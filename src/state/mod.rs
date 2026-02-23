@@ -1,5 +1,8 @@
 //! Global state management for KubecTUI.
 
+pub mod alerts;
+pub mod filters;
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::{collections::BTreeSet, fmt};
@@ -12,14 +15,10 @@ use crate::k8s::{
 /// High-level data loading phase for cluster resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DataPhase {
-    /// No data fetch attempted yet.
     #[default]
     Idle,
-    /// Data fetch is currently in progress.
     Loading,
-    /// Data is available from the most recent successful fetch.
     Ready,
-    /// Last fetch failed.
     Error,
 }
 
@@ -35,7 +34,6 @@ impl fmt::Display for DataPhase {
     }
 }
 
-/// Snapshot used by rendering layer.
 #[derive(Debug, Clone, Default)]
 pub struct ClusterSnapshot {
     pub nodes: Vec<NodeInfo>,
@@ -52,7 +50,6 @@ pub struct ClusterSnapshot {
 }
 
 impl ClusterSnapshot {
-    /// Returns a compact string suitable for header display.
     pub fn cluster_summary(&self) -> &str {
         self.cluster_url
             .as_deref()
@@ -60,19 +57,16 @@ impl ClusterSnapshot {
     }
 }
 
-/// Mutable state holder with async refresh operations.
 #[derive(Debug, Clone, Default)]
 pub struct GlobalState {
     snapshot: ClusterSnapshot,
 }
 
 impl GlobalState {
-    /// Returns a cloneable immutable snapshot for UI rendering.
     pub fn snapshot(&self) -> ClusterSnapshot {
         self.snapshot.clone()
     }
 
-    /// Refreshes core resources in parallel, updating status and timestamps.
     pub async fn refresh(&mut self, client: &K8sClient) -> Result<()> {
         self.snapshot.phase = DataPhase::Loading;
         self.snapshot.last_error = None;

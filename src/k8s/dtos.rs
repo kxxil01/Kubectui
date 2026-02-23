@@ -81,15 +81,15 @@ pub struct ClusterInfo {
 /// Dashboard alert severity used for color coding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AlertSeverity {
-    /// Critical cluster issue.
+    /// Critical condition (red).
     Error,
-    /// Warning state requiring attention.
+    /// Warning condition (yellow).
     Warning,
-    /// Informational healthy state.
+    /// Informational condition (green).
     Info,
 }
 
-/// Dashboard alert item rendered in the top-alerts panel.
+/// Dashboard alert item displayed in the alert list.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AlertItem {
     pub severity: AlertSeverity,
