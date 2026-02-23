@@ -340,6 +340,19 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
         AppView::DaemonSets
         | AppView::Jobs
         | AppView::CronJobs
+        | AppView::Endpoints
+        | AppView::Ingresses
+        | AppView::IngressClasses
+        | AppView::NetworkPolicies
+        | AppView::ConfigMaps
+        | AppView::Secrets
+        | AppView::HPAs
+        | AppView::PriorityClasses
+        | AppView::PersistentVolumeClaims
+        | AppView::PersistentVolumes
+        | AppView::StorageClasses
+        | AppView::Namespaces
+        | AppView::Events
         | AppView::ServiceAccounts
         | AppView::Roles
         | AppView::RoleBindings

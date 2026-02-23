@@ -18,10 +18,11 @@ use crate::{
 pub enum NavGroup {
     Overview,
     Workloads,
-    Networking,
-    Security,
-    Governance,
-    Extensions,
+    Network,
+    Config,
+    Storage,
+    AccessControl,
+    CustomResources,
 }
 
 impl NavGroup {
@@ -29,10 +30,11 @@ impl NavGroup {
         match self {
             NavGroup::Overview => "Overview",
             NavGroup::Workloads => "Workloads",
-            NavGroup::Networking => "Networking",
-            NavGroup::Security => "Security",
-            NavGroup::Governance => "Governance",
-            NavGroup::Extensions => "Extensions",
+            NavGroup::Network => "Network",
+            NavGroup::Config => "Config",
+            NavGroup::Storage => "Storage",
+            NavGroup::AccessControl => "Access Control",
+            NavGroup::CustomResources => "Custom Resources",
         }
     }
 
@@ -40,10 +42,11 @@ impl NavGroup {
         match self {
             NavGroup::Overview => "󰋗",
             NavGroup::Workloads => "󰆧",
-            NavGroup::Networking => "󰛳",
-            NavGroup::Security => "󰒃",
-            NavGroup::Governance => "󰒓",
-            NavGroup::Extensions => "󰏗",
+            NavGroup::Network => "󰛳",
+            NavGroup::Config => "�",
+            NavGroup::Storage => "󰋊",
+            NavGroup::AccessControl => "�",
+            NavGroup::CustomResources => "󰏗",
         }
     }
 }
@@ -51,45 +54,79 @@ impl NavGroup {
 /// Top-level views displayed by KubecTUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppView {
+    // Overview
     Dashboard,
     Nodes,
+    // Workloads
     Pods,
-    Services,
     Deployments,
     StatefulSets,
     DaemonSets,
     Jobs,
     CronJobs,
-    ServiceAccounts,
-    Roles,
-    RoleBindings,
-    ClusterRoles,
-    ClusterRoleBindings,
+    // Network
+    Services,
+    Endpoints,
+    Ingresses,
+    IngressClasses,
+    NetworkPolicies,
+    // Config
+    ConfigMaps,
+    Secrets,
     ResourceQuotas,
     LimitRanges,
+    HPAs,
     PodDisruptionBudgets,
+    PriorityClasses,
+    // Storage
+    PersistentVolumeClaims,
+    PersistentVolumes,
+    StorageClasses,
+    // Standalone
+    Namespaces,
+    Events,
+    // Access Control
+    ServiceAccounts,
+    ClusterRoles,
+    Roles,
+    ClusterRoleBindings,
+    RoleBindings,
+    // Custom Resources
     Extensions,
 }
 
 impl AppView {
-    const ORDER: [AppView; 18] = [
+    const ORDER: [AppView; 31] = [
         AppView::Dashboard,
         AppView::Nodes,
         AppView::Pods,
-        AppView::Services,
         AppView::Deployments,
         AppView::StatefulSets,
         AppView::DaemonSets,
         AppView::Jobs,
         AppView::CronJobs,
-        AppView::ServiceAccounts,
-        AppView::Roles,
-        AppView::RoleBindings,
-        AppView::ClusterRoles,
-        AppView::ClusterRoleBindings,
+        AppView::Services,
+        AppView::Endpoints,
+        AppView::Ingresses,
+        AppView::IngressClasses,
+        AppView::NetworkPolicies,
+        AppView::ConfigMaps,
+        AppView::Secrets,
         AppView::ResourceQuotas,
         AppView::LimitRanges,
+        AppView::HPAs,
         AppView::PodDisruptionBudgets,
+        AppView::PriorityClasses,
+        AppView::PersistentVolumeClaims,
+        AppView::PersistentVolumes,
+        AppView::StorageClasses,
+        AppView::Namespaces,
+        AppView::Events,
+        AppView::ServiceAccounts,
+        AppView::ClusterRoles,
+        AppView::Roles,
+        AppView::ClusterRoleBindings,
+        AppView::RoleBindings,
         AppView::Extensions,
     ];
 
@@ -99,21 +136,34 @@ impl AppView {
             AppView::Dashboard => "Dashboard",
             AppView::Nodes => "Nodes",
             AppView::Pods => "Pods",
-            AppView::Services => "Services",
             AppView::Deployments => "Deployments",
-            AppView::StatefulSets => "StatefulSets",
-            AppView::DaemonSets => "DaemonSets",
+            AppView::StatefulSets => "Stateful Sets",
+            AppView::DaemonSets => "Daemon Sets",
             AppView::Jobs => "Jobs",
-            AppView::CronJobs => "CronJobs",
-            AppView::ServiceAccounts => "ServiceAccounts",
+            AppView::CronJobs => "Cron Jobs",
+            AppView::Services => "Services",
+            AppView::Endpoints => "Endpoints",
+            AppView::Ingresses => "Ingresses",
+            AppView::IngressClasses => "Ingress Classes",
+            AppView::NetworkPolicies => "Network Policies",
+            AppView::ConfigMaps => "Config Maps",
+            AppView::Secrets => "Secrets",
+            AppView::ResourceQuotas => "Resource Quotas",
+            AppView::LimitRanges => "Limit Ranges",
+            AppView::HPAs => "Horiz. Pod Autoscalers",
+            AppView::PodDisruptionBudgets => "Pod Disruption Budgets",
+            AppView::PriorityClasses => "Priority Classes",
+            AppView::PersistentVolumeClaims => "Persistent Vol. Claims",
+            AppView::PersistentVolumes => "Persistent Volumes",
+            AppView::StorageClasses => "Storage Classes",
+            AppView::Namespaces => "Namespaces",
+            AppView::Events => "Events",
+            AppView::ServiceAccounts => "Service Accounts",
+            AppView::ClusterRoles => "Cluster Roles",
             AppView::Roles => "Roles",
-            AppView::RoleBindings => "RoleBindings",
-            AppView::ClusterRoles => "ClusterRoles",
-            AppView::ClusterRoleBindings => "ClusterRoleBindings",
-            AppView::ResourceQuotas => "ResourceQuotas",
-            AppView::LimitRanges => "LimitRanges",
-            AppView::PodDisruptionBudgets => "PodDisruptionBudgets",
-            AppView::Extensions => "Extensions",
+            AppView::ClusterRoleBindings => "Cluster Role Bindings",
+            AppView::RoleBindings => "Role Bindings",
+            AppView::Extensions => "Definitions",
         }
     }
 
@@ -123,20 +173,33 @@ impl AppView {
             AppView::Dashboard => "󰋗",
             AppView::Nodes => "󰒋",
             AppView::Pods => "󰠳",
-            AppView::Services => "󰛳",
             AppView::Deployments => "󰆧",
             AppView::StatefulSets => "󰆼",
             AppView::DaemonSets => "󰒓",
             AppView::Jobs => "󰃰",
             AppView::CronJobs => "󰔠",
-            AppView::ServiceAccounts => "󰀄",
-            AppView::Roles => "󰒃",
-            AppView::RoleBindings => "󰌋",
-            AppView::ClusterRoles => "󰒃",
-            AppView::ClusterRoleBindings => "󰌋",
+            AppView::Services => "󰛳",
+            AppView::Endpoints => "�",
+            AppView::Ingresses => "󰱓",
+            AppView::IngressClasses => "󰱓",
+            AppView::NetworkPolicies => "󰒃",
+            AppView::ConfigMaps => "󰒓",
+            AppView::Secrets => "󰌋",
             AppView::ResourceQuotas => "󰏗",
             AppView::LimitRanges => "󰳗",
+            AppView::HPAs => "󰦕",
             AppView::PodDisruptionBudgets => "󰦕",
+            AppView::PriorityClasses => "󰔠",
+            AppView::PersistentVolumeClaims => "󰋊",
+            AppView::PersistentVolumes => "󰋊",
+            AppView::StorageClasses => "󰋊",
+            AppView::Namespaces => "󰏗",
+            AppView::Events => "󰃰",
+            AppView::ServiceAccounts => "󰀄",
+            AppView::ClusterRoles => "󰒃",
+            AppView::Roles => "󰒃",
+            AppView::ClusterRoleBindings => "󰌋",
+            AppView::RoleBindings => "󰌋",
             AppView::Extensions => "󰏗",
         }
     }
@@ -151,16 +214,28 @@ impl AppView {
             | AppView::DaemonSets
             | AppView::Jobs
             | AppView::CronJobs => NavGroup::Workloads,
-            AppView::Services => NavGroup::Networking,
-            AppView::ServiceAccounts
-            | AppView::Roles
-            | AppView::RoleBindings
-            | AppView::ClusterRoles
-            | AppView::ClusterRoleBindings => NavGroup::Security,
-            AppView::ResourceQuotas
+            AppView::Services
+            | AppView::Endpoints
+            | AppView::Ingresses
+            | AppView::IngressClasses
+            | AppView::NetworkPolicies => NavGroup::Network,
+            AppView::ConfigMaps
+            | AppView::Secrets
+            | AppView::ResourceQuotas
             | AppView::LimitRanges
-            | AppView::PodDisruptionBudgets => NavGroup::Governance,
-            AppView::Extensions => NavGroup::Extensions,
+            | AppView::HPAs
+            | AppView::PodDisruptionBudgets
+            | AppView::PriorityClasses => NavGroup::Config,
+            AppView::PersistentVolumeClaims
+            | AppView::PersistentVolumes
+            | AppView::StorageClasses => NavGroup::Storage,
+            AppView::Namespaces | AppView::Events => NavGroup::Overview,
+            AppView::ServiceAccounts
+            | AppView::ClusterRoles
+            | AppView::Roles
+            | AppView::ClusterRoleBindings
+            | AppView::RoleBindings => NavGroup::AccessControl,
+            AppView::Extensions => NavGroup::CustomResources,
         }
     }
 
@@ -190,7 +265,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 18] {
+    pub const fn tabs() -> &'static [AppView; 31] {
         &Self::ORDER
     }
 }
@@ -365,12 +440,51 @@ pub enum SidebarItem {
 /// Ordered list of all sidebar rows given the current collapsed state.
 pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> Vec<SidebarItem> {
     const GROUPS: &[(NavGroup, &[AppView])] = &[
-        (NavGroup::Overview,    &[AppView::Dashboard, AppView::Nodes]),
-        (NavGroup::Workloads,   &[AppView::Pods, AppView::Deployments, AppView::StatefulSets, AppView::DaemonSets, AppView::Jobs, AppView::CronJobs]),
-        (NavGroup::Networking,  &[AppView::Services]),
-        (NavGroup::Security,    &[AppView::ServiceAccounts, AppView::Roles, AppView::RoleBindings, AppView::ClusterRoles, AppView::ClusterRoleBindings]),
-        (NavGroup::Governance,  &[AppView::ResourceQuotas, AppView::LimitRanges, AppView::PodDisruptionBudgets]),
-        (NavGroup::Extensions,  &[AppView::Extensions]),
+        (NavGroup::Overview, &[
+            AppView::Dashboard,
+            AppView::Nodes,
+            AppView::Namespaces,
+            AppView::Events,
+        ]),
+        (NavGroup::Workloads, &[
+            AppView::Pods,
+            AppView::Deployments,
+            AppView::StatefulSets,
+            AppView::DaemonSets,
+            AppView::Jobs,
+            AppView::CronJobs,
+        ]),
+        (NavGroup::Network, &[
+            AppView::Services,
+            AppView::Endpoints,
+            AppView::Ingresses,
+            AppView::IngressClasses,
+            AppView::NetworkPolicies,
+        ]),
+        (NavGroup::Config, &[
+            AppView::ConfigMaps,
+            AppView::Secrets,
+            AppView::ResourceQuotas,
+            AppView::LimitRanges,
+            AppView::HPAs,
+            AppView::PodDisruptionBudgets,
+            AppView::PriorityClasses,
+        ]),
+        (NavGroup::Storage, &[
+            AppView::PersistentVolumeClaims,
+            AppView::PersistentVolumes,
+            AppView::StorageClasses,
+        ]),
+        (NavGroup::AccessControl, &[
+            AppView::ServiceAccounts,
+            AppView::ClusterRoles,
+            AppView::Roles,
+            AppView::ClusterRoleBindings,
+            AppView::RoleBindings,
+        ]),
+        (NavGroup::CustomResources, &[
+            AppView::Extensions,
+        ]),
     ];
     let mut rows = Vec::new();
     for (group, views) in GROUPS {
@@ -979,43 +1093,43 @@ mod tests {
     #[test]
     fn tab_cycles_all_views_forward() {
         let mut app = AppState::default();
-
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::Nodes);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::Pods);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::Services);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::Deployments);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::StatefulSets);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::DaemonSets);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::Jobs);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::CronJobs);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::ServiceAccounts);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::Roles);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::RoleBindings);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::ClusterRoles);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::ClusterRoleBindings);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::ResourceQuotas);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::LimitRanges);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::PodDisruptionBudgets);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::Extensions);
-        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
-        assert_eq!(app.view(), AppView::Dashboard);
+        let expected = [
+            AppView::Nodes,
+            AppView::Pods,
+            AppView::Deployments,
+            AppView::StatefulSets,
+            AppView::DaemonSets,
+            AppView::Jobs,
+            AppView::CronJobs,
+            AppView::Services,
+            AppView::Endpoints,
+            AppView::Ingresses,
+            AppView::IngressClasses,
+            AppView::NetworkPolicies,
+            AppView::ConfigMaps,
+            AppView::Secrets,
+            AppView::ResourceQuotas,
+            AppView::LimitRanges,
+            AppView::HPAs,
+            AppView::PodDisruptionBudgets,
+            AppView::PriorityClasses,
+            AppView::PersistentVolumeClaims,
+            AppView::PersistentVolumes,
+            AppView::StorageClasses,
+            AppView::Namespaces,
+            AppView::Events,
+            AppView::ServiceAccounts,
+            AppView::ClusterRoles,
+            AppView::Roles,
+            AppView::ClusterRoleBindings,
+            AppView::RoleBindings,
+            AppView::Extensions,
+            AppView::Dashboard,
+        ];
+        for view in expected {
+            app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+            assert_eq!(app.view(), view);
+        }
     }
 
     /// Verifies reverse tab cycle wraps from Dashboard to Extensions.
@@ -1179,7 +1293,7 @@ mod tests {
     fn rapid_tab_switching_is_stable() {
         let mut app = AppState::default();
 
-        for _ in 0..108 {
+        for _ in 0..(31 * 3) {
             app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         }
 

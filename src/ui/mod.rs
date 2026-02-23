@@ -55,6 +55,19 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         AppView::Pods => {
             render_pods_widget(frame, content, cluster, app.selected_idx(), app.search_query());
         }
+        AppView::Endpoints
+        | AppView::Ingresses
+        | AppView::IngressClasses
+        | AppView::NetworkPolicies
+        | AppView::ConfigMaps
+        | AppView::Secrets
+        | AppView::HPAs
+        | AppView::PriorityClasses
+        | AppView::PersistentVolumeClaims
+        | AppView::PersistentVolumes
+        | AppView::StorageClasses
+        | AppView::Namespaces
+        | AppView::Events => render_placeholder(frame, content, app.view().label()),
         AppView::Services => views::services::render_services(
             frame,
             content,
@@ -252,6 +265,37 @@ fn render_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
         ])),
         chunks[1],
     );
+}
+
+fn render_placeholder(frame: &mut Frame, area: ratatui::layout::Rect, label: &str) {
+    use ratatui::{
+        style::Modifier,
+        text::Line,
+        widgets::{Block, BorderType, Borders, Paragraph},
+    };
+    let theme = default_theme();
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_style())
+        .style(ratatui::style::Style::default().bg(theme.bg));
+    let text = Paragraph::new(vec![
+        Line::from(""),
+        Line::from(vec![
+            ratatui::text::Span::styled(
+                format!("  {label}"),
+                ratatui::style::Style::default()
+                    .fg(theme.fg_dim)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![ratatui::text::Span::styled(
+            "  Coming soon — not yet implemented",
+            ratatui::style::Style::default().fg(theme.fg_dim),
+        )]),
+    ])
+    .block(block);
+    frame.render_widget(text, area);
 }
 
 fn render_pods_widget(
