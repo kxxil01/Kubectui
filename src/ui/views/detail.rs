@@ -11,6 +11,10 @@ use crate::{app::DetailViewState, ui::components::default_theme};
 
 /// Renders resource detail as a centered modal overlay.
 pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
+    if let Some(viewer) = &detail_state.logs_viewer {
+        render_logs_overlay(frame, area, viewer);
+        return;
+    }
     let theme = default_theme();
     let popup = centered_rect(88, 88, area);
     frame.render_widget(Clear, popup);
@@ -343,6 +347,144 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.statusbar_bg));
     frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[5]);
+}
+
+fn render_logs_overlay(
+    frame: &mut Frame,
+    area: Rect,
+    viewer: &crate::app::LogsViewerState,
+) {
+    use ratatui::layout::Margin;
+    use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+
+    let theme = default_theme();
+    let popup = centered_rect(94, 92, area);
+    frame.render_widget(Clear, popup);
+
+    let outer_block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_active_style())
+        .style(Style::default().bg(theme.bg));
+    frame.render_widget(outer_block, popup);
+
+    let inner = Rect {
+        x: popup.x + 1,
+        y: popup.y + 1,
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(4), Constraint::Length(2)])
+        .split(inner);
+
+    let title_line = Line::from(vec![
+        Span::styled(" 📋 ", theme.title_style()),
+        Span::styled(viewer.pod_name.clone(), theme.title_style()),
+        Span::styled(" · ", theme.inactive_style()),
+        Span::styled(viewer.pod_namespace.clone(), Style::default().fg(theme.accent2)),
+        Span::styled(
+            format!("  {} lines", viewer.lines.len()),
+            theme.inactive_style(),
+        ),
+        if viewer.loading {
+            Span::styled("  ⟳ Loading…", Style::default().fg(theme.warning))
+        } else {
+            Span::raw("")
+        },
+    ]);
+    let title_block = Block::default()
+        .borders(Borders::BOTTOM)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.header_bg));
+    frame.render_widget(Paragraph::new(title_line).block(title_block), chunks[0]);
+
+    let log_block = Block::default()
+        .borders(Borders::NONE)
+        .style(Style::default().bg(theme.bg));
+    let log_inner = log_block.inner(chunks[1]);
+    frame.render_widget(log_block, chunks[1]);
+
+    if viewer.loading && viewer.lines.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled("  ⟳ Fetching logs…", Style::default().fg(theme.warning))),
+            log_inner,
+        );
+    } else if let Some(ref err) = viewer.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(format!("  ✗ {err}"), theme.badge_error_style())),
+            log_inner,
+        );
+    } else if viewer.lines.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled("  No logs available", theme.inactive_style())),
+            log_inner,
+        );
+    } else {
+        let visible = log_inner.height as usize;
+        let total = viewer.lines.len();
+        let start = viewer.scroll_offset.min(total.saturating_sub(1));
+        let line_num_width = total.to_string().len().max(3);
+
+        let lines: Vec<Line> = viewer.lines[start..]
+            .iter()
+            .take(visible)
+            .enumerate()
+            .map(|(i, content)| {
+                let num = format!("{:>width$} ", start + i + 1, width = line_num_width);
+                let upper = content.to_uppercase();
+                let content_style = if upper.contains("ERROR") || upper.contains(" ERR ") {
+                    Style::default().fg(theme.error)
+                } else if upper.contains("WARN") {
+                    Style::default().fg(theme.warning)
+                } else if upper.contains("INFO") {
+                    Style::default().fg(theme.fg)
+                } else if upper.contains("DEBUG") {
+                    Style::default().fg(theme.fg_dim)
+                } else {
+                    Style::default().fg(theme.fg_dim)
+                };
+                Line::from(vec![
+                    Span::styled(num, theme.inactive_style()),
+                    Span::styled("│ ", theme.inactive_style()),
+                    Span::styled(content.clone(), content_style),
+                ])
+            })
+            .collect();
+
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            log_inner,
+        );
+
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .track_symbol(Some("│"))
+            .thumb_symbol("█");
+        let mut scrollbar_state = ScrollbarState::new(total).position(start);
+        frame.render_stateful_widget(
+            scrollbar,
+            chunks[1].inner(Margin { vertical: 0, horizontal: 0 }),
+            &mut scrollbar_state,
+        );
+    }
+
+    let footer_line = Line::from(vec![
+        Span::styled(" [j/k] ", theme.keybind_key_style()),
+        Span::styled("scroll  ", theme.keybind_desc_style()),
+        Span::styled("[g/G] ", theme.keybind_key_style()),
+        Span::styled("top/bottom  ", theme.keybind_desc_style()),
+        Span::styled("[Esc] ", theme.keybind_key_style()),
+        Span::styled("close", theme.keybind_desc_style()),
+    ]);
+    let footer_block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.statusbar_bg));
+    frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[2]);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {

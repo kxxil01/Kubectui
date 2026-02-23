@@ -105,7 +105,26 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(logs) = &mut detail.logs_viewer
             {
-                logs.scroll_offset = logs.scroll_offset.saturating_add(1);
+                let max = logs.lines.len().saturating_sub(1);
+                logs.scroll_offset = (logs.scroll_offset + 1).min(max);
+                return true;
+            }
+            false
+        }
+        AppAction::LogsViewerScrollTop => {
+            if let Some(detail) = &mut app_state.detail_view
+                && let Some(logs) = &mut detail.logs_viewer
+            {
+                logs.scroll_offset = 0;
+                return true;
+            }
+            false
+        }
+        AppAction::LogsViewerScrollBottom => {
+            if let Some(detail) = &mut app_state.detail_view
+                && let Some(logs) = &mut detail.logs_viewer
+            {
+                logs.scroll_offset = logs.lines.len().saturating_sub(1);
                 return true;
             }
             false

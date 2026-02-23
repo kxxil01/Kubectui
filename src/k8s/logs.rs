@@ -31,11 +31,22 @@ impl LogsClient {
     pub async fn tail_logs(
         &self,
         pod_ref: &PodRef,
-        _tail_lines: Option<i64>,
+        tail_lines: Option<i64>,
     ) -> anyhow::Result<Vec<String>> {
-        self.verify_pod_exists(pod_ref).await?;
-        let _pods: Api<Pod> = Api::namespaced(self.client.clone(), &pod_ref.namespace);
-        Ok(vec![])
+        use kube::api::LogParams;
+
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), &pod_ref.namespace);
+        let params = LogParams {
+            tail_lines,
+            timestamps: false,
+            ..Default::default()
+        };
+        let raw = pods
+            .logs(&pod_ref.name, &params)
+            .await
+            .context("failed to fetch pod logs")?;
+
+        Ok(raw.lines().map(str::to_string).collect())
     }
 
     async fn verify_pod_exists(&self, pod_ref: &PodRef) -> anyhow::Result<()> {
@@ -72,7 +83,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tail_logs_propagates_verify_errors() {
+    async fn tail_logs_fails_when_cluster_unreachable() {
         let cfg = kube::Config::new("http://127.0.0.1:1".parse().expect("valid URL"));
         let client = Client::try_from(cfg).expect("test client should initialize");
         let logs_client = LogsClient::new(client);
@@ -81,9 +92,9 @@ mod tests {
         let err = logs_client
             .tail_logs(&pod_ref, Some(10))
             .await
-            .expect_err("tail_logs should fail for missing pod");
+            .expect_err("tail_logs should fail when cluster is unreachable");
 
         let text = format!("{err:#}");
-        assert!(text.contains("Pod not found"));
+        assert!(text.contains("failed to fetch pod logs"));
     }
 }

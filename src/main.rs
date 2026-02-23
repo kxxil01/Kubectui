@@ -15,11 +15,11 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use kubectui::{
     app::{
-        AppAction, AppState, AppView, DetailMetadata, DetailViewState, ResourceRef, load_config,
-        save_config,
+        AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState, ResourceRef,
+        load_config, save_config,
     },
     events::apply_action,
-    k8s::client::K8sClient,
+    k8s::{client::K8sClient, logs::{LogsClient, PodRef}},
     state::{ClusterSnapshot, GlobalState},
     ui,
 };
@@ -174,6 +174,55 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
                 AppAction::CloseDetail => {
                     app.detail_view = None;
+                }
+                AppAction::LogsViewerOpen => {
+                    if let Some(detail) = &mut app.detail_view {
+                        let (pod_name, pod_ns) = detail
+                            .resource
+                            .as_ref()
+                            .and_then(|r| match r {
+                                ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
+                                _ => None,
+                            })
+                            .unwrap_or_default();
+                        detail.logs_viewer = Some(LogsViewerState {
+                            pod_name: pod_name.clone(),
+                            pod_namespace: pod_ns.clone(),
+                            loading: true,
+                            ..Default::default()
+                        });
+                    }
+                    let (pod_name, pod_ns) = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|d| d.logs_viewer.as_ref())
+                        .map(|l| (l.pod_name.clone(), l.pod_namespace.clone()))
+                        .unwrap_or_default();
+                    if !pod_name.is_empty() {
+                        let logs_client = LogsClient::new(client.get_client());
+                        let pod_ref = PodRef::new(pod_name, pod_ns);
+                        match logs_client.tail_logs(&pod_ref, Some(500)).await {
+                            Ok(lines) => {
+                                if let Some(detail) = &mut app.detail_view {
+                                    if let Some(viewer) = &mut detail.logs_viewer {
+                                        viewer.lines = lines;
+                                        viewer.loading = false;
+                                        if viewer.follow_mode {
+                                            viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
+                                        }
+                                    }
+                                }
+                            }
+                            Err(err) => {
+                                if let Some(detail) = &mut app.detail_view {
+                                    if let Some(viewer) = &mut detail.logs_viewer {
+                                        viewer.loading = false;
+                                        viewer.error = Some(err.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 // Apply all other component actions
                 other => {

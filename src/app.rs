@@ -197,6 +197,11 @@ pub enum ActiveComponent {
 pub struct LogsViewerState {
     pub scroll_offset: usize,
     pub follow_mode: bool,
+    pub lines: Vec<String>,
+    pub pod_name: String,
+    pub pod_namespace: String,
+    pub loading: bool,
+    pub error: Option<String>,
 }
 
 /// Active form field in the lightweight port-forward dialog state.
@@ -287,6 +292,8 @@ pub enum AppAction {
     LogsViewerClose,
     LogsViewerScrollUp,
     LogsViewerScrollDown,
+    LogsViewerScrollTop,
+    LogsViewerScrollBottom,
     LogsViewerToggleFollow,
     PortForwardOpen,
     PortForwardClose,
@@ -582,6 +589,8 @@ impl AppState {
                     KeyCode::Esc => AppAction::EscapePressed,
                     KeyCode::Char('k') | KeyCode::Up => AppAction::LogsViewerScrollUp,
                     KeyCode::Char('j') | KeyCode::Down => AppAction::LogsViewerScrollDown,
+                    KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
+                    KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
                     KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
                     _ => AppAction::None,
                 };
