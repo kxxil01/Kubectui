@@ -23,6 +23,19 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.detail_view = None;
             true
         }
+        AppAction::OpenNamespacePicker => {
+            app_state.open_namespace_picker();
+            true
+        }
+        AppAction::CloseNamespacePicker => {
+            app_state.close_namespace_picker();
+            true
+        }
+        AppAction::SelectNamespace(ns) => {
+            app_state.set_namespace(ns);
+            app_state.close_namespace_picker();
+            true
+        }
         AppAction::EscapePressed => {
             if app_state
                 .detail_view
@@ -107,9 +120,15 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 && let Some(dialog) = &mut detail.port_forward_dialog
             {
                 dialog.active_field = match dialog.active_field {
-                    crate::app::PortForwardField::LocalPort => crate::app::PortForwardField::RemotePort,
-                    crate::app::PortForwardField::RemotePort => crate::app::PortForwardField::TunnelList,
-                    crate::app::PortForwardField::TunnelList => crate::app::PortForwardField::LocalPort,
+                    crate::app::PortForwardField::LocalPort => {
+                        crate::app::PortForwardField::RemotePort
+                    }
+                    crate::app::PortForwardField::RemotePort => {
+                        crate::app::PortForwardField::TunnelList
+                    }
+                    crate::app::PortForwardField::TunnelList => {
+                        crate::app::PortForwardField::LocalPort
+                    }
                 };
                 return true;
             }
@@ -120,9 +139,15 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 && let Some(dialog) = &mut detail.port_forward_dialog
             {
                 dialog.active_field = match dialog.active_field {
-                    crate::app::PortForwardField::LocalPort => crate::app::PortForwardField::TunnelList,
-                    crate::app::PortForwardField::RemotePort => crate::app::PortForwardField::LocalPort,
-                    crate::app::PortForwardField::TunnelList => crate::app::PortForwardField::RemotePort,
+                    crate::app::PortForwardField::LocalPort => {
+                        crate::app::PortForwardField::TunnelList
+                    }
+                    crate::app::PortForwardField::RemotePort => {
+                        crate::app::PortForwardField::LocalPort
+                    }
+                    crate::app::PortForwardField::TunnelList => {
+                        crate::app::PortForwardField::RemotePort
+                    }
                 };
                 return true;
             }

@@ -3,15 +3,19 @@
 use anyhow::{Context, Result};
 use chrono::Utc;
 use k8s_openapi::api::{
-    apps::v1::Deployment,
-    core::v1::{Node, Pod, Service},
+    apps::v1::{DaemonSet, Deployment, StatefulSet},
+    batch::v1::{CronJob, Job},
+    core::v1::{Namespace, Node, Pod, PodSpec, Service},
 };
 use kube::{Api, Client, Config, api::ListParams, config::KubeConfigOptions};
 
 use crate::k8s::{events, yaml};
 
 pub use crate::k8s::{
-    dtos::{ClusterInfo, DeploymentInfo, NodeInfo, PodInfo, ServiceInfo},
+    dtos::{
+        ClusterInfo, CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, PodInfo,
+        ServiceInfo, StatefulSetInfo,
+    },
     events::EventInfo,
 };
 
@@ -110,6 +114,23 @@ impl K8sClient {
             .collect();
 
         Ok(nodes)
+    }
+
+    /// Fetches available namespaces sorted alphabetically.
+    pub async fn fetch_namespaces(&self) -> Result<Vec<String>> {
+        let ns_api: Api<Namespace> = Api::all(self.client.clone());
+        let list = ns_api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching namespaces")?;
+
+        let names: Vec<String> = list
+            .items
+            .iter()
+            .map(|ns| ns.metadata.name.clone().unwrap_or_default())
+            .collect();
+
+        Ok(sort_namespaces(names))
     }
 
     /// Fetches pods from a namespace or all namespaces when `namespace` is `None`.
@@ -315,6 +336,219 @@ impl K8sClient {
         Ok(deployments)
     }
 
+    /// Fetches statefulsets from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_statefulsets(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<StatefulSetInfo>> {
+        let statefulsets_api: Api<StatefulSet> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = statefulsets_api
+            .list(&ListParams::default())
+            .await
+            .with_context(|| {
+                if let Some(ns) = namespace {
+                    format!("failed fetching statefulsets in namespace '{ns}'")
+                } else {
+                    "failed fetching statefulsets across all namespaces".to_string()
+                }
+            })?;
+
+        let now = Utc::now();
+        let statefulsets = list
+            .into_iter()
+            .map(|ss| {
+                let spec = ss.spec.as_ref();
+                let status = ss.status.as_ref();
+                let created_at = ss.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                StatefulSetInfo {
+                    name: ss.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: ss
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    desired_replicas: spec.and_then(|s| s.replicas).unwrap_or(1),
+                    ready_replicas: status.and_then(|s| s.ready_replicas).unwrap_or(0),
+                    service_name: spec
+                        .map(|s| s.service_name.clone())
+                        .unwrap_or_else(|| "<none>".to_string()),
+                    pod_management_policy: spec
+                        .and_then(|s| s.pod_management_policy.clone())
+                        .unwrap_or_else(|| "OrderedReady".to_string()),
+                    image: self
+                        .extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(statefulsets)
+    }
+
+    /// Fetches daemonsets from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_daemonsets(&self, namespace: Option<&str>) -> Result<Vec<DaemonSetInfo>> {
+        let daemonsets_api: Api<DaemonSet> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = daemonsets_api
+            .list(&ListParams::default())
+            .await
+            .with_context(|| {
+                if let Some(ns) = namespace {
+                    format!("failed fetching daemonsets in namespace '{ns}'")
+                } else {
+                    "failed fetching daemonsets across all namespaces".to_string()
+                }
+            })?;
+
+        let now = Utc::now();
+        let daemonsets = list
+            .into_iter()
+            .map(|ds| {
+                let spec = ds.spec.as_ref();
+                let status = ds.status.as_ref();
+                let created_at = ds.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                DaemonSetInfo {
+                    name: ds.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: ds
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    desired_count: status.map(|s| s.desired_number_scheduled).unwrap_or(0),
+                    ready_count: status.map(|s| s.number_ready).unwrap_or(0),
+                    unavailable_count: status.and_then(|s| s.number_unavailable).unwrap_or(0),
+                    image: self
+                        .extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(daemonsets)
+    }
+
+    /// Fetches jobs from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_jobs(&self, namespace: Option<&str>) -> Result<Vec<JobInfo>> {
+        let jobs_api: Api<Job> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = jobs_api
+            .list(&ListParams::default())
+            .await
+            .with_context(|| {
+                if let Some(ns) = namespace {
+                    format!("failed fetching jobs in namespace '{ns}'")
+                } else {
+                    "failed fetching jobs across all namespaces".to_string()
+                }
+            })?;
+
+        let now = Utc::now();
+        let jobs = list
+            .into_iter()
+            .map(|job| {
+                let spec = job.spec.as_ref();
+                let status = job.status.as_ref();
+
+                let succeeded = status.and_then(|s| s.succeeded).unwrap_or(0);
+                let failed = status.and_then(|s| s.failed).unwrap_or(0);
+                let active = status.and_then(|s| s.active).unwrap_or(0);
+                let parallelism = spec.and_then(|s| s.parallelism).unwrap_or(1);
+                let start_time = status.and_then(|s| s.start_time.as_ref()).map(|ts| ts.0);
+                let completion_time = status
+                    .and_then(|s| s.completion_time.as_ref())
+                    .map(|ts| ts.0);
+                let created_at = job.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                JobInfo {
+                    name: job.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: job
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    status: job_status_from_counts(succeeded, failed, active),
+                    completions: format_job_completions(succeeded, parallelism),
+                    duration: format_job_duration(start_time, completion_time),
+                    parallelism,
+                    active_pods: active,
+                    failed_pods: failed,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(jobs)
+    }
+
+    /// Fetches cronjobs from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_cronjobs(&self, namespace: Option<&str>) -> Result<Vec<CronJobInfo>> {
+        let cronjobs_api: Api<CronJob> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = cronjobs_api
+            .list(&ListParams::default())
+            .await
+            .with_context(|| {
+                if let Some(ns) = namespace {
+                    format!("failed fetching cronjobs in namespace '{ns}'")
+                } else {
+                    "failed fetching cronjobs across all namespaces".to_string()
+                }
+            })?;
+
+        let now = Utc::now();
+        let cronjobs = list
+            .into_iter()
+            .map(|cj| {
+                let spec = cj.spec.as_ref();
+                let status = cj.status.as_ref();
+                let created_at = cj.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                CronJobInfo {
+                    name: cj.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: cj
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    schedule: spec
+                        .map(|s| s.schedule.clone())
+                        .unwrap_or_else(|| "<none>".to_string()),
+                    timezone: spec.and_then(|s| s.time_zone.clone()),
+                    last_schedule_time: status
+                        .and_then(|s| s.last_schedule_time.as_ref())
+                        .map(|ts| ts.0),
+                    next_schedule_time: None,
+                    last_successful_time: status
+                        .and_then(|s| s.last_successful_time.as_ref())
+                        .map(|ts| ts.0),
+                    suspend: spec.and_then(|s| s.suspend).unwrap_or(false),
+                    active_jobs: status
+                        .and_then(|s| s.active.as_ref())
+                        .map(|v| v.len() as i32)
+                        .unwrap_or(0),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(cronjobs)
+    }
+
     /// Fetches cluster summary information.
     pub async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {
         let nodes = self
@@ -370,19 +604,19 @@ impl K8sClient {
 
     /// Gets the current and desired replica counts for a deployment.
     pub async fn get_deployment_replicas(&self, name: &str, namespace: &str) -> Result<(i32, i32)> {
-        let deployments_api: Api<Deployment> =
-            Api::namespaced(self.client.clone(), namespace);
-        let deployment = deployments_api
-            .get(name)
-            .await
-            .with_context(|| {
-                format!(
-                    "deployment '{}' not found in namespace '{}'",
-                    name, namespace
-                )
-            })?;
+        let deployments_api: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+        let deployment = deployments_api.get(name).await.with_context(|| {
+            format!(
+                "deployment '{}' not found in namespace '{}'",
+                name, namespace
+            )
+        })?;
 
-        let desired_replicas = deployment.spec.as_ref().and_then(|s| s.replicas).unwrap_or(1);
+        let desired_replicas = deployment
+            .spec
+            .as_ref()
+            .and_then(|s| s.replicas)
+            .unwrap_or(1);
         let current_replicas = deployment
             .status
             .as_ref()
@@ -436,6 +670,12 @@ impl K8sClient {
         }
     }
 
+    fn extract_image_from_pod_spec(&self, pod_spec: Option<&PodSpec>) -> Option<String> {
+        pod_spec
+            .and_then(|spec| spec.containers.first())
+            .and_then(|container| container.image.clone())
+    }
+
     /// Creates a port-forward tunnel to a pod's port.
     ///
     /// Returns a tunnel ID on success. The tunnel is managed by PortForwarderService.
@@ -443,18 +683,22 @@ impl K8sClient {
         &self,
         target: &crate::k8s::portforward::PortForwardTarget,
         config: &crate::k8s::portforward::PortForwardConfig,
-    ) -> Result<crate::k8s::portforward::PortForwardTunnelInfo, crate::k8s::portforward_errors::PortForwardError> {
+    ) -> Result<
+        crate::k8s::portforward::PortForwardTunnelInfo,
+        crate::k8s::portforward_errors::PortForwardError,
+    > {
         use crate::k8s::portforward_errors::PortForwardError;
-        
+
         // 1. Verify pod exists
         let pods_api: Api<Pod> = Api::namespaced(self.client.clone(), &target.namespace);
-        let pod = pods_api
-            .get(&target.pod_name)
-            .await
-            .map_err(|_| PortForwardError::PodNotFound {
-                namespace: target.namespace.clone(),
-                pod_name: target.pod_name.clone(),
-            })?;
+        let pod =
+            pods_api
+                .get(&target.pod_name)
+                .await
+                .map_err(|_| PortForwardError::PodNotFound {
+                    namespace: target.namespace.clone(),
+                    pod_name: target.pod_name.clone(),
+                })?;
 
         // 2. Check if port is exposed in pod spec
         let container_ports: Vec<u16> = pod
@@ -462,12 +706,7 @@ impl K8sClient {
             .as_ref()
             .and_then(|spec| spec.containers.first())
             .and_then(|container| container.ports.as_ref())
-            .map(|ports| {
-                ports
-                    .iter()
-                    .map(|p| p.container_port as u16)
-                    .collect()
-            })
+            .map(|ports| ports.iter().map(|p| p.container_port as u16).collect())
             .unwrap_or_default();
 
         if !container_ports.is_empty() && !container_ports.contains(&target.remote_port) {
@@ -489,12 +728,12 @@ impl K8sClient {
                 })?
         } else {
             // Verify specific port is available
-            self.check_port_available(config.local_port).await.map_err(|_| {
-                PortForwardError::PortInUse {
+            self.check_port_available(config.local_port)
+                .await
+                .map_err(|_| PortForwardError::PortInUse {
                     port: config.local_port,
                     process_name: None,
-                }
-            })?;
+                })?;
             config.local_port
         };
 
@@ -504,9 +743,9 @@ impl K8sClient {
 
         let local_addr = SocketAddr::from_str(&format!("{}:{}", config.bind_address, local_port))
             .map_err(|_| PortForwardError::InvalidPort {
-                port: local_port,
-                reason: "invalid bind address".to_string(),
-            })?;
+            port: local_port,
+            reason: "invalid bind address".to_string(),
+        })?;
 
         let tunnel = crate::k8s::portforward::PortForwardTunnelInfo {
             id: target.id(),
@@ -547,6 +786,13 @@ impl K8sClient {
     }
 }
 
+fn sort_namespaces(names: Vec<String>) -> Vec<String> {
+    let mut names: Vec<String> = names.into_iter().filter(|name| !name.is_empty()).collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 fn node_condition_true(node: &Node, condition_type: &str) -> bool {
     node.status
         .as_ref()
@@ -571,6 +817,41 @@ fn node_role(node: &Node) -> String {
         "master".to_string()
     } else {
         "worker".to_string()
+    }
+}
+
+fn job_status_from_counts(succeeded: i32, failed: i32, active: i32) -> String {
+    if succeeded > 0 && active == 0 {
+        "Succeeded".to_string()
+    } else if failed > 0 {
+        "Failed".to_string()
+    } else if active > 0 {
+        "Running".to_string()
+    } else {
+        "Pending".to_string()
+    }
+}
+
+fn format_job_completions(succeeded: i32, parallelism: i32) -> String {
+    format!("{}/{}", succeeded.max(0), parallelism.max(1))
+}
+
+fn format_job_duration(
+    start_time: Option<chrono::DateTime<Utc>>,
+    completion_time: Option<chrono::DateTime<Utc>>,
+) -> Option<String> {
+    let start = start_time?;
+    let end = completion_time.unwrap_or_else(Utc::now);
+    let delta = end.signed_duration_since(start);
+
+    let secs = delta.num_seconds().max(0);
+    let mins = secs / 60;
+    let rem_secs = secs % 60;
+
+    if mins > 0 {
+        Some(format!("{mins}m{rem_secs}s"))
+    } else {
+        Some(format!("{rem_secs}s"))
     }
 }
 
@@ -613,6 +894,20 @@ mod tests {
     fn node_condition_true_unknown_type_is_false() {
         let node = node_with_condition("DiskPressure", "True");
         assert!(!node_condition_true(&node, "Ready"));
+    }
+
+    /// Verifies namespace names are sorted and deduplicated.
+    #[test]
+    fn test_fetch_namespaces_sorted() {
+        let sorted = sort_namespaces(vec![
+            "zeta".to_string(),
+            "default".to_string(),
+            "".to_string(),
+            "alpha".to_string(),
+            "default".to_string(),
+        ]);
+
+        assert_eq!(sorted, vec!["alpha", "default", "zeta"]);
     }
 
     /// Verifies control-plane labels map to master role.
@@ -703,5 +998,33 @@ mod tests {
             err_text.contains("failed preparing YAML") && err_text.contains("unsupported"),
             "error should include context and root cause, got: {err_text}"
         );
+    }
+
+    #[test]
+    fn job_status_determination_matches_expected_priority() {
+        assert_eq!(job_status_from_counts(1, 0, 0), "Succeeded");
+        assert_eq!(job_status_from_counts(0, 1, 0), "Failed");
+        assert_eq!(job_status_from_counts(0, 0, 2), "Running");
+        assert_eq!(job_status_from_counts(0, 0, 0), "Pending");
+    }
+
+    #[test]
+    fn job_completions_format_uses_succeeded_over_parallelism() {
+        assert_eq!(format_job_completions(3, 10), "3/10");
+        assert_eq!(format_job_completions(0, 0), "0/1");
+        assert_eq!(format_job_completions(-1, -2), "0/1");
+    }
+
+    #[test]
+    fn job_duration_is_human_readable() {
+        let start = Utc::now() - chrono::Duration::seconds(125);
+        let out = format_job_duration(Some(start), Some(start + chrono::Duration::seconds(125)));
+
+        assert_eq!(out.as_deref(), Some("2m5s"));
+    }
+
+    #[test]
+    fn job_duration_none_without_start_time() {
+        assert!(format_job_duration(None, None).is_none());
     }
 }

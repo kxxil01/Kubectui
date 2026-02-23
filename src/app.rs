@@ -1,8 +1,14 @@
 //! Application state machine and keyboard input handling.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use std::{fs, path::Path};
 
-use crate::k8s::client::EventInfo;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use serde::{Deserialize, Serialize};
+
+use crate::{
+    k8s::client::EventInfo,
+    ui::components::{NamespacePicker, NamespacePickerAction},
+};
 
 /// Top-level views displayed by KubecTUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,15 +18,23 @@ pub enum AppView {
     Pods,
     Services,
     Deployments,
+    StatefulSets,
+    DaemonSets,
+    Jobs,
+    CronJobs,
 }
 
 impl AppView {
-    const ORDER: [AppView; 5] = [
+    const ORDER: [AppView; 9] = [
         AppView::Dashboard,
         AppView::Nodes,
         AppView::Pods,
         AppView::Services,
         AppView::Deployments,
+        AppView::StatefulSets,
+        AppView::DaemonSets,
+        AppView::Jobs,
+        AppView::CronJobs,
     ];
 
     /// Returns a static display label for this view.
@@ -31,6 +45,10 @@ impl AppView {
             AppView::Pods => "Pods",
             AppView::Services => "Services",
             AppView::Deployments => "Deployments",
+            AppView::StatefulSets => "StatefulSets",
+            AppView::DaemonSets => "DaemonSets",
+            AppView::Jobs => "Jobs",
+            AppView::CronJobs => "CronJobs",
         }
     }
 
@@ -60,7 +78,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 5] {
+    pub const fn tabs() -> &'static [AppView; 9] {
         &Self::ORDER
     }
 }
@@ -209,6 +227,9 @@ pub enum AppAction {
     Quit,
     OpenDetail(ResourceRef),
     CloseDetail,
+    OpenNamespacePicker,
+    CloseNamespacePicker,
+    SelectNamespace(String),
     EscapePressed,
     LogsViewerOpen,
     LogsViewerClose,
@@ -243,6 +264,8 @@ pub struct AppState {
     pub should_quit: bool,
     pub error_message: Option<String>,
     pub detail_view: Option<DetailViewState>,
+    pub current_namespace: String,
+    pub namespace_picker: NamespacePicker,
 }
 
 impl Default for AppState {
@@ -255,8 +278,15 @@ impl Default for AppState {
             should_quit: false,
             error_message: None,
             detail_view: None,
+            current_namespace: "default".to_string(),
+            namespace_picker: NamespacePicker::new(vec!["all".to_string(), "default".to_string()]),
         }
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct AppConfig {
+    namespace: String,
 }
 
 impl AppState {
@@ -298,6 +328,55 @@ impl AppState {
     /// Clears any active error message.
     pub fn clear_error(&mut self) {
         self.error_message = None;
+    }
+
+    /// Sets active namespace for namespaced resource fetches.
+    pub fn set_namespace(&mut self, ns: String) {
+        self.current_namespace = ns;
+    }
+
+    /// Returns currently active namespace (`all` means cluster-wide listing).
+    pub fn get_namespace(&self) -> &str {
+        &self.current_namespace
+    }
+
+    /// Returns true when namespace picker modal is open.
+    pub fn is_namespace_picker_open(&self) -> bool {
+        self.namespace_picker.is_open()
+    }
+
+    /// Returns namespace picker state.
+    pub fn namespace_picker(&self) -> &NamespacePicker {
+        &self.namespace_picker
+    }
+
+    /// Replaces available namespace options while preserving current selection if possible.
+    pub fn set_available_namespaces(&mut self, mut namespaces: Vec<String>) {
+        namespaces.retain(|ns| !ns.is_empty());
+        namespaces.sort();
+        namespaces.dedup();
+
+        if !namespaces.iter().any(|ns| ns == "all") {
+            namespaces.insert(0, "all".to_string());
+        }
+
+        if !namespaces.iter().any(|ns| ns == &self.current_namespace) {
+            namespaces.push(self.current_namespace.clone());
+            namespaces.sort();
+            namespaces.dedup();
+        }
+
+        self.namespace_picker.set_namespaces(namespaces);
+    }
+
+    /// Opens namespace picker modal.
+    pub fn open_namespace_picker(&mut self) {
+        self.namespace_picker.open();
+    }
+
+    /// Closes namespace picker modal.
+    pub fn close_namespace_picker(&mut self) {
+        self.namespace_picker.close();
     }
 
     fn next_view(&mut self) {
@@ -387,6 +466,14 @@ impl AppState {
 
     /// Handles a keyboard event and updates app state.
     pub fn handle_key_event(&mut self, key: KeyEvent) -> AppAction {
+        if self.namespace_picker.is_open() {
+            return match self.namespace_picker.handle_key(key) {
+                NamespacePickerAction::None => AppAction::None,
+                NamespacePickerAction::Select(ns) => AppAction::SelectNamespace(ns),
+                NamespacePickerAction::Close => AppAction::CloseNamespacePicker,
+            };
+        }
+
         if self.is_search_mode {
             return self.handle_search_input(key);
         }
@@ -418,7 +505,9 @@ impl AppState {
                             .unwrap_or(PortForwardField::LocalPort);
 
                         match field {
-                            PortForwardField::LocalPort => AppAction::PortForwardUpdateLocalPort(c.to_string()),
+                            PortForwardField::LocalPort => {
+                                AppAction::PortForwardUpdateLocalPort(c.to_string())
+                            }
                             PortForwardField::RemotePort => {
                                 AppAction::PortForwardUpdateRemotePort(c.to_string())
                             }
@@ -491,6 +580,7 @@ impl AppState {
                 self.is_search_mode = true;
                 AppAction::None
             }
+            KeyCode::Char('~') => AppAction::OpenNamespacePicker,
             KeyCode::Char('r') => AppAction::RefreshData,
             KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 AppAction::RefreshData
@@ -523,6 +613,52 @@ impl AppState {
     }
 }
 
+/// Loads app state config from a given path.
+pub fn load_config_from_path(path: &Path) -> AppState {
+    let mut app = AppState::default();
+
+    if let Ok(content) = fs::read_to_string(path)
+        && let Ok(cfg) = serde_json::from_str::<AppConfig>(&content)
+        && !cfg.namespace.trim().is_empty()
+    {
+        app.set_namespace(cfg.namespace);
+    }
+
+    app
+}
+
+/// Saves app namespace config to a given path.
+pub fn save_config_to_path(app: &AppState, path: &Path) {
+    let cfg = AppConfig {
+        namespace: app.current_namespace.clone(),
+    };
+
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+
+    let serialized = serde_json::to_string(&cfg).unwrap_or_else(|_| "{}".to_string());
+    let _ = fs::write(path, serialized);
+}
+
+/// Loads app config from ~/.kube/kubectui-config.json.
+pub fn load_config() -> AppState {
+    let path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".kube")
+        .join("kubectui-config.json");
+    load_config_from_path(&path)
+}
+
+/// Saves app config to ~/.kube/kubectui-config.json.
+pub fn save_config(app: &AppState) {
+    let path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".kube")
+        .join("kubectui-config.json");
+    save_config_to_path(app, &path);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,15 +677,23 @@ mod tests {
         app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.view(), AppView::Deployments);
         app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::StatefulSets);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::DaemonSets);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::Jobs);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::CronJobs);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.view(), AppView::Dashboard);
     }
 
-    /// Verifies reverse tab cycle wraps from Dashboard to Deployments.
+    /// Verifies reverse tab cycle wraps from Dashboard to CronJobs.
     #[test]
     fn shift_tab_cycles_reverse() {
         let mut app = AppState::default();
         app.handle_key_event(KeyEvent::from(KeyCode::BackTab));
-        assert_eq!(app.view(), AppView::Deployments);
+        assert_eq!(app.view(), AppView::CronJobs);
     }
 
     /// Verifies entering search mode and adding/removing characters.
@@ -593,6 +737,40 @@ mod tests {
             app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::CONTROL)),
             AppAction::RefreshData
         );
+    }
+
+    /// Verifies namespace can be switched through dedicated mutators.
+    #[test]
+    fn test_appstate_namespace_switching() {
+        let mut app = AppState::default();
+        assert_eq!(app.get_namespace(), "default");
+
+        app.set_namespace("kube-system".to_string());
+        assert_eq!(app.get_namespace(), "kube-system");
+    }
+
+    /// Verifies namespace picker shortcut emits open action.
+    #[test]
+    fn tilde_opens_namespace_picker_action() {
+        let mut app = AppState::default();
+        let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('~')));
+        assert_eq!(action, AppAction::OpenNamespacePicker);
+    }
+
+    /// Verifies namespace persistence round-trip via config helpers.
+    #[test]
+    fn test_namespace_persistence() {
+        let path =
+            std::env::temp_dir().join(format!("kubectui-config-test-{}.json", std::process::id()));
+
+        let mut app = AppState::default();
+        app.set_namespace("demo".to_string());
+        save_config_to_path(&app, &path);
+
+        let loaded = load_config_from_path(&path);
+        assert_eq!(loaded.get_namespace(), "demo");
+
+        let _ = std::fs::remove_file(path);
     }
 
     /// Verifies quit action and should_quit state transition.
@@ -656,7 +834,7 @@ mod tests {
     fn rapid_tab_switching_is_stable() {
         let mut app = AppState::default();
 
-        for _ in 0..100 {
+        for _ in 0..99 {
             app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         }
 

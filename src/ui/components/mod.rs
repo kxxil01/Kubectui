@@ -1,14 +1,16 @@
 //! Reusable UI widgets and building blocks.
 
 pub mod input_field;
+pub mod namespace_picker;
 pub mod port_forward_dialog;
 pub mod probe_panel;
 
 pub mod scale_dialog;
-pub use port_forward_dialog::{PortForwardDialog, FormField, PortForwardMode, PortForwardAction};
-pub use probe_panel::ProbePanelState;
-pub use scale_dialog::{ScaleDialogState, ScaleField, ScaleAction, render_scale_dialog};
 pub use input_field::InputFieldWidget;
+pub use namespace_picker::{NamespacePicker, NamespacePickerAction};
+pub use port_forward_dialog::{FormField, PortForwardAction, PortForwardDialog, PortForwardMode};
+pub use probe_panel::ProbePanelState;
+pub use scale_dialog::{ScaleAction, ScaleDialogState, ScaleField, render_scale_dialog};
 
 use ratatui::{
     layout::Rect,

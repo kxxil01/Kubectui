@@ -62,20 +62,59 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             app.selected_idx(),
             app.search_query(),
         ),
+        AppView::StatefulSets => views::statefulsets::render_statefulsets(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::DaemonSets => views::daemonsets::render_daemonsets(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::Jobs => views::jobs::render_jobs(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::CronJobs => views::cronjobs::render_cronjobs(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
     }
 
     let status = if let Some(err) = app.error_message() {
-        format!("ERROR: {err}")
+        format!("[Namespace: {}] ERROR: {err}", app.get_namespace())
     } else if app.is_search_mode() {
-        format!("Search: {}", app.search_query())
+        format!(
+            "[Namespace: {}] Search: {}",
+            app.get_namespace(),
+            app.search_query()
+        )
     } else {
-        "[Tab] switch view • [/] search • [Enter] detail • [r] refresh • [q] quit".to_string()
+        format!(
+            "[Namespace: {}] [Tab] switch view • [/] search • [~] namespace • [Enter] detail • [r] refresh • [q] quit",
+            app.get_namespace()
+        )
     };
 
     components::render_status_bar(frame, layout[3], &status, app.error_message().is_some());
 
     if let Some(detail_state) = app.detail_view.as_ref() {
         views::detail::render_detail(frame, frame.area(), detail_state);
+    }
+
+    if app.is_namespace_picker_open() {
+        app.namespace_picker().render(frame, frame.area());
     }
 }
 
@@ -107,7 +146,10 @@ mod tests {
 
     use crate::{
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
-        k8s::dtos::{DeploymentInfo, NodeInfo, PodInfo, ServiceInfo},
+        k8s::dtos::{
+            CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, PodInfo, ServiceInfo,
+            StatefulSetInfo,
+        },
         state::ClusterSnapshot,
     };
 
@@ -223,6 +265,106 @@ mod tests {
         }
 
         let app = app_with_view(AppView::Deployments);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies StatefulSets view renders without panic for mixed readiness states.
+    #[test]
+    fn render_statefulsets_mixed_readiness_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.statefulsets.push(StatefulSetInfo {
+            name: "db-ready".to_string(),
+            namespace: "default".to_string(),
+            desired_replicas: 3,
+            ready_replicas: 3,
+            service_name: "db-headless".to_string(),
+            image: Some("postgres:16".to_string()),
+            ..StatefulSetInfo::default()
+        });
+        snapshot.statefulsets.push(StatefulSetInfo {
+            name: "db-partial".to_string(),
+            namespace: "default".to_string(),
+            desired_replicas: 3,
+            ready_replicas: 1,
+            service_name: "db-headless".to_string(),
+            image: Some("postgres:16".to_string()),
+            ..StatefulSetInfo::default()
+        });
+
+        let app = app_with_view(AppView::StatefulSets);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies DaemonSets view renders without panic for mixed desired/ready/unavailable counts.
+    #[test]
+    fn render_daemonsets_mixed_counts_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.daemonsets.push(DaemonSetInfo {
+            name: "agent-ok".to_string(),
+            namespace: "kube-system".to_string(),
+            desired_count: 10,
+            ready_count: 10,
+            unavailable_count: 0,
+            image: Some("agent:1".to_string()),
+            ..DaemonSetInfo::default()
+        });
+        snapshot.daemonsets.push(DaemonSetInfo {
+            name: "agent-warn".to_string(),
+            namespace: "kube-system".to_string(),
+            desired_count: 10,
+            ready_count: 8,
+            unavailable_count: 2,
+            image: Some("agent:2".to_string()),
+            ..DaemonSetInfo::default()
+        });
+
+        let app = app_with_view(AppView::DaemonSets);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies Jobs view renders without panic for mixed status values.
+    #[test]
+    fn render_jobs_mixed_status_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.jobs.push(JobInfo {
+            name: "batch-success".to_string(),
+            namespace: "default".to_string(),
+            status: "Succeeded".to_string(),
+            completions: "1/1".to_string(),
+            ..JobInfo::default()
+        });
+        snapshot.jobs.push(JobInfo {
+            name: "batch-running".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            completions: "0/1".to_string(),
+            ..JobInfo::default()
+        });
+
+        let app = app_with_view(AppView::Jobs);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies CronJobs view renders without panic for suspended and active rows.
+    #[test]
+    fn render_cronjobs_suspend_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.cronjobs.push(CronJobInfo {
+            name: "nightly".to_string(),
+            namespace: "default".to_string(),
+            schedule: "0 0 * * *".to_string(),
+            suspend: false,
+            ..CronJobInfo::default()
+        });
+        snapshot.cronjobs.push(CronJobInfo {
+            name: "paused".to_string(),
+            namespace: "default".to_string(),
+            schedule: "*/15 * * * *".to_string(),
+            suspend: true,
+            ..CronJobInfo::default()
+        });
+
+        let app = app_with_view(AppView::CronJobs);
         draw(&app, &snapshot);
     }
 

@@ -14,7 +14,10 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use kubectui::{
-    app::{AppAction, AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
+    app::{
+        AppAction, AppState, AppView, DetailMetadata, DetailViewState, ResourceRef, load_config,
+        save_config,
+    },
     events::apply_action,
     k8s::client::K8sClient,
     state::{ClusterSnapshot, GlobalState},
@@ -43,12 +46,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         .await
         .context("unable to initialize Kubernetes client")?;
 
-    let mut app = AppState::default();
+    let mut app = load_config();
     let mut global_state = GlobalState::default();
 
-    if let Err(err) = global_state.refresh(&client).await {
+    if let Err(err) = global_state
+        .refresh(&client, namespace_scope(app.get_namespace()))
+        .await
+    {
         app.set_error(format!("Initial data refresh failed: {err:#}"));
     }
+    app.set_available_namespaces(global_state.namespaces().to_vec());
 
     let mut tick = tokio::time::interval(Duration::from_millis(200));
 
@@ -65,7 +72,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         if event::poll(Duration::from_millis(1)).context("failed to poll terminal events")?
             && let Event::Key(key) = event::read().context("failed to read terminal event")?
         {
-            let action = if key.code == KeyCode::Enter && !app.is_search_mode() {
+            let action = if key.code == KeyCode::Enter
+                && !app.is_search_mode()
+                && !app.is_namespace_picker_open()
+            {
                 selected_resource(&app, &snapshot)
                     .map(AppAction::OpenDetail)
                     .unwrap_or(AppAction::None)
@@ -77,10 +87,36 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 AppAction::None => {}
                 AppAction::Quit => break,
                 AppAction::RefreshData => {
-                    if let Err(err) = global_state.refresh(&client).await {
+                    if let Err(err) = global_state
+                        .refresh(&client, namespace_scope(app.get_namespace()))
+                        .await
+                    {
                         app.set_error(format!("Refresh failed: {err:#}"));
                     } else {
                         app.clear_error();
+                        app.set_available_namespaces(global_state.namespaces().to_vec());
+                    }
+                }
+                AppAction::OpenNamespacePicker => {
+                    app.set_available_namespaces(global_state.namespaces().to_vec());
+                    app.open_namespace_picker();
+                }
+                AppAction::CloseNamespacePicker => {
+                    app.close_namespace_picker();
+                }
+                AppAction::SelectNamespace(namespace) => {
+                    app.set_namespace(namespace);
+                    app.close_namespace_picker();
+                    save_config(&app);
+
+                    if let Err(err) = global_state
+                        .refresh(&client, namespace_scope(app.get_namespace()))
+                        .await
+                    {
+                        app.set_error(format!("Refresh failed: {err:#}"));
+                    } else {
+                        app.clear_error();
+                        app.set_available_namespaces(global_state.namespaces().to_vec());
                     }
                 }
                 AppAction::OpenDetail(resource) => {
@@ -113,6 +149,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     Ok(())
 }
 
+fn namespace_scope(namespace: &str) -> Option<&str> {
+    if namespace == "all" {
+        None
+    } else {
+        Some(namespace)
+    }
+}
+
 fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<ResourceRef> {
     let idx = app.selected_idx();
     match app.view() {
@@ -133,6 +177,7 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
             .deployments
             .get(idx)
             .map(|d| ResourceRef::Deployment(d.name.clone(), d.namespace.clone())),
+        AppView::StatefulSets | AppView::DaemonSets | AppView::Jobs | AppView::CronJobs => None,
     }
 }
 

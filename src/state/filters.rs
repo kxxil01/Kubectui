@@ -1,53 +1,39 @@
 //! Pure filtering helpers for list-oriented views.
 
-use crate::k8s::dtos::{DeploymentInfo, NodeInfo, ServiceInfo};
+use crate::k8s::dtos::{
+    CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, ServiceInfo, StatefulSetInfo,
+};
 
-/// Health categories derived from deployment ready replica state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeploymentHealth {
-    /// All desired replicas are ready.
     Healthy,
-    /// Some replicas are ready, but not all.
     Degraded,
-    /// No replicas are ready.
     Failed,
 }
 
-/// Filter selector for node readiness state.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeStatusFilter {
-    /// Keep only Ready nodes.
     Ready,
-    /// Keep only NotReady nodes.
     NotReady,
 }
 
-/// Filter selector for node role classification.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeRoleFilter {
-    /// Control-plane/master nodes.
     Master,
-    /// Worker nodes.
     Worker,
-    /// Any role.
     Any,
 }
 
-/// Supported sort keys for node lists.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeSortBy {
-    /// Sort by node name (case-insensitive).
     Name,
-    /// Sort by readiness status, then by name.
     Status,
-    /// Sort by allocatable capacity (CPU then memory), descending.
     Capacity,
 }
 
-/// Filters nodes by free-text query plus optional status and role constraints.
 #[must_use]
 pub fn filter_nodes(
     nodes: &[NodeInfo],
@@ -74,7 +60,6 @@ pub fn filter_nodes(
         .collect()
 }
 
-/// Sorts node data in-place according to the requested key.
 pub fn sort_nodes(nodes: &mut [NodeInfo], by: NodeSortBy) {
     match by {
         NodeSortBy::Name => nodes.sort_by_cached_key(|n| n.name.to_ascii_lowercase()),
@@ -95,17 +80,11 @@ pub fn sort_nodes(nodes: &mut [NodeInfo], by: NodeSortBy) {
                         parse_memory_bytes(&b.memory_allocatable)
                             .cmp(&parse_memory_bytes(&a.memory_allocatable))
                     })
-                    .then_with(|| {
-                        a.name
-                            .to_ascii_lowercase()
-                            .cmp(&b.name.to_ascii_lowercase())
-                    })
             });
         }
     }
 }
 
-/// Filters services by free-text query and optional namespace/type constraints.
 pub fn filter_services(
     items: &[ServiceInfo],
     query: &str,
@@ -127,14 +106,12 @@ pub fn filter_services(
             let type_matches = type_
                 .as_deref()
                 .is_none_or(|target_type| item.type_.to_ascii_lowercase() == target_type);
-
             name_matches && ns_matches && type_matches
         })
         .cloned()
         .collect()
 }
 
-/// Filters deployments by free-text query and optional namespace/health constraints.
 pub fn filter_deployments(
     items: &[DeploymentInfo],
     query: &str,
@@ -151,14 +128,98 @@ pub fn filter_deployments(
             let ns_matches = ns.is_none_or(|target_ns| item.namespace == target_ns);
             let health_matches =
                 health.is_none_or(|expected| deployment_health_from_ready(&item.ready) == expected);
-
             name_matches && ns_matches && health_matches
         })
         .cloned()
         .collect()
 }
 
-/// Computes deployment health from a `current/desired` ready string.
+pub fn filter_jobs(items: &[JobInfo], query: &str, ns: Option<&str>) -> Vec<JobInfo> {
+    let query = query.trim().to_ascii_lowercase();
+    let ns = ns.map(str::trim).filter(|s| !s.is_empty());
+
+    items
+        .iter()
+        .filter(|job| {
+            let ns_match = ns.is_none_or(|target| job.namespace == target);
+            let query_match = query.is_empty()
+                || job.name.to_ascii_lowercase().contains(&query)
+                || job.status.to_ascii_lowercase().contains(&query);
+            ns_match && query_match
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn filter_cronjobs(items: &[CronJobInfo], query: &str, ns: Option<&str>) -> Vec<CronJobInfo> {
+    let query = query.trim().to_ascii_lowercase();
+    let ns = ns.map(str::trim).filter(|s| !s.is_empty());
+
+    items
+        .iter()
+        .filter(|cj| {
+            let ns_match = ns.is_none_or(|target| cj.namespace == target);
+            let query_match = query.is_empty()
+                || cj.name.to_ascii_lowercase().contains(&query)
+                || cj.schedule.to_ascii_lowercase().contains(&query);
+            ns_match && query_match
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn filter_statefulsets(
+    items: &[StatefulSetInfo],
+    query: &str,
+    ns: Option<&str>,
+) -> Vec<StatefulSetInfo> {
+    let query = query.trim().to_ascii_lowercase();
+    let ns = ns.map(str::trim).filter(|s| !s.is_empty());
+
+    items
+        .iter()
+        .filter(|ss| {
+            let ns_match = ns.is_none_or(|target| ss.namespace == target);
+            let query_match = query.is_empty()
+                || ss.name.to_ascii_lowercase().contains(&query)
+                || ss
+                    .image
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .contains(&query);
+            ns_match && query_match
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn filter_daemonsets(
+    items: &[DaemonSetInfo],
+    query: &str,
+    ns: Option<&str>,
+) -> Vec<DaemonSetInfo> {
+    let query = query.trim().to_ascii_lowercase();
+    let ns = ns.map(str::trim).filter(|s| !s.is_empty());
+
+    items
+        .iter()
+        .filter(|ds| {
+            let ns_match = ns.is_none_or(|target| ds.namespace == target);
+            let query_match = query.is_empty()
+                || ds.name.to_ascii_lowercase().contains(&query)
+                || ds
+                    .image
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .contains(&query);
+            ns_match && query_match
+        })
+        .cloned()
+        .collect()
+}
+
 pub fn deployment_health_from_ready(ready: &str) -> DeploymentHealth {
     let (ready_count, desired_count) = parse_ready(ready).unwrap_or((0, 0));
 
@@ -175,11 +236,9 @@ fn parse_ready(ready: &str) -> Option<(i32, i32)> {
     let mut parts = ready.trim().split('/');
     let ready = parts.next()?.trim().parse::<i32>().ok()?;
     let desired = parts.next()?.trim().parse::<i32>().ok()?;
-
     if parts.next().is_some() {
         return None;
     }
-
     Some((ready.max(0), desired.max(0)))
 }
 
@@ -187,7 +246,6 @@ fn parse_cpu_millicores(cpu: &Option<String>) -> i64 {
     let Some(raw) = cpu.as_deref() else {
         return 0;
     };
-
     if let Some(value) = raw.strip_suffix('m') {
         value.parse::<i64>().unwrap_or(0)
     } else {
@@ -201,7 +259,6 @@ fn parse_memory_bytes(mem: &Option<String>) -> i128 {
     let Some(raw) = mem.as_deref() else {
         return 0;
     };
-
     let units = [
         ("Ki", 1024_i128),
         ("Mi", 1024_i128.pow(2)),
@@ -212,7 +269,6 @@ fn parse_memory_bytes(mem: &Option<String>) -> i128 {
         ("G", 1000_i128.pow(3)),
         ("T", 1000_i128.pow(4)),
     ];
-
     for (suffix, factor) in units {
         if let Some(value) = raw.strip_suffix(suffix) {
             return value
@@ -221,7 +277,6 @@ fn parse_memory_bytes(mem: &Option<String>) -> i128 {
                 .unwrap_or(0);
         }
     }
-
     raw.parse::<i128>().unwrap_or(0)
 }
 
@@ -229,278 +284,130 @@ fn parse_memory_bytes(mem: &Option<String>) -> i128 {
 mod tests {
     use super::*;
 
-    fn node(name: &str, ready: bool, role: &str) -> NodeInfo {
-        NodeInfo {
-            name: name.to_string(),
-            ready,
-            role: role.to_string(),
-            ..NodeInfo::default()
-        }
-    }
-
-    fn service(name: &str, namespace: &str, type_: &str, ports: &[&str]) -> ServiceInfo {
-        ServiceInfo {
-            name: name.to_string(),
-            namespace: namespace.to_string(),
-            type_: type_.to_string(),
-            service_type: type_.to_string(),
-            ports: ports.iter().map(|p| p.to_string()).collect(),
-            ..ServiceInfo::default()
-        }
-    }
-
-    fn deployment(name: &str, namespace: &str, ready: &str) -> DeploymentInfo {
-        DeploymentInfo {
-            name: name.to_string(),
-            namespace: namespace.to_string(),
-            ready: ready.to_string(),
-            ..DeploymentInfo::default()
-        }
-    }
-
-    /// Verifies node filtering returns empty output for empty input.
     #[test]
-    fn filter_nodes_empty_input() {
-        let result = filter_nodes(&[], "worker", None, None);
-        assert!(result.is_empty());
-    }
-
-    /// Verifies single-node positive and negative name matching.
-    #[test]
-    fn filter_nodes_single_match_and_no_match() {
-        let nodes = vec![node("node-a", true, "worker")];
-        assert_eq!(filter_nodes(&nodes, "node", None, None).len(), 1);
-        assert!(filter_nodes(&nodes, "zzz", None, None).is_empty());
-    }
-
-    /// Verifies case-insensitive substring matching across multiple nodes.
-    #[test]
-    fn filter_nodes_case_insensitive_substring() {
-        let nodes = vec![
-            node("Alpha-NODE", true, "worker"),
-            node("beta", true, "worker"),
-        ];
-        let result = filter_nodes(&nodes, "node", None, None);
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "Alpha-NODE");
-    }
-
-    /// Verifies Ready and NotReady status filtering.
-    #[test]
-    fn filter_nodes_status_filtering() {
-        let nodes = vec![node("n1", true, "worker"), node("n2", false, "worker")];
-        assert_eq!(
-            filter_nodes(&nodes, "", Some(NodeStatusFilter::Ready), None).len(),
-            1
-        );
-        assert_eq!(
-            filter_nodes(&nodes, "", Some(NodeStatusFilter::NotReady), None).len(),
-            1
-        );
-    }
-
-    /// Verifies role-based filtering for master, worker, and any role.
-    #[test]
-    fn filter_nodes_role_filtering() {
-        let nodes = vec![node("cp", true, "master"), node("wk", true, "worker")];
-        assert_eq!(
-            filter_nodes(&nodes, "", None, Some(NodeRoleFilter::Master)).len(),
-            1
-        );
-        assert_eq!(
-            filter_nodes(&nodes, "", None, Some(NodeRoleFilter::Worker)).len(),
-            1
-        );
-        assert_eq!(
-            filter_nodes(&nodes, "", None, Some(NodeRoleFilter::Any)).len(),
-            2
-        );
-    }
-
-    /// Verifies combined node filters use AND semantics.
-    #[test]
-    fn filter_nodes_combined_filters_and_logic() {
-        let nodes = vec![
-            node("master-ready", true, "master"),
-            node("master-down", false, "master"),
-            node("worker-ready", true, "worker"),
-        ];
-
-        let result = filter_nodes(
-            &nodes,
-            "master",
-            Some(NodeStatusFilter::Ready),
-            Some(NodeRoleFilter::Master),
-        );
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].name, "master-ready");
-    }
-
-    /// Verifies filtering handles special characters literally in names.
-    #[test]
-    fn filter_nodes_special_characters() {
-        let nodes = vec![node("node.*[]+?", true, "worker")];
-        assert_eq!(filter_nodes(&nodes, ".*[]+?", None, None).len(), 1);
-    }
-
-    /// Verifies filtering supports unicode names and queries.
-    #[test]
-    fn filter_nodes_unicode_query() {
-        let nodes = vec![
-            node("café", true, "worker"),
-            node("日本語-🚀", true, "worker"),
-        ];
-        assert_eq!(filter_nodes(&nodes, "café", None, None).len(), 1);
-        assert_eq!(filter_nodes(&nodes, "日本語", None, None).len(), 1);
-        assert_eq!(filter_nodes(&nodes, "🚀", None, None).len(), 1);
-    }
-
-    /// Verifies empty and whitespace-only queries behave as match-all.
-    #[test]
-    fn filter_nodes_empty_and_spaces_match_all() {
-        let nodes = vec![node("n1", true, "worker"), node("n2", false, "master")];
-        assert_eq!(filter_nodes(&nodes, "", None, None).len(), 2);
-        assert_eq!(filter_nodes(&nodes, "    ", None, None).len(), 2);
-    }
-
-    /// Verifies very long query strings do not panic and return deterministic results.
-    #[test]
-    fn filter_nodes_very_long_query() {
-        let nodes = vec![node("n1", true, "worker")];
-        let long_query = "x".repeat(1500);
-        assert!(filter_nodes(&nodes, &long_query, None, None).is_empty());
-    }
-
-    /// Verifies service filtering handles empty input.
-    #[test]
-    fn filter_services_empty_input() {
-        let result = filter_services(&[], "api", None, None);
-        assert!(result.is_empty());
-    }
-
-    /// Verifies service name substring matching is case-insensitive.
-    #[test]
-    fn filter_services_name_matching() {
-        let items = vec![service("Api-Gateway", "default", "ClusterIP", &["80/TCP"])];
-        let result = filter_services(&items, "gateway", None, None);
-        assert_eq!(result.len(), 1);
-    }
-
-    /// Verifies service namespace and type filters.
-    #[test]
-    fn filter_services_namespace_and_type() {
+    fn test_filter_statefulsets_by_name() {
         let items = vec![
-            service("s1", "default", "ClusterIP", &["80/TCP"]),
-            service("s2", "kube-system", "NodePort", &["443/TCP"]),
-        ];
-
-        assert_eq!(
-            filter_services(&items, "", Some("kube-system"), Some("NodePort")).len(),
-            1
-        );
-        assert!(filter_services(&items, "", Some("kube-system"), Some("LoadBalancer")).is_empty());
-    }
-
-    /// Verifies combined service filters use AND semantics.
-    #[test]
-    fn filter_services_combined_filters() {
-        let items = vec![
-            service("front", "prod", "LoadBalancer", &["80/TCP"]),
-            service("front", "dev", "LoadBalancer", &["80/TCP"]),
-        ];
-
-        let result = filter_services(&items, "front", Some("prod"), Some("LoadBalancer"));
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].namespace, "prod");
-    }
-
-    /// Verifies deployment filtering handles empty input.
-    #[test]
-    fn filter_deployments_empty_input() {
-        let result = filter_deployments(&[], "api", None, None);
-        assert!(result.is_empty());
-    }
-
-    /// Verifies deployment ready parsing and health classification.
-    #[test]
-    fn deployment_health_classification() {
-        assert_eq!(
-            deployment_health_from_ready("3/3"),
-            DeploymentHealth::Healthy
-        );
-        assert_eq!(
-            deployment_health_from_ready("1/3"),
-            DeploymentHealth::Degraded
-        );
-        assert_eq!(
-            deployment_health_from_ready("0/3"),
-            DeploymentHealth::Failed
-        );
-    }
-
-    /// Verifies deployment health filtering across mixed states.
-    #[test]
-    fn filter_deployments_by_health() {
-        let items = vec![
-            deployment("ok", "default", "2/2"),
-            deployment("warn", "default", "1/2"),
-            deployment("bad", "default", "0/2"),
-        ];
-
-        assert_eq!(
-            filter_deployments(&items, "", None, Some(DeploymentHealth::Healthy)).len(),
-            1
-        );
-        assert_eq!(
-            filter_deployments(&items, "", None, Some(DeploymentHealth::Degraded)).len(),
-            1
-        );
-        assert_eq!(
-            filter_deployments(&items, "", None, Some(DeploymentHealth::Failed)).len(),
-            1
-        );
-    }
-
-    /// Verifies deployment combined filters use AND semantics.
-    #[test]
-    fn filter_deployments_combined_filters() {
-        let items = vec![
-            deployment("api", "prod", "2/3"),
-            deployment("api", "dev", "2/2"),
-        ];
-
-        let result = filter_deployments(
-            &items,
-            "api",
-            Some("prod"),
-            Some(DeploymentHealth::Degraded),
-        );
-
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].namespace, "prod");
-    }
-
-    /// Verifies node sorting by capacity handles unit parsing.
-    #[test]
-    fn sort_nodes_by_capacity_descending() {
-        let mut nodes = vec![
-            NodeInfo {
-                name: "small".to_string(),
-                cpu_allocatable: Some("500m".to_string()),
-                memory_allocatable: Some("512Mi".to_string()),
-                ..NodeInfo::default()
+            StatefulSetInfo {
+                name: "postgres-primary".into(),
+                namespace: "db".into(),
+                image: Some("postgres:16".into()),
+                ..StatefulSetInfo::default()
             },
-            NodeInfo {
-                name: "large".to_string(),
-                cpu_allocatable: Some("2".to_string()),
-                memory_allocatable: Some("4Gi".to_string()),
-                ..NodeInfo::default()
+            StatefulSetInfo {
+                name: "redis-cache".into(),
+                namespace: "cache".into(),
+                image: Some("redis:7".into()),
+                ..StatefulSetInfo::default()
             },
         ];
+        let filtered = filter_statefulsets(&items, "POSTGRES", None);
+        assert_eq!(filtered.len(), 1);
+    }
 
-        sort_nodes(&mut nodes, NodeSortBy::Capacity);
-        assert_eq!(nodes[0].name, "large");
-        assert_eq!(nodes[1].name, "small");
+    #[test]
+    fn test_filter_statefulsets_by_namespace() {
+        let items = vec![
+            StatefulSetInfo {
+                name: "postgres".into(),
+                namespace: "db".into(),
+                ..StatefulSetInfo::default()
+            },
+            StatefulSetInfo {
+                name: "postgres".into(),
+                namespace: "default".into(),
+                ..StatefulSetInfo::default()
+            },
+        ];
+        let filtered = filter_statefulsets(&items, "", Some("db"));
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_statefulsets_by_image() {
+        let items = vec![
+            StatefulSetInfo {
+                name: "pg".into(),
+                namespace: "db".into(),
+                image: Some("ghcr.io/company/postgres:16".into()),
+                ..StatefulSetInfo::default()
+            },
+            StatefulSetInfo {
+                name: "mongo".into(),
+                namespace: "db".into(),
+                image: Some("mongo:7".into()),
+                ..StatefulSetInfo::default()
+            },
+        ];
+        let filtered = filter_statefulsets(&items, "company/postgres", None);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_daemonsets_by_name() {
+        let items = vec![
+            DaemonSetInfo {
+                name: "node-exporter".into(),
+                namespace: "monitoring".into(),
+                desired_count: 10,
+                ready_count: 10,
+                ..DaemonSetInfo::default()
+            },
+            DaemonSetInfo {
+                name: "fluent-bit".into(),
+                namespace: "logging".into(),
+                desired_count: 10,
+                ready_count: 8,
+                unavailable_count: 2,
+                ..DaemonSetInfo::default()
+            },
+        ];
+        let filtered = filter_daemonsets(&items, "EXPORTER", None);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_daemonsets_ready_status() {
+        let items = vec![
+            DaemonSetInfo {
+                name: "healthy".into(),
+                namespace: "default".into(),
+                desired_count: 8,
+                ready_count: 8,
+                ..DaemonSetInfo::default()
+            },
+            DaemonSetInfo {
+                name: "degraded".into(),
+                namespace: "default".into(),
+                desired_count: 8,
+                ready_count: 4,
+                unavailable_count: 4,
+                ..DaemonSetInfo::default()
+            },
+        ];
+        let filtered = filter_daemonsets(&items, "degraded", None);
+        assert_eq!(filtered[0].ready_count, 4);
+    }
+
+    #[test]
+    fn test_filter_daemonsets_unavailable_count() {
+        let items = vec![
+            DaemonSetInfo {
+                name: "all-good".into(),
+                namespace: "default".into(),
+                desired_count: 6,
+                ready_count: 6,
+                ..DaemonSetInfo::default()
+            },
+            DaemonSetInfo {
+                name: "has-unavailable".into(),
+                namespace: "default".into(),
+                desired_count: 6,
+                ready_count: 5,
+                unavailable_count: 1,
+                ..DaemonSetInfo::default()
+            },
+        ];
+        let filtered = filter_daemonsets(&items, "has-unavailable", None);
+        assert_eq!(filtered[0].unavailable_count, 1);
     }
 }

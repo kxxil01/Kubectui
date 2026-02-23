@@ -66,6 +66,64 @@ pub struct DeploymentInfo {
     pub image: Option<String>,
 }
 
+/// Lightweight StatefulSet view used by list and detail pages.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StatefulSetInfo {
+    pub name: String,
+    pub namespace: String,
+    pub desired_replicas: i32,
+    pub ready_replicas: i32,
+    pub service_name: String,
+    pub pod_management_policy: String,
+    pub image: Option<String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight DaemonSet view used by list and detail pages.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct DaemonSetInfo {
+    pub name: String,
+    pub namespace: String,
+    pub desired_count: i32,
+    pub ready_count: i32,
+    pub unavailable_count: i32,
+    pub image: Option<String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight Job view used by list and detail pages.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct JobInfo {
+    pub name: String,
+    pub namespace: String,
+    pub status: String,
+    pub completions: String,
+    pub duration: Option<String>,
+    pub parallelism: i32,
+    pub active_pods: i32,
+    pub failed_pods: i32,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight CronJob view used by list and detail pages.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CronJobInfo {
+    pub name: String,
+    pub namespace: String,
+    pub schedule: String,
+    pub timezone: Option<String>,
+    pub last_schedule_time: Option<DateTime<Utc>>,
+    pub next_schedule_time: Option<DateTime<Utc>>,
+    pub last_successful_time: Option<DateTime<Utc>>,
+    pub suspend: bool,
+    pub active_jobs: i32,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
 /// Cluster metadata shown in dashboard/context widgets.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ClusterInfo {
