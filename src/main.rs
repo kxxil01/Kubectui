@@ -76,6 +76,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 && !app.is_search_mode()
                 && !app.is_namespace_picker_open()
                 && !app.is_context_picker_open()
+                && !app.command_palette.is_open()
             {
                 selected_resource(&app, &snapshot)
                     .map(AppAction::OpenDetail)
@@ -108,6 +109,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
                 AppAction::CloseNamespacePicker => {
                     app.close_namespace_picker();
+                }
+                AppAction::OpenCommandPalette => {
+                    app.command_palette.open();
+                }
+                AppAction::CloseCommandPalette => {
+                    app.command_palette.close();
+                }
+                AppAction::NavigateTo(view) => {
+                    app.command_palette.close();
+                    app.view = view;
+                    app.selected_idx = 0;
                 }
                 AppAction::OpenContextPicker => {
                     let contexts = K8sClient::list_contexts();

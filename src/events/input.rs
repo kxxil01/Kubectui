@@ -48,6 +48,20 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.close_context_picker();
             true
         }
+        AppAction::OpenCommandPalette => {
+            app_state.command_palette.open();
+            true
+        }
+        AppAction::CloseCommandPalette => {
+            app_state.command_palette.close();
+            true
+        }
+        AppAction::NavigateTo(view) => {
+            app_state.command_palette.close();
+            app_state.view = view;
+            app_state.selected_idx = 0;
+            true
+        }
         AppAction::EscapePressed => {
             if app_state
                 .detail_view

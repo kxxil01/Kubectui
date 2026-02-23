@@ -10,7 +10,7 @@ use crate::{
         client::EventInfo,
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodMetricsInfo},
     },
-    ui::components::{ContextPicker, ContextPickerAction, NamespacePicker, NamespacePickerAction},
+    ui::components::{CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction, NamespacePicker, NamespacePickerAction},
 };
 
 /// Sidebar navigation groups.
@@ -369,6 +369,9 @@ pub enum AppAction {
     OpenContextPicker,
     CloseContextPicker,
     SelectContext(String),
+    OpenCommandPalette,
+    CloseCommandPalette,
+    NavigateTo(AppView),
     EscapePressed,
     LogsViewerOpen,
     LogsViewerClose,
@@ -408,6 +411,7 @@ pub struct AppState {
     pub current_namespace: String,
     pub namespace_picker: NamespacePicker,
     pub context_picker: ContextPicker,
+    pub command_palette: CommandPalette,
     pub extension_instances: Vec<CustomResourceInfo>,
     pub extension_error: Option<String>,
     pub extension_selected_crd: Option<String>,
@@ -426,6 +430,7 @@ impl Default for AppState {
             current_namespace: "default".to_string(),
             namespace_picker: NamespacePicker::new(vec!["all".to_string(), "default".to_string()]),
             context_picker: ContextPicker::default(),
+            command_palette: CommandPalette::default(),
             extension_instances: Vec::new(),
             extension_error: None,
             extension_selected_crd: None,
@@ -643,6 +648,14 @@ impl AppState {
 
     /// Handles a keyboard event and updates app state.
     pub fn handle_key_event(&mut self, key: KeyEvent) -> AppAction {
+        if self.command_palette.is_open() {
+            return match self.command_palette.handle_key(key) {
+                CommandPaletteAction::None => AppAction::None,
+                CommandPaletteAction::Navigate(view) => AppAction::NavigateTo(view),
+                CommandPaletteAction::Close => AppAction::CloseCommandPalette,
+            };
+        }
+
         if self.context_picker.is_open() {
             return match self.context_picker.handle_key(key) {
                 ContextPickerAction::None => AppAction::None,
@@ -769,6 +782,7 @@ impl AppState {
             }
             KeyCode::Char('~') => AppAction::OpenNamespacePicker,
             KeyCode::Char('c') if self.detail_view.is_none() => AppAction::OpenContextPicker,
+            KeyCode::Char(':') if self.detail_view.is_none() => AppAction::OpenCommandPalette,
             KeyCode::Char('r') => AppAction::RefreshData,
             KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 AppAction::RefreshData
