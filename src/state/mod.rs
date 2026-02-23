@@ -1,8 +1,5 @@
 //! Global state management for KubecTUI.
 
-pub mod alerts;
-pub mod filters;
-
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use std::{collections::BTreeSet, fmt};
