@@ -1,10 +1,16 @@
 //! Global state management for KubecTUI.
 
+pub mod alerts;
+pub mod filters;
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use std::fmt;
+use std::{collections::BTreeSet, fmt};
 
-use crate::k8s::client::{K8sClient, NodeInfo, PodInfo};
+use crate::k8s::{
+    client::K8sClient,
+    dtos::{ClusterInfo, DeploymentInfo, NodeInfo, PodInfo, ServiceInfo},
+};
 
 /// High-level data loading phase for cluster resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -37,6 +43,11 @@ impl fmt::Display for DataPhase {
 pub struct ClusterSnapshot {
     pub nodes: Vec<NodeInfo>,
     pub pods: Vec<PodInfo>,
+    pub services: Vec<ServiceInfo>,
+    pub deployments: Vec<DeploymentInfo>,
+    pub cluster_info: Option<ClusterInfo>,
+    pub services_count: usize,
+    pub namespaces_count: usize,
     pub phase: DataPhase,
     pub last_updated: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
@@ -64,31 +75,43 @@ impl GlobalState {
         self.snapshot.clone()
     }
 
-    /// Refreshes nodes and pods in parallel, updating status and timestamps.
+    /// Refreshes core resources in parallel, updating status and timestamps.
     pub async fn refresh(&mut self, client: &K8sClient) -> Result<()> {
         self.snapshot.phase = DataPhase::Loading;
         self.snapshot.last_error = None;
         self.snapshot.cluster_url = Some(client.cluster_url().to_string());
 
-        let refresh_result = async {
-            let (nodes, pods) = tokio::try_join!(client.fetch_nodes(), client.fetch_pods(None))?;
-            Ok::<(Vec<NodeInfo>, Vec<PodInfo>), anyhow::Error>((nodes, pods))
-        }
-        .await;
-
-        match refresh_result {
-            Ok((nodes, pods)) => {
-                self.snapshot.nodes = nodes;
-                self.snapshot.pods = pods;
-                self.snapshot.phase = DataPhase::Ready;
-                self.snapshot.last_updated = Some(Utc::now());
-                Ok(())
-            }
+        let (nodes, pods, services, deployments, cluster_info) = match tokio::try_join!(
+            client.fetch_nodes(),
+            client.fetch_pods(None),
+            client.fetch_services(None),
+            client.fetch_deployments(None),
+            client.fetch_cluster_info(),
+        ) {
+            Ok(data) => data,
             Err(err) => {
                 self.snapshot.phase = DataPhase::Error;
                 self.snapshot.last_error = Some(err.to_string());
-                Err(err)
+                return Err(err);
             }
-        }
+        };
+
+        let namespaces_count = pods
+            .iter()
+            .map(|pod| pod.namespace.as_str())
+            .collect::<BTreeSet<_>>()
+            .len();
+
+        self.snapshot.services_count = services.len();
+        self.snapshot.namespaces_count = namespaces_count;
+        self.snapshot.nodes = nodes;
+        self.snapshot.pods = pods;
+        self.snapshot.services = services;
+        self.snapshot.deployments = deployments;
+        self.snapshot.cluster_info = Some(cluster_info);
+        self.snapshot.phase = DataPhase::Ready;
+        self.snapshot.last_updated = Some(Utc::now());
+
+        Ok(())
     }
 }

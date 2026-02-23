@@ -2,6 +2,8 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use crate::k8s::client::EventInfo;
+
 /// Top-level views displayed by KubecTUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppView {
@@ -63,12 +65,79 @@ impl AppView {
     }
 }
 
+/// Logical pointer to a resource selected in the current view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResourceRef {
+    Node(String),
+    Pod(String, String),
+    Service(String, String),
+    Deployment(String, String),
+}
+
+impl ResourceRef {
+    /// Returns resource kind label used by UI and fetch routing.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            ResourceRef::Node(_) => "Node",
+            ResourceRef::Pod(_, _) => "Pod",
+            ResourceRef::Service(_, _) => "Service",
+            ResourceRef::Deployment(_, _) => "Deployment",
+        }
+    }
+
+    /// Returns resource name.
+    pub fn name(&self) -> &str {
+        match self {
+            ResourceRef::Node(name)
+            | ResourceRef::Pod(name, _)
+            | ResourceRef::Service(name, _)
+            | ResourceRef::Deployment(name, _) => name,
+        }
+    }
+
+    /// Returns namespace when this is a namespaced resource.
+    pub fn namespace(&self) -> Option<&str> {
+        match self {
+            ResourceRef::Node(_) => None,
+            ResourceRef::Pod(_, ns)
+            | ResourceRef::Service(_, ns)
+            | ResourceRef::Deployment(_, ns) => Some(ns),
+        }
+    }
+}
+
+/// Human-readable metadata displayed in the detail modal.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DetailMetadata {
+    pub name: String,
+    pub namespace: Option<String>,
+    pub status: Option<String>,
+    pub node: Option<String>,
+    pub ip: Option<String>,
+    pub created: Option<String>,
+    pub labels: Vec<(String, String)>,
+}
+
+/// Detail modal state for the currently focused resource.
+#[derive(Debug, Clone, Default)]
+pub struct DetailViewState {
+    pub resource: Option<ResourceRef>,
+    pub metadata: DetailMetadata,
+    pub yaml: Option<String>,
+    pub events: Vec<EventInfo>,
+    pub sections: Vec<String>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
 /// Actions emitted by input handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppAction {
     None,
     RefreshData,
     Quit,
+    OpenDetail(ResourceRef),
+    CloseDetail,
 }
 
 /// Runtime state for UI interaction and navigation.
@@ -80,6 +149,7 @@ pub struct AppState {
     is_search_mode: bool,
     should_quit: bool,
     error_message: Option<String>,
+    pub detail_view: Option<DetailViewState>,
 }
 
 impl Default for AppState {
@@ -91,6 +161,7 @@ impl Default for AppState {
             is_search_mode: false,
             should_quit: false,
             error_message: None,
+            detail_view: None,
         }
     }
 }
@@ -157,11 +228,15 @@ impl AppState {
     /// Handles a keyboard event and updates app state.
     ///
     /// Keybindings:
-    /// - `q`/`Esc` (outside search mode): quit
+    /// - `q`: quit
+    /// - `Esc` (when detail open): close detail modal
+    /// - `Esc` (outside detail/search): quit
     /// - `Tab` / `Shift+Tab`: switch view
     /// - `↑` / `↓`: move current selection
     /// - `/`: enter search mode
     /// - `Enter` (search mode): leave search mode
+    /// - `Esc` (search mode): clear query + leave search mode
+    /// - `Ctrl+U` (search mode): clear query
     /// - `Backspace` (search mode): delete character
     /// - `Ctrl+R` or `r`: refresh data
     pub fn handle_key_event(&mut self, key: KeyEvent) -> AppAction {
@@ -170,7 +245,12 @@ impl AppState {
         }
 
         match key.code {
-            KeyCode::Char('q') | KeyCode::Esc => {
+            KeyCode::Char('q') => {
+                self.should_quit = true;
+                AppAction::Quit
+            }
+            KeyCode::Esc if self.detail_view.is_some() => AppAction::CloseDetail,
+            KeyCode::Esc => {
                 self.should_quit = true;
                 AppAction::Quit
             }
@@ -204,11 +284,18 @@ impl AppState {
 
     fn handle_search_input(&mut self, key: KeyEvent) -> AppAction {
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => {
+            KeyCode::Esc => {
+                self.search_query.clear();
+                self.is_search_mode = false;
+            }
+            KeyCode::Enter => {
                 self.is_search_mode = false;
             }
             KeyCode::Backspace => {
                 self.search_query.pop();
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.search_query.clear();
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.search_query.push(c);
@@ -249,5 +336,41 @@ mod tests {
 
         app.handle_key_event(KeyEvent::from(KeyCode::Enter));
         assert!(!app.is_search_mode());
+    }
+
+    #[test]
+    fn esc_clears_search_query() {
+        let mut app = AppState::default();
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+
+        assert_eq!(app.search_query(), "");
+        assert!(!app.is_search_mode());
+    }
+
+    #[test]
+    fn ctrl_u_clears_search_query() {
+        let mut app = AppState::default();
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+        assert_eq!(app.search_query(), "");
+        assert!(app.is_search_mode());
+    }
+
+    #[test]
+    fn esc_closes_detail_before_quit() {
+        let mut app = AppState {
+            detail_view: Some(DetailViewState::default()),
+            ..AppState::default()
+        };
+
+        let action = app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(action, AppAction::CloseDetail);
+        assert!(!app.should_quit());
     }
 }
