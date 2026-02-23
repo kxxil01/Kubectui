@@ -1,10 +1,13 @@
 //! Logs Viewer Component for KubecTUI
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{
+        Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Wrap,
+    },
     Frame,
 };
 use crossterm::event::{KeyCode, KeyEvent};
@@ -340,42 +343,50 @@ fn render_title_bar(
     area: Rect,
 ) {
     let block = Block::default()
-        .title(" Logs Viewer ")
         .borders(Borders::BOTTOM)
-        .style(theme.border_style());
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.header_bg));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let mut lines = vec![];
+    let total = state.visible_line_count();
+
+    let mut spans = vec![
+        Span::styled(" 📋 ", theme.title_style()),
+    ];
 
     if let Some(ref pod_ref) = state.pod_ref {
-        let mut title_spans = vec![
-            Span::styled(&pod_ref.name, theme.title_style()),
-            Span::raw(" in "),
-            Span::styled(&pod_ref.namespace, theme.get_style("accent")),
-        ];
-
-        if state.follow_mode {
-            title_spans.push(Span::raw(" "));
-            title_spans.push(Span::styled("[FOLLOW]", theme.get_style("success")));
-        }
-
-        lines.push(Line::from(title_spans));
+        spans.push(Span::styled(pod_ref.name.clone(), theme.title_style()));
+        spans.push(Span::styled(" · ", theme.inactive_style()));
+        spans.push(Span::styled(pod_ref.namespace.clone(), Style::default().fg(theme.accent2)));
+        spans.push(Span::styled("  ", theme.inactive_style()));
     }
 
-    let total = state.visible_line_count();
-    let status = format!(
-        "Lines: {} | Position: {}/{} | Mode: {}",
-        total,
-        state.scroll_pos + 1,
-        total.max(1),
-        if state.loading { "Loading..." } else { "Ready" }
-    );
-    lines.push(Line::from(Span::styled(status, theme.inactive_style())));
+    if state.follow_mode {
+        spans.push(Span::styled(" ⟳ FOLLOW ", theme.badge_success_style()));
+        spans.push(Span::raw("  "));
+    }
 
-    let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, inner);
+    if !state.search_query.is_empty() {
+        spans.push(Span::styled(" / ", theme.keybind_key_style()));
+        spans.push(Span::styled(state.search_query.clone(), Style::default().fg(theme.fg)));
+        spans.push(Span::styled(
+            format!(" ({} matches) ", total),
+            theme.inactive_style(),
+        ));
+    } else {
+        spans.push(Span::styled(
+            format!(" {} lines ", total),
+            theme.inactive_style(),
+        ));
+    }
+
+    if state.loading {
+        spans.push(Span::styled(" ⟳ Loading… ", Style::default().fg(theme.warning)));
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), inner);
 }
 
 fn render_log_area(
@@ -386,40 +397,79 @@ fn render_log_area(
 ) {
     let block = Block::default()
         .borders(Borders::ALL)
-        .style(theme.border_style());
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.bg));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     if state.logs.is_empty() {
-        let msg = Paragraph::new("No logs available")
-            .style(theme.inactive_style());
+        let msg = if state.loading {
+            Paragraph::new(Span::styled("  ⟳ Loading logs…", Style::default().fg(theme.warning)))
+        } else if let Some(ref err) = state.error {
+            Paragraph::new(Span::styled(format!("  ✗ {err}"), theme.badge_error_style()))
+        } else {
+            Paragraph::new(Span::styled("  No logs available", theme.inactive_style()))
+        };
         frame.render_widget(msg, inner);
         return;
     }
 
-    let visible_lines = (inner.height as usize).saturating_sub(1);
+    let visible_lines = (inner.height as usize).max(1);
     let logs = state.get_visible_logs(state.scroll_pos, visible_lines);
+    let total = state.visible_line_count();
+    let line_num_width = total.to_string().len().max(3);
 
-    let mut lines = vec![];
-    let line_num_width = state.visible_line_count().to_string().len();
+    let lines: Vec<Line> = logs
+        .iter()
+        .map(|log| {
+            let line_num = format!("{:>width$}", log.number, width = line_num_width);
+            let level_style = theme.get_log_level_style(log.level.label());
+            let content_style = match log.level {
+                LogLevel::Error => Style::default().fg(theme.error),
+                LogLevel::Warn => Style::default().fg(theme.warning),
+                LogLevel::Info => Style::default().fg(theme.fg),
+                LogLevel::Debug => Style::default().fg(theme.fg_dim),
+                LogLevel::Trace => Style::default().fg(theme.muted),
+                LogLevel::Unknown => Style::default().fg(theme.fg_dim),
+            };
 
-    for log in logs {
-        let line_num = format!("{:>width$}", log.number, width = line_num_width);
-        let level_style = theme.get_log_level_style(log.level.label());
+            let highlight = !state.search_query.is_empty()
+                && log.content.to_lowercase().contains(&state.search_query.to_lowercase());
 
-        let spans = vec![
-            Span::styled(format!("{}│ ", line_num), theme.get_style("muted")),
-            Span::styled(format!("[{}]", log.level.label()), level_style),
-            Span::raw(" "),
-            Span::styled(&log.content, level_style),
-        ];
+            let row_bg = if highlight {
+                Style::default().bg(theme.selection_bg)
+            } else {
+                Style::default()
+            };
 
-        lines.push(Line::from(spans));
-    }
+            Line::from(vec![
+                Span::styled(format!("{line_num} "), theme.inactive_style()),
+                Span::styled("│ ", theme.inactive_style()),
+                Span::styled(
+                    format!("{:<5}", log.level.label()),
+                    level_style,
+                ),
+                Span::styled(" ", Style::default()),
+                Span::styled(log.content.clone(), if highlight { row_bg.patch(content_style) } else { content_style }),
+            ])
+        })
+        .collect();
 
-    let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, inner);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(total).position(state.scroll_pos);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        &mut scrollbar_state,
+    );
 }
 
 fn render_search_box(
@@ -429,22 +479,28 @@ fn render_search_box(
     area: Rect,
 ) {
     let block = Block::default()
-        .title(" Search ")
         .borders(Borders::ALL)
-        .style(theme.border_style());
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_active_style())
+        .style(Style::default().bg(theme.bg_surface));
 
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let search_text = if state.search_query.is_empty() {
-        "Search: █".to_string()
+    let search_line = if state.search_query.is_empty() {
+        Line::from(vec![
+            Span::styled(" / ", theme.keybind_key_style()),
+            Span::styled("Type to search…", theme.inactive_style()),
+        ])
     } else {
-        format!("Search: {} █", state.search_query)
+        Line::from(vec![
+            Span::styled(" / ", theme.keybind_key_style()),
+            Span::styled(state.search_query.clone(), Style::default().fg(theme.fg)),
+            Span::styled("█", theme.keybind_key_style()),
+        ])
     };
 
-    let paragraph = Paragraph::new(search_text)
-        .style(Style::default().fg(theme.accent));
-    frame.render_widget(paragraph, inner);
+    frame.render_widget(Paragraph::new(search_line), inner);
 }
 
 fn render_footer(
@@ -453,32 +509,35 @@ fn render_footer(
     state: &LogsViewState,
     area: Rect,
 ) {
-    let help_text = vec![
-        Span::styled("j", theme.get_style("accent")),
-        Span::raw("/k: scroll "),
-        Span::styled("g", theme.get_style("accent")),
-        Span::raw("/G: top/bottom "),
-        Span::styled("f", theme.get_style("accent")),
-        Span::raw(": follow "),
-        Span::styled("/", theme.get_style("accent")),
-        Span::raw(": search "),
-        Span::styled("c", theme.get_style("accent")),
-        Span::raw(": clear "),
-        Span::styled("q", theme.get_style("accent")),
-        Span::raw(": close"),
-    ];
+    let block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.statusbar_bg));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
     if let Some(ref error) = state.error {
         let error_line = Line::from(vec![
-            Span::styled("ERROR: ", theme.get_style("error")),
-            Span::raw(error),
+            Span::styled(" ✗ ", theme.badge_error_style()),
+            Span::styled(error.clone(), Style::default().fg(theme.error)),
         ]);
-
-        let paragraph = Paragraph::new(error_line);
-        frame.render_widget(paragraph, area);
+        frame.render_widget(Paragraph::new(error_line), inner);
     } else {
-        let paragraph = Paragraph::new(Line::from(help_text));
-        frame.render_widget(paragraph, area);
+        let help_line = Line::from(vec![
+            Span::styled(" [j/k] ", theme.keybind_key_style()),
+            Span::styled("scroll  ", theme.keybind_desc_style()),
+            Span::styled("[g/G] ", theme.keybind_key_style()),
+            Span::styled("top/bottom  ", theme.keybind_desc_style()),
+            Span::styled("[f] ", theme.keybind_key_style()),
+            Span::styled("follow  ", theme.keybind_desc_style()),
+            Span::styled("[/] ", theme.keybind_key_style()),
+            Span::styled("search  ", theme.keybind_desc_style()),
+            Span::styled("[c] ", theme.keybind_key_style()),
+            Span::styled("clear  ", theme.keybind_desc_style()),
+            Span::styled("[q] ", theme.keybind_key_style()),
+            Span::styled("close", theme.keybind_desc_style()),
+        ]);
+        frame.render_widget(Paragraph::new(help_line), inner);
     }
 }
 

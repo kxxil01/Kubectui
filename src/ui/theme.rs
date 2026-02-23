@@ -333,6 +333,7 @@ impl Theme {
     pub fn highlight_symbol(&self) -> &'static str {
         " ▶ "
     }
+
 }
 
 #[cfg(test)]
