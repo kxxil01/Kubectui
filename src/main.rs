@@ -340,6 +340,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
         AppView::DaemonSets
         | AppView::ReplicaSets
         | AppView::ReplicationControllers
+        | AppView::HelmCharts
+        | AppView::HelmReleases
         | AppView::Jobs
         | AppView::CronJobs
         | AppView::Endpoints

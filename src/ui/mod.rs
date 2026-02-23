@@ -57,6 +57,8 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         }
         AppView::ReplicaSets
         | AppView::ReplicationControllers
+        | AppView::HelmCharts
+        | AppView::HelmReleases
         | AppView::Endpoints
         | AppView::Ingresses
         | AppView::IngressClasses

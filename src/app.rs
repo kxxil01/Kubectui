@@ -21,6 +21,7 @@ pub enum NavGroup {
     Network,
     Config,
     Storage,
+    Helm,
     AccessControl,
     CustomResources,
 }
@@ -33,6 +34,7 @@ impl NavGroup {
             NavGroup::Network => "Network",
             NavGroup::Config => "Config",
             NavGroup::Storage => "Storage",
+            NavGroup::Helm => "Helm",
             NavGroup::AccessControl => "Access Control",
             NavGroup::CustomResources => "Custom Resources",
         }
@@ -45,7 +47,8 @@ impl NavGroup {
             NavGroup::Network => "󰛳",
             NavGroup::Config => "�",
             NavGroup::Storage => "󰋊",
-            NavGroup::AccessControl => "�",
+            NavGroup::Helm => "󰱥",
+            NavGroup::AccessControl => "󰒃",
             NavGroup::CustomResources => "󰏗",
         }
     }
@@ -87,6 +90,9 @@ pub enum AppView {
     // Standalone
     Namespaces,
     Events,
+    // Helm
+    HelmCharts,
+    HelmReleases,
     // Access Control
     ServiceAccounts,
     ClusterRoles,
@@ -98,7 +104,7 @@ pub enum AppView {
 }
 
 impl AppView {
-    const ORDER: [AppView; 33] = [
+    const ORDER: [AppView; 35] = [
         AppView::Dashboard,
         AppView::Nodes,
         AppView::Pods,
@@ -126,6 +132,8 @@ impl AppView {
         AppView::StorageClasses,
         AppView::Namespaces,
         AppView::Events,
+        AppView::HelmCharts,
+        AppView::HelmReleases,
         AppView::ServiceAccounts,
         AppView::ClusterRoles,
         AppView::Roles,
@@ -164,6 +172,8 @@ impl AppView {
             AppView::StorageClasses => "Storage Classes",
             AppView::Namespaces => "Namespaces",
             AppView::Events => "Events",
+            AppView::HelmCharts => "Charts",
+            AppView::HelmReleases => "Releases",
             AppView::ServiceAccounts => "Service Accounts",
             AppView::ClusterRoles => "Cluster Roles",
             AppView::Roles => "Roles",
@@ -203,6 +213,8 @@ impl AppView {
             AppView::StorageClasses => "󰋊",
             AppView::Namespaces => "󰏗",
             AppView::Events => "󰃰",
+            AppView::HelmCharts => "󰱥",
+            AppView::HelmReleases => "󰱥",
             AppView::ServiceAccounts => "󰀄",
             AppView::ClusterRoles => "󰒃",
             AppView::Roles => "󰒃",
@@ -240,6 +252,7 @@ impl AppView {
             | AppView::PersistentVolumes
             | AppView::StorageClasses => NavGroup::Storage,
             AppView::Namespaces | AppView::Events => NavGroup::Overview,
+            AppView::HelmCharts | AppView::HelmReleases => NavGroup::Helm,
             AppView::ServiceAccounts
             | AppView::ClusterRoles
             | AppView::Roles
@@ -275,7 +288,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 33] {
+    pub const fn tabs() -> &'static [AppView; 35] {
         &Self::ORDER
     }
 }
@@ -486,6 +499,10 @@ pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> Vec<SidebarItem> {
             AppView::PersistentVolumeClaims,
             AppView::PersistentVolumes,
             AppView::StorageClasses,
+        ]),
+        (NavGroup::Helm, &[
+            AppView::HelmCharts,
+            AppView::HelmReleases,
         ]),
         (NavGroup::AccessControl, &[
             AppView::ServiceAccounts,
@@ -1132,6 +1149,8 @@ mod tests {
             AppView::StorageClasses,
             AppView::Namespaces,
             AppView::Events,
+            AppView::HelmCharts,
+            AppView::HelmReleases,
             AppView::ServiceAccounts,
             AppView::ClusterRoles,
             AppView::Roles,
@@ -1307,7 +1326,7 @@ mod tests {
     fn rapid_tab_switching_is_stable() {
         let mut app = AppState::default();
 
-        for _ in 0..(33 * 3) {
+        for _ in 0..(35 * 3) {
             app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         }
 
