@@ -4,6 +4,7 @@ pub mod alerts;
 pub mod filters;
 
 use anyhow::Result;
+use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use std::{collections::BTreeSet, fmt};
 
@@ -63,6 +64,50 @@ impl ClusterSnapshot {
     }
 }
 
+/// Data source contract for retrieving Kubernetes snapshot inputs.
+#[async_trait]
+pub trait ClusterDataSource {
+    /// Returns cluster API URL for status header.
+    fn cluster_url(&self) -> &str;
+    /// Fetches node list.
+    async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>>;
+    /// Fetches pod list.
+    async fn fetch_pods(&self, namespace: Option<&str>) -> Result<Vec<PodInfo>>;
+    /// Fetches service list.
+    async fn fetch_services(&self, namespace: Option<&str>) -> Result<Vec<ServiceInfo>>;
+    /// Fetches deployment list.
+    async fn fetch_deployments(&self, namespace: Option<&str>) -> Result<Vec<DeploymentInfo>>;
+    /// Fetches cluster metadata.
+    async fn fetch_cluster_info(&self) -> Result<ClusterInfo>;
+}
+
+#[async_trait]
+impl ClusterDataSource for K8sClient {
+    fn cluster_url(&self) -> &str {
+        K8sClient::cluster_url(self)
+    }
+
+    async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>> {
+        K8sClient::fetch_nodes(self).await
+    }
+
+    async fn fetch_pods(&self, namespace: Option<&str>) -> Result<Vec<PodInfo>> {
+        K8sClient::fetch_pods(self, namespace).await
+    }
+
+    async fn fetch_services(&self, namespace: Option<&str>) -> Result<Vec<ServiceInfo>> {
+        K8sClient::fetch_services(self, namespace).await
+    }
+
+    async fn fetch_deployments(&self, namespace: Option<&str>) -> Result<Vec<DeploymentInfo>> {
+        K8sClient::fetch_deployments(self, namespace).await
+    }
+
+    async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {
+        K8sClient::fetch_cluster_info(self).await
+    }
+}
+
 /// Mutable state holder with async refresh operations.
 #[derive(Debug, Clone, Default)]
 pub struct GlobalState {
@@ -76,7 +121,14 @@ impl GlobalState {
     }
 
     /// Refreshes core resources in parallel, updating status and timestamps.
-    pub async fn refresh(&mut self, client: &K8sClient) -> Result<()> {
+    pub async fn refresh<D>(&mut self, client: &D) -> Result<()>
+    where
+        D: ClusterDataSource + Sync,
+    {
+        if self.snapshot.phase == DataPhase::Loading {
+            return Ok(());
+        }
+
         self.snapshot.phase = DataPhase::Loading;
         self.snapshot.last_error = None;
         self.snapshot.cluster_url = Some(client.cluster_url().to_string());

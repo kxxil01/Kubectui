@@ -390,3 +390,135 @@ fn node_role(node: &Node) -> String {
         "worker".to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use k8s_openapi::api::core::v1::{NodeCondition, NodeStatus};
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+
+    use super::*;
+
+    fn node_with_condition(condition_type: &str, status: &str) -> Node {
+        Node {
+            metadata: ObjectMeta::default(),
+            status: Some(NodeStatus {
+                conditions: Some(vec![NodeCondition {
+                    type_: condition_type.to_string(),
+                    status: status.to_string(),
+                    ..NodeCondition::default()
+                }]),
+                ..NodeStatus::default()
+            }),
+            ..Node::default()
+        }
+    }
+
+    /// Verifies node readiness helper returns true only for matching True condition.
+    #[test]
+    fn node_condition_true_matches_expected_condition() {
+        let ready_node = node_with_condition("Ready", "True");
+        let not_ready_node = node_with_condition("Ready", "False");
+
+        assert!(node_condition_true(&ready_node, "Ready"));
+        assert!(!node_condition_true(&not_ready_node, "Ready"));
+    }
+
+    /// Verifies unknown condition types are treated as false.
+    #[test]
+    fn node_condition_true_unknown_type_is_false() {
+        let node = node_with_condition("DiskPressure", "True");
+        assert!(!node_condition_true(&node, "Ready"));
+    }
+
+    /// Verifies control-plane labels map to master role.
+    #[test]
+    fn node_role_detects_master_from_control_plane_label() {
+        let mut labels = BTreeMap::new();
+        labels.insert(
+            "node-role.kubernetes.io/control-plane".to_string(),
+            "".to_string(),
+        );
+
+        let node = Node {
+            metadata: ObjectMeta {
+                labels: Some(labels),
+                ..ObjectMeta::default()
+            },
+            ..Node::default()
+        };
+
+        assert_eq!(node_role(&node), "master");
+    }
+
+    /// Verifies nodes without control-plane labels default to worker role.
+    #[test]
+    fn node_role_defaults_to_worker() {
+        let node = Node::default();
+        assert_eq!(node_role(&node), "worker");
+    }
+
+    /// Verifies node mapping preserves defaults for missing metadata fields.
+    #[test]
+    fn fetch_nodes_mapping_handles_missing_fields() {
+        let node = Node::default();
+        let info = NodeInfo {
+            name: node
+                .metadata
+                .name
+                .clone()
+                .unwrap_or_else(|| "<unknown>".to_string()),
+            ready: node_condition_true(&node, "Ready"),
+            kubelet_version: node
+                .status
+                .as_ref()
+                .and_then(|status| status.node_info.as_ref())
+                .map(|info| info.kubelet_version.clone())
+                .unwrap_or_else(|| "unknown".to_string()),
+            os_image: node
+                .status
+                .as_ref()
+                .and_then(|status| status.node_info.as_ref())
+                .map(|info| info.os_image.clone())
+                .unwrap_or_else(|| "unknown".to_string()),
+            role: node_role(&node),
+            cpu_allocatable: None,
+            memory_allocatable: None,
+            created_at: None,
+            memory_pressure: node_condition_true(&node, "MemoryPressure"),
+            disk_pressure: node_condition_true(&node, "DiskPressure"),
+            pid_pressure: node_condition_true(&node, "PIDPressure"),
+            network_unavailable: node_condition_true(&node, "NetworkUnavailable"),
+        };
+
+        assert_eq!(info.name, "<unknown>");
+        assert_eq!(info.kubelet_version, "unknown");
+        assert_eq!(info.os_image, "unknown");
+        assert_eq!(info.role, "worker");
+    }
+
+    /// Verifies invalid resource kind in YAML fetch returns descriptive error.
+    #[tokio::test]
+    async fn fetch_resource_yaml_invalid_kind_has_clear_error() {
+        let cfg = kube::Config::new("http://127.0.0.1:1".parse().expect("valid URL"));
+        let client = Client::try_from(cfg).expect("client should build for test URL");
+
+        let k8s = K8sClient {
+            client,
+            cluster_url: "http://127.0.0.1:1".to_string(),
+            cluster_context: Some("test".to_string()),
+        };
+
+        let err = k8s
+            .fetch_resource_yaml("unsupported", "name", None)
+            .await
+            .expect_err("invalid kind should error");
+
+        let err_text = format!("{err:#}");
+        assert!(
+            err_text.contains("failed preparing YAML") && err_text.contains("unsupported"),
+            "error should include context and root cause, got: {err_text}"
+        );
+    }
+}

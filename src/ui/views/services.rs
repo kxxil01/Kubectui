@@ -115,3 +115,46 @@ fn format_age(age: Option<std::time::Duration>) -> String {
         format!("{mins}m")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies empty port list renders with a dash placeholder.
+    #[test]
+    fn format_ports_empty() {
+        assert_eq!(format_ports(&[]), "-");
+    }
+
+    /// Verifies short port lists render fully without truncation.
+    #[test]
+    fn format_ports_short_list() {
+        let ports = vec!["80/TCP".to_string(), "443/TCP".to_string()];
+        assert_eq!(format_ports(&ports), "80/TCP, 443/TCP");
+    }
+
+    /// Verifies long port lists are truncated using head-plus-ellipsis format.
+    #[test]
+    fn format_ports_long_list_truncates() {
+        let ports = vec![
+            "80/TCP".to_string(),
+            "443/TCP".to_string(),
+            "8080/TCP".to_string(),
+            "8443/TCP".to_string(),
+            "9090/TCP".to_string(),
+        ];
+
+        let out = format_ports(&ports);
+        assert!(out.starts_with("80/TCP"));
+        assert!(out.ends_with(", ..."));
+    }
+
+    /// Verifies service type style helper maps known types.
+    #[test]
+    fn service_type_style_maps_known_types() {
+        assert_eq!(service_type_style("ClusterIP").fg, Some(Color::Blue));
+        assert_eq!(service_type_style("NodePort").fg, Some(Color::Yellow));
+        assert_eq!(service_type_style("LoadBalancer").fg, Some(Color::Green));
+        assert_eq!(service_type_style("ExternalName").fg, Some(Color::Magenta));
+    }
+}

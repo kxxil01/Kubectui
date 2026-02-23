@@ -127,3 +127,37 @@ fn format_age(age: Option<std::time::Duration>) -> String {
         format!("{mins}m")
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Verifies health style colors match deployment health state.
+    #[test]
+    fn health_style_mapping() {
+        assert_eq!(
+            health_style(DeploymentHealth::Healthy).fg,
+            Some(Color::Green)
+        );
+        assert_eq!(
+            health_style(DeploymentHealth::Degraded).fg,
+            Some(Color::Yellow)
+        );
+        assert_eq!(health_style(DeploymentHealth::Failed).fg, Some(Color::Red));
+    }
+
+    /// Verifies image values are truncated when exceeding render width.
+    #[test]
+    fn format_image_truncates_long_strings() {
+        let long = "registry.io/team/service:very-long-tag-1234567890";
+        let out = format_image(Some(long));
+        assert!(out.ends_with("..."));
+        assert!(out.len() <= 37);
+    }
+
+    /// Verifies missing image renders a dash placeholder.
+    #[test]
+    fn format_image_empty_placeholder() {
+        assert_eq!(format_image(None), "-");
+    }
+}

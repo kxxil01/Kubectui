@@ -100,3 +100,86 @@ fn is_forbidden_error(err: &kube::Error) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, Utc};
+    use k8s_openapi::{
+        api::core::v1::{Event, ObjectReference},
+        apimachinery::pkg::apis::meta::v1::{ListMeta, MicroTime, Time},
+    };
+    use kube::{api::ObjectList, error::ErrorResponse};
+
+    use super::*;
+
+    fn event(reason: &str, msg: &str, last_offset_sec: i64) -> Event {
+        let now = Utc::now();
+        let mut e = Event::default();
+        e.reason = Some(reason.to_string());
+        e.message = Some(msg.to_string());
+        e.type_ = Some("Warning".to_string());
+        e.event_time = Some(MicroTime(now + Duration::seconds(last_offset_sec)));
+        e.first_timestamp = Some(Time(now - Duration::minutes(1)));
+        e.last_timestamp = Some(Time(now + Duration::seconds(last_offset_sec)));
+        e.involved_object = ObjectReference {
+            kind: Some("Pod".to_string()),
+            name: Some("pod-a".to_string()),
+            namespace: Some("default".to_string()),
+            ..Default::default()
+        };
+        e.count = Some(2);
+        e
+    }
+
+    /// Verifies empty event list maps to empty view model list.
+    #[test]
+    fn map_events_empty_list() {
+        let list: ObjectList<Event> = ObjectList {
+            metadata: ListMeta::default(),
+            items: vec![],
+            types: Default::default(),
+        };
+
+        let mapped = map_events(list);
+        assert!(mapped.is_empty());
+    }
+
+    /// Verifies event mapping preserves reason/message and sorts by last timestamp.
+    #[test]
+    fn map_events_sorts_by_last_timestamp() {
+        let newer = event("Newer", "second", 10);
+        let older = event("Older", "first", 1);
+
+        let list: ObjectList<Event> = ObjectList {
+            metadata: ListMeta::default(),
+            items: vec![newer, older],
+            types: Default::default(),
+        };
+
+        let mapped = map_events(list);
+
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].reason, "Older");
+        assert_eq!(mapped[1].reason, "Newer");
+    }
+
+    /// Verifies forbidden error detection returns true only for 403 API responses.
+    #[test]
+    fn is_forbidden_error_only_403() {
+        let forbidden = kube::Error::Api(ErrorResponse {
+            status: "Failure".to_string(),
+            message: "forbidden".to_string(),
+            reason: "Forbidden".to_string(),
+            code: 403,
+        });
+        let timeout = kube::Error::Api(ErrorResponse {
+            status: "Failure".to_string(),
+            message: "timeout".to_string(),
+            reason: "Timeout".to_string(),
+            code: 504,
+        });
+
+        assert!(is_forbidden_error(&forbidden));
+        assert!(!is_forbidden_error(&timeout));
+    }
+}

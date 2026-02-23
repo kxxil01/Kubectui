@@ -224,3 +224,283 @@ fn parse_memory_bytes(mem: &Option<String>) -> i128 {
 
     raw.parse::<i128>().unwrap_or(0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn node(name: &str, ready: bool, role: &str) -> NodeInfo {
+        NodeInfo {
+            name: name.to_string(),
+            ready,
+            role: role.to_string(),
+            ..NodeInfo::default()
+        }
+    }
+
+    fn service(name: &str, namespace: &str, type_: &str, ports: &[&str]) -> ServiceInfo {
+        ServiceInfo {
+            name: name.to_string(),
+            namespace: namespace.to_string(),
+            type_: type_.to_string(),
+            service_type: type_.to_string(),
+            ports: ports.iter().map(|p| p.to_string()).collect(),
+            ..ServiceInfo::default()
+        }
+    }
+
+    fn deployment(name: &str, namespace: &str, ready: &str) -> DeploymentInfo {
+        DeploymentInfo {
+            name: name.to_string(),
+            namespace: namespace.to_string(),
+            ready: ready.to_string(),
+            ..DeploymentInfo::default()
+        }
+    }
+
+    /// Verifies node filtering returns empty output for empty input.
+    #[test]
+    fn filter_nodes_empty_input() {
+        let result = filter_nodes(&[], "worker", None, None);
+        assert!(result.is_empty());
+    }
+
+    /// Verifies single-node positive and negative name matching.
+    #[test]
+    fn filter_nodes_single_match_and_no_match() {
+        let nodes = vec![node("node-a", true, "worker")];
+        assert_eq!(filter_nodes(&nodes, "node", None, None).len(), 1);
+        assert!(filter_nodes(&nodes, "zzz", None, None).is_empty());
+    }
+
+    /// Verifies case-insensitive substring matching across multiple nodes.
+    #[test]
+    fn filter_nodes_case_insensitive_substring() {
+        let nodes = vec![
+            node("Alpha-NODE", true, "worker"),
+            node("beta", true, "worker"),
+        ];
+        let result = filter_nodes(&nodes, "node", None, None);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "Alpha-NODE");
+    }
+
+    /// Verifies Ready and NotReady status filtering.
+    #[test]
+    fn filter_nodes_status_filtering() {
+        let nodes = vec![node("n1", true, "worker"), node("n2", false, "worker")];
+        assert_eq!(
+            filter_nodes(&nodes, "", Some(NodeStatusFilter::Ready), None).len(),
+            1
+        );
+        assert_eq!(
+            filter_nodes(&nodes, "", Some(NodeStatusFilter::NotReady), None).len(),
+            1
+        );
+    }
+
+    /// Verifies role-based filtering for master, worker, and any role.
+    #[test]
+    fn filter_nodes_role_filtering() {
+        let nodes = vec![node("cp", true, "master"), node("wk", true, "worker")];
+        assert_eq!(
+            filter_nodes(&nodes, "", None, Some(NodeRoleFilter::Master)).len(),
+            1
+        );
+        assert_eq!(
+            filter_nodes(&nodes, "", None, Some(NodeRoleFilter::Worker)).len(),
+            1
+        );
+        assert_eq!(
+            filter_nodes(&nodes, "", None, Some(NodeRoleFilter::Any)).len(),
+            2
+        );
+    }
+
+    /// Verifies combined node filters use AND semantics.
+    #[test]
+    fn filter_nodes_combined_filters_and_logic() {
+        let nodes = vec![
+            node("master-ready", true, "master"),
+            node("master-down", false, "master"),
+            node("worker-ready", true, "worker"),
+        ];
+
+        let result = filter_nodes(
+            &nodes,
+            "master",
+            Some(NodeStatusFilter::Ready),
+            Some(NodeRoleFilter::Master),
+        );
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].name, "master-ready");
+    }
+
+    /// Verifies filtering handles special characters literally in names.
+    #[test]
+    fn filter_nodes_special_characters() {
+        let nodes = vec![node("node.*[]+?", true, "worker")];
+        assert_eq!(filter_nodes(&nodes, ".*[]+?", None, None).len(), 1);
+    }
+
+    /// Verifies filtering supports unicode names and queries.
+    #[test]
+    fn filter_nodes_unicode_query() {
+        let nodes = vec![
+            node("café", true, "worker"),
+            node("日本語-🚀", true, "worker"),
+        ];
+        assert_eq!(filter_nodes(&nodes, "café", None, None).len(), 1);
+        assert_eq!(filter_nodes(&nodes, "日本語", None, None).len(), 1);
+        assert_eq!(filter_nodes(&nodes, "🚀", None, None).len(), 1);
+    }
+
+    /// Verifies empty and whitespace-only queries behave as match-all.
+    #[test]
+    fn filter_nodes_empty_and_spaces_match_all() {
+        let nodes = vec![node("n1", true, "worker"), node("n2", false, "master")];
+        assert_eq!(filter_nodes(&nodes, "", None, None).len(), 2);
+        assert_eq!(filter_nodes(&nodes, "    ", None, None).len(), 2);
+    }
+
+    /// Verifies very long query strings do not panic and return deterministic results.
+    #[test]
+    fn filter_nodes_very_long_query() {
+        let nodes = vec![node("n1", true, "worker")];
+        let long_query = "x".repeat(1500);
+        assert!(filter_nodes(&nodes, &long_query, None, None).is_empty());
+    }
+
+    /// Verifies service filtering handles empty input.
+    #[test]
+    fn filter_services_empty_input() {
+        let result = filter_services(&[], "api", None, None);
+        assert!(result.is_empty());
+    }
+
+    /// Verifies service name substring matching is case-insensitive.
+    #[test]
+    fn filter_services_name_matching() {
+        let items = vec![service("Api-Gateway", "default", "ClusterIP", &["80/TCP"])];
+        let result = filter_services(&items, "gateway", None, None);
+        assert_eq!(result.len(), 1);
+    }
+
+    /// Verifies service namespace and type filters.
+    #[test]
+    fn filter_services_namespace_and_type() {
+        let items = vec![
+            service("s1", "default", "ClusterIP", &["80/TCP"]),
+            service("s2", "kube-system", "NodePort", &["443/TCP"]),
+        ];
+
+        assert_eq!(
+            filter_services(&items, "", Some("kube-system"), Some("NodePort")).len(),
+            1
+        );
+        assert!(filter_services(&items, "", Some("kube-system"), Some("LoadBalancer")).is_empty());
+    }
+
+    /// Verifies combined service filters use AND semantics.
+    #[test]
+    fn filter_services_combined_filters() {
+        let items = vec![
+            service("front", "prod", "LoadBalancer", &["80/TCP"]),
+            service("front", "dev", "LoadBalancer", &["80/TCP"]),
+        ];
+
+        let result = filter_services(&items, "front", Some("prod"), Some("LoadBalancer"));
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].namespace, "prod");
+    }
+
+    /// Verifies deployment filtering handles empty input.
+    #[test]
+    fn filter_deployments_empty_input() {
+        let result = filter_deployments(&[], "api", None, None);
+        assert!(result.is_empty());
+    }
+
+    /// Verifies deployment ready parsing and health classification.
+    #[test]
+    fn deployment_health_classification() {
+        assert_eq!(
+            deployment_health_from_ready("3/3"),
+            DeploymentHealth::Healthy
+        );
+        assert_eq!(
+            deployment_health_from_ready("1/3"),
+            DeploymentHealth::Degraded
+        );
+        assert_eq!(
+            deployment_health_from_ready("0/3"),
+            DeploymentHealth::Failed
+        );
+    }
+
+    /// Verifies deployment health filtering across mixed states.
+    #[test]
+    fn filter_deployments_by_health() {
+        let items = vec![
+            deployment("ok", "default", "2/2"),
+            deployment("warn", "default", "1/2"),
+            deployment("bad", "default", "0/2"),
+        ];
+
+        assert_eq!(
+            filter_deployments(&items, "", None, Some(DeploymentHealth::Healthy)).len(),
+            1
+        );
+        assert_eq!(
+            filter_deployments(&items, "", None, Some(DeploymentHealth::Degraded)).len(),
+            1
+        );
+        assert_eq!(
+            filter_deployments(&items, "", None, Some(DeploymentHealth::Failed)).len(),
+            1
+        );
+    }
+
+    /// Verifies deployment combined filters use AND semantics.
+    #[test]
+    fn filter_deployments_combined_filters() {
+        let items = vec![
+            deployment("api", "prod", "2/3"),
+            deployment("api", "dev", "2/2"),
+        ];
+
+        let result = filter_deployments(
+            &items,
+            "api",
+            Some("prod"),
+            Some(DeploymentHealth::Degraded),
+        );
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].namespace, "prod");
+    }
+
+    /// Verifies node sorting by capacity handles unit parsing.
+    #[test]
+    fn sort_nodes_by_capacity_descending() {
+        let mut nodes = vec![
+            NodeInfo {
+                name: "small".to_string(),
+                cpu_allocatable: Some("500m".to_string()),
+                memory_allocatable: Some("512Mi".to_string()),
+                ..NodeInfo::default()
+            },
+            NodeInfo {
+                name: "large".to_string(),
+                cpu_allocatable: Some("2".to_string()),
+                memory_allocatable: Some("4Gi".to_string()),
+                ..NodeInfo::default()
+            },
+        ];
+
+        sort_nodes(&mut nodes, NodeSortBy::Capacity);
+        assert_eq!(nodes[0].name, "large");
+        assert_eq!(nodes[1].name, "small");
+    }
+}

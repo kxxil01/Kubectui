@@ -192,3 +192,229 @@ fn severity_rank(severity: AlertSeverity) -> u8 {
         AlertSeverity::Info => 2,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use chrono::{Duration, Utc};
+
+    use crate::{
+        k8s::dtos::{NodeInfo, PodInfo},
+        state::ClusterSnapshot,
+    };
+
+    use super::*;
+
+    fn pod(name: &str, status: &str) -> PodInfo {
+        PodInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            status: status.to_string(),
+            ..PodInfo::default()
+        }
+    }
+
+    /// Verifies alerts are present with informational severity for an empty snapshot.
+    #[test]
+    fn compute_alerts_empty_snapshot_no_elevated_alerts() {
+        let snapshot = ClusterSnapshot::default();
+        let alerts = compute_alerts(&snapshot);
+
+        assert_eq!(alerts.len(), 5);
+        assert!(alerts.iter().all(|a| a.severity == AlertSeverity::Info));
+    }
+
+    /// Verifies MemoryPressure nodes produce warning severity and expected message.
+    #[test]
+    fn compute_alerts_memory_pressure_single_type() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "n1".to_string(),
+            memory_pressure: true,
+            ..NodeInfo::default()
+        });
+
+        let alerts = compute_alerts(&snapshot);
+        let memory = alerts
+            .iter()
+            .find(|a| a.title == "MemoryPressure")
+            .expect("memory alert should exist");
+
+        assert_eq!(memory.severity, AlertSeverity::Warning);
+        assert!(memory.message.contains("1 node(s)"));
+    }
+
+    /// Verifies CrashLoopBackOff pods produce error severity.
+    #[test]
+    fn compute_alerts_crash_loop_backoff_single_type() {
+        let mut snapshot = ClusterSnapshot::default();
+        let mut p = pod("p1", "Running");
+        p.waiting_reasons = vec!["CrashLoopBackOff".to_string()];
+        snapshot.pods.push(p);
+
+        let alerts = compute_alerts(&snapshot);
+        let crash = alerts
+            .iter()
+            .find(|a| a.title == "CrashLoopBackOff")
+            .expect("crash alert should exist");
+
+        assert_eq!(crash.severity, AlertSeverity::Error);
+        assert!(crash.message.contains("1 pod(s)"));
+    }
+
+    /// Verifies failed pods produce error severity and proper wording.
+    #[test]
+    fn compute_alerts_failed_pods_single_type() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(pod("p1", "Failed"));
+
+        let alerts = compute_alerts(&snapshot);
+        let failed = alerts
+            .iter()
+            .find(|a| a.title == "Failed pods")
+            .expect("failed pods alert should exist");
+
+        assert_eq!(failed.severity, AlertSeverity::Error);
+        assert!(failed.message.contains("Failed phase"));
+    }
+
+    /// Verifies alert sorting prioritizes errors before warnings before infos.
+    #[test]
+    fn compute_alerts_severity_ordering() {
+        let mut snapshot = ClusterSnapshot::default();
+        let mut crash = pod("crash", "Running");
+        crash.waiting_reasons = vec!["CrashLoopBackOff".to_string()];
+
+        let mut image = pod("image", "Running");
+        image.waiting_reasons = vec!["ImagePullBackOff".to_string()];
+
+        snapshot.pods.push(crash);
+        snapshot.pods.push(image);
+        snapshot.pods.push(pod("failed", "Failed"));
+        snapshot.nodes.push(NodeInfo {
+            name: "n1".to_string(),
+            memory_pressure: true,
+            ..NodeInfo::default()
+        });
+
+        let alerts = compute_alerts(&snapshot);
+
+        assert!(alerts[0].severity == AlertSeverity::Error);
+        assert!(alerts[1].severity == AlertSeverity::Error);
+        assert!(
+            alerts[2].severity == AlertSeverity::Error
+                || alerts[2].severity == AlertSeverity::Warning
+        );
+    }
+
+    /// Verifies pending pod age boundary at 5 minutes is handled correctly.
+    #[test]
+    fn compute_alerts_pending_timestamp_boundary() {
+        let mut snapshot = ClusterSnapshot::default();
+
+        let mut fresh = pod("fresh", "Pending");
+        fresh.created_at = Some(Utc::now() - Duration::minutes(4) - Duration::seconds(59));
+
+        let mut old = pod("old", "Pending");
+        old.created_at = Some(Utc::now() - Duration::minutes(6));
+
+        snapshot.pods.push(fresh);
+        snapshot.pods.push(old);
+
+        let alerts = compute_alerts(&snapshot);
+        let pending = alerts
+            .iter()
+            .find(|a| a.title == "Pending > 5m")
+            .expect("pending alert should exist");
+
+        assert!(pending.message.contains("1 pod(s)"));
+    }
+
+    /// Verifies very long pod names do not break alert message formatting.
+    #[test]
+    fn compute_alerts_long_names_do_not_panic() {
+        let mut snapshot = ClusterSnapshot::default();
+        let long_name = "x".repeat(500);
+        snapshot.pods.push(PodInfo {
+            name: long_name,
+            namespace: "default".to_string(),
+            status: "Failed".to_string(),
+            ..PodInfo::default()
+        });
+
+        let alerts = compute_alerts(&snapshot);
+        let failed = alerts
+            .iter()
+            .find(|a| a.title == "Failed pods")
+            .expect("failed alert should exist");
+        assert_eq!(failed.severity, AlertSeverity::Error);
+    }
+
+    /// Verifies all ready nodes and no failing pods produce only informational alerts.
+    #[test]
+    fn compute_alerts_all_nodes_ready_no_elevated() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "n1".to_string(),
+            ready: true,
+            ..NodeInfo::default()
+        });
+
+        let alerts = compute_alerts(&snapshot);
+        assert!(alerts.iter().all(|a| a.severity == AlertSeverity::Info));
+    }
+
+    /// Verifies repeated MemoryPressure conditions are aggregated into one count.
+    #[test]
+    fn compute_alerts_memory_pressure_aggregation() {
+        let mut snapshot = ClusterSnapshot::default();
+        for i in 0..3 {
+            snapshot.nodes.push(NodeInfo {
+                name: format!("n{i}"),
+                memory_pressure: true,
+                ..NodeInfo::default()
+            });
+        }
+
+        let alerts = compute_alerts(&snapshot);
+        let memory = alerts
+            .iter()
+            .find(|a| a.title == "MemoryPressure")
+            .expect("memory alert should exist");
+
+        assert!(memory.message.contains("3 node(s)"));
+    }
+
+    /// Verifies dashboard stats percentages for zero denominators are zero.
+    #[test]
+    fn compute_dashboard_stats_zero_denominator() {
+        let stats = compute_dashboard_stats(&ClusterSnapshot::default());
+        assert_eq!(stats.ready_nodes_percent, 0);
+        assert_eq!(stats.running_pods_percent, 0);
+    }
+
+    /// Verifies dashboard stats count namespaces across pods, services, and deployments.
+    #[test]
+    fn compute_dashboard_stats_namespace_union() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "a".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        snapshot.services.push(crate::k8s::dtos::ServiceInfo {
+            name: "s1".to_string(),
+            namespace: "b".to_string(),
+            ..crate::k8s::dtos::ServiceInfo::default()
+        });
+        snapshot.deployments.push(crate::k8s::dtos::DeploymentInfo {
+            name: "d1".to_string(),
+            namespace: "c".to_string(),
+            ready: "1/1".to_string(),
+            ..crate::k8s::dtos::DeploymentInfo::default()
+        });
+
+        let stats = compute_dashboard_stats(&snapshot);
+        assert_eq!(stats.namespaces_count, 3);
+    }
+}

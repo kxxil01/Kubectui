@@ -3,11 +3,6 @@
 //! This module wires terminal lifecycle management, the application state machine,
 //! the Kubernetes client, and the ratatui rendering pipeline.
 
-mod app;
-mod k8s;
-mod state;
-mod ui;
-
 use std::{io, time::Duration};
 
 use anyhow::{Context, Result};
@@ -18,10 +13,11 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
-use crate::{
-    app::{AppAction, AppState, DetailMetadata, DetailViewState, ResourceRef},
+use kubectui::{
+    app::{AppAction, AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
     k8s::client::K8sClient,
     state::{ClusterSnapshot, GlobalState},
+    ui,
 };
 
 /// Main asynchronous runtime entrypoint.
@@ -115,20 +111,20 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<ResourceRef> {
     let idx = app.selected_idx();
     match app.view() {
-        app::AppView::Dashboard => None,
-        app::AppView::Nodes => snapshot
+        AppView::Dashboard => None,
+        AppView::Nodes => snapshot
             .nodes
             .get(idx)
             .map(|n| ResourceRef::Node(n.name.clone())),
-        app::AppView::Pods => snapshot
+        AppView::Pods => snapshot
             .pods
             .get(idx)
             .map(|p| ResourceRef::Pod(p.name.clone(), p.namespace.clone())),
-        app::AppView::Services => snapshot
+        AppView::Services => snapshot
             .services
             .get(idx)
             .map(|s| ResourceRef::Service(s.name.clone(), s.namespace.clone())),
-        app::AppView::Deployments => snapshot
+        AppView::Deployments => snapshot
             .deployments
             .get(idx)
             .map(|d| ResourceRef::Deployment(d.name.clone(), d.namespace.clone())),

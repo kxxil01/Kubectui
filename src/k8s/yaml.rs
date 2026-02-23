@@ -109,3 +109,62 @@ fn is_forbidden_error(err: &kube::Error) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use kube::error::ErrorResponse;
+
+    use super::*;
+
+    /// Verifies YAML truncation keeps short payloads intact.
+    #[test]
+    fn truncate_yaml_keeps_small_payload() {
+        let yaml = "kind: Pod\nmetadata:\n  name: p1\n".to_string();
+        assert_eq!(truncate_yaml(yaml.clone()), yaml);
+    }
+
+    /// Verifies YAML payloads larger than 10KiB are truncated with suffix.
+    #[test]
+    fn truncate_yaml_applies_10kb_limit() {
+        let long_yaml = format!("kind: Pod\n{}", "a".repeat(MAX_YAML_BYTES + 1024));
+        let out = truncate_yaml(long_yaml);
+        assert!(out.contains("... (truncated)"));
+        assert!(out.len() <= MAX_YAML_BYTES + 32);
+    }
+
+    /// Verifies truncation handles multibyte UTF-8 boundaries safely.
+    #[test]
+    fn truncate_yaml_handles_utf8_boundaries() {
+        let payload = "🚀".repeat(MAX_YAML_BYTES);
+        let out = truncate_yaml(payload);
+        assert!(out.is_char_boundary(out.len()));
+    }
+
+    /// Verifies large resources over 1MB are truncated and safe to display.
+    #[test]
+    fn truncate_yaml_handles_large_resource() {
+        let huge = "x".repeat(1_100_000);
+        let out = truncate_yaml(huge);
+        assert!(out.ends_with("... (truncated)"));
+    }
+
+    /// Verifies forbidden error classifier returns true only for 403 API errors.
+    #[test]
+    fn forbidden_error_detection() {
+        let forbidden = kube::Error::Api(ErrorResponse {
+            status: "Failure".to_string(),
+            message: "forbidden".to_string(),
+            reason: "Forbidden".to_string(),
+            code: 403,
+        });
+        let not_found = kube::Error::Api(ErrorResponse {
+            status: "Failure".to_string(),
+            message: "not found".to_string(),
+            reason: "NotFound".to_string(),
+            code: 404,
+        });
+
+        assert!(is_forbidden_error(&forbidden));
+        assert!(!is_forbidden_error(&not_found));
+    }
+}

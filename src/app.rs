@@ -310,58 +310,86 @@ impl AppState {
 mod tests {
     use super::*;
 
+    /// Verifies full forward tab cycle across all views and wraps to Dashboard.
     #[test]
-    fn tab_cycles_views() {
+    fn tab_cycles_all_views_forward() {
         let mut app = AppState::default();
-        assert_eq!(app.view(), AppView::Dashboard);
 
         app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.view(), AppView::Nodes);
-
-        app.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::Pods);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::Services);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::Deployments);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.view(), AppView::Dashboard);
     }
 
+    /// Verifies reverse tab cycle wraps from Dashboard to Deployments.
     #[test]
-    fn search_mode_collects_input() {
+    fn shift_tab_cycles_reverse() {
         let mut app = AppState::default();
-
-        app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
-        assert!(app.is_search_mode());
-
-        app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
-        app.handle_key_event(KeyEvent::from(KeyCode::Char('b')));
-
-        assert_eq!(app.search_query(), "ab");
-
-        app.handle_key_event(KeyEvent::from(KeyCode::Enter));
-        assert!(!app.is_search_mode());
+        app.handle_key_event(KeyEvent::from(KeyCode::BackTab));
+        assert_eq!(app.view(), AppView::Deployments);
     }
 
+    /// Verifies entering search mode and adding/removing characters.
     #[test]
-    fn esc_clears_search_query() {
+    fn search_query_add_backspace_and_clear() {
         let mut app = AppState::default();
 
         app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('b')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Backspace));
+
+        assert_eq!(app.search_query(), "a");
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert_eq!(app.search_query(), "");
+    }
+
+    /// Verifies pressing Esc in search mode exits mode and clears query.
+    #[test]
+    fn search_mode_esc_clears_and_exits() {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
         app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
+
         app.handle_key_event(KeyEvent::from(KeyCode::Esc));
 
         assert_eq!(app.search_query(), "");
         assert!(!app.is_search_mode());
     }
 
+    /// Verifies refresh actions are emitted for `r` and Ctrl+R.
     #[test]
-    fn ctrl_u_clears_search_query() {
+    fn refresh_action_transitions() {
         let mut app = AppState::default();
-
-        app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
-        app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
-
-        assert_eq!(app.search_query(), "");
-        assert!(app.is_search_mode());
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('r'))),
+            AppAction::RefreshData
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::CONTROL)),
+            AppAction::RefreshData
+        );
     }
 
+    /// Verifies quit action and should_quit state transition.
+    #[test]
+    fn quit_action_sets_should_quit() {
+        let mut app = AppState::default();
+
+        let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
+
+        assert_eq!(action, AppAction::Quit);
+        assert!(app.should_quit());
+    }
+
+    /// Verifies Esc closes detail view before requesting app quit.
     #[test]
     fn esc_closes_detail_before_quit() {
         let mut app = AppState {
@@ -370,7 +398,88 @@ mod tests {
         };
 
         let action = app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+
         assert_eq!(action, AppAction::CloseDetail);
         assert!(!app.should_quit());
+    }
+
+    /// Verifies selection index saturates at zero when moving up.
+    #[test]
+    fn selected_index_never_underflows() {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Up));
+        assert_eq!(app.selected_idx(), 0);
+    }
+
+    /// Verifies selection can grow with repeated down events.
+    #[test]
+    fn selected_index_grows_with_down_events() {
+        let mut app = AppState::default();
+        for _ in 0..5 {
+            app.handle_key_event(KeyEvent::from(KeyCode::Down));
+        }
+        assert_eq!(app.selected_idx(), 5);
+    }
+
+    /// Verifies selection resets to zero when switching tabs.
+    #[test]
+    fn view_switch_resets_selection_index() {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Down));
+        app.handle_key_event(KeyEvent::from(KeyCode::Down));
+        assert_eq!(app.selected_idx(), 2);
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+
+        assert_eq!(app.selected_idx(), 0);
+    }
+
+    /// Verifies rapid tab switching remains stable.
+    #[test]
+    fn rapid_tab_switching_is_stable() {
+        let mut app = AppState::default();
+
+        for _ in 0..100 {
+            app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        }
+
+        assert_eq!(app.view(), AppView::Dashboard);
+    }
+
+    /// Verifies search input ignores Ctrl-modified characters except supported shortcuts.
+    #[test]
+    fn search_input_ignores_ctrl_characters() {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL));
+
+        assert_eq!(app.search_query(), "");
+    }
+
+    /// Verifies error message can be set and cleared.
+    #[test]
+    fn error_message_set_and_clear() {
+        let mut app = AppState::default();
+        app.set_error("boom".to_string());
+        assert_eq!(app.error_message(), Some("boom"));
+
+        app.clear_error();
+        assert_eq!(app.error_message(), None);
+    }
+
+    /// Verifies resource reference helper methods return expected kind/name/namespace.
+    #[test]
+    fn resource_ref_helpers_work_for_each_variant() {
+        let node = ResourceRef::Node("n1".to_string());
+        let pod = ResourceRef::Pod("p1".to_string(), "ns1".to_string());
+
+        assert_eq!(node.kind(), "Node");
+        assert_eq!(node.name(), "n1");
+        assert_eq!(node.namespace(), None);
+
+        assert_eq!(pod.kind(), "Pod");
+        assert_eq!(pod.name(), "p1");
+        assert_eq!(pod.namespace(), Some("ns1"));
     }
 }
