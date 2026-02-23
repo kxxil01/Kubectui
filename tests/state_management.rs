@@ -23,7 +23,7 @@ async fn refresh_transitions_to_ready() {
     let source = MockDataSource::default();
 
     state
-        .refresh(&source)
+        .refresh(&source, None)
         .await
         .expect("refresh should succeed with mock source");
 
@@ -41,7 +41,7 @@ async fn mock_refresh_populates_snapshot() {
     source.pods.push(make_pod("p2", "kube-system", "Pending"));
 
     state
-        .refresh(&source)
+        .refresh(&source, None)
         .await
         .expect("refresh should succeed");
 
@@ -63,7 +63,7 @@ async fn error_state_transition_on_refresh_failure() {
     };
 
     let err = state
-        .refresh(&source)
+        .refresh(&source, None)
         .await
         .expect_err("refresh should fail when mock configured to fail");
 
@@ -81,18 +81,18 @@ async fn concurrent_refresh_requests_are_observable() {
     let source = MockDataSource::default();
 
     state
-        .refresh(&source)
+        .refresh(&source, None)
         .await
         .expect("first refresh should succeed");
 
     // second call should still be valid and deterministic
     state
-        .refresh(&source)
+        .refresh(&source, None)
         .await
         .expect("second refresh should succeed");
 
     assert!(
-        source.calls.load(Ordering::SeqCst) >= 10,
-        "expected at least two rounds of 5 calls"
+        source.calls.load(Ordering::SeqCst) >= 20,
+        "expected at least two rounds of 10 calls"
     );
 }
