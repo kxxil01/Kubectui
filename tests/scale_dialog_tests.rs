@@ -1,6 +1,6 @@
 //! Integration tests for the Scale Dialog component
 
-use kubectui::ui::components::scale_dialog::{ScaleDialogState, ScaleField, ScaleAction};
+use kubectui::ui::components::{ScaleDialogState, ScaleField, ScaleAction};
 
 #[test]
 fn test_scale_dialog_state_creation() {

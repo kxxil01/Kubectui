@@ -1,6 +1,9 @@
 //! Reusable UI widgets and building blocks.
 
-pub mod probe_panel;
+pub mod port_forward_dialog;
+pub mod scale_dialog;
+
+pub use scale_dialog::{ScaleDialogState, ScaleField, ScaleAction, render_scale_dialog};
 
 use ratatui::{
     layout::Rect,
