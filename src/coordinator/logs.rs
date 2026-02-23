@@ -91,7 +91,7 @@ async fn stream_logs_internal(
                     break;
                 }
             }
-            _ = cancel_rx => {
+            _ = &mut *cancel_rx => {
                 // Cancellation signal received
                 let _ = update_tx.send(UpdateMessage::LogStreamStatus {
                     pod_name: pod_ref.name.clone(),
