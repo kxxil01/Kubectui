@@ -38,14 +38,16 @@ fn test_digit_input() {
 fn test_validation_range() {
     let mut state = ScaleDialogState::new("api", "test", 5);
     
-    // Test valid range
-    state.input_buffer = "50".to_string();
-    state.validate_and_update();
+    // Add valid digits
+    state.handle_action(ScaleAction::AddChar('5'));
+    state.handle_action(ScaleAction::AddChar('0'));
     assert!(state.error_message.is_none());
     
-    // Test above max
-    state.input_buffer = "101".to_string();
-    state.validate_and_update();
+    // Clear and try invalid range
+    state.input_buffer.clear();
+    state.handle_action(ScaleAction::AddChar('1'));
+    state.handle_action(ScaleAction::AddChar('0'));
+    state.handle_action(ScaleAction::AddChar('1'));
     assert!(state.error_message.is_some());
 }
 
@@ -100,8 +102,8 @@ fn test_is_valid_check() {
 fn test_submit_updates_desired_replicas() {
     let mut state = ScaleDialogState::new("service", "dev", 3);
     
-    state.input_buffer = "10".to_string();
-    state.validate_and_update();
+    state.handle_action(ScaleAction::AddChar('1'));
+    state.handle_action(ScaleAction::AddChar('0'));
     state.handle_action(ScaleAction::Submit);
     
     assert_eq!(state.desired_replicas, "10");
