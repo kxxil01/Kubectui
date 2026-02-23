@@ -2,7 +2,8 @@
 
 use crate::k8s::dtos::{
     CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo, NodeInfo,
-    PodDisruptionBudgetInfo, ResourceQuotaInfo, ServiceInfo, StatefulSetInfo,
+    PodDisruptionBudgetInfo, ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo,
+    ServiceInfo, StatefulSetInfo,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -364,6 +365,44 @@ fn parse_memory_bytes(mem: &Option<String>) -> i128 {
         }
     }
     raw.parse::<i128>().unwrap_or(0)
+}
+
+#[must_use]
+pub fn filter_replicasets(
+    items: &[ReplicaSetInfo],
+    query: &str,
+    namespace: Option<&str>,
+) -> Vec<ReplicaSetInfo> {
+    let q = query.trim().to_ascii_lowercase();
+    items
+        .iter()
+        .filter(|rs| namespace.is_none_or(|ns| rs.namespace == ns))
+        .filter(|rs| {
+            q.is_empty()
+                || rs.name.to_ascii_lowercase().contains(&q)
+                || rs.namespace.to_ascii_lowercase().contains(&q)
+        })
+        .cloned()
+        .collect()
+}
+
+#[must_use]
+pub fn filter_replication_controllers(
+    items: &[ReplicationControllerInfo],
+    query: &str,
+    namespace: Option<&str>,
+) -> Vec<ReplicationControllerInfo> {
+    let q = query.trim().to_ascii_lowercase();
+    items
+        .iter()
+        .filter(|rc| namespace.is_none_or(|ns| rc.namespace == ns))
+        .filter(|rc| {
+            q.is_empty()
+                || rc.name.to_ascii_lowercase().contains(&q)
+                || rc.namespace.to_ascii_lowercase().contains(&q)
+        })
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]

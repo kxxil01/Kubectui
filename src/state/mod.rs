@@ -14,8 +14,9 @@ use crate::k8s::{
     dtos::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo,
         CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo,
-        NodeInfo, PodDisruptionBudgetInfo, PodInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
-        ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
+        NodeInfo, PodDisruptionBudgetInfo, PodInfo, ReplicaSetInfo, ReplicationControllerInfo,
+        ResourceQuotaInfo, RoleBindingInfo, RoleInfo, ServiceAccountInfo, ServiceInfo,
+        StatefulSetInfo,
     },
 };
 
@@ -54,6 +55,8 @@ pub struct ClusterSnapshot {
     pub deployments: Vec<DeploymentInfo>,
     pub statefulsets: Vec<StatefulSetInfo>,
     pub daemonsets: Vec<DaemonSetInfo>,
+    pub replicasets: Vec<ReplicaSetInfo>,
+    pub replication_controllers: Vec<ReplicationControllerInfo>,
     pub jobs: Vec<JobInfo>,
     pub cronjobs: Vec<CronJobInfo>,
     pub resource_quotas: Vec<ResourceQuotaInfo>,
@@ -102,6 +105,13 @@ pub trait ClusterDataSource {
     async fn fetch_statefulsets(&self, namespace: Option<&str>) -> Result<Vec<StatefulSetInfo>>;
     /// Fetches DaemonSet list.
     async fn fetch_daemonsets(&self, namespace: Option<&str>) -> Result<Vec<DaemonSetInfo>>;
+    /// Fetches ReplicaSet list.
+    async fn fetch_replicasets(&self, namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>>;
+    /// Fetches ReplicationController list.
+    async fn fetch_replication_controllers(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ReplicationControllerInfo>>;
     /// Fetches Job list.
     async fn fetch_jobs(&self, namespace: Option<&str>) -> Result<Vec<JobInfo>>;
     /// Fetches CronJob list.
@@ -169,6 +179,17 @@ impl ClusterDataSource for K8sClient {
 
     async fn fetch_daemonsets(&self, namespace: Option<&str>) -> Result<Vec<DaemonSetInfo>> {
         K8sClient::fetch_daemonsets(self, namespace).await
+    }
+
+    async fn fetch_replicasets(&self, namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>> {
+        K8sClient::fetch_replicasets(self, namespace).await
+    }
+
+    async fn fetch_replication_controllers(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ReplicationControllerInfo>> {
+        K8sClient::fetch_replication_controllers(self, namespace).await
     }
 
     async fn fetch_jobs(&self, namespace: Option<&str>) -> Result<Vec<JobInfo>> {
@@ -285,6 +306,8 @@ impl GlobalState {
             deployments_res,
             statefulsets_res,
             daemonsets_res,
+            replicasets_res,
+            replication_controllers_res,
             jobs_res,
             cronjobs_res,
             resource_quotas_res,
@@ -304,6 +327,8 @@ impl GlobalState {
             Self::fetch_with_timeout("deployments", client.fetch_deployments(namespace)),
             Self::fetch_with_timeout("statefulsets", client.fetch_statefulsets(namespace)),
             Self::fetch_with_timeout("daemonsets", client.fetch_daemonsets(namespace)),
+            Self::fetch_with_timeout("replicasets", client.fetch_replicasets(namespace)),
+            Self::fetch_with_timeout("replicationcontrollers", client.fetch_replication_controllers(namespace)),
             Self::fetch_with_timeout("jobs", client.fetch_jobs(namespace)),
             Self::fetch_with_timeout("cronjobs", client.fetch_cronjobs(namespace)),
             Self::fetch_with_timeout("resourcequotas", client.fetch_resource_quotas(namespace)),
@@ -367,6 +392,20 @@ impl GlobalState {
             Ok(v) => v,
             Err(e) => {
                 errors.push(format!("daemonsets: {e}"));
+                Vec::new()
+            }
+        };
+        let replicasets = match replicasets_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("replicasets: {e}"));
+                Vec::new()
+            }
+        };
+        let replication_controllers = match replication_controllers_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("replicationcontrollers: {e}"));
                 Vec::new()
             }
         };
@@ -499,6 +538,8 @@ impl GlobalState {
         self.snapshot.deployments = deployments;
         self.snapshot.statefulsets = statefulsets;
         self.snapshot.daemonsets = daemonsets;
+        self.snapshot.replicasets = replicasets;
+        self.snapshot.replication_controllers = replication_controllers;
         self.snapshot.jobs = jobs;
         self.snapshot.cronjobs = cronjobs;
         self.snapshot.resource_quotas = resource_quotas;
@@ -537,6 +578,8 @@ mod tests {
         deployments: Vec<DeploymentInfo>,
         statefulsets: Vec<StatefulSetInfo>,
         daemonsets: Vec<DaemonSetInfo>,
+        replicasets: Vec<ReplicaSetInfo>,
+        replication_controllers: Vec<ReplicationControllerInfo>,
         jobs: Vec<JobInfo>,
         cronjobs: Vec<CronJobInfo>,
         resource_quotas: Vec<ResourceQuotaInfo>,
@@ -619,6 +662,8 @@ mod tests {
                     unavailable_count: 0,
                     ..DaemonSetInfo::default()
                 }],
+                replicasets: Vec::new(),
+                replication_controllers: Vec::new(),
                 jobs: vec![JobInfo {
                     name: "cleanup".to_string(),
                     namespace: "default".to_string(),
@@ -796,6 +841,20 @@ mod tests {
             Ok(self.daemonsets.clone())
         }
 
+        async fn fetch_replicasets(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<ReplicaSetInfo>> {
+            Ok(self.replicasets.clone())
+        }
+
+        async fn fetch_replication_controllers(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<ReplicationControllerInfo>> {
+            Ok(self.replication_controllers.clone())
+        }
+
         async fn fetch_jobs(&self, _namespace: Option<&str>) -> Result<Vec<JobInfo>> {
             if let Some(err) = &self.jobs_err {
                 return Err(anyhow!(err.clone()));
@@ -969,6 +1028,8 @@ mod tests {
             deployments: vec![],
             statefulsets: vec![],
             daemonsets: vec![],
+            replicasets: vec![],
+            replication_controllers: vec![],
             jobs: vec![],
             cronjobs: vec![],
             resource_quotas: vec![],

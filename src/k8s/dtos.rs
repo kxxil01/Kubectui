@@ -176,6 +176,32 @@ pub struct ClusterRoleBindingInfo {
     pub created_at: Option<DateTime<Utc>>,
 }
 
+/// Lightweight ReplicaSet view used by list and detail pages.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReplicaSetInfo {
+    pub name: String,
+    pub namespace: String,
+    pub desired: i32,
+    pub ready: i32,
+    pub available: i32,
+    pub image: Option<String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight ReplicationController view used by list and detail pages.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ReplicationControllerInfo {
+    pub name: String,
+    pub namespace: String,
+    pub desired: i32,
+    pub ready: i32,
+    pub available: i32,
+    pub image: Option<String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
 /// Lightweight Job view used by list and detail pages.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct JobInfo {

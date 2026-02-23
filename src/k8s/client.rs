@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use anyhow::{Context, Result};
 use chrono::Utc;
 use k8s_openapi::api::{
-    apps::v1::{DaemonSet, Deployment, StatefulSet},
+    apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet},
     batch::v1::{CronJob, Job},
-    core::v1::{LimitRange, Namespace, Node, Pod, PodSpec, ResourceQuota, Service, ServiceAccount},
+    core::v1::{LimitRange, Namespace, Node, Pod, PodSpec, ReplicationController, ResourceQuota, Service, ServiceAccount},
     policy::v1::PodDisruptionBudget,
     rbac::v1::{ClusterRole, ClusterRoleBinding, PolicyRule, Role, RoleBinding, Subject},
 };
@@ -26,8 +26,9 @@ pub use crate::k8s::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo,
         CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo, DeploymentInfo, JobInfo,
         LimitRangeInfo, LimitSpec, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo,
-        PodMetricsInfo, RbacRule, ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject, RoleInfo,
-        ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
+        PodMetricsInfo, RbacRule, ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo,
+        RoleBindingInfo, RoleBindingSubject, RoleInfo, ServiceAccountInfo, ServiceInfo,
+        StatefulSetInfo,
     },
     events::EventInfo,
 };
@@ -520,6 +521,94 @@ impl K8sClient {
             .collect();
 
         Ok(daemonsets)
+    }
+
+    /// Fetches replica sets from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_replicasets(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ReplicaSetInfo>> {
+        let api: Api<ReplicaSet> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = api.list(&ListParams::default()).await.with_context(|| {
+            if let Some(ns) = namespace {
+                format!("failed fetching replicasets in namespace '{ns}'")
+            } else {
+                "failed fetching replicasets across all namespaces".to_string()
+            }
+        })?;
+
+        let now = Utc::now();
+        let items = list
+            .into_iter()
+            .map(|rs| {
+                let spec = rs.spec.as_ref();
+                let status = rs.status.as_ref();
+                let created_at = rs.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+                ReplicaSetInfo {
+                    name: rs.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: rs.metadata.namespace.unwrap_or_else(|| "default".to_string()),
+                    desired: spec.and_then(|s| s.replicas).unwrap_or(0),
+                    ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
+                    available: status.and_then(|s| s.available_replicas).unwrap_or(0),
+                    image: self.extract_image_from_pod_spec(
+                        spec.and_then(|s| s.template.as_ref())
+                            .and_then(|t| t.spec.as_ref()),
+                    ),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(items)
+    }
+
+    /// Fetches replication controllers from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_replication_controllers(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ReplicationControllerInfo>> {
+        let api: Api<ReplicationController> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = api.list(&ListParams::default()).await.with_context(|| {
+            if let Some(ns) = namespace {
+                format!("failed fetching replicationcontrollers in namespace '{ns}'")
+            } else {
+                "failed fetching replicationcontrollers across all namespaces".to_string()
+            }
+        })?;
+
+        let now = Utc::now();
+        let items = list
+            .into_iter()
+            .map(|rc| {
+                let spec = rc.spec.as_ref();
+                let status = rc.status.as_ref();
+                let created_at = rc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+                ReplicationControllerInfo {
+                    name: rc.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: rc.metadata.namespace.unwrap_or_else(|| "default".to_string()),
+                    desired: spec.and_then(|s| s.replicas).unwrap_or(0),
+                    ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
+                    available: status.and_then(|s| s.available_replicas).unwrap_or(0),
+                    image: self.extract_image_from_pod_spec(
+                        spec.and_then(|s| s.template.as_ref())
+                            .and_then(|t| t.spec.as_ref()),
+                    ),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(items)
     }
 
     /// Fetches service accounts from a namespace or all namespaces when `namespace` is `None`.

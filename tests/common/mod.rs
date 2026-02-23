@@ -11,8 +11,9 @@ use kubectui::{
     k8s::dtos::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo,
         CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo,
-        NodeInfo, PodDisruptionBudgetInfo, PodInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
-        ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
+        NodeInfo, PodDisruptionBudgetInfo, PodInfo, ReplicaSetInfo, ReplicationControllerInfo,
+        ResourceQuotaInfo, RoleBindingInfo, RoleInfo, ServiceAccountInfo, ServiceInfo,
+        StatefulSetInfo,
     },
     state::ClusterDataSource,
 };
@@ -65,6 +66,8 @@ pub struct MockDataSource {
     pub deployments: Vec<DeploymentInfo>,
     pub statefulsets: Vec<StatefulSetInfo>,
     pub daemonsets: Vec<DaemonSetInfo>,
+    pub replicasets: Vec<ReplicaSetInfo>,
+    pub replication_controllers: Vec<ReplicationControllerInfo>,
     pub jobs: Vec<JobInfo>,
     pub cronjobs: Vec<CronJobInfo>,
     pub resource_quotas: Vec<ResourceQuotaInfo>,
@@ -105,6 +108,8 @@ impl Default for MockDataSource {
                 ready_count: 1,
                 ..DaemonSetInfo::default()
             }],
+            replicasets: vec![],
+            replication_controllers: vec![],
             jobs: vec![JobInfo {
                 name: "job1".to_string(),
                 namespace: "default".to_string(),
@@ -192,6 +197,28 @@ impl ClusterDataSource for MockDataSource {
             return Err(anyhow!("mock daemonsets error"));
         }
         Ok(self.daemonsets.clone())
+    }
+
+    async fn fetch_replicasets(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<ReplicaSetInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock replicasets error"));
+        }
+        Ok(self.replicasets.clone())
+    }
+
+    async fn fetch_replication_controllers(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<ReplicationControllerInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock replicationcontrollers error"));
+        }
+        Ok(self.replication_controllers.clone())
     }
 
     async fn fetch_jobs(&self, _namespace: Option<&str>) -> Result<Vec<JobInfo>> {
