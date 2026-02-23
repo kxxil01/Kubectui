@@ -58,10 +58,13 @@ pub enum AppView {
     Dashboard,
     Nodes,
     // Workloads
+    WorkloadsOverview,
     Pods,
     Deployments,
     StatefulSets,
     DaemonSets,
+    ReplicaSets,
+    ReplicationControllers,
     Jobs,
     CronJobs,
     // Network
@@ -96,13 +99,16 @@ pub enum AppView {
 }
 
 impl AppView {
-    const ORDER: [AppView; 31] = [
+    const ORDER: [AppView; 34] = [
         AppView::Dashboard,
         AppView::Nodes,
+        AppView::WorkloadsOverview,
         AppView::Pods,
         AppView::Deployments,
         AppView::StatefulSets,
         AppView::DaemonSets,
+        AppView::ReplicaSets,
+        AppView::ReplicationControllers,
         AppView::Jobs,
         AppView::CronJobs,
         AppView::Services,
@@ -135,10 +141,13 @@ impl AppView {
         match self {
             AppView::Dashboard => "Dashboard",
             AppView::Nodes => "Nodes",
+            AppView::WorkloadsOverview => "Overview",
             AppView::Pods => "Pods",
             AppView::Deployments => "Deployments",
             AppView::StatefulSets => "Stateful Sets",
             AppView::DaemonSets => "Daemon Sets",
+            AppView::ReplicaSets => "Replica Sets",
+            AppView::ReplicationControllers => "Replication Controllers",
             AppView::Jobs => "Jobs",
             AppView::CronJobs => "Cron Jobs",
             AppView::Services => "Services",
@@ -172,10 +181,13 @@ impl AppView {
         match self {
             AppView::Dashboard => "󰋗",
             AppView::Nodes => "󰒋",
+            AppView::WorkloadsOverview => "󰋗",
             AppView::Pods => "󰠳",
             AppView::Deployments => "󰆧",
             AppView::StatefulSets => "󰆼",
             AppView::DaemonSets => "󰒓",
+            AppView::ReplicaSets => "󰆧",
+            AppView::ReplicationControllers => "󰆧",
             AppView::Jobs => "󰃰",
             AppView::CronJobs => "󰔠",
             AppView::Services => "󰛳",
@@ -208,10 +220,13 @@ impl AppView {
     pub const fn group(self) -> NavGroup {
         match self {
             AppView::Dashboard | AppView::Nodes => NavGroup::Overview,
-            AppView::Pods
+            AppView::WorkloadsOverview
+            | AppView::Pods
             | AppView::Deployments
             | AppView::StatefulSets
             | AppView::DaemonSets
+            | AppView::ReplicaSets
+            | AppView::ReplicationControllers
             | AppView::Jobs
             | AppView::CronJobs => NavGroup::Workloads,
             AppView::Services
@@ -265,7 +280,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 31] {
+    pub const fn tabs() -> &'static [AppView; 34] {
         &Self::ORDER
     }
 }
@@ -447,10 +462,13 @@ pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> Vec<SidebarItem> {
             AppView::Events,
         ]),
         (NavGroup::Workloads, &[
+            AppView::WorkloadsOverview,
             AppView::Pods,
             AppView::Deployments,
             AppView::StatefulSets,
             AppView::DaemonSets,
+            AppView::ReplicaSets,
+            AppView::ReplicationControllers,
             AppView::Jobs,
             AppView::CronJobs,
         ]),
@@ -1095,10 +1113,13 @@ mod tests {
         let mut app = AppState::default();
         let expected = [
             AppView::Nodes,
+            AppView::WorkloadsOverview,
             AppView::Pods,
             AppView::Deployments,
             AppView::StatefulSets,
             AppView::DaemonSets,
+            AppView::ReplicaSets,
+            AppView::ReplicationControllers,
             AppView::Jobs,
             AppView::CronJobs,
             AppView::Services,
@@ -1293,7 +1314,7 @@ mod tests {
     fn rapid_tab_switching_is_stable() {
         let mut app = AppState::default();
 
-        for _ in 0..(31 * 3) {
+        for _ in 0..(34 * 3) {
             app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         }
 

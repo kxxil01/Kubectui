@@ -55,7 +55,10 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         AppView::Pods => {
             render_pods_widget(frame, content, cluster, app.selected_idx(), app.search_query());
         }
-        AppView::Endpoints
+        AppView::WorkloadsOverview
+        | AppView::ReplicaSets
+        | AppView::ReplicationControllers
+        | AppView::Endpoints
         | AppView::Ingresses
         | AppView::IngressClasses
         | AppView::NetworkPolicies
