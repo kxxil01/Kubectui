@@ -15,6 +15,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use kubectui::{
     app::{AppAction, AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
+    events::apply_action,
     k8s::client::K8sClient,
     state::{ClusterSnapshot, GlobalState},
     ui,
@@ -98,6 +99,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
                 AppAction::CloseDetail => {
                     app.detail_view = None;
+                }
+                // Apply all other component actions
+                other => {
+                    apply_action(other, &mut app);
                 }
             }
         }

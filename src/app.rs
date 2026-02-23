@@ -143,12 +143,12 @@ pub enum AppAction {
 /// Runtime state for UI interaction and navigation.
 #[derive(Debug, Clone)]
 pub struct AppState {
-    view: AppView,
-    selected_idx: usize,
-    search_query: String,
-    is_search_mode: bool,
-    should_quit: bool,
-    error_message: Option<String>,
+    pub view: AppView,
+    pub selected_idx: usize,
+    pub search_query: String,
+    pub is_search_mode: bool,
+    pub should_quit: bool,
+    pub error_message: Option<String>,
     pub detail_view: Option<DetailViewState>,
 }
 
