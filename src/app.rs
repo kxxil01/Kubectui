@@ -836,7 +836,7 @@ impl AppState {
 
         if self.confirm_quit {
             return match key.code {
-                KeyCode::Char('q') | KeyCode::Char('y') | KeyCode::Enter | KeyCode::Esc => {
+                KeyCode::Char('q') | KeyCode::Char('y') | KeyCode::Enter => {
                     self.should_quit = true;
                     AppAction::Quit
                 }

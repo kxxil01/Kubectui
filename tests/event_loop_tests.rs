@@ -333,8 +333,14 @@ fn test_main_view_quit_on_escape() {
     assert_eq!(action, AppAction::None);
     assert!(app.confirm_quit);
 
-    // Second Esc confirms quit
+    // Second Esc cancels the dialog
     let action = route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app);
+    assert_eq!(action, AppAction::None);
+    assert!(!app.confirm_quit);
+
+    // q then y confirms quit
+    route_keyboard_input(KeyEvent::from(KeyCode::Char('q')), &mut app);
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('y')), &mut app);
     assert_eq!(action, AppAction::Quit);
 }
 
