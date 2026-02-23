@@ -58,7 +58,6 @@ pub enum AppView {
     Dashboard,
     Nodes,
     // Workloads
-    WorkloadsOverview,
     Pods,
     Deployments,
     StatefulSets,
@@ -99,10 +98,9 @@ pub enum AppView {
 }
 
 impl AppView {
-    const ORDER: [AppView; 34] = [
+    const ORDER: [AppView; 33] = [
         AppView::Dashboard,
         AppView::Nodes,
-        AppView::WorkloadsOverview,
         AppView::Pods,
         AppView::Deployments,
         AppView::StatefulSets,
@@ -141,7 +139,6 @@ impl AppView {
         match self {
             AppView::Dashboard => "Dashboard",
             AppView::Nodes => "Nodes",
-            AppView::WorkloadsOverview => "Overview",
             AppView::Pods => "Pods",
             AppView::Deployments => "Deployments",
             AppView::StatefulSets => "Stateful Sets",
@@ -181,7 +178,6 @@ impl AppView {
         match self {
             AppView::Dashboard => "󰋗",
             AppView::Nodes => "󰒋",
-            AppView::WorkloadsOverview => "󰋗",
             AppView::Pods => "󰠳",
             AppView::Deployments => "󰆧",
             AppView::StatefulSets => "󰆼",
@@ -220,8 +216,7 @@ impl AppView {
     pub const fn group(self) -> NavGroup {
         match self {
             AppView::Dashboard | AppView::Nodes => NavGroup::Overview,
-            AppView::WorkloadsOverview
-            | AppView::Pods
+            AppView::Pods
             | AppView::Deployments
             | AppView::StatefulSets
             | AppView::DaemonSets
@@ -280,7 +275,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 34] {
+    pub const fn tabs() -> &'static [AppView; 33] {
         &Self::ORDER
     }
 }
@@ -462,7 +457,6 @@ pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> Vec<SidebarItem> {
             AppView::Events,
         ]),
         (NavGroup::Workloads, &[
-            AppView::WorkloadsOverview,
             AppView::Pods,
             AppView::Deployments,
             AppView::StatefulSets,
@@ -1113,7 +1107,6 @@ mod tests {
         let mut app = AppState::default();
         let expected = [
             AppView::Nodes,
-            AppView::WorkloadsOverview,
             AppView::Pods,
             AppView::Deployments,
             AppView::StatefulSets,
@@ -1314,7 +1307,7 @@ mod tests {
     fn rapid_tab_switching_is_stable() {
         let mut app = AppState::default();
 
-        for _ in 0..(34 * 3) {
+        for _ in 0..(33 * 3) {
             app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         }
 

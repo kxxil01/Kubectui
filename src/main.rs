@@ -337,8 +337,7 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
             .pod_disruption_budgets
             .get(idx)
             .map(|pdb| ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone())),
-        AppView::WorkloadsOverview
-        | AppView::DaemonSets
+        AppView::DaemonSets
         | AppView::ReplicaSets
         | AppView::ReplicationControllers
         | AppView::Jobs
