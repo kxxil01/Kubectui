@@ -4,8 +4,8 @@
 mod integration_tests {
     use kubectui::coordinator::UpdateCoordinator;
     use kubectui::k8s::client::K8sClient;
-    use tokio::sync::mpsc;
     use std::time::Duration;
+    use tokio::sync::mpsc;
 
     /// Test that we can connect to the KIND cluster
     #[tokio::test]
@@ -27,7 +27,8 @@ mod integration_tests {
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start polling for a pod
-        coordinator.start_probe_polling("probes-test".to_string(), "default".to_string())
+        coordinator
+            .start_probe_polling("probes-test".to_string(), "default".to_string())
             .await
             .expect("Failed to start probe polling");
 
@@ -36,7 +37,9 @@ mod integration_tests {
 
         // Should have received a probe update or error
         let mut received_update = false;
-        while let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(100), update_rx.recv()).await {
+        while let Ok(Some(msg)) =
+            tokio::time::timeout(Duration::from_millis(100), update_rx.recv()).await
+        {
             use kubectui::coordinator::UpdateMessage;
             match msg {
                 UpdateMessage::ProbeUpdate { .. } => {
@@ -68,13 +71,16 @@ mod integration_tests {
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start polling for multiple pods
-        coordinator.start_probe_polling("pod-1".to_string(), "default".to_string())
+        coordinator
+            .start_probe_polling("pod-1".to_string(), "default".to_string())
             .await
             .ok();
-        coordinator.start_probe_polling("pod-2".to_string(), "default".to_string())
+        coordinator
+            .start_probe_polling("pod-2".to_string(), "default".to_string())
             .await
             .ok();
-        coordinator.start_probe_polling("pod-3".to_string(), "default".to_string())
+        coordinator
+            .start_probe_polling("pod-3".to_string(), "default".to_string())
             .await
             .ok();
 
@@ -87,7 +93,11 @@ mod integration_tests {
         coordinator.shutdown().await.ok();
 
         tokio::time::sleep(Duration::from_millis(100)).await;
-        assert_eq!(coordinator.active_probe_tasks().await, 0, "Tasks not cleaned up");
+        assert_eq!(
+            coordinator.active_probe_tasks().await,
+            0,
+            "Tasks not cleaned up"
+        );
     }
 
     /// Test log streaming on a real pod
@@ -104,14 +114,15 @@ mod integration_tests {
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start streaming logs
-        coordinator.start_log_streaming(
-            "nginx".to_string(),
-            "default".to_string(),
-            "nginx".to_string(),
-            false,  // Don't follow, just get recent logs
-        )
-        .await
-        .ok();
+        coordinator
+            .start_log_streaming(
+                "nginx".to_string(),
+                "default".to_string(),
+                "nginx".to_string(),
+                false, // Don't follow, just get recent logs
+            )
+            .await
+            .ok();
 
         // Wait for logs to be streamed
         tokio::time::sleep(Duration::from_secs(1)).await;
@@ -120,7 +131,9 @@ mod integration_tests {
         let mut received_log = false;
         let mut message_count = 0;
         while message_count < 10 {
-            if let Ok(Some(msg)) = tokio::time::timeout(Duration::from_millis(200), update_rx.recv()).await {
+            if let Ok(Some(msg)) =
+                tokio::time::timeout(Duration::from_millis(200), update_rx.recv()).await
+            {
                 use kubectui::coordinator::UpdateMessage;
                 match msg {
                     UpdateMessage::LogUpdate { .. } => {
@@ -154,7 +167,8 @@ mod integration_tests {
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start polling
-        coordinator.start_probe_polling("test-pod".to_string(), "default".to_string())
+        coordinator
+            .start_probe_polling("test-pod".to_string(), "default".to_string())
             .await
             .ok();
 
@@ -162,7 +176,8 @@ mod integration_tests {
         let tasks_before = coordinator.active_probe_tasks().await;
 
         // Stop polling
-        coordinator.stop_probe_polling("test-pod", "default")
+        coordinator
+            .stop_probe_polling("test-pod", "default")
             .await
             .ok();
 
@@ -188,21 +203,20 @@ mod integration_tests {
 
         // Start many tasks
         for i in 0..10 {
-            coordinator.start_probe_polling(
-                format!("pod-{}", i),
-                "default".to_string(),
-            )
-            .await
-            .ok();
+            coordinator
+                .start_probe_polling(format!("pod-{}", i), "default".to_string())
+                .await
+                .ok();
 
-            coordinator.start_log_streaming(
-                format!("pod-{}", i),
-                "default".to_string(),
-                format!("container-{}", i),
-                false,
-            )
-            .await
-            .ok();
+            coordinator
+                .start_log_streaming(
+                    format!("pod-{}", i),
+                    "default".to_string(),
+                    format!("container-{}", i),
+                    false,
+                )
+                .await
+                .ok();
         }
 
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -218,8 +232,14 @@ mod integration_tests {
         let probe_tasks_after = coordinator.active_probe_tasks().await;
         let log_tasks_after = coordinator.active_log_tasks().await;
 
-        println!("Probe tasks before: {}, after: {}", probe_tasks_before, probe_tasks_after);
-        println!("Log tasks before: {}, after: {}", log_tasks_before, log_tasks_after);
+        println!(
+            "Probe tasks before: {}, after: {}",
+            probe_tasks_before, probe_tasks_after
+        );
+        println!(
+            "Log tasks before: {}, after: {}",
+            log_tasks_before, log_tasks_after
+        );
 
         assert!(probe_tasks_before > 0, "No probe tasks started");
         assert!(log_tasks_before > 0, "No log tasks started");

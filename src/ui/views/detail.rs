@@ -17,9 +17,10 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3),
-            Constraint::Length(9),
+            Constraint::Length(8),
+            Constraint::Length(7),
             Constraint::Length(6),
-            Constraint::Min(8),
+            Constraint::Min(6),
             Constraint::Length(3),
         ])
         .split(popup);
@@ -128,6 +129,44 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         .wrap(Wrap { trim: false });
     frame.render_widget(resource_widget, chunks[2]);
 
+    let metrics_lines = if let Some(message) = &detail_state.metrics_unavailable_message {
+        vec![Line::from(message.clone())]
+    } else if let Some(node_metrics) = &detail_state.node_metrics {
+        vec![
+            Line::from(format!("CPU: {}", node_metrics.cpu)),
+            Line::from(format!("Memory: {}", node_metrics.memory)),
+            Line::from(format!(
+                "Window: {}",
+                node_metrics
+                    .window
+                    .clone()
+                    .unwrap_or_else(|| "n/a".to_string())
+            )),
+        ]
+    } else if let Some(pod_metrics) = &detail_state.pod_metrics {
+        if pod_metrics.containers.is_empty() {
+            vec![Line::from("No container metrics available")]
+        } else {
+            pod_metrics
+                .containers
+                .iter()
+                .map(|container| {
+                    Line::from(format!(
+                        "{}: cpu={} mem={}",
+                        container.name, container.cpu, container.memory
+                    ))
+                })
+                .collect()
+        }
+    } else {
+        vec![Line::from("Metrics unavailable")]
+    };
+
+    let metrics_widget = Paragraph::new(metrics_lines)
+        .block(Block::default().borders(Borders::ALL).title("Metrics"))
+        .wrap(Wrap { trim: false });
+    frame.render_widget(metrics_widget, chunks[3]);
+
     let yaml_body = if detail_state.loading {
         "Loading detail...".to_string()
     } else if let Some(err) = &detail_state.error {
@@ -142,12 +181,12 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
     let yaml_widget = Paragraph::new(yaml_body)
         .block(Block::default().borders(Borders::ALL).title("YAML"))
         .wrap(Wrap { trim: false });
-    frame.render_widget(yaml_widget, chunks[3]);
+    frame.render_widget(yaml_widget, chunks[4]);
 
-    let footer = Paragraph::new("[View YAML] [Logs] [Port Fwd] [Delete]    [Esc] Close")
+    let footer = Paragraph::new("[Metrics] [View YAML] [Logs] [Port Fwd] [Delete]    [Esc] Close")
         .style(Style::default().fg(Color::Gray))
         .block(Block::default().borders(Borders::ALL).title("Actions"));
-    frame.render_widget(footer, chunks[4]);
+    frame.render_widget(footer, chunks[5]);
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {

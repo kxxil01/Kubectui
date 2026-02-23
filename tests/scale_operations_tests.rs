@@ -1,6 +1,6 @@
 //! Comprehensive tests for scaling operations - Stream C
 
-use kubectui::k8s::scaling::{ScaleRequest, ScaleProgress, ScaleError};
+use kubectui::k8s::scaling::{ScaleError, ScaleProgress, ScaleRequest};
 use std::error::Error;
 
 #[test]
@@ -82,8 +82,7 @@ fn test_scale_progress_initiated_serialization() {
     let json = serde_json::to_string(&progress).expect("should serialize");
     assert!(json.contains("Initiated"));
 
-    let deserialized: ScaleProgress =
-        serde_json::from_str(&json).expect("should deserialize");
+    let deserialized: ScaleProgress = serde_json::from_str(&json).expect("should deserialize");
     assert_eq!(format!("{:?}", deserialized), "Initiated");
 }
 

@@ -90,7 +90,11 @@ impl ProbeConfig {
     pub fn format_display(&self) -> String {
         format!(
             "{} ({}), delay: {}s, period: {}s, timeout: {}s",
-            self.probe_type, self.handler, self.initial_delay_seconds, self.period_seconds, self.timeout_seconds
+            self.probe_type,
+            self.handler,
+            self.initial_delay_seconds,
+            self.period_seconds,
+            self.timeout_seconds
         )
     }
 }
@@ -163,7 +167,10 @@ fn parse_probe(probe: &Probe, probe_type: ProbeType) -> Option<ProbeConfig> {
         ProbeHandler::Http {
             path: http_get.path.clone().unwrap_or_default(),
             port,
-            scheme: http_get.scheme.clone().unwrap_or_else(|| "HTTP".to_string()),
+            scheme: http_get
+                .scheme
+                .clone()
+                .unwrap_or_else(|| "HTTP".to_string()),
         }
     } else if let Some(exec) = &probe.exec {
         ProbeHandler::Exec {

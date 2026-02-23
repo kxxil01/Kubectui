@@ -1,9 +1,9 @@
 //! Port forwarding implementation using kube-rs PortForward API
 
+use anyhow::{Context, Result, anyhow};
+use dashmap::DashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use anyhow::{anyhow, Context, Result};
-use dashmap::DashMap;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tracing::{info, instrument};
@@ -19,7 +19,11 @@ pub struct PortForwardTarget {
 }
 
 impl PortForwardTarget {
-    pub fn new(namespace: impl Into<String>, pod_name: impl Into<String>, remote_port: u16) -> Self {
+    pub fn new(
+        namespace: impl Into<String>,
+        pod_name: impl Into<String>,
+        remote_port: u16,
+    ) -> Self {
         Self {
             namespace: namespace.into(),
             pod_name: pod_name.into(),
@@ -115,7 +119,8 @@ impl PortForwarderService {
         }
 
         // Create tunnel via K8s API
-        let tunnel_info = self.k8s_client
+        let tunnel_info = self
+            .k8s_client
             .create_port_forward(&target, &config)
             .await?;
 
@@ -189,11 +194,7 @@ impl PortForwarderService {
     }
 
     pub async fn stop_all(&self) {
-        let ids: Vec<String> = self
-            .tunnels
-            .iter()
-            .map(|e| e.key().clone())
-            .collect();
+        let ids: Vec<String> = self.tunnels.iter().map(|e| e.key().clone()).collect();
 
         for id in ids {
             let _ = self.stop_forward(&id).await;
@@ -208,7 +209,9 @@ impl PortForwarderService {
     }
 
     pub fn get_tunnel(&self, tunnel_id: &str) -> Option<PortForwardTunnelInfo> {
-        self.tunnels.get(tunnel_id).map(|entry| entry.value().clone())
+        self.tunnels
+            .get(tunnel_id)
+            .map(|entry| entry.value().clone())
     }
 }
 
@@ -217,7 +220,11 @@ mod tests {
     use super::*;
 
     async fn service() -> PortForwarderService {
-        let client = Arc::new(crate::k8s::client::K8sClient::connect().await.expect("kind cluster should be available for tests"));
+        let client = Arc::new(
+            crate::k8s::client::K8sClient::connect()
+                .await
+                .expect("kind cluster should be available for tests"),
+        );
         PortForwarderService::new(client)
     }
 
@@ -312,4 +319,3 @@ mod tests {
         }
     }
 }
-

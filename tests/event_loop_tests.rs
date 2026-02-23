@@ -8,7 +8,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use kubectui::app::{
-    AppAction, AppState, ActiveComponent, DetailViewState, PortForwardField, ResourceRef,
+    ActiveComponent, AppAction, AppState, DetailViewState, PortForwardField, ResourceRef,
 };
 use kubectui::events::{apply_action, route_keyboard_input};
 
@@ -174,7 +174,10 @@ fn test_port_forward_digit_input() {
     // Type '8' in LocalPort field
     let key = KeyEvent::from(KeyCode::Char('8'));
     let action = route_keyboard_input(key, &mut app);
-    assert_eq!(action, AppAction::PortForwardUpdateLocalPort("8".to_string()));
+    assert_eq!(
+        action,
+        AppAction::PortForwardUpdateLocalPort("8".to_string())
+    );
 
     apply_action(action, &mut app);
 
@@ -427,7 +430,11 @@ fn test_probe_panel_navigation() {
     // Add some probes to the state
     if let Some(detail) = &mut app.detail_view {
         if let Some(probe) = &mut detail.probe_panel {
-            probe.probes = vec!["Probe1".to_string(), "Probe2".to_string(), "Probe3".to_string()];
+            probe.probes = vec![
+                "Probe1".to_string(),
+                "Probe2".to_string(),
+                "Probe3".to_string(),
+            ];
             probe.expanded = vec![false, false, false];
         }
     }

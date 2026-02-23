@@ -100,11 +100,7 @@ impl ProbePanelState {
 }
 
 /// Render the probe panel widget.
-pub fn render_probe_panel(
-    frame: &mut Frame,
-    area: Rect,
-    state: &ProbePanelState,
-) {
+pub fn render_probe_panel(frame: &mut Frame, area: Rect, state: &ProbePanelState) {
     let block = Block::default()
         .title("Health Probes")
         .borders(Borders::ALL)
@@ -126,26 +122,22 @@ pub fn render_probe_panel(
             let indicator = if is_expanded { "▼" } else { "▶" };
             let selector = if is_selected { "█" } else { " " };
 
-            let probe_count = if probes.liveness.is_some() as usize
-                + probes.readiness.is_some() as usize
-                == 0
-            {
-                "no probes".to_string()
-            } else {
-                let mut count_str = String::new();
-                if probes.liveness.is_some() {
-                    count_str.push_str("L");
-                }
-                if probes.readiness.is_some() {
-                    count_str.push_str("R");
-                }
-                count_str
-            };
+            let probe_count =
+                if probes.liveness.is_some() as usize + probes.readiness.is_some() as usize == 0 {
+                    "no probes".to_string()
+                } else {
+                    let mut count_str = String::new();
+                    if probes.liveness.is_some() {
+                        count_str.push_str("L");
+                    }
+                    if probes.readiness.is_some() {
+                        count_str.push_str("R");
+                    }
+                    count_str
+                };
 
             let container_line_style = if is_selected {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .bg(Color::DarkGray)
+                Style::default().fg(Color::Cyan).bg(Color::DarkGray)
             } else {
                 Style::default().fg(Color::White)
             };
@@ -156,9 +148,7 @@ pub fn render_probe_panel(
                 Span::styled(format!(" {} ", container_name), container_line_style),
                 Span::styled(
                     format!("[{}]", probe_count),
-                    Style::default()
-                        .fg(Color::DarkGray)
-                        .italic(),
+                    Style::default().fg(Color::DarkGray).italic(),
                 ),
             ]);
 
@@ -244,18 +234,9 @@ mod tests {
     #[test]
     fn test_probe_panel_navigation() {
         let probes = vec![
-            (
-                "container1".to_string(),
-                ContainerProbes::default(),
-            ),
-            (
-                "container2".to_string(),
-                ContainerProbes::default(),
-            ),
-            (
-                "container3".to_string(),
-                ContainerProbes::default(),
-            ),
+            ("container1".to_string(), ContainerProbes::default()),
+            ("container2".to_string(), ContainerProbes::default()),
+            ("container3".to_string(), ContainerProbes::default()),
         ];
 
         let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
@@ -323,10 +304,22 @@ mod tests {
 
     #[test]
     fn test_status_color_mapping() {
-        assert_eq!(ProbePanelState::status_color(ProbeStatus::Success), Color::Green);
-        assert_eq!(ProbePanelState::status_color(ProbeStatus::Failure), Color::Red);
-        assert_eq!(ProbePanelState::status_color(ProbeStatus::Pending), Color::Blue);
-        assert_eq!(ProbePanelState::status_color(ProbeStatus::Error), Color::Yellow);
+        assert_eq!(
+            ProbePanelState::status_color(ProbeStatus::Success),
+            Color::Green
+        );
+        assert_eq!(
+            ProbePanelState::status_color(ProbeStatus::Failure),
+            Color::Red
+        );
+        assert_eq!(
+            ProbePanelState::status_color(ProbeStatus::Pending),
+            Color::Blue
+        );
+        assert_eq!(
+            ProbePanelState::status_color(ProbeStatus::Error),
+            Color::Yellow
+        );
     }
 
     #[test]
@@ -396,11 +389,7 @@ mod tests {
 
     #[test]
     fn test_empty_probes() {
-        let state = ProbePanelState::new(
-            "test-pod".to_string(),
-            "default".to_string(),
-            vec![],
-        );
+        let state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), vec![]);
 
         assert_eq!(state.healthy_count(), 0);
         assert_eq!(state.selected_index, 0);

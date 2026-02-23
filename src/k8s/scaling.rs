@@ -1,14 +1,14 @@
 //! Kubernetes deployment scaling operations with progress tracking.
 
-use anyhow::{anyhow, Context, Result};
+use crate::k8s::client::K8sClient;
+use anyhow::{Context, Result, anyhow};
 use k8s_openapi::api::apps::v1::Deployment;
 use kube::{Api, api::Patch, api::PatchParams};
-use serde_json::json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fmt;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use crate::k8s::client::K8sClient;
 
 /// Error types for scaling operations.
 #[derive(Debug, Clone)]
@@ -27,7 +27,11 @@ impl fmt::Display for ScaleError {
                 write!(f, "Deployment '{}' not found in namespace '{}'", name, ns)
             }
             ScaleError::InvalidReplicaCount(count) => {
-                write!(f, "Invalid replica count {}: must be between 0 and 100", count)
+                write!(
+                    f,
+                    "Invalid replica count {}: must be between 0 and 100",
+                    count
+                )
             }
             ScaleError::ApiError(msg) => write!(f, "API error: {}", msg),
             ScaleError::Timeout(msg) => write!(f, "Timeout: {}", msg),
@@ -71,7 +75,10 @@ impl ScaleRequest {
 
     pub fn validate(&self) -> Result<()> {
         if self.replicas < 0 || self.replicas > 100 {
-            return Err(anyhow!("invalid replica count {}: must be between 0 and 100", self.replicas));
+            return Err(anyhow!(
+                "invalid replica count {}: must be between 0 and 100",
+                self.replicas
+            ));
         }
         Ok(())
     }
@@ -80,13 +87,29 @@ impl ScaleRequest {
 impl K8sClient {
     pub async fn scale_deployment(&self, name: &str, namespace: &str, replicas: i32) -> Result<()> {
         if replicas < 0 || replicas > 100 {
-            return Err(anyhow!("invalid replica count {}: must be between 0 and 100", replicas));
+            return Err(anyhow!(
+                "invalid replica count {}: must be between 0 and 100",
+                replicas
+            ));
         }
         let client = self.get_client();
         let deployments: Api<Deployment> = Api::namespaced(client, namespace);
-        deployments.get(name).await.with_context(|| format!("deployment '{}' not found in namespace '{}'", name, namespace))?;
+        deployments.get(name).await.with_context(|| {
+            format!(
+                "deployment '{}' not found in namespace '{}'",
+                name, namespace
+            )
+        })?;
         let patch = Patch::Merge(json!({"spec": {"replicas": replicas}}));
-        deployments.patch(name, &PatchParams::apply("kubectui"), &patch).await.with_context(|| format!("failed to patch deployment '{}' in namespace '{}'", name, namespace))?;
+        deployments
+            .patch(name, &PatchParams::apply("kubectui"), &patch)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to patch deployment '{}' in namespace '{}'",
+                    name, namespace
+                )
+            })?;
         Ok(())
     }
 }
@@ -206,12 +229,19 @@ mod tests {
     fn test_scale_error_display_variants() {
         assert!(format!("{}", ScaleError::ApiError("oops".to_string())).contains("API error"));
         assert!(format!("{}", ScaleError::Timeout("slow".to_string())).contains("Timeout"));
-        assert_eq!(format!("{}", ScaleError::Cancelled), "Scale operation cancelled");
+        assert_eq!(
+            format!("{}", ScaleError::Cancelled),
+            "Scale operation cancelled"
+        );
     }
 
     #[tokio::test]
     async fn execute_scale_rejects_invalid_replica_count_and_sends_no_progress() {
-        let client = Arc::new(K8sClient::connect().await.expect("kind cluster should be available"));
+        let client = Arc::new(
+            K8sClient::connect()
+                .await
+                .expect("kind cluster should be available"),
+        );
         let request = ScaleRequest::new("any", "default", 101);
         let (tx, mut rx) = mpsc::channel(4);
 
@@ -228,7 +258,11 @@ mod tests {
 
     #[tokio::test]
     async fn execute_scale_reports_api_error_when_deployment_missing() {
-        let client = Arc::new(K8sClient::connect().await.expect("kind cluster should be available"));
+        let client = Arc::new(
+            K8sClient::connect()
+                .await
+                .expect("kind cluster should be available"),
+        );
         let request = ScaleRequest::new("missing-deployment-xyz", "default", 1);
         let (tx, mut rx) = mpsc::channel(8);
 

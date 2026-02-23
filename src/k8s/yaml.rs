@@ -99,6 +99,22 @@ fn api_resource_for_kind(kind: &str) -> Result<(ApiResource, bool)> {
             ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "Node")),
             false,
         )),
+        "resourcequota" | "resourcequotas" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "ResourceQuota")),
+            true,
+        )),
+        "limitrange" | "limitranges" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "LimitRange")),
+            true,
+        )),
+        "poddisruptionbudget" | "poddisruptionbudgets" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "policy",
+                "v1",
+                "PodDisruptionBudget",
+            )),
+            true,
+        )),
         _ => Err(anyhow!("unsupported kind: {kind}")),
     }
 }

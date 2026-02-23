@@ -1,11 +1,11 @@
 //! Port forward dialog and tunnel list UI with enhanced form validation
 
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
     widgets::{Block, Borders, Clear, Paragraph},
 };
-use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::k8s::portforward::{PortForwardConfig, PortForwardTarget, TunnelState};
 use crate::state::port_forward::TunnelRegistry;
@@ -34,21 +34,21 @@ pub enum FormField {
 pub struct PortForwardDialog {
     /// Current mode.
     pub mode: PortForwardMode,
-    
+
     /// Form fields with input widget state.
     pub namespace_field: InputFieldWidget,
     pub pod_name_field: InputFieldWidget,
     pub remote_port_field: InputFieldWidget,
     pub local_port_field: InputFieldWidget,
-    
+
     /// Current focused field (in create mode).
     pub focus: FormField,
-    
+
     /// Tunnel registry.
     pub registry: TunnelRegistry,
     /// Selected tunnel index.
     pub selected_tunnel: usize,
-    
+
     /// Error message.
     pub error: Option<String>,
     /// Success message.
@@ -129,19 +129,17 @@ impl PortForwardDialog {
                 self.mode = PortForwardMode::List;
                 PortForwardAction::None
             }
-            KeyCode::Enter => {
-                match self.validate() {
-                    Ok((target, config)) => {
-                        self.clear_form();
-                        self.success = Some("Creating tunnel...".to_string());
-                        PortForwardAction::Create((target, config))
-                    }
-                    Err(msg) => {
-                        self.error = Some(msg);
-                        PortForwardAction::None
-                    }
+            KeyCode::Enter => match self.validate() {
+                Ok((target, config)) => {
+                    self.clear_form();
+                    self.success = Some("Creating tunnel...".to_string());
+                    PortForwardAction::Create((target, config))
                 }
-            }
+                Err(msg) => {
+                    self.error = Some(msg);
+                    PortForwardAction::None
+                }
+            },
             KeyCode::Backspace => {
                 self.current_field_mut().delete_char();
                 self.error = None;
@@ -246,19 +244,25 @@ impl PortForwardDialog {
     /// Validate form and build configuration.
     fn validate(&mut self) -> Result<(PortForwardTarget, PortForwardConfig), String> {
         // Validate namespace
-        self.namespace_field.validate_required()
+        self.namespace_field
+            .validate_required()
             .map_err(|_| "Namespace is required".to_string())?;
 
         // Validate pod name
-        self.pod_name_field.validate_required()
+        self.pod_name_field
+            .validate_required()
             .map_err(|_| "Pod name is required".to_string())?;
 
         // Validate remote port
-        let remote_port = self.remote_port_field.validate_port()
+        let remote_port = self
+            .remote_port_field
+            .validate_port()
             .map_err(|e| format!("Remote port: {}", e))?;
 
         // Validate local port (0 = auto)
-        let local_port = self.local_port_field.validate_port_optional()
+        let local_port = self
+            .local_port_field
+            .validate_port_optional()
             .map_err(|e| format!("Local port: {}", e))?;
 
         let target = PortForwardTarget::new(
@@ -285,7 +289,11 @@ impl PortForwardDialog {
     }
 
     fn get_selected_tunnel(&self) -> Option<crate::k8s::portforward::PortForwardTunnelInfo> {
-        self.registry.tunnels().values().nth(self.selected_tunnel).cloned()
+        self.registry
+            .tunnels()
+            .values()
+            .nth(self.selected_tunnel)
+            .cloned()
     }
 
     /// Render the dialog.
@@ -359,8 +367,8 @@ impl PortForwardDialog {
 
         // Messages section
         if let Some(ref error) = self.error {
-            let error_text = Paragraph::new(format!("✗ {}", error))
-                .style(Style::default().fg(Color::Red));
+            let error_text =
+                Paragraph::new(format!("✗ {}", error)).style(Style::default().fg(Color::Red));
             frame.render_widget(error_text, chunks[1]);
         }
 
@@ -389,10 +397,7 @@ impl PortForwardDialog {
         display_field.focused = focused;
         let styled = display_field.styled_text(focused);
 
-        let text = Line::from(vec![
-            Span::raw(format!("{}: ", label)),
-            styled,
-        ]);
+        let text = Line::from(vec![Span::raw(format!("{}: ", label)), styled]);
 
         let paragraph = Paragraph::new(text);
         frame.render_widget(paragraph, area);
@@ -403,22 +408,22 @@ impl PortForwardDialog {
         frame.render_widget(Clear, popup);
 
         let block = Block::default()
-            .title(format!(" Active Tunnels ({}) ", self.registry.active_count()))
+            .title(format!(
+                " Active Tunnels ({}) ",
+                self.registry.active_count()
+            ))
             .borders(Borders::ALL);
         frame.render_widget(block.clone(), popup);
 
         let inner = block.inner(popup);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(10),
-                Constraint::Length(2),
-            ])
+            .constraints([Constraint::Min(10), Constraint::Length(2)])
             .split(inner);
 
         if self.registry.is_empty() {
-            let message = Paragraph::new("No active tunnels")
-                .style(Style::default().fg(Color::Gray));
+            let message =
+                Paragraph::new("No active tunnels").style(Style::default().fg(Color::Gray));
             frame.render_widget(message, chunks[0]);
         } else {
             let mut lines = vec![];
@@ -441,13 +446,12 @@ impl PortForwardDialog {
 
                 let content = format!(
                     "{} → localhost:{}",
-                    tunnel.target.pod_name, tunnel.local_addr.port()
+                    tunnel.target.pod_name,
+                    tunnel.local_addr.port()
                 );
 
                 let style = if is_selected {
-                    Style::default()
-                        .bg(Color::DarkGray)
-                        .fg(Color::White)
+                    Style::default().bg(Color::DarkGray).fg(Color::White)
                 } else {
                     Style::default()
                 };
@@ -474,8 +478,9 @@ impl PortForwardDialog {
         }
 
         // Footer
-        let footer = Paragraph::new("[↑↓] Select │ [d] Delete │ [r] Refresh │ [F1] Create │ [Esc] Close")
-            .style(Style::default().fg(Color::Gray));
+        let footer =
+            Paragraph::new("[↑↓] Select │ [d] Delete │ [r] Refresh │ [F1] Create │ [Esc] Close")
+                .style(Style::default().fg(Color::Gray));
         frame.render_widget(footer, chunks[1]);
     }
 }
@@ -510,10 +515,15 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{backend::TestBackend, Terminal};
-    use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
 
-    fn make_tunnel(id: &str, pod: &str, state: TunnelState, port: u16) -> crate::k8s::portforward::PortForwardTunnelInfo {
+    fn make_tunnel(
+        id: &str,
+        pod: &str,
+        state: TunnelState,
+        port: u16,
+    ) -> crate::k8s::portforward::PortForwardTunnelInfo {
         crate::k8s::portforward::PortForwardTunnelInfo {
             id: id.to_string(),
             target: PortForwardTarget::new("default", pod, 8080),
@@ -622,20 +632,24 @@ mod tests {
         dialog.update_registry(registry);
 
         assert_eq!(dialog.selected_tunnel, 0);
-        
+
         // Get the first selected tunnel before navigation
-        let first_tunnel = dialog.get_selected_tunnel().expect("first tunnel should exist");
-        
+        let first_tunnel = dialog
+            .get_selected_tunnel()
+            .expect("first tunnel should exist");
+
         // Navigate down
         dialog.handle_key(KeyEvent::from(KeyCode::Down));
         assert_eq!(dialog.selected_tunnel, 1);
-        
+
         // Get the second selected tunnel
-        let second_tunnel = dialog.get_selected_tunnel().expect("second tunnel should exist");
-        
+        let second_tunnel = dialog
+            .get_selected_tunnel()
+            .expect("second tunnel should exist");
+
         // Verify they're different tunnels
         assert_ne!(first_tunnel.id, second_tunnel.id);
-        
+
         // Delete action should target the currently selected tunnel (second one)
         let action = dialog.handle_key(KeyEvent::from(KeyCode::Char('d')));
         assert_eq!(action, PortForwardAction::Stop(second_tunnel.id));
@@ -667,11 +681,15 @@ mod tests {
 
         let mut registry = TunnelRegistry::new();
         registry.add_tunnel(make_tunnel("t-active", "pod-a", TunnelState::Active, 6001));
-        registry.add_tunnel(make_tunnel("t-starting", "pod-b", TunnelState::Starting, 6002));
+        registry.add_tunnel(make_tunnel(
+            "t-starting",
+            "pod-b",
+            TunnelState::Starting,
+            6002,
+        ));
         registry.add_tunnel(make_tunnel("t-error", "pod-c", TunnelState::Error, 6003));
         dialog.update_registry(registry);
 
         draw_dialog(&dialog);
     }
 }
-

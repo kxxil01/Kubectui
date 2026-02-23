@@ -2,10 +2,10 @@
 
 #[cfg(test)]
 mod coordinator_tests {
-    use kubectui::coordinator::{UpdateCoordinator, UpdateMessage, LogStreamStatus};
+    use kubectui::coordinator::{LogStreamStatus, UpdateCoordinator, UpdateMessage};
     use kubectui::k8s::logs::PodRef;
-    use tokio::sync::mpsc;
     use std::time::Duration;
+    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_coordinator_creation() {
@@ -30,7 +30,9 @@ mod coordinator_tests {
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start probe polling for first pod (won't actually work without pod, but tests task tracking)
-        let result = coordinator.start_probe_polling("test-pod-1".to_string(), "default".to_string()).await;
+        let result = coordinator
+            .start_probe_polling("test-pod-1".to_string(), "default".to_string())
+            .await;
         assert!(result.is_ok());
 
         // Task is added before the actual poll starts, so we should have at least 1 task
@@ -50,12 +52,18 @@ mod coordinator_tests {
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start probe polling
-        coordinator.start_probe_polling("test-pod".to_string(), "default".to_string()).await.ok();
-        
+        coordinator
+            .start_probe_polling("test-pod".to_string(), "default".to_string())
+            .await
+            .ok();
+
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         // Stop probe polling
-        coordinator.stop_probe_polling("test-pod", "default").await.ok();
+        coordinator
+            .stop_probe_polling("test-pod", "default")
+            .await
+            .ok();
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -75,14 +83,20 @@ mod coordinator_tests {
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start probe polling
-        coordinator.start_probe_polling("test-pod".to_string(), "default".to_string()).await.ok();
-        
+        coordinator
+            .start_probe_polling("test-pod".to_string(), "default".to_string())
+            .await
+            .ok();
+
         tokio::time::sleep(Duration::from_millis(100)).await;
         let count_after_first = coordinator.active_probe_tasks().await;
 
         // Try to start again (should be idempotent)
-        coordinator.start_probe_polling("test-pod".to_string(), "default".to_string()).await.ok();
-        
+        coordinator
+            .start_probe_polling("test-pod".to_string(), "default".to_string())
+            .await
+            .ok();
+
         tokio::time::sleep(Duration::from_millis(100)).await;
         let count_after_second = coordinator.active_probe_tasks().await;
 
@@ -102,21 +116,25 @@ mod coordinator_tests {
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start log streaming for first container
-        let result = coordinator.start_log_streaming(
-            "test-pod".to_string(),
-            "default".to_string(),
-            "container1".to_string(),
-            false,
-        ).await;
+        let result = coordinator
+            .start_log_streaming(
+                "test-pod".to_string(),
+                "default".to_string(),
+                "container1".to_string(),
+                false,
+            )
+            .await;
         assert!(result.is_ok());
 
         // Start log streaming for second container
-        let result = coordinator.start_log_streaming(
-            "test-pod".to_string(),
-            "default".to_string(),
-            "container2".to_string(),
-            false,
-        ).await;
+        let result = coordinator
+            .start_log_streaming(
+                "test-pod".to_string(),
+                "default".to_string(),
+                "container2".to_string(),
+                false,
+            )
+            .await;
         assert!(result.is_ok());
 
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -138,14 +156,23 @@ mod coordinator_tests {
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start multiple tasks
-        coordinator.start_probe_polling("test-pod-1".to_string(), "default".to_string()).await.ok();
-        coordinator.start_probe_polling("test-pod-2".to_string(), "default".to_string()).await.ok();
-        coordinator.start_log_streaming(
-            "test-pod".to_string(),
-            "default".to_string(),
-            "container1".to_string(),
-            false,
-        ).await.ok();
+        coordinator
+            .start_probe_polling("test-pod-1".to_string(), "default".to_string())
+            .await
+            .ok();
+        coordinator
+            .start_probe_polling("test-pod-2".to_string(), "default".to_string())
+            .await
+            .ok();
+        coordinator
+            .start_log_streaming(
+                "test-pod".to_string(),
+                "default".to_string(),
+                "container1".to_string(),
+                false,
+            )
+            .await
+            .ok();
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
@@ -165,14 +192,15 @@ mod coordinator_tests {
         let msg = UpdateMessage::ProbeUpdate {
             pod_name: "test-pod".to_string(),
             namespace: "default".to_string(),
-            probes: vec![(
-                "test-container".to_string(),
-                ContainerProbes::default(),
-            )],
+            probes: vec![("test-container".to_string(), ContainerProbes::default())],
         };
 
         match msg {
-            UpdateMessage::ProbeUpdate { pod_name, namespace, probes } => {
+            UpdateMessage::ProbeUpdate {
+                pod_name,
+                namespace,
+                probes,
+            } => {
                 assert_eq!(pod_name, "test-pod");
                 assert_eq!(namespace, "default");
                 assert_eq!(probes.len(), 1);
@@ -190,13 +218,15 @@ mod coordinator_tests {
             pod_name: "test".to_string(),
             container_name: "app".to_string(),
             status: LogStreamStatus::Started,
-        }).unwrap();
+        })
+        .unwrap();
 
         tx.send(UpdateMessage::LogStreamStatus {
             pod_name: "test".to_string(),
             container_name: "app".to_string(),
             status: LogStreamStatus::Ended,
-        }).unwrap();
+        })
+        .unwrap();
 
         // Receive and verify
         if let Some(UpdateMessage::LogStreamStatus { status, .. }) = rx.recv().await {
@@ -327,7 +357,8 @@ mod log_streaming_tests {
                 pod_name: "test".to_string(),
                 container_name: "app".to_string(),
                 line: format!("log line {}", i),
-            }).unwrap();
+            })
+            .unwrap();
         }
 
         // Verify order
@@ -343,9 +374,9 @@ mod log_streaming_tests {
 
 #[cfg(test)]
 mod coordinator_channel_tests {
-    use tokio::sync::mpsc;
     use kubectui::coordinator::UpdateMessage;
     use kubectui::k8s::probes::ContainerProbes;
+    use tokio::sync::mpsc;
 
     #[tokio::test]
     async fn test_unbounded_channel_capacity() {
@@ -391,19 +422,22 @@ mod coordinator_channel_tests {
             pod_name: "pod1".to_string(),
             container_name: "app".to_string(),
             line: "test".to_string(),
-        }).unwrap();
+        })
+        .unwrap();
 
         tx.send(UpdateMessage::ProbeUpdate {
             pod_name: "pod2".to_string(),
             namespace: "default".to_string(),
             probes: vec![],
-        }).unwrap();
+        })
+        .unwrap();
 
         tx.send(UpdateMessage::ProbeError {
             pod_name: "pod3".to_string(),
             namespace: "default".to_string(),
             error: "error".to_string(),
-        }).unwrap();
+        })
+        .unwrap();
 
         // Verify we can match on them
         let mut log_count = 0;

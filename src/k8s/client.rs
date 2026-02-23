@@ -1,20 +1,33 @@
 //! Kubernetes API client wrapper used by KubecTUI.
 
+use std::collections::BTreeMap;
+
 use anyhow::{Context, Result};
 use chrono::Utc;
 use k8s_openapi::api::{
     apps::v1::{DaemonSet, Deployment, StatefulSet},
     batch::v1::{CronJob, Job},
-    core::v1::{Namespace, Node, Pod, PodSpec, Service},
+    core::v1::{LimitRange, Namespace, Node, Pod, PodSpec, ResourceQuota, Service, ServiceAccount},
+    policy::v1::PodDisruptionBudget,
+    rbac::v1::{ClusterRole, ClusterRoleBinding, PolicyRule, Role, RoleBinding, Subject},
 };
-use kube::{Api, Client, Config, api::ListParams, config::KubeConfigOptions};
+use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+use kube::{
+    Api, Client, Config,
+    api::{ApiResource, DynamicObject, GroupVersionKind, ListParams},
+    config::KubeConfigOptions,
+};
 
 use crate::k8s::{events, yaml};
 
 pub use crate::k8s::{
     dtos::{
-        ClusterInfo, CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, PodInfo,
-        ServiceInfo, StatefulSetInfo,
+        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo,
+        CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo, DeploymentInfo, JobInfo,
+        LimitRangeInfo, LimitSpec, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo,
+        PodMetricsInfo, RbacRule, ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject, RoleInfo,
+        ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
     },
     events::EventInfo,
 };
@@ -416,15 +429,45 @@ impl K8sClient {
                 let status = ds.status.as_ref();
                 let created_at = ds.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
 
+                let desired_count = status.map(|s| s.desired_number_scheduled).unwrap_or(0);
+                let ready_count = status.map(|s| s.number_ready).unwrap_or(0);
+                let unavailable_count = status.and_then(|s| s.number_unavailable).unwrap_or(0);
+
                 DaemonSetInfo {
                     name: ds.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
                     namespace: ds
                         .metadata
                         .namespace
                         .unwrap_or_else(|| "default".to_string()),
-                    desired_count: status.map(|s| s.desired_number_scheduled).unwrap_or(0),
-                    ready_count: status.map(|s| s.number_ready).unwrap_or(0),
-                    unavailable_count: status.and_then(|s| s.number_unavailable).unwrap_or(0),
+                    desired_count,
+                    ready_count,
+                    unavailable_count,
+                    selector: spec
+                        .and_then(|s| s.selector.match_labels.as_ref())
+                        .map(|labels| {
+                            labels
+                                .iter()
+                                .map(|(k, v)| format!("{k}={v}"))
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        })
+                        .unwrap_or_else(|| "<none>".to_string()),
+                    update_strategy: spec
+                        .and_then(|s| s.update_strategy.as_ref())
+                        .and_then(|us| us.type_.clone())
+                        .unwrap_or_else(|| "RollingUpdate".to_string()),
+                    labels: ds
+                        .metadata
+                        .labels
+                        .clone()
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect(),
+                    status_message: if unavailable_count == 0 {
+                        "Ready".to_string()
+                    } else {
+                        format!("{unavailable_count} pods unavailable")
+                    },
                     image: self
                         .extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
                     age: created_at.and_then(|ts| (now - ts).to_std().ok()),
@@ -434,6 +477,213 @@ impl K8sClient {
             .collect();
 
         Ok(daemonsets)
+    }
+
+    /// Fetches service accounts from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_service_accounts(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ServiceAccountInfo>> {
+        let service_accounts_api: Api<ServiceAccount> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = service_accounts_api
+            .list(&ListParams::default())
+            .await
+            .with_context(|| {
+                if let Some(ns) = namespace {
+                    format!("failed fetching serviceaccounts in namespace '{ns}'")
+                } else {
+                    "failed fetching serviceaccounts across all namespaces".to_string()
+                }
+            })?;
+
+        let now = Utc::now();
+        let service_accounts = list
+            .into_iter()
+            .map(|sa| {
+                let created_at = sa.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                ServiceAccountInfo {
+                    name: sa.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: sa
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    secrets_count: sa.secrets.as_ref().map_or(0, |v| v.len()),
+                    image_pull_secrets_count: sa.image_pull_secrets.as_ref().map_or(0, |v| v.len()),
+                    automount_service_account_token: sa.automount_service_account_token,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(service_accounts)
+    }
+
+    /// Fetches roles from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_roles(&self, namespace: Option<&str>) -> Result<Vec<RoleInfo>> {
+        let roles_api: Api<Role> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = roles_api
+            .list(&ListParams::default())
+            .await
+            .with_context(|| {
+                if let Some(ns) = namespace {
+                    format!("failed fetching roles in namespace '{ns}'")
+                } else {
+                    "failed fetching roles across all namespaces".to_string()
+                }
+            })?;
+
+        let now = Utc::now();
+        let roles = list
+            .into_iter()
+            .map(|role| {
+                let created_at = role.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                RoleInfo {
+                    name: role
+                        .metadata
+                        .name
+                        .unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: role
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    rules: role
+                        .rules
+                        .as_ref()
+                        .map(|rules| rules.iter().map(rule_from_policy_rule).collect())
+                        .unwrap_or_default(),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(roles)
+    }
+
+    /// Fetches role bindings from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_role_bindings(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<RoleBindingInfo>> {
+        let role_bindings_api: Api<RoleBinding> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = role_bindings_api
+            .list(&ListParams::default())
+            .await
+            .with_context(|| {
+                if let Some(ns) = namespace {
+                    format!("failed fetching rolebindings in namespace '{ns}'")
+                } else {
+                    "failed fetching rolebindings across all namespaces".to_string()
+                }
+            })?;
+
+        let now = Utc::now();
+        let role_bindings = list
+            .into_iter()
+            .map(|rb| {
+                let created_at = rb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+                let role_ref = rb.role_ref;
+
+                RoleBindingInfo {
+                    name: rb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: rb
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    role_ref_kind: role_ref.kind,
+                    role_ref_name: role_ref.name,
+                    subjects: rb
+                        .subjects
+                        .as_ref()
+                        .map(|subjects| subjects.iter().map(subject_from_k8s).collect())
+                        .unwrap_or_default(),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(role_bindings)
+    }
+
+    /// Fetches cluster roles (cluster-wide only).
+    pub async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>> {
+        let cluster_roles_api: Api<ClusterRole> = Api::all(self.client.clone());
+
+        let list = cluster_roles_api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching clusterroles")?;
+
+        let now = Utc::now();
+        let cluster_roles = list
+            .into_iter()
+            .map(|cr| {
+                let created_at = cr.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                ClusterRoleInfo {
+                    name: cr.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    rules: cr
+                        .rules
+                        .as_ref()
+                        .map(|rules| rules.iter().map(rule_from_policy_rule).collect())
+                        .unwrap_or_default(),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(cluster_roles)
+    }
+
+    /// Fetches cluster role bindings (cluster-wide only).
+    pub async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>> {
+        let cluster_role_bindings_api: Api<ClusterRoleBinding> = Api::all(self.client.clone());
+
+        let list = cluster_role_bindings_api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching clusterrolebindings")?;
+
+        let now = Utc::now();
+        let cluster_role_bindings = list
+            .into_iter()
+            .map(|crb| {
+                let created_at = crb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+                let role_ref = crb.role_ref;
+
+                ClusterRoleBindingInfo {
+                    name: crb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    role_ref_kind: role_ref.kind,
+                    role_ref_name: role_ref.name,
+                    subjects: crb
+                        .subjects
+                        .as_ref()
+                        .map(|subjects| subjects.iter().map(subject_from_k8s).collect())
+                        .unwrap_or_default(),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(cluster_role_bindings)
     }
 
     /// Fetches jobs from a namespace or all namespaces when `namespace` is `None`.
@@ -547,6 +797,330 @@ impl K8sClient {
             .collect();
 
         Ok(cronjobs)
+    }
+
+    /// Fetches resource quotas from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_resource_quotas(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ResourceQuotaInfo>> {
+        let api: Api<ResourceQuota> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = api.list(&ListParams::default()).await.with_context(|| {
+            if let Some(ns) = namespace {
+                format!("failed fetching resource quotas in namespace '{ns}'")
+            } else {
+                "failed fetching resource quotas across all namespaces".to_string()
+            }
+        })?;
+
+        let now = Utc::now();
+        let quotas = list
+            .into_iter()
+            .map(|quota| {
+                let hard = quota
+                    .status
+                    .as_ref()
+                    .and_then(|status| status.hard.as_ref())
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(k, v)| (k, v.0))
+                    .collect::<BTreeMap<_, _>>();
+
+                let used = quota
+                    .status
+                    .as_ref()
+                    .and_then(|status| status.used.as_ref())
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(k, v)| (k, v.0))
+                    .collect::<BTreeMap<_, _>>();
+
+                let percent_used = quota_percent_used(&hard, &used);
+                let created_at = quota.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                ResourceQuotaInfo {
+                    name: quota
+                        .metadata
+                        .name
+                        .unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: quota
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    hard,
+                    used,
+                    percent_used,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(quotas)
+    }
+
+    /// Fetches limit ranges from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_limit_ranges(&self, namespace: Option<&str>) -> Result<Vec<LimitRangeInfo>> {
+        let api: Api<LimitRange> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = api.list(&ListParams::default()).await.with_context(|| {
+            if let Some(ns) = namespace {
+                format!("failed fetching limit ranges in namespace '{ns}'")
+            } else {
+                "failed fetching limit ranges across all namespaces".to_string()
+            }
+        })?;
+
+        let now = Utc::now();
+        let ranges = list
+            .into_iter()
+            .map(|range| {
+                let limits = range
+                    .spec
+                    .as_ref()
+                    .map(|spec| {
+                        spec.limits
+                            .iter()
+                            .map(|item| LimitSpec {
+                                type_: item.type_.clone(),
+                                min: quantity_map_to_string_map(item.min.clone()),
+                                max: quantity_map_to_string_map(item.max.clone()),
+                                default: quantity_map_to_string_map(item.default.clone()),
+                                default_request: quantity_map_to_string_map(
+                                    item.default_request.clone(),
+                                ),
+                                max_limit_request_ratio: quantity_map_to_string_map(
+                                    item.max_limit_request_ratio.clone(),
+                                ),
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+
+                let created_at = range.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                LimitRangeInfo {
+                    name: range
+                        .metadata
+                        .name
+                        .unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: range
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    limits,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(ranges)
+    }
+
+    /// Fetches pod disruption budgets from a namespace or all namespaces when `namespace` is `None`.
+    pub async fn fetch_pod_disruption_budgets(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<PodDisruptionBudgetInfo>> {
+        let api: Api<PodDisruptionBudget> = match namespace {
+            Some(ns) => Api::namespaced(self.client.clone(), ns),
+            None => Api::all(self.client.clone()),
+        };
+
+        let list = api.list(&ListParams::default()).await.with_context(|| {
+            if let Some(ns) = namespace {
+                format!("failed fetching pod disruption budgets in namespace '{ns}'")
+            } else {
+                "failed fetching pod disruption budgets across all namespaces".to_string()
+            }
+        })?;
+
+        let now = Utc::now();
+        let pdbs = list
+            .into_iter()
+            .map(|pdb| {
+                let spec = pdb.spec.as_ref();
+                let status = pdb.status.as_ref();
+                let created_at = pdb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+                PodDisruptionBudgetInfo {
+                    name: pdb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: pdb
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
+                    min_available: spec
+                        .and_then(|s| s.min_available.as_ref())
+                        .map(int_or_string_to_string),
+                    max_unavailable: spec
+                        .and_then(|s| s.max_unavailable.as_ref())
+                        .map(int_or_string_to_string),
+                    current_healthy: status.map(|s| s.current_healthy).unwrap_or(0),
+                    desired_healthy: status.map(|s| s.desired_healthy).unwrap_or(0),
+                    disruptions_allowed: status.map(|s| s.disruptions_allowed).unwrap_or(0),
+                    expected_pods: status.map(|s| s.expected_pods).unwrap_or(0),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect();
+
+        Ok(pdbs)
+    }
+
+    /// Fetches CustomResourceDefinitions cluster-wide and includes instance counts.
+    pub async fn fetch_custom_resource_definitions(
+        &self,
+    ) -> Result<Vec<CustomResourceDefinitionInfo>> {
+        let crd_api: Api<CustomResourceDefinition> = Api::all(self.client.clone());
+        let list = crd_api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching custom resource definitions")?;
+
+        let mut crds = Vec::new();
+        for crd in list {
+            let spec = crd.spec;
+
+            let version = spec
+                .versions
+                .iter()
+                .find(|v| v.storage)
+                .or_else(|| spec.versions.iter().find(|v| v.served))
+                .or_else(|| spec.versions.first())
+                .map(|v| v.name.clone())
+                .unwrap_or_else(|| "v1".to_string());
+
+            let info = CustomResourceDefinitionInfo {
+                name: crd.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+                group: spec.group.clone(),
+                version,
+                kind: spec.names.kind.clone(),
+                plural: spec.names.plural.clone(),
+                scope: spec.scope,
+                instances: 0,
+            };
+
+            let instances = self
+                .count_custom_resource_instances(&info)
+                .await
+                .unwrap_or(0);
+
+            crds.push(CustomResourceDefinitionInfo { instances, ..info });
+        }
+
+        crds.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(crds)
+    }
+
+    /// Fetches custom resources for a selected CRD.
+    pub async fn fetch_custom_resources(
+        &self,
+        crd: &CustomResourceDefinitionInfo,
+        namespace: Option<&str>,
+    ) -> Result<Vec<CustomResourceInfo>> {
+        let ar = custom_resource_api_resource(crd);
+
+        let api: Api<DynamicObject> = if crd.scope.eq_ignore_ascii_case("Namespaced") {
+            match namespace {
+                Some(ns) => Api::namespaced_with(self.client.clone(), ns, &ar),
+                None => Api::all_with(self.client.clone(), &ar),
+            }
+        } else {
+            Api::all_with(self.client.clone(), &ar)
+        };
+
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .with_context(|| format!("failed fetching custom resources for CRD '{}'", crd.name))?;
+
+        let now = Utc::now();
+        let mut resources = list
+            .into_iter()
+            .map(|item| {
+                let created_at = item.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+                CustomResourceInfo {
+                    name: item
+                        .metadata
+                        .name
+                        .unwrap_or_else(|| "<unknown>".to_string()),
+                    namespace: item.metadata.namespace,
+                    created_at,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                }
+            })
+            .collect::<Vec<_>>();
+
+        resources.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(resources)
+    }
+
+    /// Fetches pod metrics via metrics.k8s.io (returns None when unavailable).
+    pub async fn fetch_pod_metrics(
+        &self,
+        name: &str,
+        namespace: &str,
+    ) -> Result<Option<PodMetricsInfo>> {
+        let gvk = GroupVersionKind::gvk("metrics.k8s.io", "v1beta1", "PodMetrics");
+        let mut ar = ApiResource::from_gvk(&gvk);
+        ar.plural = "pods".to_string();
+        let api: Api<DynamicObject> = Api::namespaced_with(self.client.clone(), namespace, &ar);
+
+        let obj = match api.get(name).await {
+            Ok(value) => value,
+            Err(err) if is_metrics_api_unavailable(&err) => return Ok(None),
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!("failed fetching pod metrics for {namespace}/{name}")
+                });
+            }
+        };
+
+        Ok(PodMetricsInfo::from_json(
+            name.to_string(),
+            namespace.to_string(),
+            &obj.data,
+        ))
+    }
+
+    /// Fetches node metrics via metrics.k8s.io (returns None when unavailable).
+    pub async fn fetch_node_metrics(&self, name: &str) -> Result<Option<NodeMetricsInfo>> {
+        let gvk = GroupVersionKind::gvk("metrics.k8s.io", "v1beta1", "NodeMetrics");
+        let mut ar = ApiResource::from_gvk(&gvk);
+        ar.plural = "nodes".to_string();
+        let api: Api<DynamicObject> = Api::all_with(self.client.clone(), &ar);
+
+        let obj = match api.get(name).await {
+            Ok(value) => value,
+            Err(err) if is_metrics_api_unavailable(&err) => return Ok(None),
+            Err(err) => {
+                return Err(err)
+                    .with_context(|| format!("failed fetching node metrics for node '{name}'"));
+            }
+        };
+
+        Ok(NodeMetricsInfo::from_json(name.to_string(), &obj.data))
+    }
+
+    async fn count_custom_resource_instances(
+        &self,
+        crd: &CustomResourceDefinitionInfo,
+    ) -> Result<usize> {
+        let ar = custom_resource_api_resource(crd);
+        let api: Api<DynamicObject> = Api::all_with(self.client.clone(), &ar);
+        let list = api.list(&ListParams::default()).await?;
+        Ok(list.items.len())
     }
 
     /// Fetches cluster summary information.
@@ -793,6 +1367,25 @@ fn sort_namespaces(names: Vec<String>) -> Vec<String> {
     names
 }
 
+fn custom_resource_api_resource(crd: &CustomResourceDefinitionInfo) -> ApiResource {
+    let gvk = GroupVersionKind::gvk(&crd.group, &crd.version, &crd.kind);
+    let mut ar = ApiResource::from_gvk(&gvk);
+    ar.plural = crd.plural.clone();
+    ar
+}
+
+fn is_metrics_api_unavailable(err: &kube::Error) -> bool {
+    match err {
+        kube::Error::Api(response) => {
+            response.code == 404
+                || response.code == 503
+                || response.message.contains("metrics.k8s.io")
+                || response.reason.eq_ignore_ascii_case("NotFound")
+        }
+        _ => false,
+    }
+}
+
 fn node_condition_true(node: &Node, condition_type: &str) -> bool {
     node.status
         .as_ref()
@@ -817,6 +1410,25 @@ fn node_role(node: &Node) -> String {
         "master".to_string()
     } else {
         "worker".to_string()
+    }
+}
+
+fn rule_from_policy_rule(rule: &PolicyRule) -> RbacRule {
+    RbacRule {
+        verbs: rule.verbs.clone(),
+        api_groups: rule.api_groups.clone().unwrap_or_default(),
+        resources: rule.resources.clone().unwrap_or_default(),
+        resource_names: rule.resource_names.clone().unwrap_or_default(),
+        non_resource_urls: rule.non_resource_urls.clone().unwrap_or_default(),
+    }
+}
+
+fn subject_from_k8s(subject: &Subject) -> RoleBindingSubject {
+    RoleBindingSubject {
+        kind: subject.kind.clone(),
+        name: subject.name.clone(),
+        namespace: subject.namespace.clone(),
+        api_group: subject.api_group.clone(),
     }
 }
 
@@ -855,11 +1467,82 @@ fn format_job_duration(
     }
 }
 
+fn quota_percent_used(
+    hard: &BTreeMap<String, String>,
+    used: &BTreeMap<String, String>,
+) -> BTreeMap<String, f64> {
+    hard.iter()
+        .filter_map(|(key, hard_value)| {
+            let used_value = used.get(key)?;
+            let used_num = parse_k8s_quantity(used_value)?;
+            let hard_num = parse_k8s_quantity(hard_value)?;
+            if hard_num <= 0.0 {
+                return None;
+            }
+            Some((key.clone(), (used_num / hard_num) * 100.0))
+        })
+        .collect()
+}
+
+fn quantity_map_to_string_map(
+    value: Option<BTreeMap<String, k8s_openapi::apimachinery::pkg::api::resource::Quantity>>,
+) -> BTreeMap<String, String> {
+    value
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(k, v)| (k, v.0))
+        .collect()
+}
+
+fn int_or_string_to_string(value: &IntOrString) -> String {
+    match value {
+        IntOrString::Int(v) => v.to_string(),
+        IntOrString::String(v) => v.clone(),
+    }
+}
+
+fn parse_k8s_quantity(raw: &str) -> Option<f64> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let factors = [
+        ("Ki", 1024.0),
+        ("Mi", 1024.0_f64.powi(2)),
+        ("Gi", 1024.0_f64.powi(3)),
+        ("Ti", 1024.0_f64.powi(4)),
+        ("Pi", 1024.0_f64.powi(5)),
+        ("Ei", 1024.0_f64.powi(6)),
+        ("n", 1e-9),
+        ("u", 1e-6),
+        ("m", 1e-3),
+        ("K", 1e3),
+        ("M", 1e6),
+        ("G", 1e9),
+        ("T", 1e12),
+        ("P", 1e15),
+        ("E", 1e18),
+    ];
+
+    for (suffix, factor) in factors {
+        if let Some(number) = raw.strip_suffix(suffix) {
+            let value = number.trim().parse::<f64>().ok()?;
+            return Some(value * factor);
+        }
+    }
+
+    raw.parse::<f64>().ok()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
 
-    use k8s_openapi::api::core::v1::{NodeCondition, NodeStatus};
+    use k8s_openapi::api::{
+        core::v1::{NodeCondition, NodeStatus},
+        rbac::v1::{PolicyRule, Subject},
+    };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 
     use super::*;
@@ -1024,7 +1707,95 @@ mod tests {
     }
 
     #[test]
+    fn policy_rule_mapping_extracts_all_fields() {
+        let input = PolicyRule {
+            verbs: vec!["get".to_string(), "list".to_string()],
+            api_groups: Some(vec!["apps".to_string()]),
+            resources: Some(vec!["deployments".to_string()]),
+            resource_names: Some(vec!["api".to_string()]),
+            non_resource_urls: Some(vec!["/healthz".to_string()]),
+        };
+
+        let mapped = rule_from_policy_rule(&input);
+        assert_eq!(mapped.verbs, vec!["get", "list"]);
+        assert_eq!(mapped.api_groups, vec!["apps"]);
+        assert_eq!(mapped.resources, vec!["deployments"]);
+        assert_eq!(mapped.resource_names, vec!["api"]);
+        assert_eq!(mapped.non_resource_urls, vec!["/healthz"]);
+    }
+
+    #[test]
+    fn role_binding_subject_mapping_keeps_namespace_and_api_group() {
+        let input = Subject {
+            kind: "ServiceAccount".to_string(),
+            name: "builder".to_string(),
+            namespace: Some("default".to_string()),
+            api_group: Some("rbac.authorization.k8s.io".to_string()),
+        };
+
+        let mapped = subject_from_k8s(&input);
+        assert_eq!(mapped.kind, "ServiceAccount");
+        assert_eq!(mapped.name, "builder");
+        assert_eq!(mapped.namespace.as_deref(), Some("default"));
+        assert_eq!(
+            mapped.api_group.as_deref(),
+            Some("rbac.authorization.k8s.io")
+        );
+    }
+
+    #[test]
     fn job_duration_none_without_start_time() {
         assert!(format_job_duration(None, None).is_none());
+    }
+
+    #[test]
+    fn parse_k8s_quantity_understands_cpu_and_memory_units() {
+        assert_eq!(parse_k8s_quantity("500m"), Some(0.5));
+        assert_eq!(parse_k8s_quantity("1"), Some(1.0));
+        assert_eq!(parse_k8s_quantity("1Gi"), Some(1024.0_f64.powi(3)));
+    }
+
+    #[test]
+    fn quota_percent_used_computes_expected_ratio() {
+        let mut hard = BTreeMap::new();
+        let mut used = BTreeMap::new();
+        hard.insert("pods".to_string(), "10".to_string());
+        used.insert("pods".to_string(), "4".to_string());
+
+        let result = quota_percent_used(&hard, &used);
+        assert_eq!(result.get("pods").copied(), Some(40.0));
+    }
+
+    #[test]
+    fn int_or_string_to_string_handles_both_variants() {
+        assert_eq!(int_or_string_to_string(&IntOrString::Int(2)), "2");
+        assert_eq!(
+            int_or_string_to_string(&IntOrString::String("50%".to_string())),
+            "50%"
+        );
+    }
+
+    #[test]
+    fn metrics_api_unavailable_detects_not_found_errors() {
+        let err = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "the server could not find the requested resource".to_string(),
+            reason: "NotFound".to_string(),
+            code: 404,
+        });
+
+        assert!(is_metrics_api_unavailable(&err));
+    }
+
+    #[test]
+    fn metrics_api_unavailable_ignores_unrelated_api_errors() {
+        let err = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "forbidden".to_string(),
+            reason: "Forbidden".to_string(),
+            code: 403,
+        });
+
+        assert!(!is_metrics_api_unavailable(&err));
     }
 }

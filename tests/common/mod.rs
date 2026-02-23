@@ -9,8 +9,10 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use kubectui::{
     k8s::dtos::{
-        ClusterInfo, CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, PodInfo,
-        ServiceInfo, StatefulSetInfo,
+        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo,
+        CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo,
+        NodeInfo, PodDisruptionBudgetInfo, PodInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
+        ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
     },
     state::ClusterDataSource,
 };
@@ -65,6 +67,15 @@ pub struct MockDataSource {
     pub daemonsets: Vec<DaemonSetInfo>,
     pub jobs: Vec<JobInfo>,
     pub cronjobs: Vec<CronJobInfo>,
+    pub resource_quotas: Vec<ResourceQuotaInfo>,
+    pub limit_ranges: Vec<LimitRangeInfo>,
+    pub pod_disruption_budgets: Vec<PodDisruptionBudgetInfo>,
+    pub service_accounts: Vec<ServiceAccountInfo>,
+    pub roles: Vec<RoleInfo>,
+    pub role_bindings: Vec<RoleBindingInfo>,
+    pub cluster_roles: Vec<ClusterRoleInfo>,
+    pub cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
+    pub custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
     pub fail: bool,
     pub calls: Arc<AtomicUsize>,
 }
@@ -106,6 +117,15 @@ impl Default for MockDataSource {
                 schedule: "*/5 * * * *".to_string(),
                 ..CronJobInfo::default()
             }],
+            resource_quotas: vec![],
+            limit_ranges: vec![],
+            pod_disruption_budgets: vec![],
+            service_accounts: vec![],
+            roles: vec![],
+            role_bindings: vec![],
+            cluster_roles: vec![],
+            cluster_role_bindings: vec![],
+            custom_resource_definitions: vec![],
             fail: false,
             calls: Arc::new(AtomicUsize::new(0)),
         }
@@ -188,6 +208,87 @@ impl ClusterDataSource for MockDataSource {
             return Err(anyhow!("mock cronjobs error"));
         }
         Ok(self.cronjobs.clone())
+    }
+
+    async fn fetch_resource_quotas(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<ResourceQuotaInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock resourcequotas error"));
+        }
+        Ok(self.resource_quotas.clone())
+    }
+
+    async fn fetch_limit_ranges(&self, _namespace: Option<&str>) -> Result<Vec<LimitRangeInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock limitranges error"));
+        }
+        Ok(self.limit_ranges.clone())
+    }
+
+    async fn fetch_pod_disruption_budgets(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<PodDisruptionBudgetInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock pdb error"));
+        }
+        Ok(self.pod_disruption_budgets.clone())
+    }
+
+    async fn fetch_service_accounts(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<ServiceAccountInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock serviceaccounts error"));
+        }
+        Ok(self.service_accounts.clone())
+    }
+
+    async fn fetch_roles(&self, _namespace: Option<&str>) -> Result<Vec<RoleInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock roles error"));
+        }
+        Ok(self.roles.clone())
+    }
+
+    async fn fetch_role_bindings(&self, _namespace: Option<&str>) -> Result<Vec<RoleBindingInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock rolebindings error"));
+        }
+        Ok(self.role_bindings.clone())
+    }
+
+    async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock clusterroles error"));
+        }
+        Ok(self.cluster_roles.clone())
+    }
+
+    async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock clusterrolebindings error"));
+        }
+        Ok(self.cluster_role_bindings.clone())
+    }
+
+    async fn fetch_custom_resource_definitions(&self) -> Result<Vec<CustomResourceDefinitionInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock crds error"));
+        }
+        Ok(self.custom_resource_definitions.clone())
     }
 
     async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {

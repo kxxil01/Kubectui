@@ -56,6 +56,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         app.set_error(format!("Initial data refresh failed: {err:#}"));
     }
     app.set_available_namespaces(global_state.namespaces().to_vec());
+    sync_extensions_instances(&client, &mut app, &global_state.snapshot()).await;
 
     let mut tick = tokio::time::interval(Duration::from_millis(200));
 
@@ -84,7 +85,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             };
 
             match action {
-                AppAction::None => {}
+                AppAction::None => {
+                    sync_extensions_instances(&client, &mut app, &snapshot).await;
+                }
                 AppAction::Quit => break,
                 AppAction::RefreshData => {
                     if let Err(err) = global_state
@@ -95,6 +98,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     } else {
                         app.clear_error();
                         app.set_available_namespaces(global_state.namespaces().to_vec());
+                        sync_extensions_instances(&client, &mut app, &global_state.snapshot())
+                            .await;
                     }
                 }
                 AppAction::OpenNamespacePicker => {
@@ -117,6 +122,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     } else {
                         app.clear_error();
                         app.set_available_namespaces(global_state.namespaces().to_vec());
+                        sync_extensions_instances(&client, &mut app, &global_state.snapshot())
+                            .await;
                     }
                 }
                 AppAction::OpenDetail(resource) => {
@@ -149,6 +156,46 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     Ok(())
 }
 
+async fn sync_extensions_instances(
+    client: &K8sClient,
+    app: &mut AppState,
+    snapshot: &ClusterSnapshot,
+) {
+    if app.view() != AppView::Extensions {
+        return;
+    }
+
+    let Some(crd) = snapshot.custom_resource_definitions.get(
+        app.selected_idx()
+            .min(snapshot.custom_resource_definitions.len().saturating_sub(1)),
+    ) else {
+        app.extension_instances.clear();
+        app.extension_error = None;
+        app.extension_selected_crd = None;
+        return;
+    };
+
+    if app.extension_selected_crd.as_deref() == Some(crd.name.as_str()) {
+        return;
+    }
+
+    let namespace_owned = if crd.scope.eq_ignore_ascii_case("Namespaced") {
+        namespace_scope(app.get_namespace()).map(ToString::to_string)
+    } else {
+        None
+    };
+
+    match client
+        .fetch_custom_resources(crd, namespace_owned.as_deref())
+        .await
+    {
+        Ok(items) => app.set_extension_instances(crd.name.clone(), items, None),
+        Err(err) => {
+            app.set_extension_instances(crd.name.clone(), Vec::new(), Some(err.to_string()))
+        }
+    }
+}
+
 fn namespace_scope(namespace: &str) -> Option<&str> {
     if namespace == "all" {
         None
@@ -177,7 +224,31 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
             .deployments
             .get(idx)
             .map(|d| ResourceRef::Deployment(d.name.clone(), d.namespace.clone())),
-        AppView::StatefulSets | AppView::DaemonSets | AppView::Jobs | AppView::CronJobs => None,
+        AppView::StatefulSets => snapshot
+            .statefulsets
+            .get(idx)
+            .map(|ss| ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone())),
+        AppView::ResourceQuotas => snapshot
+            .resource_quotas
+            .get(idx)
+            .map(|rq| ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone())),
+        AppView::LimitRanges => snapshot
+            .limit_ranges
+            .get(idx)
+            .map(|lr| ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone())),
+        AppView::PodDisruptionBudgets => snapshot
+            .pod_disruption_budgets
+            .get(idx)
+            .map(|pdb| ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone())),
+        AppView::DaemonSets
+        | AppView::Jobs
+        | AppView::CronJobs
+        | AppView::ServiceAccounts
+        | AppView::Roles
+        | AppView::RoleBindings
+        | AppView::ClusterRoles
+        | AppView::ClusterRoleBindings
+        | AppView::Extensions => None,
     }
 }
 
@@ -211,6 +282,34 @@ async fn fetch_detail_view(
         _ => Vec::new(),
     };
 
+    let (pod_metrics, node_metrics, metrics_unavailable_message) = match &resource {
+        ResourceRef::Pod(name, ns) => match client.fetch_pod_metrics(name, ns).await {
+            Ok(Some(metrics)) => (Some(metrics), None, None),
+            Ok(None) => (
+                None,
+                None,
+                Some(
+                    "metrics unavailable (metrics-server not installed or inaccessible)"
+                        .to_string(),
+                ),
+            ),
+            Err(err) => (None, None, Some(format!("metrics unavailable: {err}"))),
+        },
+        ResourceRef::Node(name) => match client.fetch_node_metrics(name).await {
+            Ok(Some(metrics)) => (None, Some(metrics), None),
+            Ok(None) => (
+                None,
+                None,
+                Some(
+                    "metrics unavailable (metrics-server not installed or inaccessible)"
+                        .to_string(),
+                ),
+            ),
+            Err(err) => (None, None, Some(format!("metrics unavailable: {err}"))),
+        },
+        _ => (None, None, None),
+    };
+
     let sections = sections_for_resource(snapshot, &resource);
 
     Ok(DetailViewState {
@@ -219,6 +318,9 @@ async fn fetch_detail_view(
         yaml,
         events,
         sections,
+        pod_metrics,
+        node_metrics,
+        metrics_unavailable_message,
         loading: false,
         error: None,
         logs_viewer: None,
@@ -293,6 +395,68 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 ..DetailMetadata::default()
             }
         }
+        ResourceRef::StatefulSet(name, ns) => {
+            let status = snapshot
+                .statefulsets
+                .iter()
+                .find(|ss| &ss.name == name && &ss.namespace == ns)
+                .map(|ss| format!("Ready {}/{}", ss.ready_replicas, ss.desired_replicas));
+
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::ResourceQuota(name, ns) => {
+            let status = snapshot
+                .resource_quotas
+                .iter()
+                .find(|rq| &rq.name == name && &rq.namespace == ns)
+                .map(|rq| {
+                    let max_pct = rq
+                        .percent_used
+                        .values()
+                        .fold(0.0_f64, |acc, value| acc.max(*value));
+                    format!("Max usage {:.0}%", max_pct)
+                });
+
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::LimitRange(name, ns) => {
+            let status = snapshot
+                .limit_ranges
+                .iter()
+                .find(|lr| &lr.name == name && &lr.namespace == ns)
+                .map(|lr| format!("{} limit specs", lr.limits.len()));
+
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::PodDisruptionBudget(name, ns) => {
+            let status = snapshot
+                .pod_disruption_budgets
+                .iter()
+                .find(|pdb| &pdb.name == name && &pdb.namespace == ns)
+                .map(|pdb| format!("Healthy {}/{}", pdb.current_healthy, pdb.desired_healthy));
+
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
     }
 }
 
@@ -356,7 +520,95 @@ fn sections_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 ]
             })
             .unwrap_or_default(),
+        ResourceRef::StatefulSet(name, ns) => snapshot
+            .statefulsets
+            .iter()
+            .find(|ss| &ss.name == name && &ss.namespace == ns)
+            .map(|ss| {
+                vec![
+                    "REPLICAS".to_string(),
+                    format!("desired: {}", ss.desired_replicas),
+                    format!("ready: {}", ss.ready_replicas),
+                    format!("service: {}", ss.service_name),
+                    format!("pod management: {}", ss.pod_management_policy),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::ResourceQuota(name, ns) => snapshot
+            .resource_quotas
+            .iter()
+            .find(|rq| &rq.name == name && &rq.namespace == ns)
+            .map(|rq| {
+                let mut lines = vec!["QUOTAS".to_string()];
+                for (key, hard) in rq.hard.iter().take(12) {
+                    let used = rq.used.get(key).cloned().unwrap_or_else(|| "-".to_string());
+                    let pct = rq
+                        .percent_used
+                        .get(key)
+                        .map(|v| format!(" ({v:.0}%)"))
+                        .unwrap_or_default();
+                    lines.push(format!("{key}: {used}/{hard}{pct}"));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::LimitRange(name, ns) => snapshot
+            .limit_ranges
+            .iter()
+            .find(|lr| &lr.name == name && &lr.namespace == ns)
+            .map(|lr| {
+                let mut lines = vec!["LIMIT SPECS".to_string()];
+                for spec in lr.limits.iter().take(8) {
+                    lines.push(format!("type: {}", spec.type_));
+                    if !spec.default.is_empty() {
+                        lines.push(format!("  default: {}", map_to_kv(&spec.default)));
+                    }
+                    if !spec.default_request.is_empty() {
+                        lines.push(format!(
+                            "  defaultRequest: {}",
+                            map_to_kv(&spec.default_request)
+                        ));
+                    }
+                    if !spec.min.is_empty() {
+                        lines.push(format!("  min: {}", map_to_kv(&spec.min)));
+                    }
+                    if !spec.max.is_empty() {
+                        lines.push(format!("  max: {}", map_to_kv(&spec.max)));
+                    }
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::PodDisruptionBudget(name, ns) => snapshot
+            .pod_disruption_budgets
+            .iter()
+            .find(|pdb| &pdb.name == name && &pdb.namespace == ns)
+            .map(|pdb| {
+                vec![
+                    "AVAILABILITY".to_string(),
+                    format!(
+                        "minAvailable: {}",
+                        pdb.min_available.as_deref().unwrap_or("-")
+                    ),
+                    format!(
+                        "maxUnavailable: {}",
+                        pdb.max_unavailable.as_deref().unwrap_or("-")
+                    ),
+                    format!("currentHealthy: {}", pdb.current_healthy),
+                    format!("desiredHealthy: {}", pdb.desired_healthy),
+                    format!("disruptionsAllowed: {}", pdb.disruptions_allowed),
+                    format!("expectedPods: {}", pdb.expected_pods),
+                ]
+            })
+            .unwrap_or_default(),
     }
+}
+
+fn map_to_kv(map: &std::collections::BTreeMap<String, String>) -> String {
+    map.iter()
+        .map(|(k, v)| format!("{k}={v}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Configures terminal in alternate screen + raw mode for TUI rendering.

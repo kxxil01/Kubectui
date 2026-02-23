@@ -6,10 +6,7 @@ use std::fmt;
 #[derive(Debug, Clone)]
 pub enum PortForwardError {
     /// Pod not found in namespace
-    PodNotFound {
-        namespace: String,
-        pod_name: String,
-    },
+    PodNotFound { namespace: String, pod_name: String },
 
     /// Port not exposed in pod spec
     PortNotExposed {
@@ -19,13 +16,20 @@ pub enum PortForwardError {
     },
 
     /// Local port already in use
-    PortInUse { port: u16, process_name: Option<String> },
+    PortInUse {
+        port: u16,
+        process_name: Option<String>,
+    },
 
     /// Permission denied (typically for privileged ports < 1024)
     PermissionDenied { port: u16, reason: String },
 
     /// Connection to pod failed
-    ConnectionFailed { pod_name: String, retryable: bool, message: String },
+    ConnectionFailed {
+        pod_name: String,
+        retryable: bool,
+        message: String,
+    },
 
     /// Tunnel terminated unexpectedly
     TunnelClosed { tunnel_id: String, reason: String },
@@ -47,7 +51,10 @@ impl PortForwardError {
     /// Convert to user-friendly message for TUI display
     pub fn to_user_message(&self) -> String {
         match self {
-            Self::PodNotFound { namespace, pod_name } => {
+            Self::PodNotFound {
+                namespace,
+                pod_name,
+            } => {
                 format!("Pod '{}' not found in namespace '{}'", pod_name, namespace)
             }
             Self::PortNotExposed {
@@ -83,7 +90,10 @@ impl PortForwardError {
                 message,
             } => {
                 let retry_hint = if *retryable { " (will retry)" } else { "" };
-                format!("Connection to '{}' failed{}: {}", pod_name, retry_hint, message)
+                format!(
+                    "Connection to '{}' failed{}: {}",
+                    pod_name, retry_hint, message
+                )
             }
             Self::TunnelClosed { tunnel_id, reason } => {
                 format!("Tunnel {} closed: {}", tunnel_id, reason)
@@ -121,11 +131,11 @@ impl PortForwardError {
     pub fn suggested_action(&self) -> Option<String> {
         match self {
             Self::PodNotFound { .. } => Some("Check pod name or namespace".to_string()),
-            Self::PortNotExposed { available_ports, .. } => {
-                available_ports
-                    .first()
-                    .map(|p| format!("Try port {} instead", p))
-            }
+            Self::PortNotExposed {
+                available_ports, ..
+            } => available_ports
+                .first()
+                .map(|p| format!("Try port {} instead", p)),
             Self::PortInUse { .. } => Some("Use port 0 for auto-assignment".to_string()),
             Self::PermissionDenied { .. } => Some("Use a port > 1024".to_string()),
             _ => None,

@@ -90,6 +90,65 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             app.selected_idx(),
             app.search_query(),
         ),
+        AppView::ServiceAccounts => views::security::service_accounts::render_service_accounts(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::Roles => views::security::roles::render_roles(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::RoleBindings => views::security::role_bindings::render_role_bindings(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::ClusterRoles => views::security::cluster_roles::render_cluster_roles(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::ClusterRoleBindings => {
+            views::security::cluster_role_bindings::render_cluster_role_bindings(
+                frame,
+                layout[2],
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            )
+        }
+        AppView::ResourceQuotas => views::governance::quotas::render_resource_quotas(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::LimitRanges => views::governance::limits::render_limit_ranges(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::PodDisruptionBudgets => views::governance::pdbs::render_pdbs(
+            frame,
+            layout[2],
+            cluster,
+            app.selected_idx(),
+            app.search_query(),
+        ),
+        AppView::Extensions => views::extensions::render_extensions(frame, layout[2], cluster, app),
     }
 
     let status = if let Some(err) = app.error_message() {
@@ -147,8 +206,10 @@ mod tests {
     use crate::{
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
         k8s::dtos::{
-            CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, PodInfo, ServiceInfo,
-            StatefulSetInfo,
+            ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo, CustomResourceDefinitionInfo,
+            CustomResourceInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo, NodeInfo,
+            PodDisruptionBudgetInfo, PodInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
+            ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
         },
         state::ClusterSnapshot,
     };
@@ -365,6 +426,147 @@ mod tests {
         });
 
         let app = app_with_view(AppView::CronJobs);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies ResourceQuotas governance view renders usage bands without panic.
+    #[test]
+    fn render_resource_quotas_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.resource_quotas.push(ResourceQuotaInfo {
+            name: "rq-default".to_string(),
+            namespace: "default".to_string(),
+            percent_used: [("pods".to_string(), 85.0)].into_iter().collect(),
+            ..ResourceQuotaInfo::default()
+        });
+
+        let app = app_with_view(AppView::ResourceQuotas);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies LimitRanges governance view renders limits summary without panic.
+    #[test]
+    fn render_limit_ranges_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.limit_ranges.push(LimitRangeInfo {
+            name: "limits-default".to_string(),
+            namespace: "default".to_string(),
+            ..LimitRangeInfo::default()
+        });
+
+        let app = app_with_view(AppView::LimitRanges);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies PDB governance view renders disruption stats without panic.
+    #[test]
+    fn render_pdbs_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot
+            .pod_disruption_budgets
+            .push(PodDisruptionBudgetInfo {
+                name: "web-pdb".to_string(),
+                namespace: "default".to_string(),
+                min_available: Some("1".to_string()),
+                disruptions_allowed: 1,
+                ..PodDisruptionBudgetInfo::default()
+            });
+
+        let app = app_with_view(AppView::PodDisruptionBudgets);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies ServiceAccounts view renders without panic.
+    #[test]
+    fn render_service_accounts_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.service_accounts.push(ServiceAccountInfo {
+            name: "default".to_string(),
+            namespace: "default".to_string(),
+            secrets_count: 1,
+            image_pull_secrets_count: 0,
+            automount_service_account_token: Some(true),
+            ..ServiceAccountInfo::default()
+        });
+
+        let app = app_with_view(AppView::ServiceAccounts);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies Roles view renders rule details without panic.
+    #[test]
+    fn render_roles_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.roles.push(RoleInfo {
+            name: "reader".to_string(),
+            namespace: "default".to_string(),
+            ..RoleInfo::default()
+        });
+
+        let app = app_with_view(AppView::Roles);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies RoleBindings view renders subject details without panic.
+    #[test]
+    fn render_role_bindings_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.role_bindings.push(RoleBindingInfo {
+            name: "reader-binding".to_string(),
+            namespace: "default".to_string(),
+            role_ref_kind: "Role".to_string(),
+            role_ref_name: "reader".to_string(),
+            ..RoleBindingInfo::default()
+        });
+
+        let app = app_with_view(AppView::RoleBindings);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies ClusterRoles and ClusterRoleBindings views render without panic.
+    #[test]
+    fn render_cluster_rbac_views_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.cluster_roles.push(ClusterRoleInfo {
+            name: "cluster-admin".to_string(),
+            ..ClusterRoleInfo::default()
+        });
+        snapshot.cluster_role_bindings.push(ClusterRoleBindingInfo {
+            name: "cluster-admin-binding".to_string(),
+            role_ref_kind: "ClusterRole".to_string(),
+            role_ref_name: "cluster-admin".to_string(),
+            ..ClusterRoleBindingInfo::default()
+        });
+
+        let app_roles = app_with_view(AppView::ClusterRoles);
+        draw(&app_roles, &snapshot);
+
+        let app_bindings = app_with_view(AppView::ClusterRoleBindings);
+        draw(&app_bindings, &snapshot);
+    }
+
+    #[test]
+    fn render_extensions_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot
+            .custom_resource_definitions
+            .push(CustomResourceDefinitionInfo {
+                name: "widgets.demo.io".to_string(),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                plural: "widgets".to_string(),
+                scope: "Namespaced".to_string(),
+                instances: 1,
+            });
+
+        let mut app = app_with_view(AppView::Extensions);
+        app.extension_instances = vec![CustomResourceInfo {
+            name: "sample".to_string(),
+            namespace: Some("default".to_string()),
+            ..CustomResourceInfo::default()
+        }];
+
         draw(&app, &snapshot);
     }
 

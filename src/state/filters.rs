@@ -1,7 +1,8 @@
 //! Pure filtering helpers for list-oriented views.
 
 use crate::k8s::dtos::{
-    CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, ServiceInfo, StatefulSetInfo,
+    CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo, NodeInfo,
+    PodDisruptionBudgetInfo, ResourceQuotaInfo, ServiceInfo, StatefulSetInfo,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -208,8 +209,93 @@ pub fn filter_daemonsets(
             let ns_match = ns.is_none_or(|target| ds.namespace == target);
             let query_match = query.is_empty()
                 || ds.name.to_ascii_lowercase().contains(&query)
+                || ds.selector.to_ascii_lowercase().contains(&query)
                 || ds
                     .image
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .contains(&query)
+                || ds.labels.iter().any(|(k, v)| {
+                    k.to_ascii_lowercase().contains(&query)
+                        || v.to_ascii_lowercase().contains(&query)
+                });
+            ns_match && query_match
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn filter_resource_quotas(
+    items: &[ResourceQuotaInfo],
+    query: &str,
+    ns: Option<&str>,
+) -> Vec<ResourceQuotaInfo> {
+    let query = query.trim().to_ascii_lowercase();
+    let ns = ns.map(str::trim).filter(|s| !s.is_empty());
+
+    items
+        .iter()
+        .filter(|rq| {
+            let ns_match = ns.is_none_or(|target| rq.namespace == target);
+            let query_match = query.is_empty()
+                || rq.name.to_ascii_lowercase().contains(&query)
+                || rq
+                    .hard
+                    .keys()
+                    .any(|k| k.to_ascii_lowercase().contains(&query));
+            ns_match && query_match
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn filter_limit_ranges(
+    items: &[LimitRangeInfo],
+    query: &str,
+    ns: Option<&str>,
+) -> Vec<LimitRangeInfo> {
+    let query = query.trim().to_ascii_lowercase();
+    let ns = ns.map(str::trim).filter(|s| !s.is_empty());
+
+    items
+        .iter()
+        .filter(|lr| {
+            let ns_match = ns.is_none_or(|target| lr.namespace == target);
+            let query_match = query.is_empty()
+                || lr.name.to_ascii_lowercase().contains(&query)
+                || lr
+                    .limits
+                    .iter()
+                    .any(|spec| spec.type_.to_ascii_lowercase().contains(&query));
+            ns_match && query_match
+        })
+        .cloned()
+        .collect()
+}
+
+pub fn filter_pod_disruption_budgets(
+    items: &[PodDisruptionBudgetInfo],
+    query: &str,
+    ns: Option<&str>,
+) -> Vec<PodDisruptionBudgetInfo> {
+    let query = query.trim().to_ascii_lowercase();
+    let ns = ns.map(str::trim).filter(|s| !s.is_empty());
+
+    items
+        .iter()
+        .filter(|pdb| {
+            let ns_match = ns.is_none_or(|target| pdb.namespace == target);
+            let query_match = query.is_empty()
+                || pdb.name.to_ascii_lowercase().contains(&query)
+                || pdb
+                    .min_available
+                    .as_deref()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase()
+                    .contains(&query)
+                || pdb
+                    .max_unavailable
                     .as_deref()
                     .unwrap_or_default()
                     .to_ascii_lowercase()
@@ -386,6 +472,58 @@ mod tests {
         ];
         let filtered = filter_daemonsets(&items, "degraded", None);
         assert_eq!(filtered[0].ready_count, 4);
+    }
+
+    #[test]
+    fn test_filter_resource_quotas_by_name() {
+        let items = vec![
+            ResourceQuotaInfo {
+                name: "team-a".into(),
+                namespace: "default".into(),
+                ..ResourceQuotaInfo::default()
+            },
+            ResourceQuotaInfo {
+                name: "team-b".into(),
+                namespace: "prod".into(),
+                ..ResourceQuotaInfo::default()
+            },
+        ];
+        let filtered = filter_resource_quotas(&items, "team-a", None);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_limit_ranges_by_type() {
+        let mut lr = LimitRangeInfo {
+            name: "limits".into(),
+            namespace: "default".into(),
+            ..LimitRangeInfo::default()
+        };
+        lr.limits.push(crate::k8s::dtos::LimitSpec {
+            type_: "Container".into(),
+            ..crate::k8s::dtos::LimitSpec::default()
+        });
+        let filtered = filter_limit_ranges(&[lr], "container", None);
+        assert_eq!(filtered.len(), 1);
+    }
+
+    #[test]
+    fn test_filter_pdbs_by_namespace() {
+        let items = vec![
+            PodDisruptionBudgetInfo {
+                name: "web".into(),
+                namespace: "default".into(),
+                ..PodDisruptionBudgetInfo::default()
+            },
+            PodDisruptionBudgetInfo {
+                name: "api".into(),
+                namespace: "prod".into(),
+                ..PodDisruptionBudgetInfo::default()
+            },
+        ];
+        let filtered = filter_pod_disruption_budgets(&items, "", Some("prod"));
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "api");
     }
 
     #[test]

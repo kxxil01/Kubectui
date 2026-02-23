@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::time::interval;
 use tokio::sync::mpsc;
+use tokio::time::interval;
 
+use super::UpdateMessage;
 use crate::k8s::client::K8sClient;
 use crate::k8s::probes::extract_probes_from_pod;
-use super::UpdateMessage;
 
 /// Poll probes for a pod at regular intervals (2 seconds).
 ///
@@ -79,8 +79,8 @@ async fn fetch_and_compare_probes(
     namespace: &str,
     last_probes: &Option<Vec<(String, crate::k8s::probes::ContainerProbes)>>,
 ) -> anyhow::Result<(Vec<(String, crate::k8s::probes::ContainerProbes)>, bool)> {
-    use kube::Api;
     use k8s_openapi::api::core::v1::Pod;
+    use kube::Api;
 
     let pods_api: Api<Pod> = Api::namespaced(client.get_client(), namespace);
     let pod = pods_api.get(pod_name).await?;
@@ -134,7 +134,10 @@ fn probes_equal(
 }
 
 /// Compare two ProbeConfigs for equality.
-fn probe_config_equal(a: &crate::k8s::probes::ProbeConfig, b: &crate::k8s::probes::ProbeConfig) -> bool {
+fn probe_config_equal(
+    a: &crate::k8s::probes::ProbeConfig,
+    b: &crate::k8s::probes::ProbeConfig,
+) -> bool {
     use crate::k8s::probes::ProbeHandler;
 
     if a.probe_type != b.probe_type {
@@ -151,15 +154,20 @@ fn probe_config_equal(a: &crate::k8s::probes::ProbeConfig, b: &crate::k8s::probe
     }
 
     match (&a.handler, &b.handler) {
-        (ProbeHandler::Http { path: p1, port: po1, scheme: s1 }, ProbeHandler::Http { path: p2, port: po2, scheme: s2 }) => {
-            p1 == p2 && po1 == po2 && s1 == s2
-        }
-        (ProbeHandler::Exec { command: c1 }, ProbeHandler::Exec { command: c2 }) => {
-            c1 == c2
-        }
-        (ProbeHandler::Tcp { port: p1 }, ProbeHandler::Tcp { port: p2 }) => {
-            p1 == p2
-        }
+        (
+            ProbeHandler::Http {
+                path: p1,
+                port: po1,
+                scheme: s1,
+            },
+            ProbeHandler::Http {
+                path: p2,
+                port: po2,
+                scheme: s2,
+            },
+        ) => p1 == p2 && po1 == po2 && s1 == s2,
+        (ProbeHandler::Exec { command: c1 }, ProbeHandler::Exec { command: c2 }) => c1 == c2,
+        (ProbeHandler::Tcp { port: p1 }, ProbeHandler::Tcp { port: p2 }) => p1 == p2,
         _ => false,
     }
 }

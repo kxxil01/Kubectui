@@ -13,10 +13,10 @@ pub mod logs;
 pub mod probes;
 
 use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::mpsc;
-use tokio::sync::RwLock;
 use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tokio::sync::mpsc;
 
 use crate::k8s::client::K8sClient;
 use crate::k8s::logs::PodRef;
@@ -103,10 +103,7 @@ pub struct UpdateCoordinator {
 
 impl UpdateCoordinator {
     /// Create a new UpdateCoordinator.
-    pub fn new(
-        client: K8sClient,
-        update_tx: mpsc::UnboundedSender<UpdateMessage>,
-    ) -> Self {
+    pub fn new(client: K8sClient, update_tx: mpsc::UnboundedSender<UpdateMessage>) -> Self {
         Self {
             client: Arc::new(client),
             update_tx,
@@ -116,11 +113,7 @@ impl UpdateCoordinator {
     }
 
     /// Start polling probes for a specific pod.
-    pub async fn start_probe_polling(
-        &self,
-        pod_name: String,
-        namespace: String,
-    ) -> Result<()> {
+    pub async fn start_probe_polling(&self, pod_name: String, namespace: String) -> Result<()> {
         let key = format!("{}/{}", namespace, pod_name);
 
         // Don't start a new task if one is already running

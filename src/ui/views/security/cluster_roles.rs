@@ -1,0 +1,122 @@
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Rect},
+    prelude::{Color, Frame, Style},
+    text::Line,
+    widgets::{Cell, Paragraph, Row, Table},
+};
+
+use crate::{k8s::dtos::RbacRule, state::ClusterSnapshot, ui::components};
+
+pub fn render_cluster_roles(
+    frame: &mut Frame,
+    area: Rect,
+    cluster: &ClusterSnapshot,
+    selected_idx: usize,
+    query: &str,
+) {
+    let query = query.trim().to_ascii_lowercase();
+    let mut items: Vec<_> = cluster
+        .cluster_roles
+        .iter()
+        .filter(|role| query.is_empty() || role.name.to_ascii_lowercase().contains(&query))
+        .collect();
+    items.sort_by_key(|r| r.name.to_ascii_lowercase());
+
+    if items.is_empty() {
+        frame.render_widget(
+            Paragraph::new("No clusterroles found")
+                .block(components::default_block("ClusterRoles")),
+            area,
+        );
+        return;
+    }
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+        .split(area);
+
+    let rows = items.iter().enumerate().map(|(idx, role)| {
+        let style = if idx == selected_idx {
+            Style::default().bg(Color::DarkGray)
+        } else {
+            Style::default()
+        };
+
+        Row::new(vec![
+            Cell::from(role.name.clone()),
+            Cell::from(role.rules.len().to_string()),
+            Cell::from(format_age(role.age)),
+        ])
+        .style(style)
+    });
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(36),
+            Constraint::Length(8),
+            Constraint::Fill(1),
+        ],
+    )
+    .header(Row::new(["Name", "Rules", "Age"]).style(Style::default().fg(Color::Cyan)))
+    .block(components::default_block("ClusterRoles"));
+    frame.render_widget(table, chunks[0]);
+
+    let idx = selected_idx.min(items.len().saturating_sub(1));
+    let selected = items[idx];
+    let detail = render_rule_tree(&selected.rules);
+    frame.render_widget(
+        Paragraph::new(detail).block(components::default_block("Selected ClusterRole Rules")),
+        chunks[1],
+    );
+}
+
+fn render_rule_tree(rules: &[RbacRule]) -> Vec<Line<'static>> {
+    if rules.is_empty() {
+        return vec![Line::from("No rules")];
+    }
+
+    let mut lines = Vec::new();
+    for (idx, rule) in rules.iter().enumerate() {
+        lines.push(Line::from(format!("Rule {}", idx + 1)));
+        lines.push(Line::from(format!(
+            "  ├─ verbs: {}",
+            join_or_all(&rule.verbs)
+        )));
+        lines.push(Line::from(format!(
+            "  ├─ apiGroups: {}",
+            join_or_all(&rule.api_groups)
+        )));
+        lines.push(Line::from(format!(
+            "  └─ resources: {}",
+            join_or_all(&rule.resources)
+        )));
+    }
+    lines
+}
+
+fn join_or_all(items: &[String]) -> String {
+    if items.is_empty() {
+        "*".to_string()
+    } else {
+        items.join(", ")
+    }
+}
+
+fn format_age(age: Option<std::time::Duration>) -> String {
+    let Some(age) = age else {
+        return "-".to_string();
+    };
+    let secs = age.as_secs();
+    let days = secs / 86_400;
+    let hours = (secs % 86_400) / 3_600;
+    let mins = (secs % 3_600) / 60;
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {mins}m")
+    } else {
+        format!("{mins}m")
+    }
+}

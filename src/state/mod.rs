@@ -12,8 +12,10 @@ use std::{collections::BTreeSet, fmt, time::Duration};
 use crate::k8s::{
     client::K8sClient,
     dtos::{
-        ClusterInfo, CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, PodInfo,
-        ServiceInfo, StatefulSetInfo,
+        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo,
+        CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo,
+        NodeInfo, PodDisruptionBudgetInfo, PodInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
+        ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
     },
 };
 
@@ -54,6 +56,15 @@ pub struct ClusterSnapshot {
     pub daemonsets: Vec<DaemonSetInfo>,
     pub jobs: Vec<JobInfo>,
     pub cronjobs: Vec<CronJobInfo>,
+    pub resource_quotas: Vec<ResourceQuotaInfo>,
+    pub limit_ranges: Vec<LimitRangeInfo>,
+    pub pod_disruption_budgets: Vec<PodDisruptionBudgetInfo>,
+    pub service_accounts: Vec<ServiceAccountInfo>,
+    pub roles: Vec<RoleInfo>,
+    pub role_bindings: Vec<RoleBindingInfo>,
+    pub cluster_roles: Vec<ClusterRoleInfo>,
+    pub cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
+    pub custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
     pub cluster_info: Option<ClusterInfo>,
     pub services_count: usize,
     pub namespaces_count: usize,
@@ -95,6 +106,33 @@ pub trait ClusterDataSource {
     async fn fetch_jobs(&self, namespace: Option<&str>) -> Result<Vec<JobInfo>>;
     /// Fetches CronJob list.
     async fn fetch_cronjobs(&self, namespace: Option<&str>) -> Result<Vec<CronJobInfo>>;
+    /// Fetches ResourceQuota list.
+    async fn fetch_resource_quotas(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ResourceQuotaInfo>>;
+    /// Fetches LimitRange list.
+    async fn fetch_limit_ranges(&self, namespace: Option<&str>) -> Result<Vec<LimitRangeInfo>>;
+    /// Fetches PodDisruptionBudget list.
+    async fn fetch_pod_disruption_budgets(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<PodDisruptionBudgetInfo>>;
+    /// Fetches ServiceAccount list.
+    async fn fetch_service_accounts(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ServiceAccountInfo>>;
+    /// Fetches Role list.
+    async fn fetch_roles(&self, namespace: Option<&str>) -> Result<Vec<RoleInfo>>;
+    /// Fetches RoleBinding list.
+    async fn fetch_role_bindings(&self, namespace: Option<&str>) -> Result<Vec<RoleBindingInfo>>;
+    /// Fetches ClusterRole list.
+    async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>>;
+    /// Fetches ClusterRoleBinding list.
+    async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>>;
+    /// Fetches CRD list used by Extensions view.
+    async fn fetch_custom_resource_definitions(&self) -> Result<Vec<CustomResourceDefinitionInfo>>;
     /// Fetches cluster metadata.
     async fn fetch_cluster_info(&self) -> Result<ClusterInfo>;
 }
@@ -139,6 +177,51 @@ impl ClusterDataSource for K8sClient {
 
     async fn fetch_cronjobs(&self, namespace: Option<&str>) -> Result<Vec<CronJobInfo>> {
         K8sClient::fetch_cronjobs(self, namespace).await
+    }
+
+    async fn fetch_resource_quotas(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ResourceQuotaInfo>> {
+        K8sClient::fetch_resource_quotas(self, namespace).await
+    }
+
+    async fn fetch_limit_ranges(&self, namespace: Option<&str>) -> Result<Vec<LimitRangeInfo>> {
+        K8sClient::fetch_limit_ranges(self, namespace).await
+    }
+
+    async fn fetch_pod_disruption_budgets(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<PodDisruptionBudgetInfo>> {
+        K8sClient::fetch_pod_disruption_budgets(self, namespace).await
+    }
+
+    async fn fetch_service_accounts(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ServiceAccountInfo>> {
+        K8sClient::fetch_service_accounts(self, namespace).await
+    }
+
+    async fn fetch_roles(&self, namespace: Option<&str>) -> Result<Vec<RoleInfo>> {
+        K8sClient::fetch_roles(self, namespace).await
+    }
+
+    async fn fetch_role_bindings(&self, namespace: Option<&str>) -> Result<Vec<RoleBindingInfo>> {
+        K8sClient::fetch_role_bindings(self, namespace).await
+    }
+
+    async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>> {
+        K8sClient::fetch_cluster_roles(self).await
+    }
+
+    async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>> {
+        K8sClient::fetch_cluster_role_bindings(self).await
+    }
+
+    async fn fetch_custom_resource_definitions(&self) -> Result<Vec<CustomResourceDefinitionInfo>> {
+        K8sClient::fetch_custom_resource_definitions(self).await
     }
 
     async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {
@@ -204,6 +287,15 @@ impl GlobalState {
             daemonsets_res,
             jobs_res,
             cronjobs_res,
+            resource_quotas_res,
+            limit_ranges_res,
+            pod_disruption_budgets_res,
+            service_accounts_res,
+            roles_res,
+            role_bindings_res,
+            cluster_roles_res,
+            cluster_role_bindings_res,
+            custom_resource_definitions_res,
             cluster_info_res,
         ) = tokio::join!(
             Self::fetch_with_timeout("nodes", client.fetch_nodes()),
@@ -214,6 +306,15 @@ impl GlobalState {
             Self::fetch_with_timeout("daemonsets", client.fetch_daemonsets(namespace)),
             Self::fetch_with_timeout("jobs", client.fetch_jobs(namespace)),
             Self::fetch_with_timeout("cronjobs", client.fetch_cronjobs(namespace)),
+            Self::fetch_with_timeout("resourcequotas", client.fetch_resource_quotas(namespace)),
+            Self::fetch_with_timeout("limitranges", client.fetch_limit_ranges(namespace)),
+            Self::fetch_with_timeout("pdbs", client.fetch_pod_disruption_budgets(namespace)),
+            Self::fetch_with_timeout("serviceaccounts", client.fetch_service_accounts(namespace)),
+            Self::fetch_with_timeout("roles", client.fetch_roles(namespace)),
+            Self::fetch_with_timeout("rolebindings", client.fetch_role_bindings(namespace)),
+            Self::fetch_with_timeout("clusterroles", client.fetch_cluster_roles()),
+            Self::fetch_with_timeout("clusterrolebindings", client.fetch_cluster_role_bindings()),
+            Self::fetch_with_timeout("crds", client.fetch_custom_resource_definitions()),
             Self::fetch_with_timeout("cluster info", client.fetch_cluster_info()),
         );
 
@@ -283,6 +384,69 @@ impl GlobalState {
                 Vec::new()
             }
         };
+        let resource_quotas = match resource_quotas_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("resourcequotas: {e}"));
+                Vec::new()
+            }
+        };
+        let limit_ranges = match limit_ranges_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("limitranges: {e}"));
+                Vec::new()
+            }
+        };
+        let pod_disruption_budgets = match pod_disruption_budgets_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("pdbs: {e}"));
+                Vec::new()
+            }
+        };
+        let service_accounts = match service_accounts_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("serviceaccounts: {e}"));
+                Vec::new()
+            }
+        };
+        let roles = match roles_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("roles: {e}"));
+                Vec::new()
+            }
+        };
+        let role_bindings = match role_bindings_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("rolebindings: {e}"));
+                Vec::new()
+            }
+        };
+        let cluster_roles = match cluster_roles_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("clusterroles: {e}"));
+                Vec::new()
+            }
+        };
+        let cluster_role_bindings = match cluster_role_bindings_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("clusterrolebindings: {e}"));
+                Vec::new()
+            }
+        };
+        let custom_resource_definitions = match custom_resource_definitions_res {
+            Ok(v) => v,
+            Err(e) => {
+                errors.push(format!("crds: {e}"));
+                Vec::new()
+            }
+        };
         let cluster_info = match cluster_info_res {
             Ok(v) => Some(v),
             Err(e) => {
@@ -299,6 +463,15 @@ impl GlobalState {
             && daemonsets.is_empty()
             && jobs.is_empty()
             && cronjobs.is_empty()
+            && resource_quotas.is_empty()
+            && limit_ranges.is_empty()
+            && pod_disruption_budgets.is_empty()
+            && service_accounts.is_empty()
+            && roles.is_empty()
+            && role_bindings.is_empty()
+            && cluster_roles.is_empty()
+            && cluster_role_bindings.is_empty()
+            && custom_resource_definitions.is_empty()
             && cluster_info.is_none();
 
         if all_failed {
@@ -328,6 +501,15 @@ impl GlobalState {
         self.snapshot.daemonsets = daemonsets;
         self.snapshot.jobs = jobs;
         self.snapshot.cronjobs = cronjobs;
+        self.snapshot.resource_quotas = resource_quotas;
+        self.snapshot.limit_ranges = limit_ranges;
+        self.snapshot.pod_disruption_budgets = pod_disruption_budgets;
+        self.snapshot.service_accounts = service_accounts;
+        self.snapshot.roles = roles;
+        self.snapshot.role_bindings = role_bindings;
+        self.snapshot.cluster_roles = cluster_roles;
+        self.snapshot.cluster_role_bindings = cluster_role_bindings;
+        self.snapshot.custom_resource_definitions = custom_resource_definitions;
         self.snapshot.cluster_info = cluster_info;
         self.snapshot.phase = DataPhase::Ready;
         self.snapshot.last_updated = Some(Utc::now());
@@ -357,6 +539,15 @@ mod tests {
         daemonsets: Vec<DaemonSetInfo>,
         jobs: Vec<JobInfo>,
         cronjobs: Vec<CronJobInfo>,
+        resource_quotas: Vec<ResourceQuotaInfo>,
+        limit_ranges: Vec<LimitRangeInfo>,
+        pod_disruption_budgets: Vec<PodDisruptionBudgetInfo>,
+        service_accounts: Vec<ServiceAccountInfo>,
+        roles: Vec<RoleInfo>,
+        role_bindings: Vec<RoleBindingInfo>,
+        cluster_roles: Vec<ClusterRoleInfo>,
+        cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
+        custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
         cluster_info: Option<ClusterInfo>,
         nodes_err: Option<String>,
         pods_err: Option<String>,
@@ -366,6 +557,14 @@ mod tests {
         daemonsets_err: Option<String>,
         jobs_err: Option<String>,
         cronjobs_err: Option<String>,
+        resource_quotas_err: Option<String>,
+        limit_ranges_err: Option<String>,
+        pod_disruption_budgets_err: Option<String>,
+        service_accounts_err: Option<String>,
+        roles_err: Option<String>,
+        role_bindings_err: Option<String>,
+        cluster_roles_err: Option<String>,
+        cluster_role_bindings_err: Option<String>,
         cluster_info_err: Option<String>,
         delay_ms: u64,
     }
@@ -436,6 +635,60 @@ mod tests {
                     active_jobs: 0,
                     ..CronJobInfo::default()
                 }],
+                resource_quotas: vec![ResourceQuotaInfo {
+                    name: "rq-default".to_string(),
+                    namespace: "default".to_string(),
+                    ..ResourceQuotaInfo::default()
+                }],
+                limit_ranges: vec![LimitRangeInfo {
+                    name: "limits-default".to_string(),
+                    namespace: "default".to_string(),
+                    ..LimitRangeInfo::default()
+                }],
+                pod_disruption_budgets: vec![PodDisruptionBudgetInfo {
+                    name: "web-pdb".to_string(),
+                    namespace: "default".to_string(),
+                    disruptions_allowed: 1,
+                    ..PodDisruptionBudgetInfo::default()
+                }],
+                service_accounts: vec![ServiceAccountInfo {
+                    name: "default".to_string(),
+                    namespace: "default".to_string(),
+                    secrets_count: 1,
+                    image_pull_secrets_count: 0,
+                    ..ServiceAccountInfo::default()
+                }],
+                roles: vec![RoleInfo {
+                    name: "reader".to_string(),
+                    namespace: "default".to_string(),
+                    ..RoleInfo::default()
+                }],
+                role_bindings: vec![RoleBindingInfo {
+                    name: "reader-binding".to_string(),
+                    namespace: "default".to_string(),
+                    role_ref_kind: "Role".to_string(),
+                    role_ref_name: "reader".to_string(),
+                    ..RoleBindingInfo::default()
+                }],
+                cluster_roles: vec![ClusterRoleInfo {
+                    name: "cluster-admin".to_string(),
+                    ..ClusterRoleInfo::default()
+                }],
+                cluster_role_bindings: vec![ClusterRoleBindingInfo {
+                    name: "cluster-admin-binding".to_string(),
+                    role_ref_kind: "ClusterRole".to_string(),
+                    role_ref_name: "cluster-admin".to_string(),
+                    ..ClusterRoleBindingInfo::default()
+                }],
+                custom_resource_definitions: vec![CustomResourceDefinitionInfo {
+                    name: "widgets.demo.io".to_string(),
+                    group: "demo.io".to_string(),
+                    version: "v1".to_string(),
+                    kind: "Widget".to_string(),
+                    plural: "widgets".to_string(),
+                    scope: "Namespaced".to_string(),
+                    instances: 1,
+                }],
                 cluster_info: Some(ClusterInfo {
                     server: "https://kind.local".to_string(),
                     node_count: 1,
@@ -451,6 +704,14 @@ mod tests {
                 daemonsets_err: None,
                 jobs_err: None,
                 cronjobs_err: None,
+                resource_quotas_err: None,
+                limit_ranges_err: None,
+                pod_disruption_budgets_err: None,
+                service_accounts_err: None,
+                roles_err: None,
+                role_bindings_err: None,
+                cluster_roles_err: None,
+                cluster_role_bindings_err: None,
                 cluster_info_err: None,
                 delay_ms: 0,
             }
@@ -549,6 +810,83 @@ mod tests {
             Ok(self.cronjobs.clone())
         }
 
+        async fn fetch_resource_quotas(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<ResourceQuotaInfo>> {
+            if let Some(err) = &self.resource_quotas_err {
+                return Err(anyhow!(err.clone()));
+            }
+            Ok(self.resource_quotas.clone())
+        }
+
+        async fn fetch_limit_ranges(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<LimitRangeInfo>> {
+            if let Some(err) = &self.limit_ranges_err {
+                return Err(anyhow!(err.clone()));
+            }
+            Ok(self.limit_ranges.clone())
+        }
+
+        async fn fetch_pod_disruption_budgets(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<PodDisruptionBudgetInfo>> {
+            if let Some(err) = &self.pod_disruption_budgets_err {
+                return Err(anyhow!(err.clone()));
+            }
+            Ok(self.pod_disruption_budgets.clone())
+        }
+
+        async fn fetch_service_accounts(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<ServiceAccountInfo>> {
+            if let Some(err) = &self.service_accounts_err {
+                return Err(anyhow!(err.clone()));
+            }
+            Ok(self.service_accounts.clone())
+        }
+
+        async fn fetch_roles(&self, _namespace: Option<&str>) -> Result<Vec<RoleInfo>> {
+            if let Some(err) = &self.roles_err {
+                return Err(anyhow!(err.clone()));
+            }
+            Ok(self.roles.clone())
+        }
+
+        async fn fetch_role_bindings(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<RoleBindingInfo>> {
+            if let Some(err) = &self.role_bindings_err {
+                return Err(anyhow!(err.clone()));
+            }
+            Ok(self.role_bindings.clone())
+        }
+
+        async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>> {
+            if let Some(err) = &self.cluster_roles_err {
+                return Err(anyhow!(err.clone()));
+            }
+            Ok(self.cluster_roles.clone())
+        }
+
+        async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>> {
+            if let Some(err) = &self.cluster_role_bindings_err {
+                return Err(anyhow!(err.clone()));
+            }
+            Ok(self.cluster_role_bindings.clone())
+        }
+
+        async fn fetch_custom_resource_definitions(
+            &self,
+        ) -> Result<Vec<CustomResourceDefinitionInfo>> {
+            Ok(self.custom_resource_definitions.clone())
+        }
+
         async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
@@ -582,6 +920,15 @@ mod tests {
         assert_eq!(snapshot.daemonsets.len(), 1);
         assert_eq!(snapshot.jobs.len(), 1);
         assert_eq!(snapshot.cronjobs.len(), 1);
+        assert_eq!(snapshot.resource_quotas.len(), 1);
+        assert_eq!(snapshot.limit_ranges.len(), 1);
+        assert_eq!(snapshot.pod_disruption_budgets.len(), 1);
+        assert_eq!(snapshot.service_accounts.len(), 1);
+        assert_eq!(snapshot.roles.len(), 1);
+        assert_eq!(snapshot.role_bindings.len(), 1);
+        assert_eq!(snapshot.cluster_roles.len(), 1);
+        assert_eq!(snapshot.cluster_role_bindings.len(), 1);
+        assert_eq!(snapshot.custom_resource_definitions.len(), 1);
         assert_eq!(snapshot.cluster_summary(), "https://kind.local");
         assert_eq!(state.namespaces, vec!["default", "demo"]);
         assert!(snapshot.last_updated.is_some());
@@ -624,6 +971,15 @@ mod tests {
             daemonsets: vec![],
             jobs: vec![],
             cronjobs: vec![],
+            resource_quotas: vec![],
+            limit_ranges: vec![],
+            pod_disruption_budgets: vec![],
+            service_accounts: vec![],
+            roles: vec![],
+            role_bindings: vec![],
+            cluster_roles: vec![],
+            cluster_role_bindings: vec![],
+            custom_resource_definitions: vec![],
             cluster_info: None,
             nodes_err: Some("nodes down".to_string()),
             pods_err: Some("pods down".to_string()),
@@ -633,6 +989,14 @@ mod tests {
             daemonsets_err: Some("daemonsets down".to_string()),
             jobs_err: Some("jobs down".to_string()),
             cronjobs_err: Some("cronjobs down".to_string()),
+            resource_quotas_err: Some("resourcequotas down".to_string()),
+            limit_ranges_err: Some("limitranges down".to_string()),
+            pod_disruption_budgets_err: Some("pdbs down".to_string()),
+            service_accounts_err: Some("serviceaccounts down".to_string()),
+            roles_err: Some("roles down".to_string()),
+            role_bindings_err: Some("rolebindings down".to_string()),
+            cluster_roles_err: Some("clusterroles down".to_string()),
+            cluster_role_bindings_err: Some("clusterrolebindings down".to_string()),
             cluster_info_err: Some("cluster down".to_string()),
             delay_ms: 0,
         };
@@ -657,6 +1021,15 @@ mod tests {
             daemonsets: vec![],
             jobs: vec![],
             cronjobs: vec![],
+            resource_quotas: vec![],
+            limit_ranges: vec![],
+            pod_disruption_budgets: vec![],
+            service_accounts: vec![],
+            roles: vec![],
+            role_bindings: vec![],
+            cluster_roles: vec![],
+            cluster_role_bindings: vec![],
+            custom_resource_definitions: vec![],
             cluster_info: Some(ClusterInfo {
                 server: "https://kind.local".to_string(),
                 ..ClusterInfo::default()
@@ -677,6 +1050,15 @@ mod tests {
         assert_eq!(snapshot.namespaces_count, 0);
         assert!(snapshot.jobs.is_empty());
         assert!(snapshot.cronjobs.is_empty());
+        assert!(snapshot.resource_quotas.is_empty());
+        assert!(snapshot.limit_ranges.is_empty());
+        assert!(snapshot.pod_disruption_budgets.is_empty());
+        assert!(snapshot.service_accounts.is_empty());
+        assert!(snapshot.roles.is_empty());
+        assert!(snapshot.role_bindings.is_empty());
+        assert!(snapshot.cluster_roles.is_empty());
+        assert!(snapshot.cluster_role_bindings.is_empty());
+        assert!(snapshot.custom_resource_definitions.is_empty());
     }
 
     #[tokio::test]

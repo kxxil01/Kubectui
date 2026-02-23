@@ -6,7 +6,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    k8s::client::EventInfo,
+    k8s::{
+        client::EventInfo,
+        dtos::{CustomResourceInfo, NodeMetricsInfo, PodMetricsInfo},
+    },
     ui::components::{NamespacePicker, NamespacePickerAction},
 };
 
@@ -22,10 +25,19 @@ pub enum AppView {
     DaemonSets,
     Jobs,
     CronJobs,
+    ServiceAccounts,
+    Roles,
+    RoleBindings,
+    ClusterRoles,
+    ClusterRoleBindings,
+    ResourceQuotas,
+    LimitRanges,
+    PodDisruptionBudgets,
+    Extensions,
 }
 
 impl AppView {
-    const ORDER: [AppView; 9] = [
+    const ORDER: [AppView; 18] = [
         AppView::Dashboard,
         AppView::Nodes,
         AppView::Pods,
@@ -35,6 +47,15 @@ impl AppView {
         AppView::DaemonSets,
         AppView::Jobs,
         AppView::CronJobs,
+        AppView::ServiceAccounts,
+        AppView::Roles,
+        AppView::RoleBindings,
+        AppView::ClusterRoles,
+        AppView::ClusterRoleBindings,
+        AppView::ResourceQuotas,
+        AppView::LimitRanges,
+        AppView::PodDisruptionBudgets,
+        AppView::Extensions,
     ];
 
     /// Returns a static display label for this view.
@@ -49,6 +70,15 @@ impl AppView {
             AppView::DaemonSets => "DaemonSets",
             AppView::Jobs => "Jobs",
             AppView::CronJobs => "CronJobs",
+            AppView::ServiceAccounts => "SvcAccounts",
+            AppView::Roles => "Roles",
+            AppView::RoleBindings => "RoleBindings",
+            AppView::ClusterRoles => "ClusterRoles",
+            AppView::ClusterRoleBindings => "ClusterRoleBindings",
+            AppView::ResourceQuotas => "Gov: Quotas",
+            AppView::LimitRanges => "Gov: Limits",
+            AppView::PodDisruptionBudgets => "Gov: PDBs",
+            AppView::Extensions => "Extensions",
         }
     }
 
@@ -78,7 +108,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 9] {
+    pub const fn tabs() -> &'static [AppView; 18] {
         &Self::ORDER
     }
 }
@@ -90,6 +120,10 @@ pub enum ResourceRef {
     Pod(String, String),
     Service(String, String),
     Deployment(String, String),
+    StatefulSet(String, String),
+    ResourceQuota(String, String),
+    LimitRange(String, String),
+    PodDisruptionBudget(String, String),
 }
 
 impl ResourceRef {
@@ -100,6 +134,10 @@ impl ResourceRef {
             ResourceRef::Pod(_, _) => "Pod",
             ResourceRef::Service(_, _) => "Service",
             ResourceRef::Deployment(_, _) => "Deployment",
+            ResourceRef::StatefulSet(_, _) => "StatefulSet",
+            ResourceRef::ResourceQuota(_, _) => "ResourceQuota",
+            ResourceRef::LimitRange(_, _) => "LimitRange",
+            ResourceRef::PodDisruptionBudget(_, _) => "PodDisruptionBudget",
         }
     }
 
@@ -109,7 +147,11 @@ impl ResourceRef {
             ResourceRef::Node(name)
             | ResourceRef::Pod(name, _)
             | ResourceRef::Service(name, _)
-            | ResourceRef::Deployment(name, _) => name,
+            | ResourceRef::Deployment(name, _)
+            | ResourceRef::StatefulSet(name, _)
+            | ResourceRef::ResourceQuota(name, _)
+            | ResourceRef::LimitRange(name, _)
+            | ResourceRef::PodDisruptionBudget(name, _) => name,
         }
     }
 
@@ -119,7 +161,11 @@ impl ResourceRef {
             ResourceRef::Node(_) => None,
             ResourceRef::Pod(_, ns)
             | ResourceRef::Service(_, ns)
-            | ResourceRef::Deployment(_, ns) => Some(ns),
+            | ResourceRef::Deployment(_, ns)
+            | ResourceRef::StatefulSet(_, ns)
+            | ResourceRef::ResourceQuota(_, ns)
+            | ResourceRef::LimitRange(_, ns)
+            | ResourceRef::PodDisruptionBudget(_, ns) => Some(ns),
         }
     }
 }
@@ -211,6 +257,9 @@ pub struct DetailViewState {
     pub yaml: Option<String>,
     pub events: Vec<EventInfo>,
     pub sections: Vec<String>,
+    pub pod_metrics: Option<PodMetricsInfo>,
+    pub node_metrics: Option<NodeMetricsInfo>,
+    pub metrics_unavailable_message: Option<String>,
     pub loading: bool,
     pub error: Option<String>,
     pub logs_viewer: Option<LogsViewerState>,
@@ -266,6 +315,9 @@ pub struct AppState {
     pub detail_view: Option<DetailViewState>,
     pub current_namespace: String,
     pub namespace_picker: NamespacePicker,
+    pub extension_instances: Vec<CustomResourceInfo>,
+    pub extension_error: Option<String>,
+    pub extension_selected_crd: Option<String>,
 }
 
 impl Default for AppState {
@@ -280,6 +332,9 @@ impl Default for AppState {
             detail_view: None,
             current_namespace: "default".to_string(),
             namespace_picker: NamespacePicker::new(vec!["all".to_string(), "default".to_string()]),
+            extension_instances: Vec::new(),
+            extension_error: None,
+            extension_selected_crd: None,
         }
     }
 }
@@ -377,6 +432,18 @@ impl AppState {
     /// Closes namespace picker modal.
     pub fn close_namespace_picker(&mut self) {
         self.namespace_picker.close();
+    }
+
+    /// Updates the currently displayed custom resource instances for Extensions view.
+    pub fn set_extension_instances(
+        &mut self,
+        crd_name: String,
+        instances: Vec<CustomResourceInfo>,
+        error: Option<String>,
+    ) {
+        self.extension_selected_crd = Some(crd_name);
+        self.extension_instances = instances;
+        self.extension_error = error;
     }
 
     fn next_view(&mut self) {
@@ -685,15 +752,33 @@ mod tests {
         app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.view(), AppView::CronJobs);
         app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::ServiceAccounts);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::Roles);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::RoleBindings);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::ClusterRoles);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::ClusterRoleBindings);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::ResourceQuotas);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::LimitRanges);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::PodDisruptionBudgets);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+        assert_eq!(app.view(), AppView::Extensions);
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         assert_eq!(app.view(), AppView::Dashboard);
     }
 
-    /// Verifies reverse tab cycle wraps from Dashboard to CronJobs.
+    /// Verifies reverse tab cycle wraps from Dashboard to Extensions.
     #[test]
     fn shift_tab_cycles_reverse() {
         let mut app = AppState::default();
         app.handle_key_event(KeyEvent::from(KeyCode::BackTab));
-        assert_eq!(app.view(), AppView::CronJobs);
+        assert_eq!(app.view(), AppView::Extensions);
     }
 
     /// Verifies entering search mode and adding/removing characters.
@@ -834,7 +919,7 @@ mod tests {
     fn rapid_tab_switching_is_stable() {
         let mut app = AppState::default();
 
-        for _ in 0..99 {
+        for _ in 0..108 {
             app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         }
 
@@ -868,6 +953,8 @@ mod tests {
     fn resource_ref_helpers_work_for_each_variant() {
         let node = ResourceRef::Node("n1".to_string());
         let pod = ResourceRef::Pod("p1".to_string(), "ns1".to_string());
+        let statefulset = ResourceRef::StatefulSet("ss1".to_string(), "ns1".to_string());
+        let quota = ResourceRef::ResourceQuota("rq1".to_string(), "ns1".to_string());
 
         assert_eq!(node.kind(), "Node");
         assert_eq!(node.name(), "n1");
@@ -876,5 +963,13 @@ mod tests {
         assert_eq!(pod.kind(), "Pod");
         assert_eq!(pod.name(), "p1");
         assert_eq!(pod.namespace(), Some("ns1"));
+
+        assert_eq!(statefulset.kind(), "StatefulSet");
+        assert_eq!(statefulset.name(), "ss1");
+        assert_eq!(statefulset.namespace(), Some("ns1"));
+
+        assert_eq!(quota.kind(), "ResourceQuota");
+        assert_eq!(quota.name(), "rq1");
+        assert_eq!(quota.namespace(), Some("ns1"));
     }
 }

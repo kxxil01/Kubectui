@@ -43,7 +43,11 @@ pub struct ScaleDialogState {
 
 impl ScaleDialogState {
     /// Creates a new scale dialog state for a deployment.
-    pub fn new(deployment_name: impl Into<String>, namespace: impl Into<String>, current_replicas: i32) -> Self {
+    pub fn new(
+        deployment_name: impl Into<String>,
+        namespace: impl Into<String>,
+        current_replicas: i32,
+    ) -> Self {
         Self {
             deployment_name: deployment_name.into(),
             namespace: namespace.into(),
@@ -123,7 +127,8 @@ impl ScaleDialogState {
                     // Check for large jump warning
                     let diff = (n - self.current_replicas).abs();
                     if diff > 10 {
-                        self.warning_message = Some(format!("Large scale change ({} replicas)", diff));
+                        self.warning_message =
+                            Some(format!("Large scale change ({} replicas)", diff));
                     }
                 }
             }
@@ -138,7 +143,7 @@ impl ScaleDialogState {
         if self.input_buffer.is_empty() {
             return false;
         }
-        
+
         if self.input_buffer.len() > 1 && self.input_buffer.starts_with('0') {
             return false;
         }
@@ -211,10 +216,12 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
     frame.render_widget(title_widget, chunks[0]);
 
     // Metadata section
-    let meta_lines = vec![
-        Line::from(format!("Namespace: {} | Current replicas: {}", state.namespace, state.current_replicas)),
-    ];
-    let meta_widget = Paragraph::new(meta_lines).block(Block::default().borders(Borders::ALL).title("Info"));
+    let meta_lines = vec![Line::from(format!(
+        "Namespace: {} | Current replicas: {}",
+        state.namespace, state.current_replicas
+    ))];
+    let meta_widget =
+        Paragraph::new(meta_lines).block(Block::default().borders(Borders::ALL).title("Info"));
     frame.render_widget(meta_widget, chunks[1]);
 
     // Input section with +/- buttons
@@ -223,7 +230,7 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
     } else {
         format!(" {} ", state.input_buffer)
     };
-    
+
     let input_style = if state.error_message.is_some() {
         Style::default().fg(Color::Red)
     } else if state.warning_message.is_some() {
@@ -232,7 +239,11 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         Style::default().fg(Color::Cyan)
     };
 
-    let cursor = if state.focus_field == ScaleField::InputField { "│" } else { " " };
+    let cursor = if state.focus_field == ScaleField::InputField {
+        "│"
+    } else {
+        " "
+    };
     let input_box = format!("┌─{}─{}─┐", input_display, cursor);
     let input_footer = "└─────────────────────┘";
 
@@ -242,16 +253,26 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         Line::from(Span::styled(input_footer, input_style)),
     ];
 
-    let input_widget = Paragraph::new(input_lines).block(Block::default().borders(Borders::ALL).title("Input"));
+    let input_widget =
+        Paragraph::new(input_lines).block(Block::default().borders(Borders::ALL).title("Input"));
     frame.render_widget(input_widget, chunks[2]);
 
     // Validation/Warning display
     let validation_line = if let Some(err) = &state.error_message {
-        Line::from(Span::styled(format!("✗ {}", err), Style::default().fg(Color::Red)))
+        Line::from(Span::styled(
+            format!("✗ {}", err),
+            Style::default().fg(Color::Red),
+        ))
     } else if let Some(warn) = &state.warning_message {
-        Line::from(Span::styled(format!("⚠ {}", warn), Style::default().fg(Color::Yellow)))
+        Line::from(Span::styled(
+            format!("⚠ {}", warn),
+            Style::default().fg(Color::Yellow),
+        ))
     } else if state.pending {
-        Line::from(Span::styled("⏳ Scaling...", Style::default().fg(Color::Magenta)))
+        Line::from(Span::styled(
+            "⏳ Scaling...",
+            Style::default().fg(Color::Magenta),
+        ))
     } else {
         Line::from(Span::styled(
             "Use +/- keys to adjust, type digits, Enter to apply",
@@ -259,7 +280,8 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         ))
     };
 
-    let validation_widget = Paragraph::new(validation_line).block(Block::default().borders(Borders::ALL));
+    let validation_widget =
+        Paragraph::new(validation_line).block(Block::default().borders(Borders::ALL));
     frame.render_widget(validation_widget, chunks[3]);
 
     // Buttons with focus indication
@@ -323,7 +345,7 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::{backend::TestBackend, Terminal};
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn draw(state: &ScaleDialogState) {
         let backend = TestBackend::new(120, 40);
@@ -486,4 +508,3 @@ mod tests {
         draw(&state);
     }
 }
-

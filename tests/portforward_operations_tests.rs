@@ -5,15 +5,13 @@ use std::str::FromStr;
 
 #[tokio::test]
 async fn test_port_forward_target_id() {
-    let target =
-        kubectui::k8s::portforward::PortForwardTarget::new("default", "test-pod", 8080);
+    let target = kubectui::k8s::portforward::PortForwardTarget::new("default", "test-pod", 8080);
     assert_eq!(target.id(), "default/test-pod/8080");
 }
 
 #[tokio::test]
 async fn test_tunnel_info_creation() {
-    let target =
-        kubectui::k8s::portforward::PortForwardTarget::new("default", "test-pod", 8080);
+    let target = kubectui::k8s::portforward::PortForwardTarget::new("default", "test-pod", 8080);
     let local_addr = SocketAddr::from_str("127.0.0.1:8080").unwrap();
 
     let tunnel = kubectui::k8s::portforward::PortForwardTunnelInfo {
@@ -23,7 +21,10 @@ async fn test_tunnel_info_creation() {
         state: kubectui::k8s::portforward::TunnelState::Active,
     };
 
-    assert_eq!(tunnel.state, kubectui::k8s::portforward::TunnelState::Active);
+    assert_eq!(
+        tunnel.state,
+        kubectui::k8s::portforward::TunnelState::Active
+    );
     assert_eq!(tunnel.target.namespace, "default");
 }
 
@@ -137,8 +138,8 @@ async fn test_error_suggested_action() {
 
 #[tokio::test]
 async fn test_tunnel_registry_add_and_remove() {
-    use kubectui::state::port_forward::TunnelRegistry;
     use kubectui::k8s::portforward::{PortForwardTarget, PortForwardTunnelInfo, TunnelState};
+    use kubectui::state::port_forward::TunnelRegistry;
     use std::str::FromStr;
 
     let mut registry = TunnelRegistry::new();
@@ -162,8 +163,8 @@ async fn test_tunnel_registry_add_and_remove() {
 
 #[tokio::test]
 async fn test_tunnel_registry_navigation() {
-    use kubectui::state::port_forward::TunnelRegistry;
     use kubectui::k8s::portforward::{PortForwardTarget, PortForwardTunnelInfo, TunnelState};
+    use kubectui::state::port_forward::TunnelRegistry;
     use std::str::FromStr;
 
     let mut registry = TunnelRegistry::new();
@@ -174,8 +175,7 @@ async fn test_tunnel_registry_navigation() {
         let tunnel = PortForwardTunnelInfo {
             id: target.id(),
             target: target.clone(),
-            local_addr: SocketAddr::from_str(&format!("127.0.0.1:{}", 8000 + i as u16))
-                .unwrap(),
+            local_addr: SocketAddr::from_str(&format!("127.0.0.1:{}", 8000 + i as u16)).unwrap(),
             state: TunnelState::Active,
         };
         registry.add_tunnel(tunnel);
@@ -210,8 +210,8 @@ async fn test_tunnel_registry_is_empty() {
 
 #[tokio::test]
 async fn test_tunnel_registry_update_tunnels() {
-    use kubectui::state::port_forward::TunnelRegistry;
     use kubectui::k8s::portforward::{PortForwardTarget, PortForwardTunnelInfo, TunnelState};
+    use kubectui::state::port_forward::TunnelRegistry;
     use std::str::FromStr;
 
     let mut registry = TunnelRegistry::new();

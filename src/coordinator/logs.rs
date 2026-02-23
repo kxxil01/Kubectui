@@ -1,13 +1,13 @@
 //! Background task for streaming pod logs in real-time.
 
+use k8s_openapi::api::core::v1::Pod;
+use kube::Api;
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use kube::Api;
-use k8s_openapi::api::core::v1::Pod;
 
+use super::{LogStreamStatus, UpdateMessage};
 use crate::k8s::client::K8sClient;
 use crate::k8s::logs::PodRef;
-use super::{UpdateMessage, LogStreamStatus};
 
 /// Stream logs for a pod container.
 ///
@@ -39,7 +39,16 @@ pub async fn stream_logs(
     });
 
     // Attempt to stream logs
-    match stream_logs_internal(&client, &pod_ref, &container_name, follow, &update_tx, &mut cancel_rx).await {
+    match stream_logs_internal(
+        &client,
+        &pod_ref,
+        &container_name,
+        follow,
+        &update_tx,
+        &mut cancel_rx,
+    )
+    .await
+    {
         Ok(_) => {
             // Send status: ended normally
             let _ = update_tx.send(UpdateMessage::LogStreamStatus {
@@ -73,10 +82,10 @@ async fn stream_logs_internal(
 
     // TODO: Implement actual log streaming using kube-rs log API
     // For now, we just send a placeholder log line to demonstrate the framework
-    
+
     // Simulate log streaming with placeholder data
     let mut poll_interval = tokio::time::interval(std::time::Duration::from_secs(1));
-    
+
     loop {
         tokio::select! {
             _ = poll_interval.tick() => {
@@ -120,16 +129,21 @@ mod tests {
     #[tokio::test]
     async fn test_log_stream_status_message() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        
+
         let msg = UpdateMessage::LogStreamStatus {
             pod_name: "test-pod".to_string(),
             container_name: "test-container".to_string(),
             status: LogStreamStatus::Started,
         };
-        
+
         tx.send(msg).unwrap();
-        
-        if let Some(UpdateMessage::LogStreamStatus { pod_name, container_name, status }) = rx.recv().await {
+
+        if let Some(UpdateMessage::LogStreamStatus {
+            pod_name,
+            container_name,
+            status,
+        }) = rx.recv().await
+        {
             assert_eq!(pod_name, "test-pod");
             assert_eq!(container_name, "test-container");
             assert_eq!(status, LogStreamStatus::Started);
@@ -141,16 +155,21 @@ mod tests {
     #[tokio::test]
     async fn test_log_update_message() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        
+
         let msg = UpdateMessage::LogUpdate {
             pod_name: "test-pod".to_string(),
             container_name: "test-container".to_string(),
             line: "test log line".to_string(),
         };
-        
+
         tx.send(msg).unwrap();
-        
-        if let Some(UpdateMessage::LogUpdate { pod_name, container_name, line }) = rx.recv().await {
+
+        if let Some(UpdateMessage::LogUpdate {
+            pod_name,
+            container_name,
+            line,
+        }) = rx.recv().await
+        {
             assert_eq!(pod_name, "test-pod");
             assert_eq!(container_name, "test-container");
             assert_eq!(line, "test log line");

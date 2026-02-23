@@ -75,7 +75,9 @@ impl InputFieldWidget {
         if self.value.is_empty() {
             return Err("Port required".to_string());
         }
-        let port: u16 = self.value.parse()
+        let port: u16 = self
+            .value
+            .parse()
             .map_err(|_| "Invalid port number".to_string())?;
         if port == 0 {
             return Err("Port must be > 0".to_string());
@@ -88,7 +90,8 @@ impl InputFieldWidget {
         if self.value.is_empty() {
             return Ok(0);
         }
-        self.value.parse()
+        self.value
+            .parse()
             .map_err(|_| "Invalid port number".to_string())
     }
 
@@ -103,7 +106,7 @@ impl InputFieldWidget {
     /// Get styled display text with cursor.
     pub fn styled_text(&self, focused: bool) -> Span<'static> {
         let mut display = self.value.clone();
-        
+
         // Insert cursor placeholder
         if focused && !display.is_empty() {
             display.insert(self.cursor_pos.min(display.len()), '█');
@@ -114,7 +117,9 @@ impl InputFieldWidget {
         let style = if self.error {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
         } else if focused {
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
         } else {
             Style::default()
         };

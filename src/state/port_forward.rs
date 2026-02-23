@@ -116,10 +116,7 @@ mod tests {
     #[test]
     fn test_update_tunnels() {
         let mut registry = TunnelRegistry::new();
-        let tunnels = vec![
-            create_test_tunnel("test-1"),
-            create_test_tunnel("test-2"),
-        ];
+        let tunnels = vec![create_test_tunnel("test-1"), create_test_tunnel("test-2")];
 
         registry.update_tunnels(tunnels);
         assert_eq!(registry.len(), 2);

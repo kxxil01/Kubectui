@@ -12,11 +12,7 @@ fn test_container_navigation_down() {
         ("init".to_string(), ContainerProbes::default()),
     ];
 
-    let mut state = ProbePanelState::new(
-        "test-pod".to_string(),
-        "default".to_string(),
-        probes,
-    );
+    let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
 
     // Initial selection
     assert_eq!(state.selected_index, 0);
@@ -42,11 +38,7 @@ fn test_container_navigation_up() {
         ("init".to_string(), ContainerProbes::default()),
     ];
 
-    let mut state = ProbePanelState::new(
-        "test-pod".to_string(),
-        "default".to_string(),
-        probes,
-    );
+    let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
 
     // Navigate up from 0
     state.select_prev();
@@ -72,11 +64,7 @@ fn test_expand_collapse_toggle() {
         ("sidecar".to_string(), ContainerProbes::default()),
     ];
 
-    let mut state = ProbePanelState::new(
-        "test-pod".to_string(),
-        "default".to_string(),
-        probes,
-    );
+    let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
 
     // Initially not expanded
     assert!(!state.expanded_containers.contains("app"));
@@ -101,11 +89,7 @@ fn test_expand_collapse_toggle() {
 /// Test with no probes (graceful display).
 #[test]
 fn test_no_probes_graceful_display() {
-    let state = ProbePanelState::new(
-        "no-probe-pod".to_string(),
-        "default".to_string(),
-        vec![],
-    );
+    let state = ProbePanelState::new("no-probe-pod".to_string(), "default".to_string(), vec![]);
 
     assert_eq!(state.healthy_count(), 0);
     assert_eq!(state.selected_index, 0);
