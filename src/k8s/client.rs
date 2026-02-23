@@ -55,6 +55,11 @@ impl K8sClient {
         &self.cluster_url
     }
 
+    /// Returns reference to the underlying Kubernetes client.
+    pub fn get_client(&self) -> Client {
+        self.client.clone()
+    }
+
     /// Fetches all nodes from the current cluster.
     pub async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>> {
         let nodes_api: Api<Node> = Api::all(self.client.clone());

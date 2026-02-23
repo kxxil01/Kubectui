@@ -3,11 +3,9 @@
 use std::net::SocketAddr;
 use anyhow::{anyhow, Context, Result};
 use dashmap::DashMap;
-use k8s_openapi::api::core::v1::Pod;
-use kube::api::Api;
 use kube::Client;
 use tokio::net::TcpListener;
-use tracing::{debug, error, info, instrument, warn};
+use tracing::{info, instrument};
 
 /// Port forwarding target
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -138,11 +136,11 @@ impl PortForwarderService {
     pub fn list_tunnels(&self) -> Vec<PortForwardTunnelInfo> {
         self.tunnels
             .iter()
-            .map(|e| e.value().clone())
+            .map(|entry| entry.value().clone())
             .collect()
     }
 
     pub fn get_tunnel(&self, tunnel_id: &str) -> Option<PortForwardTunnelInfo> {
-        self.tunnels.get(tunnel_id).as_ref().map(|e| e.clone())
+        self.tunnels.get(tunnel_id).map(|entry| entry.value().clone())
     }
 }

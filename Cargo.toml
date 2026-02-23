@@ -18,6 +18,9 @@ log = "0.4"
 env_logger = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
 async-trait = "0.1"
+dashmap = "5.5"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }

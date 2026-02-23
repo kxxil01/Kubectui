@@ -35,7 +35,8 @@ impl K8sClient {
         if replicas < 0 || replicas > 100 {
             return Err(anyhow!("invalid replica count {}: must be between 0 and 100", replicas));
         }
-        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+        let client = self.get_client();
+        let deployments: Api<Deployment> = Api::namespaced(client, namespace);
         deployments.get(name).await.with_context(|| format!("deployment '{}' not found in namespace '{}'", name, namespace))?;
         let patch = Patch::Merge(json!({"spec": {"replicas": replicas}}));
         deployments.patch(name, &PatchParams::apply("kubectui"), &patch).await.with_context(|| format!("failed to patch deployment '{}' in namespace '{}'", name, namespace))?;
