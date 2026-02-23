@@ -176,6 +176,10 @@ async fn fetch_detail_view(
         sections,
         loading: false,
         error: None,
+        logs_viewer: None,
+        port_forward_dialog: None,
+        scale_dialog: None,
+        probe_panel: None,
     })
 }
 

@@ -118,6 +118,73 @@ pub struct DetailMetadata {
     pub labels: Vec<(String, String)>,
 }
 
+/// Top-level active component when detail modal is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActiveComponent {
+    None,
+    LogsViewer,
+    PortForward,
+    Scale,
+    ProbePanel,
+}
+
+/// In-detail logs viewer state.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LogsViewerState {
+    pub scroll_offset: usize,
+    pub follow_mode: bool,
+}
+
+/// Active form field in the lightweight port-forward dialog state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortForwardField {
+    LocalPort,
+    RemotePort,
+    TunnelList,
+}
+
+/// In-detail port-forward dialog state used by keyboard routing tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortForwardDialogState {
+    pub active_field: PortForwardField,
+    pub local_port: String,
+    pub remote_port: String,
+}
+
+impl Default for PortForwardDialogState {
+    fn default() -> Self {
+        Self {
+            active_field: PortForwardField::LocalPort,
+            local_port: String::new(),
+            remote_port: String::new(),
+        }
+    }
+}
+
+/// In-detail scale dialog state used by keyboard routing tests.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScaleDialogInputState {
+    pub replica_input: String,
+    pub target_replicas: i32,
+}
+
+impl Default for ScaleDialogInputState {
+    fn default() -> Self {
+        Self {
+            replica_input: String::new(),
+            target_replicas: 0,
+        }
+    }
+}
+
+/// In-detail probe panel state used by keyboard routing tests.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProbePanelState {
+    pub probes: Vec<String>,
+    pub expanded: Vec<bool>,
+    pub selected_idx: usize,
+}
+
 /// Detail modal state for the currently focused resource.
 #[derive(Debug, Clone, Default)]
 pub struct DetailViewState {
@@ -128,6 +195,10 @@ pub struct DetailViewState {
     pub sections: Vec<String>,
     pub loading: bool,
     pub error: Option<String>,
+    pub logs_viewer: Option<LogsViewerState>,
+    pub port_forward_dialog: Option<PortForwardDialogState>,
+    pub scale_dialog: Option<ScaleDialogInputState>,
+    pub probe_panel: Option<ProbePanelState>,
 }
 
 /// Actions emitted by input handling.
@@ -138,6 +209,28 @@ pub enum AppAction {
     Quit,
     OpenDetail(ResourceRef),
     CloseDetail,
+    EscapePressed,
+    LogsViewerOpen,
+    LogsViewerClose,
+    LogsViewerScrollUp,
+    LogsViewerScrollDown,
+    LogsViewerToggleFollow,
+    PortForwardOpen,
+    PortForwardClose,
+    PortForwardNextField,
+    PortForwardPrevField,
+    PortForwardUpdateLocalPort(String),
+    PortForwardUpdateRemotePort(String),
+    PortForwardBackspace,
+    ScaleDialogOpen,
+    ScaleDialogClose,
+    ScaleDialogUpdateInput(char),
+    ScaleDialogBackspace,
+    ProbePanelOpen,
+    ProbePanelClose,
+    ProbeToggleExpand(usize),
+    ProbeSelectNext,
+    ProbeSelectPrev,
 }
 
 /// Runtime state for UI interaction and navigation.
@@ -225,23 +318,142 @@ impl AppState {
         self.selected_idx = self.selected_idx.saturating_sub(1);
     }
 
+    /// Returns which detail sub-component is currently active.
+    pub fn active_component(&self) -> ActiveComponent {
+        let Some(detail) = &self.detail_view else {
+            return ActiveComponent::None;
+        };
+
+        if detail.logs_viewer.is_some() {
+            ActiveComponent::LogsViewer
+        } else if detail.port_forward_dialog.is_some() {
+            ActiveComponent::PortForward
+        } else if detail.scale_dialog.is_some() {
+            ActiveComponent::Scale
+        } else if detail.probe_panel.is_some() {
+            ActiveComponent::ProbePanel
+        } else {
+            ActiveComponent::None
+        }
+    }
+
+    pub fn open_logs_viewer(&mut self) {
+        if let Some(detail) = &mut self.detail_view {
+            detail.logs_viewer = Some(LogsViewerState::default());
+        }
+    }
+
+    pub fn close_logs_viewer(&mut self) {
+        if let Some(detail) = &mut self.detail_view {
+            detail.logs_viewer = None;
+        }
+    }
+
+    pub fn open_port_forward(&mut self) {
+        if let Some(detail) = &mut self.detail_view {
+            detail.port_forward_dialog = Some(PortForwardDialogState::default());
+        }
+    }
+
+    pub fn close_port_forward(&mut self) {
+        if let Some(detail) = &mut self.detail_view {
+            detail.port_forward_dialog = None;
+        }
+    }
+
+    pub fn open_scale_dialog(&mut self) {
+        if let Some(detail) = &mut self.detail_view {
+            detail.scale_dialog = Some(ScaleDialogInputState::default());
+        }
+    }
+
+    pub fn close_scale_dialog(&mut self) {
+        if let Some(detail) = &mut self.detail_view {
+            detail.scale_dialog = None;
+        }
+    }
+
+    pub fn open_probe_panel(&mut self) {
+        if let Some(detail) = &mut self.detail_view {
+            detail.probe_panel = Some(ProbePanelState::default());
+        }
+    }
+
+    pub fn close_probe_panel(&mut self) {
+        if let Some(detail) = &mut self.detail_view {
+            detail.probe_panel = None;
+        }
+    }
+
     /// Handles a keyboard event and updates app state.
-    ///
-    /// Keybindings:
-    /// - `q`: quit
-    /// - `Esc` (when detail open): close detail modal
-    /// - `Esc` (outside detail/search): quit
-    /// - `Tab` / `Shift+Tab`: switch view
-    /// - `↑` / `↓`: move current selection
-    /// - `/`: enter search mode
-    /// - `Enter` (search mode): leave search mode
-    /// - `Esc` (search mode): clear query + leave search mode
-    /// - `Ctrl+U` (search mode): clear query
-    /// - `Backspace` (search mode): delete character
-    /// - `Ctrl+R` or `r`: refresh data
     pub fn handle_key_event(&mut self, key: KeyEvent) -> AppAction {
         if self.is_search_mode {
             return self.handle_search_input(key);
+        }
+
+        // Component-level routing priority:
+        // LogsViewer > PortForward > Scale > ProbePanel > DetailView > MainView
+        match self.active_component() {
+            ActiveComponent::LogsViewer => {
+                return match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char('k') | KeyCode::Up => AppAction::LogsViewerScrollUp,
+                    KeyCode::Char('j') | KeyCode::Down => AppAction::LogsViewerScrollDown,
+                    KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
+                    _ => AppAction::None,
+                };
+            }
+            ActiveComponent::PortForward => {
+                return match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Tab => AppAction::PortForwardNextField,
+                    KeyCode::BackTab => AppAction::PortForwardPrevField,
+                    KeyCode::Backspace => AppAction::PortForwardBackspace,
+                    KeyCode::Char(c) if c.is_ascii_digit() => {
+                        let field = self
+                            .detail_view
+                            .as_ref()
+                            .and_then(|d| d.port_forward_dialog.as_ref())
+                            .map(|pf| pf.active_field)
+                            .unwrap_or(PortForwardField::LocalPort);
+
+                        match field {
+                            PortForwardField::LocalPort => AppAction::PortForwardUpdateLocalPort(c.to_string()),
+                            PortForwardField::RemotePort => {
+                                AppAction::PortForwardUpdateRemotePort(c.to_string())
+                            }
+                            PortForwardField::TunnelList => AppAction::None,
+                        }
+                    }
+                    _ => AppAction::None,
+                };
+            }
+            ActiveComponent::Scale => {
+                return match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Backspace => AppAction::ScaleDialogBackspace,
+                    KeyCode::Char(c) if c.is_ascii_digit() => AppAction::ScaleDialogUpdateInput(c),
+                    _ => AppAction::None,
+                };
+            }
+            ActiveComponent::ProbePanel => {
+                return match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char(' ') => {
+                        let idx = self
+                            .detail_view
+                            .as_ref()
+                            .and_then(|d| d.probe_panel.as_ref())
+                            .map(|p| p.selected_idx)
+                            .unwrap_or(0);
+                        AppAction::ProbeToggleExpand(idx)
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => AppAction::ProbeSelectNext,
+                    KeyCode::Char('k') | KeyCode::Up => AppAction::ProbeSelectPrev,
+                    _ => AppAction::None,
+                };
+            }
+            ActiveComponent::None => {}
         }
 
         match key.code {
@@ -254,6 +466,11 @@ impl AppState {
                 self.should_quit = true;
                 AppAction::Quit
             }
+            KeyCode::Char('l') | KeyCode::Char('L') if self.detail_view.is_some() => {
+                AppAction::LogsViewerOpen
+            }
+            KeyCode::Char('f') if self.detail_view.is_some() => AppAction::PortForwardOpen,
+            KeyCode::Char('s') if self.detail_view.is_some() => AppAction::ScaleDialogOpen,
             KeyCode::Tab => {
                 self.next_view();
                 AppAction::None
