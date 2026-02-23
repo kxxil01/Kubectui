@@ -108,7 +108,7 @@ fn probes_equal(
     a: &crate::k8s::probes::ContainerProbes,
     b: &crate::k8s::probes::ContainerProbes,
 ) -> bool {
-    use crate::k8s::probes::{ProbeConfig, ProbeHandler};
+    
 
     match (&a.liveness, &b.liveness) {
         (None, None) => {}

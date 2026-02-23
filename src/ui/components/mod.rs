@@ -22,7 +22,7 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Tabs},
 };
 
-use crate::{app::AppView, ui::theme::Theme};
+use crate::{app::{AppView, NavGroup}, ui::theme::Theme};
 
 /// Global theme singleton — dark by default, can be overridden via CLI.
 pub fn default_theme() -> Theme {
@@ -87,6 +87,99 @@ pub fn render_tabs(frame: &mut Frame, area: Rect, views: &[AppView], active: App
         .divider(Span::styled("│", theme.muted_style()));
 
     frame.render_widget(tabs, area);
+}
+
+/// Renders the left sidebar navigation with grouped sections.
+pub fn render_sidebar(frame: &mut Frame, area: Rect, active: AppView) {
+    use ratatui::layout::Margin;
+
+    let theme = default_theme();
+
+    let outer = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.bg_surface));
+    frame.render_widget(outer, area);
+
+    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
+
+    const GROUPS: &[(NavGroup, &[AppView])] = &[
+        (NavGroup::Overview, &[AppView::Dashboard, AppView::Nodes]),
+        (
+            NavGroup::Workloads,
+            &[
+                AppView::Pods,
+                AppView::Deployments,
+                AppView::StatefulSets,
+                AppView::DaemonSets,
+                AppView::Jobs,
+                AppView::CronJobs,
+            ],
+        ),
+        (NavGroup::Networking, &[AppView::Services]),
+        (
+            NavGroup::Security,
+            &[
+                AppView::ServiceAccounts,
+                AppView::Roles,
+                AppView::RoleBindings,
+                AppView::ClusterRoles,
+                AppView::ClusterRoleBindings,
+            ],
+        ),
+        (
+            NavGroup::Governance,
+            &[
+                AppView::ResourceQuotas,
+                AppView::LimitRanges,
+                AppView::PodDisruptionBudgets,
+            ],
+        ),
+        (NavGroup::Extensions, &[AppView::Extensions]),
+    ];
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    for (group, views) in GROUPS {
+        let group_line = Line::from(vec![
+            Span::styled(
+                format!(" {} {} ", group.icon(), group.label()),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        ]);
+        lines.push(group_line);
+
+        for view in *views {
+            let is_active = *view == active;
+            let label = view.label();
+
+            if is_active {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  ▶ {label}"),
+                        Style::default()
+                            .fg(theme.selection_fg)
+                            .bg(theme.selection_bg)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]));
+            } else {
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("    {label}"),
+                        Style::default().fg(theme.fg_dim),
+                    ),
+                ]));
+            }
+        }
+
+        lines.push(Line::from(Span::raw("")));
+    }
+
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 /// Renders the bottom status bar with context-aware styling.

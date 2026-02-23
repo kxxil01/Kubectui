@@ -22,102 +22,105 @@ use crate::{
 
 /// Renders a full frame for the current app and cluster state.
 pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
-    let layout = Layout::default()
+    let root = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(8),
-            Constraint::Length(2),
-        ])
+        .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(2)])
         .split(frame.area());
 
     components::render_header(
         frame,
-        layout[0],
+        root[0],
         "KubecTUI v0.1.0",
         cluster.cluster_summary(),
     );
-    components::render_tabs(frame, layout[1], AppView::tabs(), app.view());
+
+    let body = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(22), Constraint::Min(0)])
+        .split(root[1]);
+
+    components::render_sidebar(frame, body[0], app.view());
+
+    let content = body[1];
 
     match app.view() {
-        AppView::Dashboard => views::dashboard::render_dashboard(frame, layout[2], cluster),
+        AppView::Dashboard => views::dashboard::render_dashboard(frame, content, cluster),
         AppView::Nodes => views::nodes::render_nodes(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::Pods => {
-            render_pods_widget(frame, layout[2], cluster, app.selected_idx(), app.search_query());
+            render_pods_widget(frame, content, cluster, app.selected_idx(), app.search_query());
         }
         AppView::Services => views::services::render_services(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::Deployments => views::deployments::render_deployments(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::StatefulSets => views::statefulsets::render_statefulsets(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::DaemonSets => views::daemonsets::render_daemonsets(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::Jobs => views::jobs::render_jobs(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::CronJobs => views::cronjobs::render_cronjobs(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::ServiceAccounts => views::security::service_accounts::render_service_accounts(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::Roles => views::security::roles::render_roles(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::RoleBindings => views::security::role_bindings::render_role_bindings(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::ClusterRoles => views::security::cluster_roles::render_cluster_roles(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
@@ -125,7 +128,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         AppView::ClusterRoleBindings => {
             views::security::cluster_role_bindings::render_cluster_role_bindings(
                 frame,
-                layout[2],
+                content,
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
@@ -133,44 +136,40 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         }
         AppView::ResourceQuotas => views::governance::quotas::render_resource_quotas(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::LimitRanges => views::governance::limits::render_limit_ranges(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
         AppView::PodDisruptionBudgets => views::governance::pdbs::render_pdbs(
             frame,
-            layout[2],
+            content,
             cluster,
             app.selected_idx(),
             app.search_query(),
         ),
-        AppView::Extensions => views::extensions::render_extensions(frame, layout[2], cluster, app),
+        AppView::Extensions => views::extensions::render_extensions(frame, content, cluster, app),
     }
 
     let status = if let Some(err) = app.error_message() {
-        format!("[Namespace: {}] ERROR: {err}", app.get_namespace())
+        format!("[{}] ERROR: {err}", app.get_namespace())
     } else if app.is_search_mode() {
-        format!(
-            "[Namespace: {}] Search: {}",
-            app.get_namespace(),
-            app.search_query()
-        )
+        format!("[{}] Search: {}", app.get_namespace(), app.search_query())
     } else {
         format!(
-            "[Namespace: {}] [Tab] switch view • [/] search • [~] namespace • [Enter] detail • [r] refresh • [q] quit",
+            "[{}]  [j/k] navigate • [/] search • [~] namespace • [c] context • [Enter] detail • [r] refresh • [q] quit",
             app.get_namespace()
         )
     };
 
-    components::render_status_bar(frame, layout[3], &status, app.error_message().is_some());
+    components::render_status_bar(frame, root[2], &status, app.error_message().is_some());
 
     if let Some(detail_state) = app.detail_view.as_ref() {
         views::detail::render_detail(frame, frame.area(), detail_state);

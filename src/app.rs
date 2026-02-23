@@ -13,6 +13,41 @@ use crate::{
     ui::components::{ContextPicker, ContextPickerAction, NamespacePicker, NamespacePickerAction},
 };
 
+/// Sidebar navigation groups.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavGroup {
+    Overview,
+    Workloads,
+    Networking,
+    Security,
+    Governance,
+    Extensions,
+}
+
+impl NavGroup {
+    pub const fn label(self) -> &'static str {
+        match self {
+            NavGroup::Overview => "Overview",
+            NavGroup::Workloads => "Workloads",
+            NavGroup::Networking => "Networking",
+            NavGroup::Security => "Security",
+            NavGroup::Governance => "Governance",
+            NavGroup::Extensions => "Extensions",
+        }
+    }
+
+    pub const fn icon(self) -> &'static str {
+        match self {
+            NavGroup::Overview => "󰋗",
+            NavGroup::Workloads => "󰆧",
+            NavGroup::Networking => "󰛳",
+            NavGroup::Security => "󰒃",
+            NavGroup::Governance => "󰒓",
+            NavGroup::Extensions => "󰏗",
+        }
+    }
+}
+
 /// Top-level views displayed by KubecTUI.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AppView {
@@ -70,15 +105,62 @@ impl AppView {
             AppView::DaemonSets => "DaemonSets",
             AppView::Jobs => "Jobs",
             AppView::CronJobs => "CronJobs",
-            AppView::ServiceAccounts => "SvcAccounts",
+            AppView::ServiceAccounts => "ServiceAccounts",
             AppView::Roles => "Roles",
             AppView::RoleBindings => "RoleBindings",
             AppView::ClusterRoles => "ClusterRoles",
             AppView::ClusterRoleBindings => "ClusterRoleBindings",
-            AppView::ResourceQuotas => "Gov: Quotas",
-            AppView::LimitRanges => "Gov: Limits",
-            AppView::PodDisruptionBudgets => "Gov: PDBs",
+            AppView::ResourceQuotas => "ResourceQuotas",
+            AppView::LimitRanges => "LimitRanges",
+            AppView::PodDisruptionBudgets => "PodDisruptionBudgets",
             AppView::Extensions => "Extensions",
+        }
+    }
+
+    /// Returns the sidebar icon for this view.
+    pub const fn icon(self) -> &'static str {
+        match self {
+            AppView::Dashboard => "󰋗",
+            AppView::Nodes => "󰒋",
+            AppView::Pods => "󰠳",
+            AppView::Services => "󰛳",
+            AppView::Deployments => "󰆧",
+            AppView::StatefulSets => "󰆼",
+            AppView::DaemonSets => "󰒓",
+            AppView::Jobs => "󰃰",
+            AppView::CronJobs => "󰔠",
+            AppView::ServiceAccounts => "󰀄",
+            AppView::Roles => "󰒃",
+            AppView::RoleBindings => "󰌋",
+            AppView::ClusterRoles => "󰒃",
+            AppView::ClusterRoleBindings => "󰌋",
+            AppView::ResourceQuotas => "󰏗",
+            AppView::LimitRanges => "󰳗",
+            AppView::PodDisruptionBudgets => "󰦕",
+            AppView::Extensions => "󰏗",
+        }
+    }
+
+    /// Returns the NavGroup this view belongs to.
+    pub const fn group(self) -> NavGroup {
+        match self {
+            AppView::Dashboard | AppView::Nodes => NavGroup::Overview,
+            AppView::Pods
+            | AppView::Deployments
+            | AppView::StatefulSets
+            | AppView::DaemonSets
+            | AppView::Jobs
+            | AppView::CronJobs => NavGroup::Workloads,
+            AppView::Services => NavGroup::Networking,
+            AppView::ServiceAccounts
+            | AppView::Roles
+            | AppView::RoleBindings
+            | AppView::ClusterRoles
+            | AppView::ClusterRoleBindings => NavGroup::Security,
+            AppView::ResourceQuotas
+            | AppView::LimitRanges
+            | AppView::PodDisruptionBudgets => NavGroup::Governance,
+            AppView::Extensions => NavGroup::Extensions,
         }
     }
 
