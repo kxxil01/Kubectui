@@ -171,6 +171,7 @@ async fn fetch_detail_view(
         sections,
         loading: false,
         error: None,
+        probe_panel: None,
     })
 }
 

@@ -1,5 +1,7 @@
 //! Reusable UI widgets and building blocks.
 
+pub mod probe_panel;
+
 use ratatui::{
     layout::Rect,
     prelude::{Color, Frame, Style},

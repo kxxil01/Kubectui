@@ -48,7 +48,7 @@ pub enum TunnelState {
 }
 
 /// Port forwarding configuration
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortForwardConfig {
     /// Local port (0 for auto-assign)
     pub local_port: u16,
