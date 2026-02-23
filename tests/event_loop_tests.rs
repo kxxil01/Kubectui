@@ -328,12 +328,13 @@ fn test_component_priority_escape_closes_logs_first() {
 #[test]
 fn test_main_view_quit_on_escape() {
     let mut app = AppState::default();
-    // No detail view open
+    // No detail view open — first Esc sets confirm_quit
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app);
+    assert_eq!(action, AppAction::None);
+    assert!(app.confirm_quit);
 
-    let key = KeyEvent::from(KeyCode::Esc);
-    let action = route_keyboard_input(key, &mut app);
-
-    // Should get Quit action
+    // Second Esc confirms quit
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app);
     assert_eq!(action, AppAction::Quit);
 }
 
@@ -341,10 +342,13 @@ fn test_main_view_quit_on_escape() {
 fn test_main_view_quit_on_q() {
     let mut app = AppState::default();
 
-    let key = KeyEvent::from(KeyCode::Char('q'));
-    let action = route_keyboard_input(key, &mut app);
+    // First q sets confirm_quit
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('q')), &mut app);
+    assert_eq!(action, AppAction::None);
+    assert!(app.confirm_quit);
 
-    // Should get Quit action
+    // Second q confirms quit
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('q')), &mut app);
     assert_eq!(action, AppAction::Quit);
 }
 

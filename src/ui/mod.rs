@@ -186,6 +186,72 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     if app.command_palette.is_open() {
         app.command_palette.render(frame, frame.area());
     }
+
+    if app.confirm_quit {
+        render_quit_confirm(frame, frame.area());
+    }
+}
+
+fn render_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
+    use ratatui::{
+        style::Modifier,
+        text::Line,
+        widgets::{Block, BorderType, Borders, Clear},
+    };
+
+    let theme = default_theme();
+
+    let w = 36u16;
+    let h = 5u16;
+    let popup = ratatui::layout::Rect {
+        x: (area.width.saturating_sub(w)) / 2,
+        y: (area.height.saturating_sub(h)) / 2,
+        width: w,
+        height: h,
+    };
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.badge_error_style())
+        .style(ratatui::style::Style::default().bg(theme.bg));
+    frame.render_widget(block, popup);
+
+    let inner = ratatui::layout::Rect {
+        x: popup.x + 1,
+        y: popup.y + 1,
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(2)])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  Quit KubecTUI? ", theme.title_style()),
+        ])),
+        chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "  [y/q/Enter] ",
+                ratatui::style::Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("yes  ", theme.inactive_style()),
+            Span::styled("[any] ", theme.keybind_key_style()),
+            Span::styled("cancel", theme.keybind_desc_style()),
+        ])),
+        chunks[1],
+    );
 }
 
 fn render_pods_widget(

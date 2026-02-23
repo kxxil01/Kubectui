@@ -436,6 +436,7 @@ pub struct AppState {
     pub search_query: String,
     pub is_search_mode: bool,
     pub should_quit: bool,
+    pub confirm_quit: bool,
     pub error_message: Option<String>,
     pub detail_view: Option<DetailViewState>,
     pub current_namespace: String,
@@ -457,6 +458,7 @@ impl Default for AppState {
             search_query: String::new(),
             is_search_mode: false,
             should_quit: false,
+            confirm_quit: false,
             error_message: None,
             detail_view: None,
             current_namespace: "default".to_string(),
@@ -832,15 +834,28 @@ impl AppState {
             ActiveComponent::None => {}
         }
 
+        if self.confirm_quit {
+            return match key.code {
+                KeyCode::Char('q') | KeyCode::Char('y') | KeyCode::Enter | KeyCode::Esc => {
+                    self.should_quit = true;
+                    AppAction::Quit
+                }
+                _ => {
+                    self.confirm_quit = false;
+                    AppAction::None
+                }
+            };
+        }
+
         match key.code {
             KeyCode::Char('q') => {
-                self.should_quit = true;
-                AppAction::Quit
+                self.confirm_quit = true;
+                AppAction::None
             }
             KeyCode::Esc if self.detail_view.is_some() => AppAction::CloseDetail,
             KeyCode::Esc => {
-                self.should_quit = true;
-                AppAction::Quit
+                self.confirm_quit = true;
+                AppAction::None
             }
             KeyCode::Char('l') | KeyCode::Char('L') if self.detail_view.is_some() => {
                 AppAction::LogsViewerOpen
@@ -1088,15 +1103,31 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
-    /// Verifies quit action and should_quit state transition.
+    /// Verifies quit requires confirmation: first q sets confirm_quit, second q quits.
     #[test]
     fn quit_action_sets_should_quit() {
         let mut app = AppState::default();
 
         let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
+        assert_eq!(action, AppAction::None);
+        assert!(app.confirm_quit);
+        assert!(!app.should_quit());
 
+        let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
         assert_eq!(action, AppAction::Quit);
         assert!(app.should_quit());
+    }
+
+    /// Verifies any other key cancels the quit confirmation.
+    #[test]
+    fn quit_confirm_cancelled_by_other_key() {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
+        assert!(app.confirm_quit);
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('n')));
+        assert!(!app.confirm_quit);
+        assert!(!app.should_quit());
     }
 
     /// Verifies Esc closes detail view before requesting app quit.
