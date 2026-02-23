@@ -410,6 +410,9 @@ mod coordinator_channel_tests {
         let mut probe_count = 0;
         let mut error_count = 0;
 
+        // Close sender so receiver loop can terminate.
+        drop(tx);
+
         while let Some(msg) = rx.recv().await {
             match msg {
                 UpdateMessage::LogUpdate { .. } => log_count += 1,

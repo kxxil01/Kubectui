@@ -74,7 +74,7 @@ impl fmt::Display for ProbeStatus {
 }
 
 /// Configuration for a health probe.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeConfig {
     pub probe_type: ProbeType,
     pub handler: ProbeHandler,
@@ -96,7 +96,7 @@ impl ProbeConfig {
 }
 
 /// Container probes (readiness and/or liveness).
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContainerProbes {
     pub liveness: Option<ProbeConfig>,
     pub readiness: Option<ProbeConfig>,
