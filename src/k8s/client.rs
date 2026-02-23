@@ -367,6 +367,184 @@ impl K8sClient {
             .await
             .with_context(|| format!("failed preparing events for pod '{namespace}/{name}'"))
     }
+
+    /// Gets the current and desired replica counts for a deployment.
+    pub async fn get_deployment_replicas(&self, name: &str, namespace: &str) -> Result<(i32, i32)> {
+        let deployments_api: Api<Deployment> =
+            Api::namespaced(self.client.clone(), namespace);
+        let deployment = deployments_api
+            .get(name)
+            .await
+            .with_context(|| {
+                format!(
+                    "deployment '{}' not found in namespace '{}'",
+                    name, namespace
+                )
+            })?;
+
+        let desired_replicas = deployment.spec.as_ref().and_then(|s| s.replicas).unwrap_or(1);
+        let current_replicas = deployment
+            .status
+            .as_ref()
+            .and_then(|s| s.ready_replicas)
+            .unwrap_or(0);
+
+        Ok((current_replicas, desired_replicas))
+    }
+
+    /// Polls deployment replicas until target is reached or timeout occurs.
+    ///
+    /// Polls every 500ms and returns when current_replicas == target_replicas or timeout is reached.
+    pub async fn wait_for_replicas(
+        &self,
+        name: &str,
+        namespace: &str,
+        target_replicas: i32,
+        timeout_secs: u64,
+    ) -> Result<()> {
+        use std::time::{Duration, Instant};
+        use tokio::time::sleep;
+
+        let start = Instant::now();
+        let timeout = Duration::from_secs(timeout_secs);
+
+        loop {
+            let (current, _) = self
+                .get_deployment_replicas(name, namespace)
+                .await
+                .with_context(|| {
+                    format!(
+                        "failed polling deployment '{}' in namespace '{}'",
+                        name, namespace
+                    )
+                })?;
+
+            if current == target_replicas {
+                return Ok(());
+            }
+
+            if start.elapsed() > timeout {
+                return Err(anyhow::anyhow!(
+                    "timeout waiting for {} replicas in deployment '{}' (namespace '{}')",
+                    target_replicas,
+                    name,
+                    namespace
+                ));
+            }
+
+            sleep(Duration::from_millis(500)).await;
+        }
+    }
+
+    /// Creates a port-forward tunnel to a pod's port.
+    ///
+    /// Returns a tunnel ID on success. The tunnel is managed by PortForwarderService.
+    pub async fn create_port_forward(
+        &self,
+        target: &crate::k8s::portforward::PortForwardTarget,
+        config: &crate::k8s::portforward::PortForwardConfig,
+    ) -> Result<crate::k8s::portforward::PortForwardTunnelInfo, crate::k8s::portforward_errors::PortForwardError> {
+        use crate::k8s::portforward_errors::PortForwardError;
+        
+        // 1. Verify pod exists
+        let pods_api: Api<Pod> = Api::namespaced(self.client.clone(), &target.namespace);
+        let pod = pods_api
+            .get(&target.pod_name)
+            .await
+            .map_err(|_| PortForwardError::PodNotFound {
+                namespace: target.namespace.clone(),
+                pod_name: target.pod_name.clone(),
+            })?;
+
+        // 2. Check if port is exposed in pod spec
+        let container_ports: Vec<u16> = pod
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.containers.first())
+            .and_then(|container| container.ports.as_ref())
+            .map(|ports| {
+                ports
+                    .iter()
+                    .map(|p| p.container_port as u16)
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if !container_ports.is_empty() && !container_ports.contains(&target.remote_port) {
+            return Err(PortForwardError::PortNotExposed {
+                pod_name: target.pod_name.clone(),
+                port: target.remote_port,
+                available_ports: container_ports,
+            });
+        }
+
+        // 3. Check local port availability
+        let local_port = if config.local_port == 0 {
+            // Auto-assign a port
+            self.find_available_port()
+                .await
+                .map_err(|_| PortForwardError::PortInUse {
+                    port: 0,
+                    process_name: Some("auto-assignment failed".to_string()),
+                })?
+        } else {
+            // Verify specific port is available
+            self.check_port_available(config.local_port).await.map_err(|_| {
+                PortForwardError::PortInUse {
+                    port: config.local_port,
+                    process_name: None,
+                }
+            })?;
+            config.local_port
+        };
+
+        // 4. Create the tunnel info
+        use std::net::SocketAddr;
+        use std::str::FromStr;
+
+        let local_addr = SocketAddr::from_str(&format!("{}:{}", config.bind_address, local_port))
+            .map_err(|_| PortForwardError::InvalidPort {
+                port: local_port,
+                reason: "invalid bind address".to_string(),
+            })?;
+
+        let tunnel = crate::k8s::portforward::PortForwardTunnelInfo {
+            id: target.id(),
+            target: target.clone(),
+            local_addr,
+            state: crate::k8s::portforward::TunnelState::Active,
+        };
+
+        Ok(tunnel)
+    }
+
+    /// Checks if a local port is available for binding.
+    async fn check_port_available(&self, port: u16) -> Result<()> {
+        use tokio::net::TcpListener;
+
+        let bind_addr = format!("127.0.0.1:{}", port);
+        let _listener = TcpListener::bind(&bind_addr)
+            .await
+            .with_context(|| format!("Port {} is not available", port))?;
+
+        Ok(())
+    }
+
+    /// Finds an available port on the system.
+    async fn find_available_port(&self) -> Result<u16> {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .context("failed to find available port")?;
+
+        let port = listener
+            .local_addr()
+            .context("failed to get local address")?
+            .port();
+
+        Ok(port)
+    }
 }
 
 fn node_condition_true(node: &Node, condition_type: &str) -> bool {

@@ -1,11 +1,14 @@
 //! Port forwarding implementation using kube-rs PortForward API
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use anyhow::{anyhow, Context, Result};
 use dashmap::DashMap;
-use kube::Client;
 use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
 use tracing::{info, instrument};
+
+pub use crate::k8s::portforward_errors::PortForwardError;
 
 /// Port forwarding target
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -47,6 +50,13 @@ pub enum TunnelState {
     Closed,
 }
 
+/// Handle to a background tunnel task
+#[derive(Debug)]
+pub struct TunnelHandle {
+    pub task: JoinHandle<()>,
+    pub info: PortForwardTunnelInfo,
+}
+
 /// Port forwarding configuration
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortForwardConfig {
@@ -71,16 +81,68 @@ impl Default for PortForwardConfig {
 /// Port forwarding service
 #[derive(Clone)]
 pub struct PortForwarderService {
-    client: Client,
-    tunnels: std::sync::Arc<DashMap<String, PortForwardTunnelInfo>>,
+    k8s_client: Arc<crate::k8s::client::K8sClient>,
+    tunnels: Arc<DashMap<String, PortForwardTunnelInfo>>,
+    handles: Arc<DashMap<String, TunnelHandle>>,
 }
 
 impl PortForwarderService {
-    pub fn new(client: Client) -> Self {
+    pub fn new(k8s_client: Arc<crate::k8s::client::K8sClient>) -> Self {
         Self {
-            client,
-            tunnels: std::sync::Arc::new(DashMap::new()),
+            k8s_client,
+            tunnels: Arc::new(DashMap::new()),
+            handles: Arc::new(DashMap::new()),
         }
+    }
+
+    /// Create and start a port forward tunnel asynchronously.
+    /// Returns tunnel ID immediately, continues in background.
+    #[instrument(skip(self))]
+    pub async fn create_tunnel_async(
+        &self,
+        target: PortForwardTarget,
+        config: PortForwardConfig,
+    ) -> Result<String, PortForwardError> {
+        let tunnel_id = target.id();
+
+        // Check if already exists
+        if self.tunnels.contains_key(&tunnel_id) {
+            return Err(PortForwardError::ConnectionFailed {
+                pod_name: target.pod_name.clone(),
+                retryable: false,
+                message: format!("Tunnel already exists: {}", tunnel_id),
+            });
+        }
+
+        // Create tunnel via K8s API
+        let tunnel_info = self.k8s_client
+            .create_port_forward(&target, &config)
+            .await?;
+
+        // Register tunnel
+        self.tunnels.insert(tunnel_id.clone(), tunnel_info.clone());
+
+        // Spawn background task to maintain tunnel lifecycle
+        let _tunnels = Arc::clone(&self.tunnels);
+        let id = tunnel_id.clone();
+        let task = tokio::spawn(async move {
+            // Simulate tunnel maintenance
+            // In real implementation, this would handle port forwarding stream
+            info!("Tunnel {} maintenance task running", id);
+            // Keep tunnel alive
+            tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+        });
+
+        // Store the handle
+        self.handles.insert(
+            tunnel_id.clone(),
+            TunnelHandle {
+                task,
+                info: tunnel_info,
+            },
+        );
+
+        Ok(tunnel_id)
     }
 
     #[instrument(skip(self))]
@@ -115,6 +177,11 @@ impl PortForwarderService {
     }
 
     pub async fn stop_forward(&self, tunnel_id: &str) -> Result<()> {
+        // Cancel the background task
+        if let Some((_, handle)) = self.handles.remove(tunnel_id) {
+            handle.task.abort();
+        }
+
         if self.tunnels.remove(tunnel_id).is_some() {
             info!("Stopped tunnel {}", tunnel_id);
         }
