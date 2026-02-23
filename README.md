@@ -6,37 +6,48 @@ Terminal UI for Kubernetes with real-time cluster views and in-app operations.
 ![Tests](https://img.shields.io/badge/tests-157%20passing-brightgreen)
 ![Coverage](https://img.shields.io/badge/coverage-73.8%25-brightgreen)
 
-## v0.3.0 Highlights (Phase 4)
+## Phase 4 (v0.3.0)
 
-- ✅ End-to-end validation on KIND (`kubectui-dev`)
-- ✅ Logs stream workflow integrated (`L` from detail view)
-- ✅ Port-forward dialog + tunnel list (`f` from detail view)
-- ✅ Deployment scaling dialog with validation (`s` from detail view)
-- ✅ Probe panel and real-time probe updates
-- ✅ Production hardening for data refresh:
+Phase 4 focuses on operator workflows: logs, port-forwarding, scaling, and probes, plus reliability hardening.
+
+### What’s new
+
+- Detail-view workflow actions for:
+  - **Logs viewer** (open + scroll + follow state)
+  - **Port-forward dialog** (form state + tunnel registry state)
+  - **Scale dialog** (replica validation + submission state)
+  - **Probe panel** (container probe state + navigation)
+- Refresh pipeline hardening:
   - per-resource timeout guard
-  - graceful degradation on partial Kubernetes API failures
-  - stable behavior on empty resource sets
-- ✅ Test coverage increased above target:
-  - **Lines: 73.80%**
-  - **157 unit tests passing**
+  - graceful degradation on partial API failures
+  - stable handling for empty resource sets
+- Test/quality baseline:
+  - **157 tests passing**
+  - **Coverage (llvm-cov): 75.41% regions / 73.82% lines**
 
 ---
 
-## Install & Run
+## Installation
+
+### Prerequisites
+
+- Rust 1.93.1+
+- `kubectl` configured
+- Kubernetes cluster (KIND/minikube/managed cluster)
+
+### Build
 
 ```bash
 git clone https://github.com/kxxil01/Kubectui.git
 cd Kubectui
 cargo build --release
-./target/release/kubectui --kubeconfig ~/.kube/config
 ```
 
-## Prerequisites
+### Quick start
 
-- Rust 1.93.1+
-- `kubectl` configured
-- Kubernetes cluster (KIND/minikube/real cluster)
+```bash
+./target/release/kubectui --kubeconfig ~/.kube/config
+```
 
 ---
 
@@ -44,135 +55,64 @@ cargo build --release
 
 ### Global
 
-- `Tab` / `Shift+Tab` → Switch top-level view
-- `↑` / `↓` → Move selection
-- `/` → Search mode
-- `Enter` → Open detail view
-- `r` → Refresh
-- `q` → Quit
-- `Esc` → Close active modal / detail
+- `Tab` / `Shift+Tab` → switch top-level view
+- `↑` / `↓` → move selection
+- `Enter` → open selected resource detail
+- `/` → search mode
+- `r` → refresh
+- `Esc` → close active overlay/detail (or quit from main view)
+- `q` → quit
 
-### Detail View Actions
+### Detail actions (Phase 4)
 
-- `L` → Open Logs viewer
-- `f` → Open Port Forward dialog
-- `s` → Open Scale dialog
-- `Esc` → Close active component
+- `L` → open **Logs** workflow
+- `F` / `f` → open **Port Forward** workflow
+- `S` / `s` → open **Scale** workflow
+- `P` / `p` → open **Probe** workflow
 
-### Logs Viewer
+### Logs workflow
 
-- `j` / `↓` → Scroll down
-- `k` / `↑` → Scroll up
-- `f` → Toggle follow mode
-- `Esc` → Close logs viewer
-
-### Port Forward Dialog
-
-- `Tab` / `Shift+Tab` → Next/previous field
-- `Enter` → Create tunnel
-- `F2` → Tunnel list mode
-- `F1` → Back to create mode
-- `d` / `Delete` → Stop selected tunnel
-- `r` / `F5` → Refresh tunnel list
-- `Esc` → Close dialog
-
-### Scale Dialog
-
-- `0-9` → Enter desired replicas
-- `Backspace` → Remove digit
-- `+` / `-` (or increment/decrement actions) → Adjust value
-- `Enter` → Submit if valid
-- `Esc` → Cancel
-
----
-
-## E2E Testing (KIND)
-
-### Manual Run Command
-
-```bash
-./target/release/kubectui --kubeconfig ~/.kube/config
-```
-
-### Validation Checklist
-
-1. **Logs**
-   - Navigate to a pod detail
-   - Press `L`
-   - Verify log panel opens and supports scroll/follow
-
-2. **Port Forward**
-   - Navigate to target detail
-   - Press `f`
-   - Enter namespace/pod/ports and create tunnel
-   - Verify active tunnel appears in list mode
-
-3. **Scaling**
-   - Navigate to deployment detail
-   - Press `s`
-   - Change replicas and submit
-   - Verify replica count updates in cluster
-
-4. **Probes**
-   - Open pod detail with probes
-   - Verify probe health panel renders
-   - Verify updates are reflected without crash
+- `j` / `↓` → scroll down
+- `k` / `↑` → scroll up
+- `f` → toggle follow mode
+- `Esc` → close logs workflow
 
 ---
 
 ## Testing & Coverage
 
 ```bash
-# Unit + integration test suite
-cargo test
+# Unit/integration tests
+cargo test --lib
 
 # Coverage summary
 cargo llvm-cov --summary-only
 
-# HTML coverage report
-cargo llvm-cov --html
+# Coverage HTML report
+cargo llvm-cov --html --output-dir /tmp/phase4-coverage
 ```
 
 Current baseline:
 - **157 tests passed**
-- **Line coverage: 73.80%**
+- **Region coverage: 75.41%**
+- **Line coverage: 73.82%**
 
 ---
 
-## Troubleshooting
+## Known Limitations (current v0.3.0 runtime)
 
-### Cannot connect to Kubernetes
+Phase 4 state machines and keyboard routing are covered by tests. During live KIND manual checks, the following runtime gaps were observed and should be addressed in the next patch release:
 
-```bash
-kubectl config current-context
-kubectl cluster-info
-kubectl get nodes
-```
+- Logs/Port Forward/Scale/Probe overlays are not consistently rendered in live runtime sessions.
+- Cluster-side effects for Scale and Port Forward were not observed from UI interaction in current binary.
+- Probe open shortcut (`P`) is documented as intended workflow, but live open behavior may depend on pending runtime wiring.
 
-If this fails, fix kubeconfig/context first.
+If you hit these issues, use `kubectl` equivalents as a temporary fallback:
 
-### Refresh shows partial data
-
-KubecTUI now degrades gracefully on partial API failures. This can happen with restricted RBAC or transient API issues. Check:
-
-```bash
-kubectl auth can-i list nodes
-kubectl auth can-i list pods --all-namespaces
-kubectl auth can-i list services --all-namespaces
-kubectl auth can-i list deployments --all-namespaces
-```
-
-### Slow or unstable clusters
-
-Phase 4 added timeout guards to prevent indefinite refresh hangs. If data is delayed:
-
-- retry with `r`
-- verify API server responsiveness (`kubectl get pods -A`)
-- check cluster resource pressure
-
-### Empty resources / no services / no probes
-
-This is supported. UI should remain stable and render empty states instead of crashing.
+- Logs: `kubectl logs -n <ns> <pod> -f`
+- Port-forward: `kubectl port-forward -n <ns> svc/<service> <local>:<remote>`
+- Scale: `kubectl scale deploy/<name> -n <ns> --replicas=<n>`
+- Probes: `kubectl describe pod -n <ns> <pod>`
 
 ---
 
