@@ -572,19 +572,55 @@ pub enum AppAction {
 }
 
 /// Which panel currently owns keyboard focus.
+///
+/// Focus determines how `j`/`k`/`↑`/`↓` are routed:
+/// - [`Focus::Sidebar`] → moves `sidebar_cursor` through the nav tree.
+/// - [`Focus::Content`] → increments/decrements `selected_idx` in the active list.
+///
+/// # Transitions
+/// - **Sidebar → Content**: `Enter` on a [`SidebarItem::View`] row (via [`AppState::sidebar_activate`]).
+/// - **Content → Sidebar**: `Esc` while no detail view is open.
+/// - **Tab / BackTab**: cycle through views directly, always lands in Content focus.
+/// - **Command palette `NavigateTo`**: jumps to a view, lands in Content focus.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Focus {
-    /// Sidebar navigation panel has focus (default).
+    /// Sidebar navigation panel has focus (default on startup).
+    ///
+    /// `j`/`k` move the sidebar cursor. `Enter` activates the highlighted row
+    /// (either toggling a [`NavGroup`] or navigating to an [`AppView`]).
     #[default]
     Sidebar,
     /// Main content area has focus.
+    ///
+    /// `j`/`k` scroll `selected_idx` through the resource list. `Enter` opens
+    /// the detail view for the highlighted row. `Esc` returns focus to the sidebar.
     Content,
 }
 
 /// Runtime state for UI interaction and navigation.
+///
+/// # Navigation model
+///
+/// The UI has two independently navigable panels: the **sidebar** and the **content area**.
+/// [`AppState::focus`] tracks which panel owns keyboard input at any given moment.
+///
+/// ```text
+/// ┌─ Sidebar (Focus::Sidebar) ──┐  ┌─ Content (Focus::Content) ──────────────┐
+/// │  ▼ Workloads                │  │  NAME        READY  STATUS  RESTARTS AGE │
+/// │    Pods              ←─ Enter activates ──→  row 0  ← selected_idx        │
+/// │    Deployments              │  │  row 1                                    │
+/// │    ...                      │  │  row 2                                    │
+/// └─────────────────────────────┘  └───────────────────────────────────────────┘
+///       j/k: sidebar_cursor              j/k: selected_idx
+///       Enter: navigate → Content        Enter: open detail view
+///                                        Esc: return → Sidebar
+/// ```
 #[derive(Debug, Clone)]
 pub struct AppState {
+    /// The currently active top-level view (e.g. Pods, Deployments).
     pub view: AppView,
+    /// Zero-based index of the highlighted row in the active content list.
+    /// Reset to `0` on every view change.
     pub selected_idx: usize,
     pub search_query: String,
     pub is_search_mode: bool,
@@ -596,8 +632,12 @@ pub struct AppState {
     pub namespace_picker: NamespacePicker,
     pub context_picker: ContextPicker,
     pub command_palette: CommandPalette,
+    /// Set of [`NavGroup`]s that are currently collapsed in the sidebar.
     pub collapsed_groups: HashSet<NavGroup>,
+    /// Zero-based index of the highlighted row in the sidebar nav tree.
+    /// Includes both group headers and view rows; collapsed groups hide their children.
     pub sidebar_cursor: usize,
+    /// Which panel currently owns keyboard focus. See [`Focus`] for routing rules.
     pub focus: Focus,
     pub extension_instances: Vec<CustomResourceInfo>,
     pub extension_error: Option<String>,
@@ -752,34 +792,46 @@ impl AppState {
         self.extension_error = error;
     }
 
+    /// Advances to the next view in [`AppView::ORDER`], wrapping around.
+    /// Resets `selected_idx` and syncs `sidebar_cursor` to the new view.
+    /// Triggered by `Tab`. Focus is not changed (Tab always targets content).
     fn next_view(&mut self) {
         self.view = self.view.next();
         self.selected_idx = 0;
         self.sync_sidebar_cursor_to_view();
     }
 
+    /// Retreats to the previous view in [`AppView::ORDER`], wrapping around.
+    /// Resets `selected_idx` and syncs `sidebar_cursor` to the new view.
+    /// Triggered by `Shift+Tab`.
     fn previous_view(&mut self) {
         self.view = self.view.previous();
         self.selected_idx = 0;
         self.sync_sidebar_cursor_to_view();
     }
 
+    /// Moves the content list selection down one row (saturates at `usize::MAX`).
+    /// Called when [`Focus::Content`] is active and `j`/`↓` is pressed.
     fn select_next(&mut self) {
         self.selected_idx = self.selected_idx.saturating_add(1);
     }
 
+    /// Moves the content list selection up one row (saturates at `0`).
+    /// Called when [`Focus::Content`] is active and `k`/`↑` is pressed.
     fn select_previous(&mut self) {
         self.selected_idx = self.selected_idx.saturating_sub(1);
     }
 
-    /// Moves the sidebar cursor down one row (wraps).
+    /// Moves the sidebar cursor down one row, wrapping from the last row back to the first.
+    /// Only called when [`Focus::Sidebar`] is active and `j`/`↓` is pressed.
     pub fn sidebar_cursor_down(&mut self) {
         let rows = sidebar_rows(&self.collapsed_groups);
         if rows.is_empty() { return; }
         self.sidebar_cursor = (self.sidebar_cursor + 1) % rows.len();
     }
 
-    /// Moves the sidebar cursor up one row (wraps).
+    /// Moves the sidebar cursor up one row, wrapping from the first row back to the last.
+    /// Only called when [`Focus::Sidebar`] is active and `k`/`↑` is pressed.
     pub fn sidebar_cursor_up(&mut self) {
         let rows = sidebar_rows(&self.collapsed_groups);
         if rows.is_empty() { return; }
@@ -790,7 +842,13 @@ impl AppState {
         };
     }
 
-    /// Activates the currently focused sidebar row: toggles group or navigates to view.
+    /// Activates the currently highlighted sidebar row.
+    ///
+    /// - [`SidebarItem::Group`] → emits [`AppAction::ToggleNavGroup`] to collapse/expand it.
+    /// - [`SidebarItem::View`] → switches `view`, resets `selected_idx` to `0`, and sets
+    ///   [`Focus::Content`] so subsequent `j`/`k` scroll the resource list.
+    ///
+    /// Called from `main.rs` when `Enter` is pressed while [`Focus::Sidebar`] is active.
     pub fn sidebar_activate(&mut self) -> AppAction {
         let rows = sidebar_rows(&self.collapsed_groups);
         match rows.get(self.sidebar_cursor) {
@@ -806,6 +864,10 @@ impl AppState {
     }
 
     /// Keeps `sidebar_cursor` pointing at the active view row after external navigation.
+    ///
+    /// Called after `Tab`/`Shift+Tab` view cycling so the sidebar highlight stays in sync
+    /// with the active view even when the user didn't navigate via the sidebar cursor.
+    /// No-op if the current view is not visible (e.g. its group is collapsed).
     pub fn sync_sidebar_cursor_to_view(&mut self) {
         let rows = sidebar_rows(&self.collapsed_groups);
         if let Some(idx) = rows.iter().position(|r| *r == SidebarItem::View(self.view)) {
@@ -891,7 +953,44 @@ impl AppState {
         }
     }
 
-    /// Handles a keyboard event and updates app state.
+    /// Routes a raw keyboard event to the appropriate handler and returns the resulting action.
+    ///
+    /// # Input routing priority (highest → lowest)
+    ///
+    /// 1. **Command palette** — when open, all keys are consumed by the palette.
+    /// 2. **Context picker** — when open, all keys are consumed by the picker.
+    /// 3. **Namespace picker** — when open, all keys are consumed by the picker.
+    /// 4. **Search mode** — `/` activates it; `Esc`/`Enter` exits; all printable chars append to query.
+    /// 5. **Active sub-component** (detail overlay):
+    ///    - `LogsViewer`: `j`/`k` scroll lines, `g`/`G` jump to top/bottom, `f` toggles follow.
+    ///    - `PortForward`: `Tab`/`BackTab` cycle fields, digits update port inputs.
+    ///    - `Scale`: digits update replica count, `Backspace` deletes.
+    ///    - `ProbePanel`: `j`/`k` select probe, `Space` toggles expand.
+    /// 6. **Quit confirmation** — after `q`/`Esc`, `q`/`y`/`Enter` confirms; any other key cancels.
+    /// 7. **Main navigation** (see table below).
+    ///
+    /// # Main navigation keys
+    ///
+    /// | Key | Condition | Effect |
+    /// |-----|-----------|--------|
+    /// | `q` | — | Enter quit confirmation |
+    /// | `Esc` | detail view open | Close detail view |
+    /// | `Esc` | `focus == Content` | Return focus to sidebar |
+    /// | `Esc` | — | Enter quit confirmation |
+    /// | `Tab` | — | Next view in [`AppView::ORDER`], sync sidebar cursor |
+    /// | `Shift+Tab` | — | Previous view in [`AppView::ORDER`], sync sidebar cursor |
+    /// | `j` / `↓` | no detail, `focus == Sidebar` | Move sidebar cursor down |
+    /// | `j` / `↓` | no detail, `focus == Content` | Move content selection down |
+    /// | `k` / `↑` | no detail, `focus == Sidebar` | Move sidebar cursor up |
+    /// | `k` / `↑` | no detail, `focus == Content` | Move content selection up |
+    /// | `/` | — | Enter search mode |
+    /// | `~` | — | Open namespace picker |
+    /// | `c` | no detail | Open context picker |
+    /// | `:` | no detail | Open command palette |
+    /// | `r` / `Ctrl+R` | — | Trigger data refresh |
+    ///
+    /// `Enter` is **not** handled here — it is intercepted in `main.rs` before this method
+    /// is called, because its behaviour depends on both `focus` and `detail_view`.
     pub fn handle_key_event(&mut self, key: KeyEvent) -> AppAction {
         if self.command_palette.is_open() {
             return match self.command_palette.handle_key(key) {
