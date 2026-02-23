@@ -1,9 +1,12 @@
 //! Reusable UI widgets and building blocks.
 
+pub mod input_field;
 pub mod port_forward_dialog;
-pub mod scale_dialog;
+pub mod probe_panel;
 
-pub use scale_dialog::{ScaleDialogState, ScaleField, ScaleAction, render_scale_dialog};
+pub use port_forward_dialog::{PortForwardDialog, FormField, PortForwardMode, PortForwardAction};
+pub use probe_panel::ProbePanelState;
+pub use input_field::InputFieldWidget;
 
 use ratatui::{
     layout::Rect,
