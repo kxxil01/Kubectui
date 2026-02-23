@@ -91,8 +91,15 @@ pub fn render_tabs(frame: &mut Frame, area: Rect, views: &[AppView], active: App
     frame.render_widget(tabs, area);
 }
 
-/// Renders the left sidebar navigation with grouped sections.
-pub fn render_sidebar(frame: &mut Frame, area: Rect, active: AppView) {
+/// Renders the left sidebar navigation with Lens-style collapsible groups.
+pub fn render_sidebar(
+    frame: &mut Frame,
+    area: Rect,
+    active: AppView,
+    sidebar_cursor: usize,
+    collapsed: &std::collections::HashSet<NavGroup>,
+) {
+    use crate::app::{SidebarItem, sidebar_rows};
     use ratatui::layout::Margin;
 
     let theme = default_theme();
@@ -105,81 +112,80 @@ pub fn render_sidebar(frame: &mut Frame, area: Rect, active: AppView) {
     frame.render_widget(outer, area);
 
     let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
+    let rows = sidebar_rows(collapsed);
 
-    const GROUPS: &[(NavGroup, &[AppView])] = &[
-        (NavGroup::Overview, &[AppView::Dashboard, AppView::Nodes]),
-        (
-            NavGroup::Workloads,
-            &[
-                AppView::Pods,
-                AppView::Deployments,
-                AppView::StatefulSets,
-                AppView::DaemonSets,
-                AppView::Jobs,
-                AppView::CronJobs,
-            ],
-        ),
-        (NavGroup::Networking, &[AppView::Services]),
-        (
-            NavGroup::Security,
-            &[
-                AppView::ServiceAccounts,
-                AppView::Roles,
-                AppView::RoleBindings,
-                AppView::ClusterRoles,
-                AppView::ClusterRoleBindings,
-            ],
-        ),
-        (
-            NavGroup::Governance,
-            &[
-                AppView::ResourceQuotas,
-                AppView::LimitRanges,
-                AppView::PodDisruptionBudgets,
-            ],
-        ),
-        (NavGroup::Extensions, &[AppView::Extensions]),
-    ];
-
-    let mut lines: Vec<Line> = Vec::new();
-
-    for (group, views) in GROUPS {
-        let group_line = Line::from(vec![
-            Span::styled(
-                format!(" {} {} ", group.icon(), group.label()),
-                Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]);
-        lines.push(group_line);
-
-        for view in *views {
-            let is_active = *view == active;
-            let label = view.label();
-
-            if is_active {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("  ▶ {label}"),
-                        Style::default()
-                            .fg(theme.selection_fg)
-                            .bg(theme.selection_bg)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                ]));
-            } else {
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("    {label}"),
-                        Style::default().fg(theme.fg_dim),
-                    ),
-                ]));
+    let lines: Vec<Line> = rows
+        .iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            let is_cursor = idx == sidebar_cursor;
+            match item {
+                SidebarItem::Group(group) => {
+                    let collapsed = collapsed.contains(group);
+                    let toggle = if collapsed { "▶" } else { "▼" };
+                    let label = group.label();
+                    if is_cursor {
+                        Line::from(vec![Span::styled(
+                            format!(" {toggle} {label}"),
+                            Style::default()
+                                .fg(theme.selection_fg)
+                                .bg(theme.selection_bg)
+                                .add_modifier(Modifier::BOLD),
+                        )])
+                    } else {
+                        Line::from(vec![
+                            Span::styled(
+                                format!(" {toggle} "),
+                                Style::default().fg(theme.accent),
+                            ),
+                            Span::styled(
+                                label,
+                                Style::default()
+                                    .fg(theme.accent)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                        ])
+                    }
+                }
+                SidebarItem::View(view) => {
+                    let is_active = *view == active;
+                    let label = view.label();
+                    if is_cursor && is_active {
+                        Line::from(vec![Span::styled(
+                            format!("  ● {label}"),
+                            Style::default()
+                                .fg(theme.selection_fg)
+                                .bg(theme.selection_bg)
+                                .add_modifier(Modifier::BOLD),
+                        )])
+                    } else if is_cursor {
+                        Line::from(vec![Span::styled(
+                            format!("    {label}"),
+                            Style::default()
+                                .fg(theme.fg)
+                                .bg(theme.bg_surface)
+                                .add_modifier(Modifier::BOLD),
+                        )])
+                    } else if is_active {
+                        Line::from(vec![
+                            Span::styled("  ● ", Style::default().fg(theme.accent)),
+                            Span::styled(
+                                label,
+                                Style::default()
+                                    .fg(theme.fg)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                        ])
+                    } else {
+                        Line::from(vec![Span::styled(
+                            format!("    {label}"),
+                            Style::default().fg(theme.fg_dim),
+                        )])
+                    }
+                }
             }
-        }
-
-        lines.push(Line::from(Span::raw("")));
-    }
+        })
+        .collect();
 
     frame.render_widget(Paragraph::new(lines), inner);
 }

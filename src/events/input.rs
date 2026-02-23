@@ -48,6 +48,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.close_context_picker();
             true
         }
+        AppAction::ToggleNavGroup(group) => {
+            app_state.toggle_nav_group(group);
+            true
+        }
         AppAction::OpenCommandPalette => {
             app_state.command_palette.open();
             true

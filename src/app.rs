@@ -1,6 +1,6 @@
 //! Application state machine and keyboard input handling.
 
-use std::{fs, path::Path};
+use std::{collections::HashSet, fs, path::Path};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use crate::{
 };
 
 /// Sidebar navigation groups.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NavGroup {
     Overview,
     Workloads,
@@ -355,6 +355,35 @@ pub struct DetailViewState {
     pub probe_panel: Option<ProbePanelState>,
 }
 
+/// A row in the sidebar — either a group header or a leaf view item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarItem {
+    Group(NavGroup),
+    View(AppView),
+}
+
+/// Ordered list of all sidebar rows given the current collapsed state.
+pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> Vec<SidebarItem> {
+    const GROUPS: &[(NavGroup, &[AppView])] = &[
+        (NavGroup::Overview,    &[AppView::Dashboard, AppView::Nodes]),
+        (NavGroup::Workloads,   &[AppView::Pods, AppView::Deployments, AppView::StatefulSets, AppView::DaemonSets, AppView::Jobs, AppView::CronJobs]),
+        (NavGroup::Networking,  &[AppView::Services]),
+        (NavGroup::Security,    &[AppView::ServiceAccounts, AppView::Roles, AppView::RoleBindings, AppView::ClusterRoles, AppView::ClusterRoleBindings]),
+        (NavGroup::Governance,  &[AppView::ResourceQuotas, AppView::LimitRanges, AppView::PodDisruptionBudgets]),
+        (NavGroup::Extensions,  &[AppView::Extensions]),
+    ];
+    let mut rows = Vec::new();
+    for (group, views) in GROUPS {
+        rows.push(SidebarItem::Group(*group));
+        if !collapsed.contains(group) {
+            for v in *views {
+                rows.push(SidebarItem::View(*v));
+            }
+        }
+    }
+    rows
+}
+
 /// Actions emitted by input handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppAction {
@@ -372,6 +401,7 @@ pub enum AppAction {
     OpenCommandPalette,
     CloseCommandPalette,
     NavigateTo(AppView),
+    ToggleNavGroup(NavGroup),
     EscapePressed,
     LogsViewerOpen,
     LogsViewerClose,
@@ -412,6 +442,8 @@ pub struct AppState {
     pub namespace_picker: NamespacePicker,
     pub context_picker: ContextPicker,
     pub command_palette: CommandPalette,
+    pub collapsed_groups: HashSet<NavGroup>,
+    pub sidebar_cursor: usize,
     pub extension_instances: Vec<CustomResourceInfo>,
     pub extension_error: Option<String>,
     pub extension_selected_crd: Option<String>,
@@ -431,6 +463,8 @@ impl Default for AppState {
             namespace_picker: NamespacePicker::new(vec!["all".to_string(), "default".to_string()]),
             context_picker: ContextPicker::default(),
             command_palette: CommandPalette::default(),
+            collapsed_groups: HashSet::new(),
+            sidebar_cursor: 0,
             extension_instances: Vec::new(),
             extension_error: None,
             extension_selected_crd: None,
@@ -564,11 +598,13 @@ impl AppState {
     fn next_view(&mut self) {
         self.view = self.view.next();
         self.selected_idx = 0;
+        self.sync_sidebar_cursor_to_view();
     }
 
     fn previous_view(&mut self) {
         self.view = self.view.previous();
         self.selected_idx = 0;
+        self.sync_sidebar_cursor_to_view();
     }
 
     fn select_next(&mut self) {
@@ -577,6 +613,57 @@ impl AppState {
 
     fn select_previous(&mut self) {
         self.selected_idx = self.selected_idx.saturating_sub(1);
+    }
+
+    /// Moves the sidebar cursor down one row (wraps).
+    pub fn sidebar_cursor_down(&mut self) {
+        let rows = sidebar_rows(&self.collapsed_groups);
+        if rows.is_empty() { return; }
+        self.sidebar_cursor = (self.sidebar_cursor + 1) % rows.len();
+    }
+
+    /// Moves the sidebar cursor up one row (wraps).
+    pub fn sidebar_cursor_up(&mut self) {
+        let rows = sidebar_rows(&self.collapsed_groups);
+        if rows.is_empty() { return; }
+        self.sidebar_cursor = if self.sidebar_cursor == 0 {
+            rows.len() - 1
+        } else {
+            self.sidebar_cursor - 1
+        };
+    }
+
+    /// Activates the currently focused sidebar row: toggles group or navigates to view.
+    pub fn sidebar_activate(&mut self) -> AppAction {
+        let rows = sidebar_rows(&self.collapsed_groups);
+        match rows.get(self.sidebar_cursor) {
+            Some(SidebarItem::Group(g)) => AppAction::ToggleNavGroup(*g),
+            Some(SidebarItem::View(v)) => {
+                self.view = *v;
+                self.selected_idx = 0;
+                AppAction::None
+            }
+            None => AppAction::None,
+        }
+    }
+
+    /// Keeps `sidebar_cursor` pointing at the active view row after external navigation.
+    pub fn sync_sidebar_cursor_to_view(&mut self) {
+        let rows = sidebar_rows(&self.collapsed_groups);
+        if let Some(idx) = rows.iter().position(|r| *r == SidebarItem::View(self.view)) {
+            self.sidebar_cursor = idx;
+        }
+    }
+
+    /// Toggles a nav group collapsed/expanded and clamps the cursor.
+    pub fn toggle_nav_group(&mut self, group: NavGroup) {
+        if self.collapsed_groups.contains(&group) {
+            self.collapsed_groups.remove(&group);
+        } else {
+            self.collapsed_groups.insert(group);
+        }
+        let rows = sidebar_rows(&self.collapsed_groups);
+        self.sidebar_cursor = self.sidebar_cursor.min(rows.len().saturating_sub(1));
     }
 
     /// Returns which detail sub-component is currently active.
@@ -766,6 +853,14 @@ impl AppState {
             }
             KeyCode::BackTab => {
                 self.previous_view();
+                AppAction::None
+            }
+            KeyCode::Char('j') | KeyCode::Down if self.detail_view.is_none() => {
+                self.sidebar_cursor_down();
+                AppAction::None
+            }
+            KeyCode::Char('k') | KeyCode::Up if self.detail_view.is_none() => {
+                self.sidebar_cursor_up();
                 AppAction::None
             }
             KeyCode::Down => {
@@ -1026,22 +1121,21 @@ mod tests {
         assert_eq!(app.selected_idx(), 0);
     }
 
-    /// Verifies selection can grow with repeated down events.
+    /// Verifies j/k move the sidebar cursor (not selected_idx) when no detail view.
     #[test]
     fn selected_index_grows_with_down_events() {
         let mut app = AppState::default();
         for _ in 0..5 {
             app.handle_key_event(KeyEvent::from(KeyCode::Down));
         }
-        assert_eq!(app.selected_idx(), 5);
+        assert_eq!(app.sidebar_cursor, 5);
     }
 
     /// Verifies selection resets to zero when switching tabs.
     #[test]
     fn view_switch_resets_selection_index() {
         let mut app = AppState::default();
-        app.handle_key_event(KeyEvent::from(KeyCode::Down));
-        app.handle_key_event(KeyEvent::from(KeyCode::Down));
+        app.selected_idx = 2;
         assert_eq!(app.selected_idx(), 2);
 
         app.handle_key_event(KeyEvent::from(KeyCode::Tab));

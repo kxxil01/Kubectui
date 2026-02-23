@@ -78,9 +78,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 && !app.is_context_picker_open()
                 && !app.command_palette.is_open()
             {
-                selected_resource(&app, &snapshot)
-                    .map(AppAction::OpenDetail)
-                    .unwrap_or(AppAction::None)
+                if app.detail_view.is_none() {
+                    app.sidebar_activate()
+                } else {
+                    selected_resource(&app, &snapshot)
+                        .map(AppAction::OpenDetail)
+                        .unwrap_or(AppAction::None)
+                }
             } else {
                 app.handle_key_event(key)
             };
