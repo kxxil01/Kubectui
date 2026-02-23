@@ -1,17 +1,21 @@
 //! Services list rendering.
 
 use ratatui::{
-    layout::{Constraint, Rect},
-    prelude::{Color, Frame, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    layout::{Constraint, Margin, Rect},
+    prelude::{Frame, Style},
+    text::Span,
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
 use crate::{
     state::{ClusterSnapshot, filters::filter_services},
-    ui::components,
+    ui::components::{active_block, default_block, default_theme},
 };
 
-/// Renders the Services table for the current snapshot.
+/// Renders the Services table with stateful selection and scrollbar.
 pub fn render_services(
     frame: &mut Frame,
     area: Rect,
@@ -19,65 +23,120 @@ pub fn render_services(
     selected_idx: usize,
     query: &str,
 ) {
+    let theme = default_theme();
     let items = filter_services(&snapshot.services, query, None, None);
 
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("No services found").block(components::default_block("Services")),
+            Paragraph::new(Span::styled("  No services found", theme.inactive_style()))
+                .block(default_block("Services")),
             area,
         );
         return;
     }
 
-    let rows = items.iter().enumerate().map(|(idx, svc)| {
-        let selected_style = if idx == selected_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
+    let total = items.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
-        Row::new(vec![
-            Cell::from(svc.name.clone()),
-            Cell::from(svc.namespace.clone()),
-            Cell::from(svc.type_.clone()).style(service_type_style(&svc.type_)),
-            Cell::from(svc.cluster_ip.clone().unwrap_or_else(|| "-".to_string())),
-            Cell::from(format_ports(&svc.ports)),
-            Cell::from(format_age(svc.age)),
-        ])
-        .style(selected_style)
-    });
+    let header = Row::new([
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("Type", theme.header_style())),
+        Cell::from(Span::styled("ClusterIP", theme.header_style())),
+        Cell::from(Span::styled("Ports", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+    ])
+    .height(1)
+    .style(theme.header_style());
 
-    let header = Row::new(["Name", "Namespace", "Type", "ClusterIP", "Ports", "Age"])
-        .style(Style::default().fg(Color::Cyan));
+    let rows: Vec<Row> = items
+        .iter()
+        .enumerate()
+        .map(|(idx, svc)| {
+            let type_style = service_type_style(&svc.type_, &theme);
+            let row_style = if idx % 2 == 0 {
+                Style::default().bg(theme.bg)
+            } else {
+                theme.row_alt_style()
+            };
+
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("  {}", svc.name),
+                    Style::default().fg(theme.fg),
+                )),
+                Cell::from(Span::styled(
+                    svc.namespace.clone(),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(svc.type_.clone(), type_style)),
+                Cell::from(Span::styled(
+                    svc.cluster_ip.clone().unwrap_or_else(|| "None".to_string()),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(
+                    format_ports(&svc.ports),
+                    Style::default().fg(theme.accent2),
+                )),
+                Cell::from(Span::styled(format_age(svc.age), theme.inactive_style())),
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let mut table_state = TableState::default().with_selected(Some(selected));
+
+    let title = format!(" 🔌 Services ({total}) ");
+    let block = if query.is_empty() {
+        active_block(&title)
+    } else {
+        active_block(&format!("{title} [/{query}]"))
+    };
 
     let table = Table::new(
         rows,
         [
-            Constraint::Length(22),
+            Constraint::Length(24),
+            Constraint::Length(16),
             Constraint::Length(14),
-            Constraint::Length(14),
-            Constraint::Length(15),
-            Constraint::Min(20),
-            Constraint::Length(8),
+            Constraint::Length(16),
+            Constraint::Min(18),
+            Constraint::Length(9),
         ],
     )
     .header(header)
-    .block(Block::default().title("Services").borders(Borders::ALL));
+    .block(block)
+    .row_highlight_style(theme.selection_style())
+    .highlight_symbol(theme.highlight_symbol())
+    .highlight_spacing(HighlightSpacing::Always);
 
-    frame.render_widget(table, area);
+    frame.render_stateful_widget(table, area, &mut table_state);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        &mut scrollbar_state,
+    );
 }
 
-fn service_type_style(type_: &str) -> Style {
+fn service_type_style(type_: &str, theme: &crate::ui::theme::Theme) -> Style {
     if type_.eq_ignore_ascii_case("ClusterIP") {
-        Style::default().fg(Color::Blue)
+        Style::default().fg(theme.info)
     } else if type_.eq_ignore_ascii_case("NodePort") {
-        Style::default().fg(Color::Yellow)
+        Style::default().fg(theme.warning)
     } else if type_.eq_ignore_ascii_case("LoadBalancer") {
-        Style::default().fg(Color::Green)
+        Style::default().fg(theme.success)
     } else if type_.eq_ignore_ascii_case("ExternalName") {
-        Style::default().fg(Color::Magenta)
+        Style::default().fg(theme.accent2)
     } else {
-        Style::default().fg(Color::Gray)
+        Style::default().fg(theme.muted)
     }
 }
 
@@ -152,9 +211,11 @@ mod tests {
     /// Verifies service type style helper maps known types.
     #[test]
     fn service_type_style_maps_known_types() {
-        assert_eq!(service_type_style("ClusterIP").fg, Some(Color::Blue));
-        assert_eq!(service_type_style("NodePort").fg, Some(Color::Yellow));
-        assert_eq!(service_type_style("LoadBalancer").fg, Some(Color::Green));
-        assert_eq!(service_type_style("ExternalName").fg, Some(Color::Magenta));
+        use crate::ui::theme::Theme;
+        let theme = Theme::dark();
+        assert_eq!(service_type_style("ClusterIP", &theme).fg, Some(theme.info));
+        assert_eq!(service_type_style("NodePort", &theme).fg, Some(theme.warning));
+        assert_eq!(service_type_style("LoadBalancer", &theme).fg, Some(theme.success));
+        assert_eq!(service_type_style("ExternalName", &theme).fg, Some(theme.accent2));
     }
 }

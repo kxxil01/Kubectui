@@ -1,11 +1,18 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    prelude::{Color, Frame, Style},
-    text::Line,
-    widgets::{Cell, Paragraph, Row, Table},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
+    prelude::{Frame, Style},
+    text::{Line, Span},
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
-use crate::{k8s::dtos::RoleBindingSubject, state::ClusterSnapshot, ui::components};
+use crate::{
+    k8s::dtos::RoleBindingSubject,
+    state::ClusterSnapshot,
+    ui::components::{active_block, default_block, default_theme},
+};
 
 pub fn render_cluster_role_bindings(
     frame: &mut Frame,
@@ -26,10 +33,12 @@ pub fn render_cluster_role_bindings(
         .collect();
     items.sort_by_key(|rb| rb.name.to_ascii_lowercase());
 
+    let theme = default_theme();
+
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("No clusterrolebindings found")
-                .block(components::default_block("ClusterRoleBindings")),
+            Paragraph::new(Span::styled("  No clusterrolebindings found", theme.inactive_style()))
+                .block(default_block("ClusterRoleBindings")),
             area,
         );
         return;
@@ -40,60 +49,64 @@ pub fn render_cluster_role_bindings(
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
         .split(area);
 
-    let rows = items.iter().enumerate().map(|(idx, rb)| {
-        let style = if idx == selected_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
+    let total = items.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
+    let header = Row::new([
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("RoleRef", theme.header_style())),
+        Cell::from(Span::styled("Subjects", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+    ]).height(1).style(theme.header_style());
+
+    let rows: Vec<Row> = items.iter().enumerate().map(|(idx, rb)| {
+        let row_style = if idx % 2 == 0 { Style::default().bg(theme.bg) } else { theme.row_alt_style() };
         Row::new(vec![
-            Cell::from(rb.name.clone()),
-            Cell::from(format!("{}/{}", rb.role_ref_kind, rb.role_ref_name)),
-            Cell::from(rb.subjects.len().to_string()),
-            Cell::from(format_age(rb.age)),
-        ])
-        .style(style)
-    });
+            Cell::from(Span::styled(format!("  {}", rb.name), Style::default().fg(theme.fg))),
+            Cell::from(Span::styled(format!("{}/{}", rb.role_ref_kind, rb.role_ref_name), Style::default().fg(theme.accent2))),
+            Cell::from(Span::styled(rb.subjects.len().to_string(), Style::default().fg(theme.fg_dim))),
+            Cell::from(Span::styled(format_age(rb.age), theme.inactive_style())),
+        ]).style(row_style)
+    }).collect();
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(30),
-            Constraint::Length(38),
-            Constraint::Length(9),
-            Constraint::Fill(1),
-        ],
-    )
-    .header(
-        Row::new(["Name", "RoleRef", "Subjects", "Age"]).style(Style::default().fg(Color::Cyan)),
-    )
-    .block(components::default_block("ClusterRoleBindings"));
-    frame.render_widget(table, chunks[0]);
+    let mut table_state = TableState::default().with_selected(Some(selected));
+    let title = format!(" 🔗 ClusterRoleBindings ({total}) ");
+    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
 
-    let idx = selected_idx.min(items.len().saturating_sub(1));
-    let selected = items[idx];
-    let detail = render_subjects(&selected.subjects);
+    let table = Table::new(rows, [Constraint::Min(30), Constraint::Length(38), Constraint::Length(9), Constraint::Length(9)])
+        .header(header).block(block)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
+    frame.render_stateful_widget(table, chunks[0], &mut table_state);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲")).end_symbol(Some("▼")).track_symbol(Some("│")).thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(scrollbar, chunks[0].inner(Margin { vertical: 1, horizontal: 0 }), &mut scrollbar_state);
+
+    let sel_item = items[selected];
+    let detail = render_subjects(&sel_item.subjects, &theme);
     frame.render_widget(
-        Paragraph::new(detail).block(components::default_block("Selected Binding Subjects")),
+        Paragraph::new(detail).block(active_block("Selected Binding Subjects")),
         chunks[1],
     );
 }
 
-fn render_subjects(subjects: &[RoleBindingSubject]) -> Vec<Line<'static>> {
+fn render_subjects(subjects: &[RoleBindingSubject], theme: &crate::ui::theme::Theme) -> Vec<Line<'static>> {
     if subjects.is_empty() {
-        return vec![Line::from("No subjects")];
+        return vec![Line::from(Span::styled("  No subjects", theme.inactive_style()))];
     }
-
     subjects
         .iter()
         .map(|subject| {
-            let ns = subject.namespace.as_deref().unwrap_or("-");
-            let api_group = subject.api_group.as_deref().unwrap_or("-");
-            Line::from(format!(
-                "- {}/{} (ns={}, apiGroup={})",
-                subject.kind, subject.name, ns, api_group
-            ))
+            let ns = subject.namespace.as_deref().unwrap_or("—");
+            let api_group = subject.api_group.as_deref().unwrap_or("—");
+            Line::from(vec![
+                Span::styled("  ● ", theme.title_style()),
+                Span::styled(format!("{}/{}", subject.kind, subject.name), Style::default().fg(theme.fg)),
+                Span::styled(format!("  ns={ns}  apiGroup={api_group}"), theme.inactive_style()),
+            ])
         })
         .collect()
 }

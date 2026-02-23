@@ -1,14 +1,18 @@
 //! ResourceQuotas list rendering.
 
 use ratatui::{
-    layout::{Constraint, Rect},
-    prelude::{Color, Frame, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    layout::{Constraint, Margin, Rect},
+    prelude::{Frame, Style},
+    text::Span,
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
 use crate::{
     state::{ClusterSnapshot, filters::filter_resource_quotas},
-    ui::components,
+    ui::components::{active_block, default_block, default_theme},
 };
 
 pub fn render_resource_quotas(
@@ -20,55 +24,56 @@ pub fn render_resource_quotas(
 ) {
     let items = filter_resource_quotas(&cluster.resource_quotas, query, None);
 
+    let theme = default_theme();
+
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("No resource quotas found")
-                .block(components::default_block("Governance / ResourceQuotas")),
+            Paragraph::new(Span::styled("  No resource quotas found", theme.inactive_style()))
+                .block(default_block("ResourceQuotas")),
             area,
         );
         return;
     }
 
-    let rows = items.iter().enumerate().map(|(idx, rq)| {
-        let style = if idx == selected_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
+    let total = items.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
+    let header = Row::new([
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("Tracked", theme.header_style())),
+        Cell::from(Span::styled("Max Used", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+    ]).height(1).style(theme.header_style());
+
+    let rows: Vec<Row> = items.iter().enumerate().map(|(idx, rq)| {
         let (tracked, max_pct) = quota_summary(rq);
-
+        let pct_style = usage_style(max_pct, &theme);
+        let row_style = if idx % 2 == 0 { Style::default().bg(theme.bg) } else { theme.row_alt_style() };
         Row::new(vec![
-            Cell::from(rq.name.clone()),
-            Cell::from(rq.namespace.clone()),
-            Cell::from(tracked.to_string()),
-            Cell::from(format!("{max_pct:.0}%")).style(usage_style(max_pct)),
-            Cell::from(format_age(rq.age)),
-        ])
-        .style(style)
-    });
+            Cell::from(Span::styled(format!("  {}", rq.name), Style::default().fg(theme.fg))),
+            Cell::from(Span::styled(rq.namespace.clone(), Style::default().fg(theme.fg_dim))),
+            Cell::from(Span::styled(tracked.to_string(), Style::default().fg(theme.fg_dim))),
+            Cell::from(Span::styled(format!("{max_pct:.0}%"), pct_style)),
+            Cell::from(Span::styled(format_age(rq.age), theme.inactive_style())),
+        ]).style(row_style)
+    }).collect();
 
-    let header = Row::new(["Name", "Namespace", "Tracked", "Max Used", "Age"])
-        .style(Style::default().fg(Color::Cyan));
+    let mut table_state = TableState::default().with_selected(Some(selected));
+    let title = format!(" 📊 ResourceQuotas ({total}) ");
+    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(28),
-            Constraint::Length(18),
-            Constraint::Length(10),
-            Constraint::Length(10),
-            Constraint::Fill(1),
-        ],
-    )
-    .header(header)
-    .block(
-        Block::default()
-            .title("Governance / ResourceQuotas")
-            .borders(Borders::ALL),
-    );
+    let table = Table::new(rows, [Constraint::Min(28), Constraint::Length(18), Constraint::Length(10), Constraint::Length(10), Constraint::Length(9)])
+        .header(header).block(block)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
+    frame.render_stateful_widget(table, area, &mut table_state);
 
-    frame.render_widget(table, area);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲")).end_symbol(Some("▼")).track_symbol(Some("│")).thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(scrollbar, area.inner(Margin { vertical: 1, horizontal: 0 }), &mut scrollbar_state);
 }
 
 fn quota_summary(rq: &crate::k8s::dtos::ResourceQuotaInfo) -> (usize, f64) {
@@ -80,13 +85,13 @@ fn quota_summary(rq: &crate::k8s::dtos::ResourceQuotaInfo) -> (usize, f64) {
     (tracked, max_pct)
 }
 
-fn usage_style(percent: f64) -> Style {
+fn usage_style(percent: f64, theme: &crate::ui::theme::Theme) -> Style {
     if percent >= 90.0 {
-        Style::default().fg(Color::Red)
+        theme.badge_error_style()
     } else if percent >= 70.0 {
-        Style::default().fg(Color::Yellow)
+        theme.badge_warning_style()
     } else {
-        Style::default().fg(Color::Green)
+        theme.badge_success_style()
     }
 }
 
@@ -112,11 +117,13 @@ fn format_age(age: Option<std::time::Duration>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::Theme;
 
     #[test]
     fn usage_style_thresholds() {
-        assert_eq!(usage_style(35.0).fg, Some(Color::Green));
-        assert_eq!(usage_style(75.0).fg, Some(Color::Yellow));
-        assert_eq!(usage_style(95.0).fg, Some(Color::Red));
+        let theme = Theme::dark();
+        assert_eq!(usage_style(35.0, &theme).fg, Some(theme.success));
+        assert_eq!(usage_style(75.0, &theme).fg, Some(theme.warning));
+        assert_eq!(usage_style(95.0, &theme).fg, Some(theme.error));
     }
 }

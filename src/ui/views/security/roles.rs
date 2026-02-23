@@ -1,11 +1,18 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    prelude::{Color, Frame, Style},
-    text::Line,
-    widgets::{Cell, Paragraph, Row, Table},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
+    prelude::{Frame, Modifier, Style},
+    text::{Line, Span},
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
-use crate::{k8s::dtos::RbacRule, state::ClusterSnapshot, ui::components};
+use crate::{
+    k8s::dtos::RbacRule,
+    state::ClusterSnapshot,
+    ui::components::{active_block, default_block, default_theme},
+};
 
 pub fn render_roles(
     frame: &mut Frame,
@@ -31,9 +38,12 @@ pub fn render_roles(
         )
     });
 
+    let theme = default_theme();
+
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("No roles found").block(components::default_block("Roles")),
+            Paragraph::new(Span::styled("  No roles found", theme.inactive_style()))
+                .block(default_block("Roles")),
             area,
         );
         return;
@@ -44,75 +54,91 @@ pub fn render_roles(
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
         .split(area);
 
-    let rows = items.iter().enumerate().map(|(idx, role)| {
-        let style = if idx == selected_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
+    let total = items.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
-        Row::new(vec![
-            Cell::from(role.name.clone()),
-            Cell::from(role.namespace.clone()),
-            Cell::from(role.rules.len().to_string()),
-            Cell::from(format_age(role.age)),
-        ])
-        .style(style)
-    });
+    let header = Row::new([
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("Rules", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+    ])
+    .height(1)
+    .style(theme.header_style());
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(28),
-            Constraint::Length(18),
-            Constraint::Length(8),
-            Constraint::Fill(1),
-        ],
-    )
-    .header(Row::new(["Name", "Namespace", "Rules", "Age"]).style(Style::default().fg(Color::Cyan)))
-    .block(components::default_block("Roles"));
-    frame.render_widget(table, chunks[0]);
+    let rows: Vec<Row> = items
+        .iter()
+        .enumerate()
+        .map(|(idx, role)| {
+            let row_style = if idx % 2 == 0 { Style::default().bg(theme.bg) } else { theme.row_alt_style() };
+            Row::new(vec![
+                Cell::from(Span::styled(format!("  {}", role.name), Style::default().fg(theme.fg))),
+                Cell::from(Span::styled(role.namespace.clone(), Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(role.rules.len().to_string(), Style::default().fg(theme.accent2))),
+                Cell::from(Span::styled(format_age(role.age), theme.inactive_style())),
+            ])
+            .style(row_style)
+        })
+        .collect();
 
-    let idx = selected_idx.min(items.len().saturating_sub(1));
-    let selected = items[idx];
-    let detail = render_rule_tree(&selected.rules);
+    let mut table_state = TableState::default().with_selected(Some(selected));
+    let title = format!(" 🛡️  Roles ({total}) ");
+    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
+
+    let table = Table::new(rows, [Constraint::Min(28), Constraint::Length(18), Constraint::Length(8), Constraint::Length(9)])
+        .header(header).block(block)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
+    frame.render_stateful_widget(table, chunks[0], &mut table_state);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲")).end_symbol(Some("▼")).track_symbol(Some("│")).thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(scrollbar, chunks[0].inner(Margin { vertical: 1, horizontal: 0 }), &mut scrollbar_state);
+
+    let sel_item = items[selected];
+    let detail = render_rule_tree(&sel_item.rules, &theme);
     frame.render_widget(
-        Paragraph::new(detail).block(components::default_block("Selected Role Rules")),
+        Paragraph::new(detail).block(active_block("Selected Role Rules")),
         chunks[1],
     );
 }
 
-fn render_rule_tree(rules: &[RbacRule]) -> Vec<Line<'static>> {
+fn render_rule_tree(rules: &[RbacRule], theme: &crate::ui::theme::Theme) -> Vec<Line<'static>> {
     if rules.is_empty() {
-        return vec![Line::from("No rules")];
+        return vec![Line::from(Span::styled("  No rules defined", theme.inactive_style()))];
     }
 
     let mut lines = Vec::new();
     for (idx, rule) in rules.iter().enumerate() {
-        lines.push(Line::from(format!("Rule {}", idx + 1)));
-        lines.push(Line::from(format!(
-            "  ├─ verbs: {}",
-            join_or_all(&rule.verbs)
+        lines.push(Line::from(Span::styled(
+            format!("  Rule {}", idx + 1),
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from(format!(
-            "  ├─ apiGroups: {}",
-            join_or_all(&rule.api_groups)
-        )));
-        lines.push(Line::from(format!(
-            "  ├─ resources: {}",
-            join_or_all(&rule.resources)
-        )));
+        lines.push(Line::from(vec![
+            Span::styled("    verbs       ", theme.inactive_style()),
+            Span::styled(join_or_all(&rule.verbs), Style::default().fg(theme.success)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    apiGroups   ", theme.inactive_style()),
+            Span::styled(join_or_all(&rule.api_groups), Style::default().fg(theme.fg_dim)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    resources   ", theme.inactive_style()),
+            Span::styled(join_or_all(&rule.resources), Style::default().fg(theme.accent2)),
+        ]));
         if !rule.resource_names.is_empty() {
-            lines.push(Line::from(format!(
-                "  ├─ resourceNames: {}",
-                rule.resource_names.join(", ")
-            )));
+            lines.push(Line::from(vec![
+                Span::styled("    names      ", theme.inactive_style()),
+                Span::styled(rule.resource_names.join(", "), Style::default().fg(theme.fg_dim)),
+            ]));
         }
         if !rule.non_resource_urls.is_empty() {
-            lines.push(Line::from(format!(
-                "  └─ nonResourceURLs: {}",
-                rule.non_resource_urls.join(", ")
-            )));
+            lines.push(Line::from(vec![
+                Span::styled("    urls       ", theme.inactive_style()),
+                Span::styled(rule.non_resource_urls.join(", "), Style::default().fg(theme.muted)),
+            ]));
         }
     }
     lines
@@ -146,16 +172,18 @@ fn format_age(age: Option<std::time::Duration>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::Theme;
 
     #[test]
     fn rule_tree_renders_rules_and_fields() {
+        let theme = Theme::dark();
         let lines = render_rule_tree(&[RbacRule {
             verbs: vec!["get".to_string()],
             api_groups: vec!["apps".to_string()],
             resources: vec!["deployments".to_string()],
             resource_names: vec!["api".to_string()],
             non_resource_urls: vec![],
-        }]);
+        }], &theme);
 
         let content = lines
             .into_iter()
@@ -163,7 +191,7 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert!(content.contains("Rule 1"));
-        assert!(content.contains("verbs: get"));
-        assert!(content.contains("resources: deployments"));
+        assert!(content.contains("get"));
+        assert!(content.contains("deployments"));
     }
 }

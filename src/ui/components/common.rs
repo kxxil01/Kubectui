@@ -20,7 +20,7 @@ pub enum BadgeStatus {
     Info,
 }
 
-pub fn draw_badge(theme: &Theme, status: BadgeStatus, label: &str) -> Span {
+pub fn draw_badge(theme: &Theme, status: BadgeStatus, label: &str) -> Span<'static> {
     let (symbol, color) = match status {
         BadgeStatus::Success => ("✓", theme.success),
         BadgeStatus::Error => ("✗", theme.error),

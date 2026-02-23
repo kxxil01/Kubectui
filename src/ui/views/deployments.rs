@@ -1,9 +1,13 @@
 //! Deployments list rendering.
 
 use ratatui::{
-    layout::{Constraint, Rect},
-    prelude::{Color, Frame, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    layout::{Constraint, Margin, Rect},
+    prelude::{Frame, Style},
+    text::Span,
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
 use crate::{
@@ -11,10 +15,10 @@ use crate::{
         ClusterSnapshot,
         filters::{DeploymentHealth, deployment_health_from_ready, filter_deployments},
     },
-    ui::components,
+    ui::components::{active_block, default_block, default_theme},
 };
 
-/// Renders the Deployments table for the current snapshot.
+/// Renders the Deployments table with stateful selection and scrollbar.
 pub fn render_deployments(
     frame: &mut Frame,
     area: Rect,
@@ -22,71 +26,125 @@ pub fn render_deployments(
     selected_idx: usize,
     query: &str,
 ) {
+    let theme = default_theme();
     let items = filter_deployments(&snapshot.deployments, query, None, None);
 
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("No deployments found").block(components::default_block("Deployments")),
+            Paragraph::new(Span::styled(
+                "  No deployments found",
+                theme.inactive_style(),
+            ))
+            .block(default_block("Deployments")),
             area,
         );
         return;
     }
 
-    let rows = items.iter().enumerate().map(|(idx, deploy)| {
-        let selected_style = if idx == selected_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
-
-        let health = deployment_health_from_ready(&deploy.ready);
-
-        Row::new(vec![
-            Cell::from(deploy.name.clone()),
-            Cell::from(deploy.namespace.clone()),
-            Cell::from(deploy.ready.clone()).style(health_style(health)),
-            Cell::from(deploy.updated.to_string()),
-            Cell::from(deploy.available.to_string()),
-            Cell::from(format_age(deploy.age)),
-            Cell::from(format_image(deploy.image.as_deref())),
-        ])
-        .style(selected_style)
-    });
+    let total = items.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
-        "Name",
-        "Namespace",
-        "Ready",
-        "Updated",
-        "Available",
-        "Age",
-        "Image",
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("Ready", theme.header_style())),
+        Cell::from(Span::styled("Updated", theme.header_style())),
+        Cell::from(Span::styled("Available", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled("Image", theme.header_style())),
     ])
-    .style(Style::default().fg(Color::Cyan));
+    .height(1)
+    .style(theme.header_style());
+
+    let rows: Vec<Row> = items
+        .iter()
+        .enumerate()
+        .map(|(idx, deploy)| {
+            let health = deployment_health_from_ready(&deploy.ready);
+            let ready_style = health_style(health, &theme);
+
+            let row_style = if idx % 2 == 0 {
+                Style::default().bg(theme.bg)
+            } else {
+                theme.row_alt_style()
+            };
+
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("  {}", deploy.name),
+                    Style::default().fg(theme.fg),
+                )),
+                Cell::from(Span::styled(
+                    deploy.namespace.clone(),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(deploy.ready.clone(), ready_style)),
+                Cell::from(Span::styled(
+                    deploy.updated.to_string(),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(
+                    deploy.available.to_string(),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(format_age(deploy.age), theme.inactive_style())),
+                Cell::from(Span::styled(
+                    format_image(deploy.image.as_deref()),
+                    Style::default().fg(theme.muted),
+                )),
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let mut table_state = TableState::default().with_selected(Some(selected));
+
+    let title = format!(" 🚀 Deployments ({total}) ");
+    let block = if query.is_empty() {
+        active_block(&title)
+    } else {
+        active_block(&format!("{title} [/{query}]"))
+    };
 
     let table = Table::new(
         rows,
         [
-            Constraint::Length(22),
-            Constraint::Length(14),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(10),
-            Constraint::Length(8),
-            Constraint::Min(24),
+            Constraint::Length(24),
+            Constraint::Length(16),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(11),
+            Constraint::Length(9),
+            Constraint::Min(20),
         ],
     )
     .header(header)
-    .block(Block::default().title("Deployments").borders(Borders::ALL));
+    .block(block)
+    .row_highlight_style(theme.selection_style())
+    .highlight_symbol(theme.highlight_symbol())
+    .highlight_spacing(HighlightSpacing::Always);
 
-    frame.render_widget(table, area);
+    frame.render_stateful_widget(table, area, &mut table_state);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        &mut scrollbar_state,
+    );
 }
 
-fn health_style(health: DeploymentHealth) -> Style {
+fn health_style(health: DeploymentHealth, theme: &crate::ui::theme::Theme) -> Style {
     match health {
-        DeploymentHealth::Healthy => Style::default().fg(Color::Green),
-        DeploymentHealth::Degraded => Style::default().fg(Color::Yellow),
-        DeploymentHealth::Failed => Style::default().fg(Color::Red),
+        DeploymentHealth::Healthy => theme.badge_success_style(),
+        DeploymentHealth::Degraded => theme.badge_warning_style(),
+        DeploymentHealth::Failed => theme.badge_error_style(),
     }
 }
 
@@ -131,19 +189,21 @@ fn format_age(age: Option<std::time::Duration>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::Theme;
 
     /// Verifies health style colors match deployment health state.
     #[test]
     fn health_style_mapping() {
+        let theme = Theme::dark();
         assert_eq!(
-            health_style(DeploymentHealth::Healthy).fg,
-            Some(Color::Green)
+            health_style(DeploymentHealth::Healthy, &theme).fg,
+            Some(theme.success)
         );
         assert_eq!(
-            health_style(DeploymentHealth::Degraded).fg,
-            Some(Color::Yellow)
+            health_style(DeploymentHealth::Degraded, &theme).fg,
+            Some(theme.warning)
         );
-        assert_eq!(health_style(DeploymentHealth::Failed).fg, Some(Color::Red));
+        assert_eq!(health_style(DeploymentHealth::Failed, &theme).fg, Some(theme.error));
     }
 
     /// Verifies image values are truncated when exceeding render width.

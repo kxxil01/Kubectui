@@ -1,14 +1,18 @@
 //! PodDisruptionBudgets list rendering.
 
 use ratatui::{
-    layout::{Constraint, Rect},
-    prelude::{Color, Frame, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    layout::{Constraint, Margin, Rect},
+    prelude::{Frame, Style},
+    text::Span,
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
 use crate::{
     state::{ClusterSnapshot, filters::filter_pod_disruption_budgets},
-    ui::components,
+    ui::components::{active_block, default_block, default_theme},
 };
 
 pub fn render_pdbs(
@@ -20,75 +24,67 @@ pub fn render_pdbs(
 ) {
     let items = filter_pod_disruption_budgets(&cluster.pod_disruption_budgets, query, None);
 
+    let theme = default_theme();
+
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("No pod disruption budgets found")
-                .block(components::default_block("Governance / PDBs")),
+            Paragraph::new(Span::styled("  No pod disruption budgets found", theme.inactive_style()))
+                .block(default_block("PodDisruptionBudgets")),
             area,
         );
         return;
     }
 
-    let rows = items.iter().enumerate().map(|(idx, pdb)| {
-        let style = if idx == selected_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
-
-        Row::new(vec![
-            Cell::from(pdb.name.clone()),
-            Cell::from(pdb.namespace.clone()),
-            Cell::from(
-                pdb.min_available
-                    .clone()
-                    .or_else(|| pdb.max_unavailable.clone())
-                    .unwrap_or_else(|| "-".to_string()),
-            ),
-            Cell::from(format!("{}/{}", pdb.current_healthy, pdb.desired_healthy)),
-            Cell::from(pdb.disruptions_allowed.to_string())
-                .style(disruption_style(pdb.disruptions_allowed)),
-            Cell::from(format_age(pdb.age)),
-        ])
-        .style(style)
-    });
+    let total = items.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
-        "Name",
-        "Namespace",
-        "Policy",
-        "Healthy",
-        "Disruptions Allowed",
-        "Age",
-    ])
-    .style(Style::default().fg(Color::Cyan));
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("Policy", theme.header_style())),
+        Cell::from(Span::styled("Healthy", theme.header_style())),
+        Cell::from(Span::styled("Disruptions", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+    ]).height(1).style(theme.header_style());
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(28),
-            Constraint::Length(18),
-            Constraint::Length(12),
-            Constraint::Length(10),
-            Constraint::Length(20),
-            Constraint::Fill(1),
-        ],
-    )
-    .header(header)
-    .block(
-        Block::default()
-            .title("Governance / PodDisruptionBudgets")
-            .borders(Borders::ALL),
-    );
+    let rows: Vec<Row> = items.iter().enumerate().map(|(idx, pdb)| {
+        let disrupt_style = disruption_style(pdb.disruptions_allowed, &theme);
+        let row_style = if idx % 2 == 0 { Style::default().bg(theme.bg) } else { theme.row_alt_style() };
+        Row::new(vec![
+            Cell::from(Span::styled(format!("  {}", pdb.name), Style::default().fg(theme.fg))),
+            Cell::from(Span::styled(pdb.namespace.clone(), Style::default().fg(theme.fg_dim))),
+            Cell::from(Span::styled(
+                pdb.min_available.clone().or_else(|| pdb.max_unavailable.clone()).unwrap_or_else(|| "-".to_string()),
+                Style::default().fg(theme.fg_dim),
+            )),
+            Cell::from(Span::styled(format!("{}/{}", pdb.current_healthy, pdb.desired_healthy), Style::default().fg(theme.fg_dim))),
+            Cell::from(Span::styled(pdb.disruptions_allowed.to_string(), disrupt_style)),
+            Cell::from(Span::styled(format_age(pdb.age), theme.inactive_style())),
+        ]).style(row_style)
+    }).collect();
 
-    frame.render_widget(table, area);
+    let mut table_state = TableState::default().with_selected(Some(selected));
+    let title = format!(" 🛡️  PodDisruptionBudgets ({total}) ");
+    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
+
+    let table = Table::new(rows, [Constraint::Min(28), Constraint::Length(18), Constraint::Length(12), Constraint::Length(10), Constraint::Length(12), Constraint::Length(9)])
+        .header(header).block(block)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
+    frame.render_stateful_widget(table, area, &mut table_state);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲")).end_symbol(Some("▼")).track_symbol(Some("│")).thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(scrollbar, area.inner(Margin { vertical: 1, horizontal: 0 }), &mut scrollbar_state);
 }
 
-fn disruption_style(disruptions_allowed: i32) -> Style {
+fn disruption_style(disruptions_allowed: i32, theme: &crate::ui::theme::Theme) -> Style {
     if disruptions_allowed > 0 {
-        Style::default().fg(Color::Green)
+        theme.badge_success_style()
     } else {
-        Style::default().fg(Color::Yellow)
+        theme.badge_warning_style()
     }
 }
 
@@ -114,10 +110,12 @@ fn format_age(age: Option<std::time::Duration>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::Theme;
 
     #[test]
     fn disruption_style_expected_colors() {
-        assert_eq!(disruption_style(2).fg, Some(Color::Green));
-        assert_eq!(disruption_style(0).fg, Some(Color::Yellow));
+        let theme = Theme::dark();
+        assert_eq!(disruption_style(2, &theme).fg, Some(theme.success));
+        assert_eq!(disruption_style(0, &theme).fg, Some(theme.warning));
     }
 }

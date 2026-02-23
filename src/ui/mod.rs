@@ -1,18 +1,23 @@
 //! User interface composition and rendering utilities.
 
 pub mod components;
+pub mod theme;
 pub mod views;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Margin},
     prelude::Frame,
-    text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    text::Span,
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
 use crate::{
     app::{AppState, AppView},
     state::ClusterSnapshot,
+    ui::components::{active_block, default_block, default_theme},
 };
 
 /// Renders a full frame for the current app and cluster state.
@@ -45,8 +50,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             app.search_query(),
         ),
         AppView::Pods => {
-            let body = render_pods(cluster, app.selected_idx());
-            frame.render_widget(body, layout[2]);
+            render_pods_widget(frame, layout[2], cluster, app.selected_idx(), app.search_query());
         }
         AppView::Services => views::services::render_services(
             frame,
@@ -177,26 +181,154 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     }
 }
 
-fn render_pods(cluster: &ClusterSnapshot, selected_idx: usize) -> Paragraph<'static> {
-    let mut lines = Vec::new();
+fn render_pods_widget(
+    frame: &mut Frame,
+    area: ratatui::layout::Rect,
+    cluster: &ClusterSnapshot,
+    selected_idx: usize,
+    query: &str,
+) {
+    let theme = default_theme();
 
-    for (idx, pod) in cluster.pods.iter().take(50).enumerate() {
-        let marker = if idx == selected_idx { ">" } else { " " };
-        lines.push(Line::from(Span::raw(format!(
-            "{marker} {}/{} | status={} | node={} | restarts={}",
-            pod.namespace,
-            pod.name,
-            pod.status,
-            pod.node.as_deref().unwrap_or("n/a"),
-            pod.restarts
-        ))));
+    let filtered: Vec<_> = cluster
+        .pods
+        .iter()
+        .filter(|p| {
+            if query.is_empty() {
+                true
+            } else {
+                let q = query.to_lowercase();
+                p.name.to_lowercase().contains(&q)
+                    || p.namespace.to_lowercase().contains(&q)
+                    || p.status.to_lowercase().contains(&q)
+            }
+        })
+        .collect();
+
+    if filtered.is_empty() {
+        let msg = if cluster.pods.is_empty() {
+            "  No pods available"
+        } else {
+            "  No pods match the search query"
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("Pods")),
+            area,
+        );
+        return;
     }
 
-    if lines.is_empty() {
-        lines.push(Line::from("No pods found"));
-    }
+    let total = filtered.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
-    Paragraph::new(lines).block(Block::default().title("Pods").borders(Borders::ALL))
+    let header = Row::new([
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("Status", theme.header_style())),
+        Cell::from(Span::styled("Node", theme.header_style())),
+        Cell::from(Span::styled("Restarts", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+    ])
+    .height(1)
+    .style(theme.header_style());
+
+    let rows: Vec<Row> = filtered
+        .iter()
+        .enumerate()
+        .map(|(idx, pod)| {
+            let status_style = theme.get_status_style(&pod.status);
+            let restart_style = if pod.restarts > 5 {
+                theme.badge_error_style()
+            } else if pod.restarts > 0 {
+                theme.badge_warning_style()
+            } else {
+                theme.inactive_style()
+            };
+            let row_style = if idx % 2 == 0 {
+                ratatui::prelude::Style::default().bg(theme.bg)
+            } else {
+                theme.row_alt_style()
+            };
+
+            let age = pod
+                .created_at
+                .map(|ts| {
+                    let delta = chrono::Utc::now().signed_duration_since(ts);
+                    let days = delta.num_days();
+                    let hours = delta.num_hours() % 24;
+                    let mins = delta.num_minutes() % 60;
+                    if days > 0 {
+                        format!("{days}d{hours}h")
+                    } else if hours > 0 {
+                        format!("{hours}h{mins}m")
+                    } else {
+                        format!("{mins}m")
+                    }
+                })
+                .unwrap_or_else(|| "-".to_string());
+
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("  {}", pod.name),
+                    ratatui::prelude::Style::default().fg(theme.fg),
+                )),
+                Cell::from(Span::styled(
+                    pod.namespace.clone(),
+                    ratatui::prelude::Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(pod.status.clone(), status_style)),
+                Cell::from(Span::styled(
+                    pod.node.clone().unwrap_or_else(|| "n/a".to_string()),
+                    ratatui::prelude::Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(pod.restarts.to_string(), restart_style)),
+                Cell::from(Span::styled(age, theme.inactive_style())),
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let mut table_state = TableState::default().with_selected(Some(selected));
+
+    let title = format!(" 🐳 Pods ({total}) ");
+    let block = if query.is_empty() {
+        active_block(&title)
+    } else {
+        active_block(&format!("{title} [/{query}]"))
+    };
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Min(28),
+            Constraint::Length(18),
+            Constraint::Length(20),
+            Constraint::Length(22),
+            Constraint::Length(10),
+            Constraint::Length(9),
+        ],
+    )
+    .header(header)
+    .block(block)
+    .row_highlight_style(theme.selection_style())
+    .highlight_symbol(theme.highlight_symbol())
+    .highlight_spacing(HighlightSpacing::Always);
+
+    frame.render_stateful_widget(table, area, &mut table_state);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        &mut scrollbar_state,
+    );
 }
 
 #[cfg(test)]

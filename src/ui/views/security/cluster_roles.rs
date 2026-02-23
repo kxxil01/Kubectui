@@ -1,11 +1,18 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
-    prelude::{Color, Frame, Style},
-    text::Line,
-    widgets::{Cell, Paragraph, Row, Table},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
+    prelude::{Frame, Modifier, Style},
+    text::{Line, Span},
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
-use crate::{k8s::dtos::RbacRule, state::ClusterSnapshot, ui::components};
+use crate::{
+    k8s::dtos::RbacRule,
+    state::ClusterSnapshot,
+    ui::components::{active_block, default_block, default_theme},
+};
 
 pub fn render_cluster_roles(
     frame: &mut Frame,
@@ -22,10 +29,12 @@ pub fn render_cluster_roles(
         .collect();
     items.sort_by_key(|r| r.name.to_ascii_lowercase());
 
+    let theme = default_theme();
+
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("No clusterroles found")
-                .block(components::default_block("ClusterRoles")),
+            Paragraph::new(Span::styled("  No clusterroles found", theme.inactive_style()))
+                .block(default_block("ClusterRoles")),
             area,
         );
         return;
@@ -36,62 +45,70 @@ pub fn render_cluster_roles(
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
         .split(area);
 
-    let rows = items.iter().enumerate().map(|(idx, role)| {
-        let style = if idx == selected_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
+    let total = items.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
+    let header = Row::new([
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("Rules", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+    ]).height(1).style(theme.header_style());
+
+    let rows: Vec<Row> = items.iter().enumerate().map(|(idx, role)| {
+        let row_style = if idx % 2 == 0 { Style::default().bg(theme.bg) } else { theme.row_alt_style() };
         Row::new(vec![
-            Cell::from(role.name.clone()),
-            Cell::from(role.rules.len().to_string()),
-            Cell::from(format_age(role.age)),
-        ])
-        .style(style)
-    });
+            Cell::from(Span::styled(format!("  {}", role.name), Style::default().fg(theme.fg))),
+            Cell::from(Span::styled(role.rules.len().to_string(), Style::default().fg(theme.accent2))),
+            Cell::from(Span::styled(format_age(role.age), theme.inactive_style())),
+        ]).style(row_style)
+    }).collect();
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(36),
-            Constraint::Length(8),
-            Constraint::Fill(1),
-        ],
-    )
-    .header(Row::new(["Name", "Rules", "Age"]).style(Style::default().fg(Color::Cyan)))
-    .block(components::default_block("ClusterRoles"));
-    frame.render_widget(table, chunks[0]);
+    let mut table_state = TableState::default().with_selected(Some(selected));
+    let title = format!(" 🛡️  ClusterRoles ({total}) ");
+    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
 
-    let idx = selected_idx.min(items.len().saturating_sub(1));
-    let selected = items[idx];
-    let detail = render_rule_tree(&selected.rules);
+    let table = Table::new(rows, [Constraint::Min(36), Constraint::Length(8), Constraint::Length(9)])
+        .header(header).block(block)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
+    frame.render_stateful_widget(table, chunks[0], &mut table_state);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲")).end_symbol(Some("▼")).track_symbol(Some("│")).thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(scrollbar, chunks[0].inner(Margin { vertical: 1, horizontal: 0 }), &mut scrollbar_state);
+
+    let sel_item = items[selected];
+    let detail = render_rule_tree(&sel_item.rules, &theme);
     frame.render_widget(
-        Paragraph::new(detail).block(components::default_block("Selected ClusterRole Rules")),
+        Paragraph::new(detail).block(active_block("Selected ClusterRole Rules")),
         chunks[1],
     );
 }
 
-fn render_rule_tree(rules: &[RbacRule]) -> Vec<Line<'static>> {
+fn render_rule_tree(rules: &[RbacRule], theme: &crate::ui::theme::Theme) -> Vec<Line<'static>> {
     if rules.is_empty() {
-        return vec![Line::from("No rules")];
+        return vec![Line::from(Span::styled("  No rules defined", theme.inactive_style()))];
     }
-
     let mut lines = Vec::new();
     for (idx, rule) in rules.iter().enumerate() {
-        lines.push(Line::from(format!("Rule {}", idx + 1)));
-        lines.push(Line::from(format!(
-            "  ├─ verbs: {}",
-            join_or_all(&rule.verbs)
+        lines.push(Line::from(Span::styled(
+            format!("  Rule {}", idx + 1),
+            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
         )));
-        lines.push(Line::from(format!(
-            "  ├─ apiGroups: {}",
-            join_or_all(&rule.api_groups)
-        )));
-        lines.push(Line::from(format!(
-            "  └─ resources: {}",
-            join_or_all(&rule.resources)
-        )));
+        lines.push(Line::from(vec![
+            Span::styled("    verbs      ", theme.inactive_style()),
+            Span::styled(join_or_all(&rule.verbs), Style::default().fg(theme.success)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    apiGroups  ", theme.inactive_style()),
+            Span::styled(join_or_all(&rule.api_groups), Style::default().fg(theme.fg_dim)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    resources  ", theme.inactive_style()),
+            Span::styled(join_or_all(&rule.resources), Style::default().fg(theme.accent2)),
+        ]));
     }
     lines
 }

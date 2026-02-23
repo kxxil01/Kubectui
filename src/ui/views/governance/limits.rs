@@ -1,14 +1,18 @@
 //! LimitRanges list rendering.
 
 use ratatui::{
-    layout::{Constraint, Rect},
-    prelude::{Color, Frame, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    layout::{Constraint, Margin, Rect},
+    prelude::{Frame, Style},
+    text::Span,
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
 use crate::{
     state::{ClusterSnapshot, filters::filter_limit_ranges},
-    ui::components,
+    ui::components::{active_block, default_block, default_theme},
 };
 
 pub fn render_limit_ranges(
@@ -20,53 +24,54 @@ pub fn render_limit_ranges(
 ) {
     let items = filter_limit_ranges(&cluster.limit_ranges, query, None);
 
+    let theme = default_theme();
+
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("No limit ranges found")
-                .block(components::default_block("Governance / LimitRanges")),
+            Paragraph::new(Span::styled("  No limit ranges found", theme.inactive_style()))
+                .block(default_block("LimitRanges")),
             area,
         );
         return;
     }
 
-    let rows = items.iter().enumerate().map(|(idx, lr)| {
-        let style = if idx == selected_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
+    let total = items.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
+    let header = Row::new([
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("Specs", theme.header_style())),
+        Cell::from(Span::styled("Types", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+    ]).height(1).style(theme.header_style());
+
+    let rows: Vec<Row> = items.iter().enumerate().map(|(idx, lr)| {
+        let row_style = if idx % 2 == 0 { Style::default().bg(theme.bg) } else { theme.row_alt_style() };
         Row::new(vec![
-            Cell::from(lr.name.clone()),
-            Cell::from(lr.namespace.clone()),
-            Cell::from(lr.limits.len().to_string()),
-            Cell::from(limit_types_summary(lr)),
-            Cell::from(format_age(lr.age)),
-        ])
-        .style(style)
-    });
+            Cell::from(Span::styled(format!("  {}", lr.name), Style::default().fg(theme.fg))),
+            Cell::from(Span::styled(lr.namespace.clone(), Style::default().fg(theme.fg_dim))),
+            Cell::from(Span::styled(lr.limits.len().to_string(), Style::default().fg(theme.fg_dim))),
+            Cell::from(Span::styled(limit_types_summary(lr), Style::default().fg(theme.accent2))),
+            Cell::from(Span::styled(format_age(lr.age), theme.inactive_style())),
+        ]).style(row_style)
+    }).collect();
 
-    let header = Row::new(["Name", "Namespace", "Specs", "Types", "Age"])
-        .style(Style::default().fg(Color::Cyan));
+    let mut table_state = TableState::default().with_selected(Some(selected));
+    let title = format!(" ⚖️  LimitRanges ({total}) ");
+    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Length(28),
-            Constraint::Length(18),
-            Constraint::Length(8),
-            Constraint::Min(24),
-            Constraint::Fill(1),
-        ],
-    )
-    .header(header)
-    .block(
-        Block::default()
-            .title("Governance / LimitRanges")
-            .borders(Borders::ALL),
-    );
+    let table = Table::new(rows, [Constraint::Min(28), Constraint::Length(18), Constraint::Length(8), Constraint::Min(24), Constraint::Length(9)])
+        .header(header).block(block)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
+    frame.render_stateful_widget(table, area, &mut table_state);
 
-    frame.render_widget(table, area);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲")).end_symbol(Some("▼")).track_symbol(Some("│")).thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(scrollbar, area.inner(Margin { vertical: 1, horizontal: 0 }), &mut scrollbar_state);
 }
 
 fn limit_types_summary(lr: &crate::k8s::dtos::LimitRangeInfo) -> String {

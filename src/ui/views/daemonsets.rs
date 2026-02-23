@@ -1,17 +1,21 @@
 //! DaemonSets list rendering.
 
 use ratatui::{
-    layout::{Constraint, Rect},
-    prelude::{Color, Frame, Style},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    layout::{Constraint, Margin, Rect},
+    prelude::{Frame, Style},
+    text::Span,
+    widgets::{
+        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Table, TableState,
+    },
 };
 
 use crate::{
     state::{ClusterSnapshot, filters},
-    ui::components,
+    ui::components::{active_block, default_block, default_theme},
 };
 
-/// Renders the DaemonSets table for the current snapshot.
+/// Renders the DaemonSets table with stateful selection and scrollbar.
 pub fn render_daemonsets(
     frame: &mut Frame,
     area: Rect,
@@ -19,81 +23,128 @@ pub fn render_daemonsets(
     selected_idx: usize,
     query: &str,
 ) {
+    let theme = default_theme();
     let items = filters::filter_daemonsets(&cluster.daemonsets, query, None);
 
     if items.is_empty() {
         frame.render_widget(
-            Paragraph::new("No daemonsets found").block(components::default_block("DaemonSets")),
+            Paragraph::new(Span::styled("  No daemonsets found", theme.inactive_style()))
+                .block(default_block("DaemonSets")),
             area,
         );
         return;
     }
 
-    let rows = items.iter().enumerate().map(|(idx, ds)| {
-        let selected_style = if idx == selected_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
-
-        Row::new(vec![
-            Cell::from(ds.name.clone()),
-            Cell::from(ds.namespace.clone()),
-            Cell::from(ds.desired_count.to_string()),
-            Cell::from(ds.ready_count.to_string())
-                .style(readiness_style(ds.ready_count, ds.desired_count)),
-            Cell::from(ds.unavailable_count.to_string())
-                .style(unavailable_style(ds.unavailable_count)),
-            Cell::from(format_image(ds.image.as_deref())),
-            Cell::from(format_age(ds.age)),
-        ])
-        .style(selected_style)
-    });
+    let total = items.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
-        "Name",
-        "Namespace",
-        "Desired",
-        "Ready",
-        "Unavailable",
-        "Image",
-        "Age",
+        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("Desired", theme.header_style())),
+        Cell::from(Span::styled("Ready", theme.header_style())),
+        Cell::from(Span::styled("Unavailable", theme.header_style())),
+        Cell::from(Span::styled("Image", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
     ])
-    .style(Style::default().fg(Color::Cyan));
+    .height(1)
+    .style(theme.header_style());
+
+    let rows: Vec<Row> = items
+        .iter()
+        .enumerate()
+        .map(|(idx, ds)| {
+            let ready_style = readiness_style(ds.ready_count, ds.desired_count, &theme);
+            let unavail_style = unavailable_style(ds.unavailable_count, &theme);
+            let row_style = if idx % 2 == 0 {
+                Style::default().bg(theme.bg)
+            } else {
+                theme.row_alt_style()
+            };
+
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("  {}", ds.name),
+                    Style::default().fg(theme.fg),
+                )),
+                Cell::from(Span::styled(
+                    ds.namespace.clone(),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(
+                    ds.desired_count.to_string(),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(ds.ready_count.to_string(), ready_style)),
+                Cell::from(Span::styled(ds.unavailable_count.to_string(), unavail_style)),
+                Cell::from(Span::styled(
+                    format_image(ds.image.as_deref()),
+                    Style::default().fg(theme.muted),
+                )),
+                Cell::from(Span::styled(format_age(ds.age), theme.inactive_style())),
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let mut table_state = TableState::default().with_selected(Some(selected));
+
+    let title = format!(" 👾 DaemonSets ({total}) ");
+    let block = if query.is_empty() {
+        active_block(&title)
+    } else {
+        active_block(&format!("{title} [/{query}]"))
+    };
 
     let table = Table::new(
         rows,
         [
-            Constraint::Length(18),
-            Constraint::Length(14),
-            Constraint::Length(8),
-            Constraint::Length(8),
-            Constraint::Length(12),
-            Constraint::Length(28),
-            Constraint::Fill(1),
+            Constraint::Length(20),
+            Constraint::Length(16),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(13),
+            Constraint::Min(24),
+            Constraint::Length(9),
         ],
     )
     .header(header)
-    .block(Block::default().title("DaemonSets").borders(Borders::ALL));
+    .block(block)
+    .row_highlight_style(theme.selection_style())
+    .highlight_symbol(theme.highlight_symbol())
+    .highlight_spacing(HighlightSpacing::Always);
 
-    frame.render_widget(table, area);
+    frame.render_stateful_widget(table, area, &mut table_state);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+
+    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        &mut scrollbar_state,
+    );
 }
 
-fn readiness_style(ready: i32, desired: i32) -> Style {
+fn readiness_style(ready: i32, desired: i32, theme: &crate::ui::theme::Theme) -> Style {
     if desired > 0 && ready >= desired {
-        Style::default().fg(Color::Green)
+        theme.badge_success_style()
     } else if ready > 0 {
-        Style::default().fg(Color::Yellow)
+        theme.badge_warning_style()
     } else {
-        Style::default().fg(Color::Red)
+        theme.badge_error_style()
     }
 }
 
-fn unavailable_style(unavailable_count: i32) -> Style {
+fn unavailable_style(unavailable_count: i32, theme: &crate::ui::theme::Theme) -> Style {
     if unavailable_count == 0 {
-        Style::default().fg(Color::Green)
+        theme.badge_success_style()
     } else {
-        Style::default().fg(Color::Red)
+        theme.badge_error_style()
     }
 }
 
@@ -138,11 +189,13 @@ fn format_age(age: Option<std::time::Duration>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::Theme;
 
     #[test]
     fn readiness_style_maps_to_expected_colors() {
-        assert_eq!(readiness_style(4, 4).fg, Some(Color::Green));
-        assert_eq!(readiness_style(2, 4).fg, Some(Color::Yellow));
-        assert_eq!(readiness_style(0, 4).fg, Some(Color::Red));
+        let theme = Theme::dark();
+        assert_eq!(readiness_style(4, 4, &theme).fg, Some(theme.success));
+        assert_eq!(readiness_style(2, 4, &theme).fg, Some(theme.warning));
+        assert_eq!(readiness_style(0, 4, &theme).fg, Some(theme.error));
     }
 }

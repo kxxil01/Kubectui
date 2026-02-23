@@ -3,7 +3,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
-    prelude::{Color, Frame, Style},
+    prelude::{Frame, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, List, ListItem, Paragraph},
 };
@@ -123,68 +123,140 @@ impl NamespacePicker {
             return;
         }
 
+        use crate::ui::components::default_theme;
+        use ratatui::widgets::BorderType;
+
+        let theme = default_theme();
+
+        let popup_width = (area.width * 2 / 5).max(40).min(60);
+        let popup_height = (area.height * 2 / 3).max(12).min(30);
         let popup = Rect {
-            x: area.width / 6,
-            y: area.height / 6,
-            width: area.width * 2 / 3,
-            height: area.height * 2 / 3,
+            x: (area.width.saturating_sub(popup_width)) / 2,
+            y: (area.height.saturating_sub(popup_height)) / 2,
+            width: popup_width,
+            height: popup_height,
         };
 
         frame.render_widget(Clear, popup);
 
+        let outer_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(theme.border_active_style())
+            .style(Style::default().bg(theme.bg));
+        frame.render_widget(outer_block, popup);
+
+        let inner = Rect {
+            x: popup.x + 1,
+            y: popup.y + 1,
+            width: popup.width.saturating_sub(2),
+            height: popup.height.saturating_sub(2),
+        };
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),
+                Constraint::Length(2),
                 Constraint::Length(3),
                 Constraint::Min(3),
                 Constraint::Length(2),
             ])
-            .split(popup);
+            .split(inner);
 
-        let title = Paragraph::new("Select namespace")
-            .style(Style::default().fg(Color::Cyan))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Namespace Picker"),
-            );
-        frame.render_widget(title, chunks[0]);
+        let title_line = Line::from(vec![
+            Span::styled(" ⎈ ", theme.title_style()),
+            Span::styled("Switch Namespace", theme.title_style()),
+        ]);
+        let title_block = Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(theme.border_style())
+            .style(Style::default().bg(theme.header_bg));
+        frame.render_widget(Paragraph::new(title_line).block(title_block), chunks[0]);
 
-        let search = Paragraph::new(self.search_query.clone()).block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Search (type to filter)"),
+        let search_content = if self.search_query.is_empty() {
+            Line::from(vec![
+                Span::styled("  ", theme.inactive_style()),
+                Span::styled("Type to filter…", theme.inactive_style()),
+            ])
+        } else {
+            Line::from(vec![
+                Span::styled("  / ", theme.title_style()),
+                Span::styled(self.search_query.clone(), Style::default().fg(theme.fg)),
+                Span::styled("█", theme.title_style()),
+            ])
+        };
+
+        let search_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(if self.search_query.is_empty() {
+                theme.border_style()
+            } else {
+                theme.border_active_style()
+            })
+            .style(Style::default().bg(theme.bg_surface));
+        frame.render_widget(
+            Paragraph::new(search_content).block(search_block),
+            chunks[1],
         );
-        frame.render_widget(search, chunks[1]);
 
         let namespaces = self.filtered_namespaces();
         let items: Vec<ListItem> = if namespaces.is_empty() {
-            vec![ListItem::new(Line::from("No namespaces found"))]
+            vec![ListItem::new(Line::from(Span::styled(
+                "  No namespaces match",
+                theme.inactive_style(),
+            )))]
         } else {
             namespaces
                 .iter()
                 .enumerate()
                 .map(|(idx, ns)| {
                     if idx == self.selected_index {
-                        ListItem::new(Line::from(Span::styled(
-                            format!("> {ns}"),
-                            Style::default().fg(Color::Yellow),
-                        )))
+                        ListItem::new(Line::from(vec![
+                            Span::styled(" ▶ ", theme.title_style()),
+                            Span::styled(
+                                ns.clone(),
+                                Style::default()
+                                    .fg(theme.selection_fg)
+                                    .bg(theme.selection_bg)
+                                    .add_modifier(ratatui::style::Modifier::BOLD),
+                            ),
+                        ]))
                     } else {
-                        ListItem::new(Line::from(format!("  {ns}")))
+                        ListItem::new(Line::from(vec![
+                            Span::styled("   ", theme.inactive_style()),
+                            Span::styled(ns.clone(), Style::default().fg(theme.fg_dim)),
+                        ]))
                     }
                 })
                 .collect()
         };
 
-        let list =
-            List::new(items).block(Block::default().borders(Borders::ALL).title("Namespaces"));
-        frame.render_widget(list, chunks[2]);
+        let ns_count = namespaces.len();
+        let list_block = Block::default()
+            .title(Span::styled(
+                format!(" Namespaces ({ns_count}) "),
+                theme.muted_style(),
+            ))
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(theme.border_style())
+            .style(Style::default().bg(theme.bg));
+        frame.render_widget(List::new(items).block(list_block), chunks[2]);
 
-        let footer = Paragraph::new("[j/k or ↑/↓] navigate • [Enter] select • [Esc] close")
-            .block(Block::default().borders(Borders::ALL));
-        frame.render_widget(footer, chunks[3]);
+        let footer_line = Line::from(vec![
+            Span::styled(" [↑↓/jk] ", theme.keybind_key_style()),
+            Span::styled("navigate  ", theme.keybind_desc_style()),
+            Span::styled("[Enter] ", theme.keybind_key_style()),
+            Span::styled("select  ", theme.keybind_desc_style()),
+            Span::styled("[Esc] ", theme.keybind_key_style()),
+            Span::styled("close", theme.keybind_desc_style()),
+        ]);
+        let footer_block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(theme.border_style())
+            .style(Style::default().bg(theme.statusbar_bg));
+        frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
     }
 }
 
