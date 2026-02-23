@@ -39,7 +39,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         .constraints([Constraint::Length(22), Constraint::Min(0)])
         .split(root[1]);
 
-    components::render_sidebar(frame, body[0], app.view(), app.sidebar_cursor, &app.collapsed_groups);
+    components::render_sidebar(frame, body[0], app.view(), app.sidebar_cursor, &app.collapsed_groups, app.focus);
 
     let content = body[1];
 

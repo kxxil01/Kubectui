@@ -78,12 +78,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 && !app.is_context_picker_open()
                 && !app.command_palette.is_open()
             {
-                if app.detail_view.is_none() {
-                    app.sidebar_activate()
-                } else {
+                if app.detail_view.is_some() {
                     selected_resource(&app, &snapshot)
                         .map(AppAction::OpenDetail)
                         .unwrap_or(AppAction::None)
+                } else if app.focus == kubectui::app::Focus::Content {
+                    selected_resource(&app, &snapshot)
+                        .map(AppAction::OpenDetail)
+                        .unwrap_or(AppAction::None)
+                } else {
+                    app.sidebar_activate()
                 }
             } else {
                 app.handle_key_event(key)

@@ -98,16 +98,24 @@ pub fn render_sidebar(
     active: AppView,
     sidebar_cursor: usize,
     collapsed: &std::collections::HashSet<NavGroup>,
+    focus: crate::app::Focus,
 ) {
-    use crate::app::{SidebarItem, sidebar_rows};
+    use crate::app::{Focus, SidebarItem, sidebar_rows};
     use ratatui::layout::Margin;
 
     let theme = default_theme();
+    let sidebar_active = focus == Focus::Sidebar;
+
+    let border_style = if sidebar_active {
+        theme.border_style()
+    } else {
+        Style::default().fg(theme.muted)
+    };
 
     let outer = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
+        .border_style(border_style)
         .style(Style::default().bg(theme.bg_surface));
     frame.render_widget(outer, area);
 
@@ -150,7 +158,7 @@ pub fn render_sidebar(
                 SidebarItem::View(view) => {
                     let is_active = *view == active;
                     let label = view.label();
-                    if is_cursor && is_active {
+                    if is_cursor && is_active && sidebar_active {
                         Line::from(vec![Span::styled(
                             format!("  ● {label}"),
                             Style::default()
@@ -158,7 +166,7 @@ pub fn render_sidebar(
                                 .bg(theme.selection_bg)
                                 .add_modifier(Modifier::BOLD),
                         )])
-                    } else if is_cursor {
+                    } else if is_cursor && sidebar_active {
                         Line::from(vec![Span::styled(
                             format!("    {label}"),
                             Style::default()

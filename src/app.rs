@@ -571,6 +571,16 @@ pub enum AppAction {
     ProbeSelectPrev,
 }
 
+/// Which panel currently owns keyboard focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Focus {
+    /// Sidebar navigation panel has focus (default).
+    #[default]
+    Sidebar,
+    /// Main content area has focus.
+    Content,
+}
+
 /// Runtime state for UI interaction and navigation.
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -588,6 +598,7 @@ pub struct AppState {
     pub command_palette: CommandPalette,
     pub collapsed_groups: HashSet<NavGroup>,
     pub sidebar_cursor: usize,
+    pub focus: Focus,
     pub extension_instances: Vec<CustomResourceInfo>,
     pub extension_error: Option<String>,
     pub extension_selected_crd: Option<String>,
@@ -610,6 +621,7 @@ impl Default for AppState {
             command_palette: CommandPalette::default(),
             collapsed_groups: HashSet::new(),
             sidebar_cursor: 0,
+            focus: Focus::Sidebar,
             extension_instances: Vec::new(),
             extension_error: None,
             extension_selected_crd: None,
@@ -786,6 +798,7 @@ impl AppState {
             Some(SidebarItem::View(v)) => {
                 self.view = *v;
                 self.selected_idx = 0;
+                self.focus = Focus::Content;
                 AppAction::None
             }
             None => AppAction::None,
@@ -996,6 +1009,10 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Esc if self.detail_view.is_some() => AppAction::CloseDetail,
+            KeyCode::Esc if self.focus == Focus::Content => {
+                self.focus = Focus::Sidebar;
+                AppAction::None
+            }
             KeyCode::Esc => {
                 self.confirm_quit = true;
                 AppAction::None
@@ -1014,11 +1031,17 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('j') | KeyCode::Down if self.detail_view.is_none() => {
-                self.sidebar_cursor_down();
+                match self.focus {
+                    Focus::Sidebar => self.sidebar_cursor_down(),
+                    Focus::Content => self.select_next(),
+                }
                 AppAction::None
             }
             KeyCode::Char('k') | KeyCode::Up if self.detail_view.is_none() => {
-                self.sidebar_cursor_up();
+                match self.focus {
+                    Focus::Sidebar => self.sidebar_cursor_up(),
+                    Focus::Content => self.select_previous(),
+                }
                 AppAction::None
             }
             KeyCode::Down => {
