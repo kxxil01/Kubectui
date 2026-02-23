@@ -36,6 +36,18 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.close_namespace_picker();
             true
         }
+        AppAction::OpenContextPicker => {
+            app_state.context_picker.open();
+            true
+        }
+        AppAction::CloseContextPicker => {
+            app_state.close_context_picker();
+            true
+        }
+        AppAction::SelectContext(_) => {
+            app_state.close_context_picker();
+            true
+        }
         AppAction::EscapePressed => {
             if app_state
                 .detail_view

@@ -42,11 +42,10 @@ async fn main() -> Result<()> {
 
 /// Runs KubecTUI's event loop.
 async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    let client = K8sClient::connect()
-        .await
-        .context("unable to initialize Kubernetes client")?;
-
     let mut app = load_config();
+
+    let mut client = pick_context_at_startup(terminal, &mut app).await?;
+
     let mut global_state = GlobalState::default();
 
     if let Err(err) = global_state
@@ -76,6 +75,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             let action = if key.code == KeyCode::Enter
                 && !app.is_search_mode()
                 && !app.is_namespace_picker_open()
+                && !app.is_context_picker_open()
             {
                 selected_resource(&app, &snapshot)
                     .map(AppAction::OpenDetail)
@@ -108,6 +108,38 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
                 AppAction::CloseNamespacePicker => {
                     app.close_namespace_picker();
+                }
+                AppAction::OpenContextPicker => {
+                    let contexts = K8sClient::list_contexts();
+                    let current = kube::config::Kubeconfig::read()
+                        .ok()
+                        .and_then(|cfg| cfg.current_context);
+                    app.open_context_picker(contexts, current);
+                }
+                AppAction::CloseContextPicker => {
+                    app.close_context_picker();
+                }
+                AppAction::SelectContext(ctx) => {
+                    app.close_context_picker();
+                    match K8sClient::connect_with_context(&ctx).await {
+                        Ok(new_client) => {
+                            global_state = GlobalState::default();
+                            if let Err(err) = global_state
+                                .refresh(&new_client, namespace_scope(app.get_namespace()))
+                                .await
+                            {
+                                app.set_error(format!("Refresh failed after context switch: {err:#}"));
+                            } else {
+                                app.clear_error();
+                                app.set_available_namespaces(global_state.namespaces().to_vec());
+                                sync_extensions_instances(&new_client, &mut app, &global_state.snapshot()).await;
+                            }
+                            client = new_client;
+                        }
+                        Err(err) => {
+                            app.set_error(format!("Failed to connect to context '{ctx}': {err:#}"));
+                        }
+                    }
                 }
                 AppAction::SelectNamespace(namespace) => {
                     app.set_namespace(namespace);
@@ -609,6 +641,53 @@ fn map_to_kv(map: &std::collections::BTreeMap<String, String>) -> String {
         .map(|(k, v)| format!("{k}={v}"))
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// Shows a context picker at startup and returns a connected `K8sClient`.
+/// If only one context exists or the user presses Esc, connects to the default context.
+async fn pick_context_at_startup(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    app: &mut AppState,
+) -> Result<K8sClient> {
+    let contexts = K8sClient::list_contexts();
+    let current = kube::config::Kubeconfig::read()
+        .ok()
+        .and_then(|cfg| cfg.current_context);
+
+    if contexts.len() <= 1 {
+        return K8sClient::connect()
+            .await
+            .context("unable to initialize Kubernetes client");
+    }
+
+    app.open_context_picker(contexts, current);
+
+    loop {
+        let snapshot = kubectui::state::ClusterSnapshot::default();
+        terminal
+            .draw(|frame| ui::render(frame, app, &snapshot))
+            .context("failed to render startup context picker")?;
+
+        if event::poll(Duration::from_millis(16)).context("failed to poll events")? {
+            if let Event::Key(key) = event::read().context("failed to read event")? {
+                match app.handle_key_event(key) {
+                    AppAction::SelectContext(ctx) => {
+                        app.close_context_picker();
+                        return K8sClient::connect_with_context(&ctx)
+                            .await
+                            .with_context(|| format!("failed to connect to context '{ctx}'"));
+                    }
+                    AppAction::CloseContextPicker | AppAction::Quit => {
+                        app.close_context_picker();
+                        return K8sClient::connect()
+                            .await
+                            .context("unable to initialize Kubernetes client");
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
 }
 
 /// Configures terminal in alternate screen + raw mode for TUI rendering.

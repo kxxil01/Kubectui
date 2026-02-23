@@ -67,6 +67,49 @@ impl K8sClient {
         })
     }
 
+    /// Creates a Kubernetes client pinned to a specific kubeconfig context.
+    pub async fn connect_with_context(context: &str) -> Result<Self> {
+        let opts = KubeConfigOptions {
+            context: Some(context.to_string()),
+            ..Default::default()
+        };
+        let config = Config::from_kubeconfig(&opts)
+            .await
+            .with_context(|| format!("failed loading kubeconfig for context '{context}'"))?;
+
+        let cluster_url = config.cluster_url.to_string();
+        let client = Client::try_from(config).context("failed to build kube client")?;
+
+        Ok(Self {
+            client,
+            cluster_url,
+            cluster_context: Some(context.to_string()),
+        })
+    }
+
+    /// Returns all context names from `~/.kube/config`, sorted alphabetically.
+    /// The current context (if any) is returned first.
+    pub fn list_contexts() -> Vec<String> {
+        let Ok(kubeconfig) = kube::config::Kubeconfig::read() else {
+            return Vec::new();
+        };
+
+        let current = kubeconfig.current_context.clone();
+        let mut names: Vec<String> = kubeconfig
+            .contexts
+            .into_iter()
+            .filter_map(|nc| nc.name.into())
+            .collect();
+        names.sort();
+
+        if let Some(cur) = current {
+            names.retain(|n| n != &cur);
+            names.insert(0, cur);
+        }
+
+        names
+    }
+
     /// Returns the configured Kubernetes cluster API endpoint.
     pub fn cluster_url(&self) -> &str {
         &self.cluster_url

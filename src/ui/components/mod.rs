@@ -1,12 +1,14 @@
 //! Reusable UI widgets and building blocks.
 
 pub mod common;
+pub mod context_picker;
 pub mod input_field;
 pub mod namespace_picker;
 pub mod port_forward_dialog;
 pub mod probe_panel;
 pub mod scale_dialog;
 
+pub use context_picker::{ContextPicker, ContextPickerAction};
 pub use input_field::InputFieldWidget;
 pub use namespace_picker::{NamespacePicker, NamespacePickerAction};
 pub use port_forward_dialog::{FormField, PortForwardAction, PortForwardDialog, PortForwardMode};

@@ -10,7 +10,7 @@ use crate::{
         client::EventInfo,
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodMetricsInfo},
     },
-    ui::components::{NamespacePicker, NamespacePickerAction},
+    ui::components::{ContextPicker, ContextPickerAction, NamespacePicker, NamespacePickerAction},
 };
 
 /// Top-level views displayed by KubecTUI.
@@ -279,6 +279,9 @@ pub enum AppAction {
     OpenNamespacePicker,
     CloseNamespacePicker,
     SelectNamespace(String),
+    OpenContextPicker,
+    CloseContextPicker,
+    SelectContext(String),
     EscapePressed,
     LogsViewerOpen,
     LogsViewerClose,
@@ -315,6 +318,7 @@ pub struct AppState {
     pub detail_view: Option<DetailViewState>,
     pub current_namespace: String,
     pub namespace_picker: NamespacePicker,
+    pub context_picker: ContextPicker,
     pub extension_instances: Vec<CustomResourceInfo>,
     pub extension_error: Option<String>,
     pub extension_selected_crd: Option<String>,
@@ -332,6 +336,7 @@ impl Default for AppState {
             detail_view: None,
             current_namespace: "default".to_string(),
             namespace_picker: NamespacePicker::new(vec!["all".to_string(), "default".to_string()]),
+            context_picker: ContextPicker::default(),
             extension_instances: Vec::new(),
             extension_error: None,
             extension_selected_crd: None,
@@ -398,6 +403,22 @@ impl AppState {
     /// Returns true when namespace picker modal is open.
     pub fn is_namespace_picker_open(&self) -> bool {
         self.namespace_picker.is_open()
+    }
+
+    /// Returns true when context picker modal is open.
+    pub fn is_context_picker_open(&self) -> bool {
+        self.context_picker.is_open()
+    }
+
+    /// Opens the context picker modal with the given contexts.
+    pub fn open_context_picker(&mut self, contexts: Vec<String>, current: Option<String>) {
+        self.context_picker.set_contexts(contexts, current);
+        self.context_picker.open();
+    }
+
+    /// Closes the context picker modal.
+    pub fn close_context_picker(&mut self) {
+        self.context_picker.close();
     }
 
     /// Returns namespace picker state.
@@ -533,6 +554,14 @@ impl AppState {
 
     /// Handles a keyboard event and updates app state.
     pub fn handle_key_event(&mut self, key: KeyEvent) -> AppAction {
+        if self.context_picker.is_open() {
+            return match self.context_picker.handle_key(key) {
+                ContextPickerAction::None => AppAction::None,
+                ContextPickerAction::Select(ctx) => AppAction::SelectContext(ctx),
+                ContextPickerAction::Close => AppAction::CloseContextPicker,
+            };
+        }
+
         if self.namespace_picker.is_open() {
             return match self.namespace_picker.handle_key(key) {
                 NamespacePickerAction::None => AppAction::None,
@@ -648,6 +677,7 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('~') => AppAction::OpenNamespacePicker,
+            KeyCode::Char('c') if self.detail_view.is_none() => AppAction::OpenContextPicker,
             KeyCode::Char('r') => AppAction::RefreshData,
             KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 AppAction::RefreshData

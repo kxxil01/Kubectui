@@ -179,6 +179,10 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     if app.is_namespace_picker_open() {
         app.namespace_picker().render(frame, frame.area());
     }
+
+    if app.is_context_picker_open() {
+        app.context_picker.render(frame, frame.area());
+    }
 }
 
 fn render_pods_widget(
