@@ -510,6 +510,25 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+    use std::net::{SocketAddr, SocketAddrV4, Ipv4Addr};
+
+    fn make_tunnel(id: &str, pod: &str, state: TunnelState, port: u16) -> crate::k8s::portforward::PortForwardTunnelInfo {
+        crate::k8s::portforward::PortForwardTunnelInfo {
+            id: id.to_string(),
+            target: PortForwardTarget::new("default", pod, 8080),
+            local_addr: SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)),
+            state,
+        }
+    }
+
+    fn draw_dialog(dialog: &PortForwardDialog) {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        terminal
+            .draw(|frame| dialog.render(frame, frame.area()))
+            .expect("dialog render should not panic");
+    }
 
     #[test]
     fn test_dialog_new() {
@@ -518,6 +537,16 @@ mod tests {
         assert_eq!(dialog.namespace_field.value, "default");
         assert_eq!(dialog.pod_name_field.value, "");
         assert!(dialog.error.is_none());
+    }
+
+    #[test]
+    fn test_with_target_prefills_and_focuses_local_port() {
+        let dialog = PortForwardDialog::with_target("demo", "nginx-1", 8080);
+        assert_eq!(dialog.namespace_field.value, "demo");
+        assert_eq!(dialog.pod_name_field.value, "nginx-1");
+        assert_eq!(dialog.remote_port_field.value, "8080");
+        assert_eq!(dialog.local_port_field.value, "0");
+        assert_eq!(dialog.focus, FormField::LocalPort);
     }
 
     #[test]
@@ -540,10 +569,109 @@ mod tests {
     }
 
     #[test]
+    fn test_validation_errors_for_missing_required_fields() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.pod_name_field.value.clear();
+        dialog.remote_port_field.value = "8080".to_string();
+
+        let err = dialog.validate().expect_err("missing pod name must fail");
+        assert!(err.contains("Pod name is required"));
+    }
+
+    #[test]
     fn test_mode_switching() {
         let mut dialog = PortForwardDialog::new();
         assert_eq!(dialog.mode, PortForwardMode::Create);
         dialog.handle_key(KeyEvent::from(KeyCode::F(2)));
         assert_eq!(dialog.mode, PortForwardMode::List);
     }
+
+    #[test]
+    fn test_create_mode_enter_emits_create_and_clears_form() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.pod_name_field.value = "logs-test".to_string();
+        dialog.remote_port_field.value = "80".to_string();
+
+        let action = dialog.handle_key(KeyEvent::from(KeyCode::Enter));
+
+        assert!(matches!(action, PortForwardAction::Create(_)));
+        assert_eq!(dialog.pod_name_field.value, "");
+        assert_eq!(dialog.remote_port_field.value, "");
+        assert_eq!(dialog.local_port_field.value, "0");
+        assert!(dialog.success.is_some());
+    }
+
+    #[test]
+    fn test_digit_filtering_in_port_fields() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.focus = FormField::RemotePort;
+        dialog.handle_key(KeyEvent::from(KeyCode::Char('a')));
+        dialog.handle_key(KeyEvent::from(KeyCode::Char('9')));
+
+        assert_eq!(dialog.remote_port_field.value, "9");
+    }
+
+    #[test]
+    fn test_list_navigation_and_stop_action() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.mode = PortForwardMode::List;
+
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(make_tunnel("t1", "pod-1", TunnelState::Active, 4001));
+        registry.add_tunnel(make_tunnel("t2", "pod-2", TunnelState::Error, 4002));
+        dialog.update_registry(registry);
+
+        assert_eq!(dialog.selected_tunnel, 0);
+        
+        // Get the first selected tunnel before navigation
+        let first_tunnel = dialog.get_selected_tunnel().expect("first tunnel should exist");
+        
+        // Navigate down
+        dialog.handle_key(KeyEvent::from(KeyCode::Down));
+        assert_eq!(dialog.selected_tunnel, 1);
+        
+        // Get the second selected tunnel
+        let second_tunnel = dialog.get_selected_tunnel().expect("second tunnel should exist");
+        
+        // Verify they're different tunnels
+        assert_ne!(first_tunnel.id, second_tunnel.id);
+        
+        // Delete action should target the currently selected tunnel (second one)
+        let action = dialog.handle_key(KeyEvent::from(KeyCode::Char('d')));
+        assert_eq!(action, PortForwardAction::Stop(second_tunnel.id));
+    }
+
+    #[test]
+    fn test_update_registry_clamps_selection() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.selected_tunnel = 5;
+
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(make_tunnel("single", "pod", TunnelState::Active, 5001));
+        dialog.update_registry(registry);
+
+        assert_eq!(dialog.selected_tunnel, 0);
+    }
+
+    #[test]
+    fn render_create_mode_smoke() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.error = Some("bad input".to_string());
+        draw_dialog(&dialog);
+    }
+
+    #[test]
+    fn render_list_mode_with_tunnels_smoke() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.mode = PortForwardMode::List;
+
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(make_tunnel("t-active", "pod-a", TunnelState::Active, 6001));
+        registry.add_tunnel(make_tunnel("t-starting", "pod-b", TunnelState::Starting, 6002));
+        registry.add_tunnel(make_tunnel("t-error", "pod-c", TunnelState::Error, 6003));
+        dialog.update_registry(registry);
+
+        draw_dialog(&dialog);
+    }
 }
+

@@ -211,3 +211,105 @@ impl PortForwarderService {
         self.tunnels.get(tunnel_id).map(|entry| entry.value().clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn service() -> PortForwarderService {
+        let client = Arc::new(crate::k8s::client::K8sClient::connect().await.expect("kind cluster should be available for tests"));
+        PortForwarderService::new(client)
+    }
+
+    #[tokio::test]
+    async fn start_forward_binds_ephemeral_port() {
+        let svc = service().await;
+        let target = PortForwardTarget::new("default", "pod-a", 8080);
+
+        let tunnel = svc
+            .start_forward(target.clone(), PortForwardConfig::default())
+            .await
+            .expect("bind should succeed on random local port");
+
+        assert_eq!(tunnel.target, target);
+        assert!(tunnel.local_addr.port() > 0);
+        assert_eq!(tunnel.state, TunnelState::Active);
+    }
+
+    #[tokio::test]
+    async fn start_forward_rejects_duplicate_id() {
+        let svc = service().await;
+        let target = PortForwardTarget::new("default", "pod-b", 9090);
+
+        svc.start_forward(target.clone(), PortForwardConfig::default())
+            .await
+            .expect("first tunnel should succeed");
+
+        let err = svc
+            .start_forward(target.clone(), PortForwardConfig::default())
+            .await
+            .expect_err("duplicate should fail");
+
+        assert!(format!("{err:#}").contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn get_list_and_stop_tunnel_round_trip() {
+        let svc = service().await;
+        let target = PortForwardTarget::new("default", "pod-c", 7070);
+
+        let tunnel = svc
+            .start_forward(target.clone(), PortForwardConfig::default())
+            .await
+            .expect("tunnel should start");
+
+        let list = svc.list_tunnels();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].id, target.id());
+
+        let fetched = svc
+            .get_tunnel(&target.id())
+            .expect("tunnel should be queryable");
+        assert_eq!(fetched.id, tunnel.id);
+
+        svc.stop_forward(&target.id())
+            .await
+            .expect("stop should succeed");
+        assert!(svc.get_tunnel(&target.id()).is_none());
+    }
+
+    #[tokio::test]
+    async fn stop_all_clears_multiple_tunnels() {
+        let svc = service().await;
+
+        for (pod, port) in [("pod-d", 8081), ("pod-e", 8082), ("pod-f", 8083)] {
+            svc.start_forward(
+                PortForwardTarget::new("default", pod, port),
+                PortForwardConfig::default(),
+            )
+            .await
+            .expect("tunnel creation should succeed");
+        }
+
+        assert_eq!(svc.list_tunnels().len(), 3);
+        svc.stop_all().await;
+        assert!(svc.list_tunnels().is_empty());
+    }
+
+    #[tokio::test]
+    async fn create_tunnel_async_returns_pod_not_found_for_missing_pod() {
+        let svc = service().await;
+        let target = PortForwardTarget::new("default", "pod-that-does-not-exist", 8080);
+
+        let err = svc
+            .create_tunnel_async(target, PortForwardConfig::default())
+            .await
+            .expect_err("missing pod should fail");
+
+        match err {
+            PortForwardError::PodNotFound { .. } => {}
+            other => panic!("expected PodNotFound, got {other:?}"),
+        }
+    }
+}
+

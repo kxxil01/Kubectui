@@ -323,6 +323,15 @@ fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{backend::TestBackend, Terminal};
+
+    fn draw(state: &ScaleDialogState) {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        terminal
+            .draw(|frame| render_scale_dialog(frame, frame.area(), state))
+            .expect("scale dialog should render");
+    }
 
     #[test]
     fn test_scale_dialog_state_creation() {
@@ -407,4 +416,74 @@ mod tests {
         state.next_field();
         assert_eq!(state.focus_field, ScaleField::InputField);
     }
+
+    #[test]
+    fn test_prev_field_cycling() {
+        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        state.prev_field();
+        assert_eq!(state.focus_field, ScaleField::CancelBtn);
+        state.prev_field();
+        assert_eq!(state.focus_field, ScaleField::ApplyBtn);
+    }
+
+    #[test]
+    fn test_submit_updates_desired_replicas_when_valid() {
+        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        state.handle_action(ScaleAction::AddChar('9'));
+        state.handle_action(ScaleAction::Submit);
+        assert_eq!(state.desired_replicas, "9");
+    }
+
+    #[test]
+    fn test_submit_ignored_for_invalid_input() {
+        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        state.input_buffer = "500".to_string();
+        state.validate_and_update();
+        state.handle_action(ScaleAction::Submit);
+        assert_eq!(state.desired_replicas, "3");
+    }
+
+    #[test]
+    fn test_desired_replicas_as_int_only_when_valid() {
+        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        assert_eq!(state.desired_replicas_as_int(), None);
+
+        state.handle_action(ScaleAction::AddChar('7'));
+        assert_eq!(state.desired_replicas_as_int(), Some(7));
+    }
+
+    #[test]
+    fn test_increment_and_decrement_boundaries() {
+        let mut state = ScaleDialogState::new("nginx", "default", 100);
+        state.handle_action(ScaleAction::Increment);
+        assert_eq!(state.input_buffer, "100");
+
+        state.input_buffer = "0".to_string();
+        state.handle_action(ScaleAction::Decrement);
+        assert_eq!(state.input_buffer, "0");
+    }
+
+    #[test]
+    fn render_scale_dialog_smoke_default_state() {
+        let state = ScaleDialogState::new("nginx", "default", 3);
+        draw(&state);
+    }
+
+    #[test]
+    fn render_scale_dialog_smoke_error_warning_pending_states() {
+        let mut state = ScaleDialogState::new("nginx", "default", 3);
+
+        state.error_message = Some("Invalid range".to_string());
+        draw(&state);
+
+        state.error_message = None;
+        state.warning_message = Some("Large scale change".to_string());
+        draw(&state);
+
+        state.warning_message = None;
+        state.set_pending(true);
+        state.focus_field = ScaleField::CancelBtn;
+        draw(&state);
+    }
 }
+

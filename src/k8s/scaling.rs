@@ -201,4 +201,52 @@ mod tests {
         let serialized = serde_json::to_string(&progress).expect("should serialize");
         assert!(serialized.contains("Initiated"));
     }
+
+    #[test]
+    fn test_scale_error_display_variants() {
+        assert!(format!("{}", ScaleError::ApiError("oops".to_string())).contains("API error"));
+        assert!(format!("{}", ScaleError::Timeout("slow".to_string())).contains("Timeout"));
+        assert_eq!(format!("{}", ScaleError::Cancelled), "Scale operation cancelled");
+    }
+
+    #[tokio::test]
+    async fn execute_scale_rejects_invalid_replica_count_and_sends_no_progress() {
+        let client = Arc::new(K8sClient::connect().await.expect("kind cluster should be available"));
+        let request = ScaleRequest::new("any", "default", 101);
+        let (tx, mut rx) = mpsc::channel(4);
+
+        let err = execute_scale(client, request, tx)
+            .await
+            .expect_err("invalid replicas should fail early");
+
+        match err {
+            ScaleError::InvalidReplicaCount(101) => {}
+            other => panic!("unexpected error: {other:?}"),
+        }
+        assert!(rx.try_recv().is_err(), "no progress events expected");
+    }
+
+    #[tokio::test]
+    async fn execute_scale_reports_api_error_when_deployment_missing() {
+        let client = Arc::new(K8sClient::connect().await.expect("kind cluster should be available"));
+        let request = ScaleRequest::new("missing-deployment-xyz", "default", 1);
+        let (tx, mut rx) = mpsc::channel(8);
+
+        let err = execute_scale(client, request, tx)
+            .await
+            .expect_err("missing deployment should fail");
+
+        match err {
+            ScaleError::ApiError(msg) => {
+                assert!(msg.contains("not found") || msg.contains("failed"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+
+        let first = rx.recv().await.expect("initiated event expected");
+        assert!(matches!(first, ScaleProgress::Initiated));
+
+        let second = rx.recv().await.expect("error event expected");
+        assert!(matches!(second, ScaleProgress::Error(_)));
+    }
 }

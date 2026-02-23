@@ -46,3 +46,47 @@ impl LogsClient {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pod_ref_constructor_sets_fields() {
+        let pod = PodRef::new("my-pod".to_string(), "default".to_string());
+        assert_eq!(pod.name, "my-pod");
+        assert_eq!(pod.namespace, "default");
+    }
+
+    #[tokio::test]
+    async fn verify_pod_exists_returns_context_when_missing() {
+        let cfg = kube::Config::new("http://127.0.0.1:1".parse().expect("valid URL"));
+        let client = Client::try_from(cfg).expect("test client should initialize");
+        let logs_client = LogsClient::new(client);
+        let pod_ref = PodRef::new("missing-pod".to_string(), "default".to_string());
+
+        let err = logs_client
+            .verify_pod_exists(&pod_ref)
+            .await
+            .expect_err("missing pod should error");
+
+        assert!(format!("{err:#}").contains("Pod not found"));
+    }
+
+    #[tokio::test]
+    async fn tail_logs_propagates_verify_errors() {
+        let cfg = kube::Config::new("http://127.0.0.1:1".parse().expect("valid URL"));
+        let client = Client::try_from(cfg).expect("test client should initialize");
+        let logs_client = LogsClient::new(client);
+        let pod_ref = PodRef::new("missing-pod".to_string(), "default".to_string());
+
+        let err = logs_client
+            .tail_logs(&pod_ref, Some(10))
+            .await
+            .expect_err("tail_logs should fail for missing pod");
+
+        let text = format!("{err:#}");
+        assert!(text.contains("Pod not found"));
+    }
+}
+
