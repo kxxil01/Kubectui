@@ -104,8 +104,6 @@ mod integration_tests {
     #[tokio::test]
     #[ignore] // Only run when KIND cluster is available
     async fn test_log_streaming_real_pod() {
-        use kubectui::k8s::logs::PodRef;
-
         let client = K8sClient::connect()
             .await
             .expect("Failed to connect to K8s cluster");
@@ -128,7 +126,6 @@ mod integration_tests {
         tokio::time::sleep(Duration::from_secs(1)).await;
 
         // Should have received log updates or stream status
-        let mut received_log = false;
         let mut message_count = 0;
         while message_count < 10 {
             if let Ok(Some(msg)) =
@@ -136,11 +133,7 @@ mod integration_tests {
             {
                 use kubectui::coordinator::UpdateMessage;
                 match msg {
-                    UpdateMessage::LogUpdate { .. } => {
-                        received_log = true;
-                        message_count += 1;
-                    }
-                    UpdateMessage::LogStreamStatus { .. } => {
+                    UpdateMessage::LogUpdate { .. } | UpdateMessage::LogStreamStatus { .. } => {
                         message_count += 1;
                     }
                     _ => {}

@@ -7,10 +7,13 @@ use std::{io, time::Duration};
 
 use anyhow::{Context, Result};
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use futures::StreamExt;
+use k8s_openapi::api::core::v1::Pod;
+use kube::Api;
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use kubectui::{
@@ -18,8 +21,14 @@ use kubectui::{
         AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState, ResourceRef,
         load_config, save_config,
     },
+    coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
-    k8s::{client::K8sClient, logs::{LogsClient, PodRef}},
+    k8s::{
+        client::K8sClient,
+        logs::{LogsClient, PodRef},
+        portforward::PortForwarderService,
+        probes::extract_probes_from_pod,
+    },
     state::{ClusterSnapshot, GlobalState},
     ui,
 };
@@ -40,6 +49,34 @@ async fn main() -> Result<()> {
     run_result
 }
 
+/// Applies coordinator update messages to app state.
+fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
+    match msg {
+        UpdateMessage::LogUpdate { pod_name, line, .. } => {
+            if let Some(detail) = &mut app.detail_view {
+                if let Some(viewer) = &mut detail.logs_viewer {
+                    if viewer.pod_name == pod_name {
+                        viewer.lines.push(line);
+                        if viewer.follow_mode {
+                            viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
+                        }
+                    }
+                }
+            }
+        }
+        UpdateMessage::ProbeUpdate { pod_name, namespace, probes } => {
+            if let Some(detail) = &mut app.detail_view {
+                if let Some(panel) = &mut detail.probe_panel {
+                    if panel.pod_name == pod_name && panel.namespace == namespace {
+                        panel.update_probes(probes);
+                    }
+                }
+            }
+        }
+        UpdateMessage::LogStreamStatus { .. } | UpdateMessage::ProbeError { .. } => {}
+    }
+}
+
 /// Runs KubecTUI's event loop.
 async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let mut app = load_config();
@@ -57,201 +94,564 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     app.set_available_namespaces(global_state.namespaces().to_vec());
     sync_extensions_instances(&client, &mut app, &global_state.snapshot()).await;
 
+    let port_forwarder = PortForwarderService::new(std::sync::Arc::new(client.clone()));
+
+    let (update_tx, mut update_rx) = tokio::sync::mpsc::unbounded_channel::<UpdateMessage>();
+    let coordinator = UpdateCoordinator::new(client.clone(), update_tx);
+
+    // Channel for async detail view fetches — keeps the UI responsive while YAML/events load
+    let (detail_tx, mut detail_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Result<DetailViewState, (ResourceRef, String)>>();
+
+    // Cached snapshot — only re-clone when state is marked dirty
+    let mut cached_snapshot = global_state.snapshot();
+    let mut snapshot_dirty = false;
+
     let mut tick = tokio::time::interval(Duration::from_millis(200));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    let mut event_stream = EventStream::new();
 
     loop {
-        let snapshot = global_state.snapshot();
+        // Re-clone snapshot only when something changed
+        if snapshot_dirty {
+            cached_snapshot = global_state.snapshot();
+            snapshot_dirty = false;
+        }
+
         terminal
-            .draw(|frame| ui::render(frame, &app, &snapshot))
+            .draw(|frame| ui::render(frame, &app, &cached_snapshot))
             .context("failed to render frame")?;
 
         if app.should_quit() {
             break;
         }
 
-        if event::poll(Duration::from_millis(1)).context("failed to poll terminal events")?
-            && let Event::Key(key) = event::read().context("failed to read terminal event")?
-        {
-            let action = if key.code == KeyCode::Enter
-                && !app.is_search_mode()
-                && !app.is_namespace_picker_open()
-                && !app.is_context_picker_open()
-                && !app.command_palette.is_open()
-            {
-                if app.detail_view.is_some() {
-                    selected_resource(&app, &snapshot)
-                        .map(AppAction::OpenDetail)
-                        .unwrap_or(AppAction::None)
-                } else if app.focus == kubectui::app::Focus::Content {
-                    selected_resource(&app, &snapshot)
-                        .map(AppAction::OpenDetail)
-                        .unwrap_or(AppAction::None)
-                } else {
-                    app.sidebar_activate()
-                }
-            } else {
-                app.handle_key_event(key)
-            };
+        // Wait concurrently on: tick, input event, coordinator update, or detail fetch result.
+        // `biased` ensures coordinator messages and detail results are drained before blocking on input.
+        tokio::select! {
+            biased;
 
-            match action {
-                AppAction::None => {
-                    sync_extensions_instances(&client, &mut app, &snapshot).await;
+            // Coordinator updates (log lines, probe updates) — highest priority
+            msg = update_rx.recv() => {
+                if let Some(msg) = msg {
+                    apply_coordinator_msg(msg, &mut app);
                 }
-                AppAction::Quit => break,
-                AppAction::RefreshData => {
-                    if let Err(err) = global_state
-                        .refresh(&client, namespace_scope(app.get_namespace()))
-                        .await
-                    {
-                        app.set_error(format!("Refresh failed: {err:#}"));
-                    } else {
-                        app.clear_error();
-                        app.set_available_namespaces(global_state.namespaces().to_vec());
-                        sync_extensions_instances(&client, &mut app, &global_state.snapshot())
-                            .await;
-                    }
+                // Drain any additional queued messages without blocking
+                while let Ok(msg) = update_rx.try_recv() {
+                    apply_coordinator_msg(msg, &mut app);
                 }
-                AppAction::OpenNamespacePicker => {
-                    app.set_available_namespaces(global_state.namespaces().to_vec());
-                    app.open_namespace_picker();
-                }
-                AppAction::CloseNamespacePicker => {
-                    app.close_namespace_picker();
-                }
-                AppAction::OpenCommandPalette => {
-                    app.command_palette.open();
-                }
-                AppAction::CloseCommandPalette => {
-                    app.command_palette.close();
-                }
-                AppAction::NavigateTo(view) => {
-                    app.command_palette.close();
-                    app.view = view;
-                    app.selected_idx = 0;
-                }
-                AppAction::OpenContextPicker => {
-                    let contexts = K8sClient::list_contexts();
-                    let current = kube::config::Kubeconfig::read()
-                        .ok()
-                        .and_then(|cfg| cfg.current_context);
-                    app.open_context_picker(contexts, current);
-                }
-                AppAction::CloseContextPicker => {
-                    app.close_context_picker();
-                }
-                AppAction::SelectContext(ctx) => {
-                    app.close_context_picker();
-                    match K8sClient::connect_with_context(&ctx).await {
-                        Ok(new_client) => {
-                            global_state = GlobalState::default();
-                            if let Err(err) = global_state
-                                .refresh(&new_client, namespace_scope(app.get_namespace()))
-                                .await
-                            {
-                                app.set_error(format!("Refresh failed after context switch: {err:#}"));
-                            } else {
-                                app.clear_error();
-                                app.set_available_namespaces(global_state.namespaces().to_vec());
-                                sync_extensions_instances(&new_client, &mut app, &global_state.snapshot()).await;
-                            }
-                            client = new_client;
-                        }
-                        Err(err) => {
-                            app.set_error(format!("Failed to connect to context '{ctx}': {err:#}"));
-                        }
-                    }
-                }
-                AppAction::SelectNamespace(namespace) => {
-                    app.set_namespace(namespace);
-                    app.close_namespace_picker();
-                    save_config(&app);
+            }
 
-                    if let Err(err) = global_state
-                        .refresh(&client, namespace_scope(app.get_namespace()))
-                        .await
-                    {
-                        app.set_error(format!("Refresh failed: {err:#}"));
-                    } else {
-                        app.clear_error();
-                        app.set_available_namespaces(global_state.namespaces().to_vec());
-                        sync_extensions_instances(&client, &mut app, &global_state.snapshot())
-                            .await;
-                    }
-                }
-                AppAction::OpenDetail(resource) => {
-                    app.detail_view = Some(initial_loading_state(resource.clone(), &snapshot));
-                    match fetch_detail_view(&client, &snapshot, resource.clone()).await {
+            // Detail view fetch completed in background task
+            result = detail_rx.recv() => {
+                if let Some(result) = result {
+                    match result {
                         Ok(state) => app.detail_view = Some(state),
-                        Err(err) => {
+                        Err((resource, err)) => {
                             app.detail_view = Some(DetailViewState {
                                 resource: Some(resource),
                                 loading: false,
-                                error: Some(err.to_string()),
+                                error: Some(err),
                                 ..DetailViewState::default()
-                            })
+                            });
                         }
                     }
                 }
-                AppAction::CloseDetail => {
-                    app.detail_view = None;
-                }
-                AppAction::LogsViewerOpen => {
-                    if let Some(detail) = &mut app.detail_view {
-                        let (pod_name, pod_ns) = detail
-                            .resource
-                            .as_ref()
-                            .and_then(|r| match r {
-                                ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
-                                _ => None,
-                            })
-                            .unwrap_or_default();
-                        detail.logs_viewer = Some(LogsViewerState {
-                            pod_name: pod_name.clone(),
-                            pod_namespace: pod_ns.clone(),
-                            loading: true,
-                            ..Default::default()
+            }
+
+            // Periodic tick — just a heartbeat to keep rendering at ~200ms when idle
+            _ = tick.tick() => {}
+
+            // Keyboard / terminal input — lowest priority so messages are drained first
+            maybe_event = event_stream.next() => {
+                let Some(Ok(Event::Key(key))) = maybe_event else { continue; };
+
+                let action = if key.code == KeyCode::Enter
+                    && !app.is_search_mode()
+                    && !app.is_namespace_picker_open()
+                    && !app.is_context_picker_open()
+                    && !app.command_palette.is_open()
+                {
+                    if app.detail_view.is_some() {
+                        selected_resource(&app, &cached_snapshot)
+                            .map(AppAction::OpenDetail)
+                            .unwrap_or(AppAction::None)
+                    } else if app.focus == kubectui::app::Focus::Content {
+                        selected_resource(&app, &cached_snapshot)
+                            .map(AppAction::OpenDetail)
+                            .unwrap_or(AppAction::None)
+                    } else {
+                        app.sidebar_activate()
+                    }
+                } else {
+                    app.handle_key_event(key)
+                };
+
+                match action {
+                    AppAction::None => {
+                        // No-op — don't call sync_extensions_instances on every unrecognized key
+                    }
+                    AppAction::Quit => break,
+                    AppAction::RefreshData => {
+                        if let Err(err) = global_state
+                            .refresh(&client, namespace_scope(app.get_namespace()))
+                            .await
+                        {
+                            app.set_error(format!("Refresh failed: {err:#}"));
+                        } else {
+                            app.clear_error();
+                            app.set_available_namespaces(global_state.namespaces().to_vec());
+                            snapshot_dirty = true;
+                            sync_extensions_instances(&client, &mut app, &global_state.snapshot())
+                                .await;
+                        }
+                    }
+                    AppAction::OpenNamespacePicker => {
+                        app.set_available_namespaces(global_state.namespaces().to_vec());
+                        app.open_namespace_picker();
+                    }
+                    AppAction::CloseNamespacePicker => {
+                        app.close_namespace_picker();
+                    }
+                    AppAction::OpenCommandPalette => {
+                        app.command_palette.open();
+                    }
+                    AppAction::CloseCommandPalette => {
+                        app.command_palette.close();
+                    }
+                    AppAction::NavigateTo(view) => {
+                        app.command_palette.close();
+                        app.view = view;
+                        app.selected_idx = 0;
+                        app.focus = kubectui::app::Focus::Content;
+                        // Trigger extensions sync when navigating to Extensions view
+                        if view == kubectui::app::AppView::Extensions {
+                            sync_extensions_instances(&client, &mut app, &cached_snapshot).await;
+                        }
+                    }
+                    AppAction::OpenContextPicker => {
+                        let contexts = K8sClient::list_contexts();
+                        let current = kube::config::Kubeconfig::read()
+                            .ok()
+                            .and_then(|cfg| cfg.current_context);
+                        app.open_context_picker(contexts, current);
+                    }
+                    AppAction::CloseContextPicker => {
+                        app.close_context_picker();
+                    }
+                    AppAction::SelectContext(ctx) => {
+                        app.close_context_picker();
+                        match K8sClient::connect_with_context(&ctx).await {
+                            Ok(new_client) => {
+                                global_state = GlobalState::default();
+                                if let Err(err) = global_state
+                                    .refresh(&new_client, namespace_scope(app.get_namespace()))
+                                    .await
+                                {
+                                    app.set_error(format!("Refresh failed after context switch: {err:#}"));
+                                } else {
+                                    app.clear_error();
+                                    app.set_available_namespaces(global_state.namespaces().to_vec());
+                                    snapshot_dirty = true;
+                                    sync_extensions_instances(&new_client, &mut app, &global_state.snapshot()).await;
+                                }
+                                client = new_client;
+                            }
+                            Err(err) => {
+                                app.set_error(format!("Failed to connect to context '{ctx}': {err:#}"));
+                            }
+                        }
+                    }
+                    AppAction::SelectNamespace(namespace) => {
+                        app.set_namespace(namespace);
+                        app.close_namespace_picker();
+                        save_config(&app);
+
+                        if let Err(err) = global_state
+                            .refresh(&client, namespace_scope(app.get_namespace()))
+                            .await
+                        {
+                            app.set_error(format!("Refresh failed: {err:#}"));
+                        } else {
+                            app.clear_error();
+                            app.set_available_namespaces(global_state.namespaces().to_vec());
+                            snapshot_dirty = true;
+                            sync_extensions_instances(&client, &mut app, &global_state.snapshot())
+                                .await;
+                        }
+                    }
+                    AppAction::OpenDetail(resource) => {
+                        // Show loading state immediately — fetch happens in a background task
+                        app.detail_view = Some(initial_loading_state(resource.clone(), &cached_snapshot));
+                        let client_clone = client.clone();
+                        let snapshot_clone = cached_snapshot.clone();
+                        let tx = detail_tx.clone();
+                        tokio::spawn(async move {
+                            match fetch_detail_view(&client_clone, &snapshot_clone, resource.clone()).await {
+                                Ok(state) => { let _ = tx.send(Ok(state)); }
+                                Err(err) => { let _ = tx.send(Err((resource, err.to_string()))); }
+                            }
                         });
                     }
-                    let (pod_name, pod_ns) = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|d| d.logs_viewer.as_ref())
-                        .map(|l| (l.pod_name.clone(), l.pod_namespace.clone()))
-                        .unwrap_or_default();
-                    if !pod_name.is_empty() {
-                        let logs_client = LogsClient::new(client.get_client());
-                        let pod_ref = PodRef::new(pod_name, pod_ns);
-                        match logs_client.tail_logs(&pod_ref, Some(500)).await {
-                            Ok(lines) => {
-                                if let Some(detail) = &mut app.detail_view {
-                                    if let Some(viewer) = &mut detail.logs_viewer {
-                                        viewer.lines = lines;
-                                        viewer.loading = false;
-                                        if viewer.follow_mode {
-                                            viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
+                    AppAction::CloseDetail => {
+                        if let Some(detail) = &app.detail_view {
+                            if let Some(viewer) = &detail.logs_viewer {
+                                if viewer.follow_mode && !viewer.pod_name.is_empty() {
+                                    let _ = coordinator
+                                        .stop_log_streaming(
+                                            &viewer.pod_name,
+                                            &viewer.pod_namespace,
+                                            "default",
+                                        )
+                                        .await;
+                                }
+                            }
+                        }
+                        app.detail_view = None;
+                    }
+                    AppAction::LogsViewerOpen => {
+                        if let Some(detail) = &mut app.detail_view {
+                            let (pod_name, pod_ns) = detail
+                                .resource
+                                .as_ref()
+                                .and_then(|r| match r {
+                                    ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
+                                    _ => None,
+                                })
+                                .unwrap_or_default();
+
+                            // Fetch container list for this pod
+                            let containers: Vec<String> = {
+                                let pods_api: Api<Pod> = Api::namespaced(client.get_client(), &pod_ns);
+                                pods_api.get(&pod_name).await.ok()
+                                    .and_then(|pod| pod.spec)
+                                    .map(|spec| spec.containers.iter().map(|c| c.name.clone()).collect())
+                                    .unwrap_or_default()
+                            };
+
+                            let picking = containers.len() > 1;
+                            let first_container = containers.first().cloned().unwrap_or_default();
+
+                            detail.logs_viewer = Some(LogsViewerState {
+                                pod_name: pod_name.clone(),
+                                pod_namespace: pod_ns.clone(),
+                                container_name: if picking { String::new() } else { first_container.clone() },
+                                containers: containers.clone(),
+                                picking_container: picking,
+                                container_cursor: 0,
+                                loading: !picking,
+                                ..Default::default()
+                            });
+
+                            // If single container, fetch logs immediately
+                            if !picking && !pod_name.is_empty() {
+                                let logs_client = LogsClient::new(client.get_client());
+                                let pod_ref = PodRef::new(pod_name, pod_ns);
+                                let cname = if first_container.is_empty() { None } else { Some(first_container.as_str()) };
+                                match logs_client.tail_logs(&pod_ref, Some(500), cname).await {
+                                    Ok(lines) => {
+                                        if let Some(detail) = &mut app.detail_view {
+                                            if let Some(viewer) = &mut detail.logs_viewer {
+                                                viewer.lines = lines;
+                                                viewer.loading = false;
+                                            }
                                         }
+                                    }
+                                    Err(err) => {
+                                        if let Some(detail) = &mut app.detail_view {
+                                            if let Some(viewer) = &mut detail.logs_viewer {
+                                                viewer.loading = false;
+                                                viewer.error = Some(err.to_string());
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AppAction::LogsViewerSelectContainer(container) => {
+                        // User picked a container from the picker — fetch its logs
+                        let (pod_name, pod_ns) = app.detail_view.as_ref()
+                            .and_then(|d| d.logs_viewer.as_ref())
+                            .map(|v| (v.pod_name.clone(), v.pod_namespace.clone()))
+                            .unwrap_or_default();
+
+                        if let Some(detail) = &mut app.detail_view {
+                            if let Some(viewer) = &mut detail.logs_viewer {
+                                viewer.picking_container = false;
+                                viewer.container_name = container.clone();
+                                viewer.loading = true;
+                                viewer.lines.clear();
+                                viewer.error = None;
+                            }
+                        }
+
+                        if !pod_name.is_empty() {
+                            let logs_client = LogsClient::new(client.get_client());
+                            let pod_ref = PodRef::new(pod_name, pod_ns);
+                            match logs_client.tail_logs(&pod_ref, Some(500), Some(container.as_str())).await {
+                                Ok(lines) => {
+                                    if let Some(detail) = &mut app.detail_view {
+                                        if let Some(viewer) = &mut detail.logs_viewer {
+                                            viewer.lines = lines;
+                                            viewer.loading = false;
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    if let Some(detail) = &mut app.detail_view {
+                                        if let Some(viewer) = &mut detail.logs_viewer {
+                                            viewer.loading = false;
+                                            viewer.error = Some(err.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AppAction::LogsViewerToggleFollow => {
+                        let follow_info = app.detail_view.as_ref().and_then(|d| {
+                            d.logs_viewer.as_ref().map(|v| {
+                                (v.pod_name.clone(), v.pod_namespace.clone(), v.container_name.clone(), v.follow_mode)
+                            })
+                        });
+                        apply_action(AppAction::LogsViewerToggleFollow, &mut app);
+                        if let Some((pod_name, pod_ns, container_name, was_following)) = follow_info {
+                            if !pod_name.is_empty() {
+                                let cname = if container_name.is_empty() { "default".to_string() } else { container_name };
+                                if !was_following {
+                                    let _ = coordinator
+                                        .start_log_streaming(pod_name, pod_ns, cname, true)
+                                        .await;
+                                } else {
+                                    let _ = coordinator
+                                        .stop_log_streaming(&pod_name, &pod_ns, &cname)
+                                        .await;
+                                }
+                            }
+                        }
+                    }
+                    AppAction::ScaleDialogSubmit => {
+                        let scale_info = app.detail_view.as_ref().and_then(|d| {
+                            d.scale_dialog.as_ref().and_then(|s| {
+                                s.desired_replicas_as_int().map(|replicas| {
+                                    (s.deployment_name.clone(), s.namespace.clone(), replicas)
+                                })
+                            })
+                        });
+                        if let Some((name, namespace, replicas)) = scale_info {
+                            match client.scale_deployment(&name, &namespace, replicas).await {
+                                Ok(()) => {
+                                    app.clear_error();
+                                    if let Some(detail) = &mut app.detail_view {
+                                        detail.scale_dialog = None;
+                                    }
+                                }
+                                Err(err) => {
+                                    if let Some(detail) = &mut app.detail_view {
+                                        if let Some(scale) = &mut detail.scale_dialog {
+                                            scale.error_message = Some(format!("Scale failed: {err:#}"));
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AppAction::RolloutRestart => {
+                        let restart_info = app.detail_view.as_ref().and_then(|d| {
+                            d.resource.as_ref().and_then(|r| match r {
+                                ResourceRef::Deployment(name, ns) => Some(("deployment".to_string(), name.clone(), ns.clone())),
+                                ResourceRef::StatefulSet(name, ns) => Some(("statefulset".to_string(), name.clone(), ns.clone())),
+                                ResourceRef::DaemonSet(name, ns) => Some(("daemonset".to_string(), name.clone(), ns.clone())),
+                                _ => None,
+                            })
+                        });
+                        if let Some((kind, name, namespace)) = restart_info {
+                            match client.rollout_restart(&kind, &name, &namespace).await {
+                                Ok(()) => {
+                                    app.clear_error();
+                                    if let Some(detail) = &mut app.detail_view {
+                                        detail.error = None;
+                                    }
+                                }
+                                Err(err) => {
+                                    app.set_error(format!("Restart failed: {err:#}"));
+                                }
+                            }
+                        }
+                    }
+                    AppAction::EditYaml => {
+                        // Gather what we need before suspending the TUI
+                        let edit_info = app.detail_view.as_ref().and_then(|d| {
+                            d.resource.as_ref().zip(d.yaml.as_ref()).map(|(r, y)| {
+                                (
+                                    r.kind().to_ascii_lowercase(),
+                                    r.name().to_string(),
+                                    r.namespace().map(str::to_owned),
+                                    y.clone(),
+                                )
+                            })
+                        });
+
+                        if let Some((kind, name, namespace, yaml_content)) = edit_info {
+                            // Write YAML to a temp file
+                            let tmp_path = std::env::temp_dir()
+                                .join(format!("kubectui-{kind}-{name}.yaml"));
+                            if let Err(err) = std::fs::write(&tmp_path, &yaml_content) {
+                                app.set_error(format!("Failed to write temp file: {err}"));
+                            } else {
+                                // Suspend TUI — restore terminal to canonical mode
+                                let _ = restore_terminal(terminal);
+
+                                // Spawn $EDITOR (fallback: vi)
+                                let editor = std::env::var("EDITOR")
+                                    .or_else(|_| std::env::var("VISUAL"))
+                                    .unwrap_or_else(|_| "vi".to_string());
+
+                                let status = std::process::Command::new(&editor)
+                                    .arg(&tmp_path)
+                                    .status();
+
+                                // Re-init TUI regardless of editor outcome
+                                match setup_terminal() {
+                                    Ok(new_terminal) => *terminal = new_terminal,
+                                    Err(err) => {
+                                        eprintln!("Failed to restore terminal: {err:#}");
+                                        app.should_quit = true;
+                                        continue;
+                                    }
+                                }
+
+                                match status {
+                                    Err(err) => {
+                                        app.set_error(format!("Failed to launch editor '{editor}': {err}"));
+                                    }
+                                    Ok(exit) if !exit.success() => {
+                                        // Editor exited non-zero (e.g. :cq in vim) — treat as cancel
+                                    }
+                                    Ok(_) => {
+                                        // Read back the edited file
+                                        match std::fs::read_to_string(&tmp_path) {
+                                            Err(err) => {
+                                                app.set_error(format!("Failed to read edited file: {err}"));
+                                            }
+                                            Ok(edited_yaml) => {
+                                                if edited_yaml.trim() == yaml_content.trim() {
+                                                    // No changes — skip apply
+                                                } else {
+                                                    match client
+                                                        .apply_resource_yaml(
+                                                            &edited_yaml,
+                                                            &kind,
+                                                            &name,
+                                                            namespace.as_deref(),
+                                                        )
+                                                        .await
+                                                    {
+                                                        Ok(()) => {
+                                                            app.clear_error();
+                                                            // Reload the detail view with fresh YAML
+                                                            if let Some(detail) = &mut app.detail_view {
+                                                                detail.yaml = Some(edited_yaml);
+                                                                detail.yaml_scroll = 0;
+                                                            }
+                                                        }
+                                                        Err(err) => {
+                                                            app.set_error(format!("Apply failed: {err:#}"));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                // Clean up temp file
+                                let _ = std::fs::remove_file(&tmp_path);
+                            }
+                        }
+                    }
+                    AppAction::PortForwardCreate((target, config)) => {
+                        match port_forwarder.create_tunnel_async(target, config).await {
+                            Ok(tunnel_id) => {
+                                app.clear_error();
+                                if let Some(detail) = &mut app.detail_view {
+                                    if let Some(dialog) = &mut detail.port_forward_dialog {
+                                        dialog.success = Some(format!("Tunnel created: {tunnel_id}"));
+                                        let tunnels = port_forwarder.list_tunnels();
+                                        let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
+                                        registry.update_tunnels(tunnels);
+                                        dialog.update_registry(registry);
                                     }
                                 }
                             }
                             Err(err) => {
                                 if let Some(detail) = &mut app.detail_view {
-                                    if let Some(viewer) = &mut detail.logs_viewer {
-                                        viewer.loading = false;
-                                        viewer.error = Some(err.to_string());
+                                    if let Some(dialog) = &mut detail.port_forward_dialog {
+                                        dialog.error = Some(format!("{err}"));
                                     }
                                 }
                             }
                         }
                     }
-                }
-                // Apply all other component actions
-                other => {
-                    apply_action(other, &mut app);
+                    AppAction::ScaleDialogOpen => {
+                        // Read actual replica count from snapshot before opening dialog
+                        let scale_info = app.detail_view.as_ref().and_then(|d| {
+                            d.resource.as_ref().and_then(|r| match r {
+                                ResourceRef::Deployment(name, ns) => {
+                                    let replicas = cached_snapshot.deployments.iter()
+                                        .find(|d| &d.name == name && &d.namespace == ns)
+                                        .map(|d| d.desired_replicas)
+                                        .unwrap_or(1);
+                                    Some((name.clone(), ns.clone(), replicas))
+                                }
+                                ResourceRef::StatefulSet(name, ns) => {
+                                    let replicas = cached_snapshot.statefulsets.iter()
+                                        .find(|ss| &ss.name == name && &ss.namespace == ns)
+                                        .map(|ss| ss.desired_replicas)
+                                        .unwrap_or(1);
+                                    Some((name.clone(), ns.clone(), replicas))
+                                }
+                                _ => None,
+                            })
+                        });
+                        if let Some((name, namespace, replicas)) = scale_info {
+                            if let Some(detail) = &mut app.detail_view {
+                                detail.scale_dialog = Some(kubectui::ui::components::scale_dialog::ScaleDialogState::new(name, namespace, replicas));
+                            }
+                        }
+                    }
+                    AppAction::ProbePanelOpen => {
+                        let pod_info = app.detail_view.as_ref().and_then(|d| {
+                            d.resource.as_ref().and_then(|r| match r {
+                                ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
+                                _ => None,
+                            })
+                        });
+                        if let Some((pod_name, pod_ns)) = pod_info {
+                            let pods_api: Api<Pod> = Api::namespaced(client.get_client(), &pod_ns);
+                            let container_probes = match pods_api.get(&pod_name).await {
+                                Ok(pod) => extract_probes_from_pod(&pod).unwrap_or_default(),
+                                Err(_) => Vec::new(),
+                            };
+                            if let Some(detail) = &mut app.detail_view {
+                                use kubectui::ui::components::probe_panel::ProbePanelState;
+                                detail.probe_panel = Some(ProbePanelState::new(
+                                    pod_name,
+                                    pod_ns,
+                                    container_probes,
+                                ));
+                            }
+                        } else {
+                            apply_action(AppAction::ProbePanelOpen, &mut app);
+                        }
+                    }
+                    other => {
+                        apply_action(other, &mut app);
+                    }
                 }
             }
         }
-
-        tick.tick().await;
     }
 
     Ok(())
@@ -305,68 +705,92 @@ fn namespace_scope(namespace: &str) -> Option<&str> {
     }
 }
 
+/// Filters a slice by a text query matching name and optional namespace fields,
+/// then returns the item at the given index in the filtered result.
+fn filtered_get<'a, T, F>(items: &'a [T], idx: usize, query: &str, text_fields: F) -> Option<&'a T>
+where
+    F: Fn(&T) -> Vec<&str>,
+{
+    if query.is_empty() {
+        return items.get(idx);
+    }
+    let q = query.to_lowercase();
+    items
+        .iter()
+        .filter(|item| text_fields(item).iter().any(|f| f.to_lowercase().contains(&q)))
+        .nth(idx)
+}
+
 fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<ResourceRef> {
     let idx = app.selected_idx();
+    let q = app.search_query();
     match app.view() {
         AppView::Dashboard => None,
-        AppView::Nodes => snapshot
-            .nodes
-            .get(idx)
+        AppView::Nodes => filtered_get(&snapshot.nodes, idx, q, |n| vec![&n.name, &n.role])
             .map(|n| ResourceRef::Node(n.name.clone())),
-        AppView::Pods => snapshot
-            .pods
-            .get(idx)
+        AppView::Pods => filtered_get(&snapshot.pods, idx, q, |p| vec![&p.name, &p.namespace, &p.status])
             .map(|p| ResourceRef::Pod(p.name.clone(), p.namespace.clone())),
-        AppView::Services => snapshot
-            .services
-            .get(idx)
+        AppView::Services => filtered_get(&snapshot.services, idx, q, |s| vec![&s.name, &s.namespace, &s.type_])
             .map(|s| ResourceRef::Service(s.name.clone(), s.namespace.clone())),
-        AppView::Deployments => snapshot
-            .deployments
-            .get(idx)
+        AppView::Deployments => filtered_get(&snapshot.deployments, idx, q, |d| vec![&d.name, &d.namespace])
             .map(|d| ResourceRef::Deployment(d.name.clone(), d.namespace.clone())),
-        AppView::StatefulSets => snapshot
-            .statefulsets
-            .get(idx)
+        AppView::StatefulSets => filtered_get(&snapshot.statefulsets, idx, q, |ss| vec![&ss.name, &ss.namespace])
             .map(|ss| ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone())),
-        AppView::ResourceQuotas => snapshot
-            .resource_quotas
-            .get(idx)
+        AppView::ResourceQuotas => filtered_get(&snapshot.resource_quotas, idx, q, |rq| vec![&rq.name, &rq.namespace])
             .map(|rq| ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone())),
-        AppView::LimitRanges => snapshot
-            .limit_ranges
-            .get(idx)
+        AppView::LimitRanges => filtered_get(&snapshot.limit_ranges, idx, q, |lr| vec![&lr.name, &lr.namespace])
             .map(|lr| ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone())),
-        AppView::PodDisruptionBudgets => snapshot
-            .pod_disruption_budgets
-            .get(idx)
+        AppView::PodDisruptionBudgets => filtered_get(&snapshot.pod_disruption_budgets, idx, q, |pdb| vec![&pdb.name, &pdb.namespace])
             .map(|pdb| ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone())),
-        AppView::DaemonSets
-        | AppView::ReplicaSets
-        | AppView::ReplicationControllers
-        | AppView::HelmCharts
-        | AppView::HelmReleases
-        | AppView::Jobs
-        | AppView::CronJobs
-        | AppView::Endpoints
-        | AppView::Ingresses
-        | AppView::IngressClasses
-        | AppView::NetworkPolicies
-        | AppView::ConfigMaps
-        | AppView::Secrets
-        | AppView::HPAs
-        | AppView::PriorityClasses
-        | AppView::PersistentVolumeClaims
-        | AppView::PersistentVolumes
-        | AppView::StorageClasses
-        | AppView::Namespaces
-        | AppView::Events
-        | AppView::ServiceAccounts
-        | AppView::Roles
-        | AppView::RoleBindings
-        | AppView::ClusterRoles
-        | AppView::ClusterRoleBindings
-        | AppView::Extensions => None,
+        AppView::DaemonSets => filtered_get(&snapshot.daemonsets, idx, q, |ds| vec![&ds.name, &ds.namespace])
+            .map(|ds| ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone())),
+        AppView::ReplicaSets => filtered_get(&snapshot.replicasets, idx, q, |rs| vec![&rs.name, &rs.namespace])
+            .map(|rs| ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone())),
+        AppView::ReplicationControllers => filtered_get(&snapshot.replication_controllers, idx, q, |rc| vec![&rc.name, &rc.namespace])
+            .map(|rc| ResourceRef::ReplicationController(rc.name.clone(), rc.namespace.clone())),
+        AppView::Jobs => filtered_get(&snapshot.jobs, idx, q, |j| vec![&j.name, &j.namespace, &j.status])
+            .map(|j| ResourceRef::Job(j.name.clone(), j.namespace.clone())),
+        AppView::CronJobs => filtered_get(&snapshot.cronjobs, idx, q, |cj| vec![&cj.name, &cj.namespace, &cj.schedule])
+            .map(|cj| ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone())),
+        AppView::Endpoints => filtered_get(&snapshot.endpoints, idx, q, |e| vec![&e.name, &e.namespace])
+            .map(|e| ResourceRef::Endpoint(e.name.clone(), e.namespace.clone())),
+        AppView::Ingresses => filtered_get(&snapshot.ingresses, idx, q, |i| vec![&i.name, &i.namespace])
+            .map(|i| ResourceRef::Ingress(i.name.clone(), i.namespace.clone())),
+        AppView::IngressClasses => filtered_get(&snapshot.ingress_classes, idx, q, |ic| vec![&ic.name])
+            .map(|ic| ResourceRef::IngressClass(ic.name.clone())),
+        AppView::NetworkPolicies => filtered_get(&snapshot.network_policies, idx, q, |np| vec![&np.name, &np.namespace])
+            .map(|np| ResourceRef::NetworkPolicy(np.name.clone(), np.namespace.clone())),
+        AppView::ConfigMaps => filtered_get(&snapshot.config_maps, idx, q, |cm| vec![&cm.name, &cm.namespace])
+            .map(|cm| ResourceRef::ConfigMap(cm.name.clone(), cm.namespace.clone())),
+        AppView::Secrets => filtered_get(&snapshot.secrets, idx, q, |s| vec![&s.name, &s.namespace, &s.type_])
+            .map(|s| ResourceRef::Secret(s.name.clone(), s.namespace.clone())),
+        AppView::HPAs => filtered_get(&snapshot.hpas, idx, q, |h| vec![&h.name, &h.namespace])
+            .map(|h| ResourceRef::Hpa(h.name.clone(), h.namespace.clone())),
+        AppView::PriorityClasses => filtered_get(&snapshot.priority_classes, idx, q, |pc| vec![&pc.name])
+            .map(|pc| ResourceRef::PriorityClass(pc.name.clone())),
+        AppView::PersistentVolumeClaims => filtered_get(&snapshot.pvcs, idx, q, |pvc| vec![&pvc.name, &pvc.namespace])
+            .map(|pvc| ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone())),
+        AppView::PersistentVolumes => filtered_get(&snapshot.pvs, idx, q, |pv| vec![&pv.name])
+            .map(|pv| ResourceRef::Pv(pv.name.clone())),
+        AppView::StorageClasses => filtered_get(&snapshot.storage_classes, idx, q, |sc| vec![&sc.name])
+            .map(|sc| ResourceRef::StorageClass(sc.name.clone())),
+        AppView::Namespaces => filtered_get(&snapshot.namespace_list, idx, q, |ns| vec![&ns.name, &ns.status])
+            .map(|ns| ResourceRef::Namespace(ns.name.clone())),
+        AppView::Events => filtered_get(&snapshot.events, idx, q, |ev| vec![&ev.name, &ev.namespace, &ev.reason])
+            .map(|ev| ResourceRef::Event(ev.name.clone(), ev.namespace.clone())),
+        AppView::ServiceAccounts => filtered_get(&snapshot.service_accounts, idx, q, |sa| vec![&sa.name, &sa.namespace])
+            .map(|sa| ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone())),
+        AppView::Roles => filtered_get(&snapshot.roles, idx, q, |r| vec![&r.name, &r.namespace])
+            .map(|r| ResourceRef::Role(r.name.clone(), r.namespace.clone())),
+        AppView::RoleBindings => filtered_get(&snapshot.role_bindings, idx, q, |rb| vec![&rb.name, &rb.namespace])
+            .map(|rb| ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone())),
+        AppView::ClusterRoles => filtered_get(&snapshot.cluster_roles, idx, q, |cr| vec![&cr.name])
+            .map(|cr| ResourceRef::ClusterRole(cr.name.clone())),
+        AppView::ClusterRoleBindings => filtered_get(&snapshot.cluster_role_bindings, idx, q, |crb| vec![&crb.name])
+            .map(|crb| ResourceRef::ClusterRoleBinding(crb.name.clone())),
+        AppView::HelmCharts | AppView::Extensions => None,
+        AppView::HelmReleases => filtered_get(&snapshot.helm_releases, idx, q, |r| vec![&r.name, &r.namespace, &r.chart])
+            .map(|r| ResourceRef::HelmRelease(r.name.clone(), r.namespace.clone())),
     }
 }
 
@@ -397,6 +821,21 @@ async fn fetch_detail_view(
 
     let events = match &resource {
         ResourceRef::Pod(name, ns) => client.fetch_pod_events(name, ns).await.unwrap_or_default(),
+        // Fetch events for namespaced workload and config resources
+        ResourceRef::Deployment(name, ns)
+        | ResourceRef::StatefulSet(name, ns)
+        | ResourceRef::DaemonSet(name, ns)
+        | ResourceRef::ReplicaSet(name, ns)
+        | ResourceRef::Job(name, ns)
+        | ResourceRef::CronJob(name, ns)
+        | ResourceRef::Service(name, ns)
+        | ResourceRef::Ingress(name, ns)
+        | ResourceRef::ConfigMap(name, ns)
+        | ResourceRef::Pvc(name, ns)
+        | ResourceRef::HelmRelease(name, ns) => {
+            let kind = resource.kind();
+            client.fetch_resource_events(kind, name, ns).await.unwrap_or_default()
+        }
         _ => Vec::new(),
     };
 
@@ -434,6 +873,7 @@ async fn fetch_detail_view(
         resource: Some(resource),
         metadata,
         yaml,
+        yaml_scroll: 0,
         events,
         sections,
         pod_metrics,
@@ -568,6 +1008,283 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 .find(|pdb| &pdb.name == name && &pdb.namespace == ns)
                 .map(|pdb| format!("Healthy {}/{}", pdb.current_healthy, pdb.desired_healthy));
 
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::DaemonSet(name, ns) => {
+            let status = snapshot
+                .daemonsets
+                .iter()
+                .find(|ds| &ds.name == name && &ds.namespace == ns)
+                .map(|ds| format!("Ready {}/{}", ds.ready_count, ds.desired_count));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::ReplicaSet(name, ns) => {
+            let status = snapshot
+                .replicasets
+                .iter()
+                .find(|rs| &rs.name == name && &rs.namespace == ns)
+                .map(|rs| format!("Ready {}/{}", rs.ready, rs.desired));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::ReplicationController(name, ns) => {
+            let status = snapshot
+                .replication_controllers
+                .iter()
+                .find(|rc| &rc.name == name && &rc.namespace == ns)
+                .map(|rc| format!("Ready {}/{}", rc.ready, rc.desired));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::Job(name, ns) => {
+            let status = snapshot
+                .jobs
+                .iter()
+                .find(|j| &j.name == name && &j.namespace == ns)
+                .map(|j| j.status.clone());
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::CronJob(name, ns) => {
+            let status = snapshot
+                .cronjobs
+                .iter()
+                .find(|cj| &cj.name == name && &cj.namespace == ns)
+                .map(|cj| if cj.suspend { "Suspended".to_string() } else { "Active".to_string() });
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::Endpoint(name, ns) => DetailMetadata {
+            name: name.clone(),
+            namespace: Some(ns.clone()),
+            status: Some("Active".to_string()),
+            ..DetailMetadata::default()
+        },
+        ResourceRef::Ingress(name, ns) => {
+            let status = snapshot
+                .ingresses
+                .iter()
+                .find(|i| &i.name == name && &i.namespace == ns)
+                .and_then(|i| i.address.clone());
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::IngressClass(name) => DetailMetadata {
+            name: name.clone(),
+            namespace: None,
+            status: Some("Active".to_string()),
+            ..DetailMetadata::default()
+        },
+        ResourceRef::NetworkPolicy(name, ns) => DetailMetadata {
+            name: name.clone(),
+            namespace: Some(ns.clone()),
+            status: Some("Active".to_string()),
+            ..DetailMetadata::default()
+        },
+        ResourceRef::ConfigMap(name, ns) => {
+            let status = snapshot
+                .config_maps
+                .iter()
+                .find(|cm| &cm.name == name && &cm.namespace == ns)
+                .map(|cm| format!("{} keys", cm.data_count));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::Secret(name, ns) => {
+            let status = snapshot
+                .secrets
+                .iter()
+                .find(|s| &s.name == name && &s.namespace == ns)
+                .map(|s| format!("{} ({} keys)", s.type_, s.data_count));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::Hpa(name, ns) => {
+            let status = snapshot
+                .hpas
+                .iter()
+                .find(|h| &h.name == name && &h.namespace == ns)
+                .map(|h| format!("{}/{} replicas", h.current_replicas, h.max_replicas));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::PriorityClass(name) => {
+            let status = snapshot
+                .priority_classes
+                .iter()
+                .find(|pc| &pc.name == name)
+                .map(|pc| format!("value: {}", pc.value));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: None,
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::Pvc(name, ns) => {
+            let status = snapshot
+                .pvcs
+                .iter()
+                .find(|pvc| &pvc.name == name && &pvc.namespace == ns)
+                .map(|pvc| pvc.status.clone());
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::Pv(name) => {
+            let status = snapshot
+                .pvs
+                .iter()
+                .find(|pv| &pv.name == name)
+                .map(|pv| pv.status.clone());
+            DetailMetadata {
+                name: name.clone(),
+                namespace: None,
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::StorageClass(name) => DetailMetadata {
+            name: name.clone(),
+            namespace: None,
+            status: Some("Active".to_string()),
+            ..DetailMetadata::default()
+        },
+        ResourceRef::Namespace(name) => {
+            let status = snapshot
+                .namespace_list
+                .iter()
+                .find(|ns| &ns.name == name)
+                .map(|ns| ns.status.clone());
+            DetailMetadata {
+                name: name.clone(),
+                namespace: None,
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::Event(name, ns) => {
+            let status = snapshot
+                .events
+                .iter()
+                .find(|ev| &ev.name == name && &ev.namespace == ns)
+                .map(|ev| ev.reason.clone());
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::ServiceAccount(name, ns) => DetailMetadata {
+            name: name.clone(),
+            namespace: Some(ns.clone()),
+            status: Some("Active".to_string()),
+            ..DetailMetadata::default()
+        },
+        ResourceRef::Role(name, ns) => {
+            let status = snapshot
+                .roles
+                .iter()
+                .find(|r| &r.name == name && &r.namespace == ns)
+                .map(|r| format!("{} rules", r.rules.len()));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::RoleBinding(name, ns) => {
+            let status = snapshot
+                .role_bindings
+                .iter()
+                .find(|rb| &rb.name == name && &rb.namespace == ns)
+                .map(|rb| format!("-> {}/{}", rb.role_ref_kind, rb.role_ref_name));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: Some(ns.clone()),
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::ClusterRole(name) => {
+            let status = snapshot
+                .cluster_roles
+                .iter()
+                .find(|cr| &cr.name == name)
+                .map(|cr| format!("{} rules", cr.rules.len()));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: None,
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::ClusterRoleBinding(name) => {
+            let status = snapshot
+                .cluster_role_bindings
+                .iter()
+                .find(|crb| &crb.name == name)
+                .map(|crb| format!("-> {}/{}", crb.role_ref_kind, crb.role_ref_name));
+            DetailMetadata {
+                name: name.clone(),
+                namespace: None,
+                status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::HelmRelease(name, ns) => {
+            let status = snapshot
+                .helm_releases
+                .iter()
+                .find(|r| &r.name == name && &r.namespace == ns)
+                .map(|r| r.status.clone());
             DetailMetadata {
                 name: name.clone(),
                 namespace: Some(ns.clone()),
@@ -716,6 +1433,351 @@ fn sections_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                     format!("desiredHealthy: {}", pdb.desired_healthy),
                     format!("disruptionsAllowed: {}", pdb.disruptions_allowed),
                     format!("expectedPods: {}", pdb.expected_pods),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::DaemonSet(name, ns) => snapshot
+            .daemonsets
+            .iter()
+            .find(|ds| &ds.name == name && &ds.namespace == ns)
+            .map(|ds| {
+                vec![
+                    "STATUS".to_string(),
+                    format!("desired: {}", ds.desired_count),
+                    format!("ready: {}", ds.ready_count),
+                    format!("unavailable: {}", ds.unavailable_count),
+                    format!("updateStrategy: {}", ds.update_strategy),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::ReplicaSet(name, ns) => snapshot
+            .replicasets
+            .iter()
+            .find(|rs| &rs.name == name && &rs.namespace == ns)
+            .map(|rs| {
+                vec![
+                    "REPLICAS".to_string(),
+                    format!("desired: {}", rs.desired),
+                    format!("ready: {}", rs.ready),
+                    format!("available: {}", rs.available),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::ReplicationController(name, ns) => snapshot
+            .replication_controllers
+            .iter()
+            .find(|rc| &rc.name == name && &rc.namespace == ns)
+            .map(|rc| {
+                vec![
+                    "REPLICAS".to_string(),
+                    format!("desired: {}", rc.desired),
+                    format!("ready: {}", rc.ready),
+                    format!("available: {}", rc.available),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::Job(name, ns) => snapshot
+            .jobs
+            .iter()
+            .find(|j| &j.name == name && &j.namespace == ns)
+            .map(|j| {
+                vec![
+                    "JOB STATUS".to_string(),
+                    format!("status: {}", j.status),
+                    format!("completions: {}", j.completions),
+                    format!("parallelism: {}", j.parallelism),
+                    format!("active: {}", j.active_pods),
+                    format!("failed: {}", j.failed_pods),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::CronJob(name, ns) => snapshot
+            .cronjobs
+            .iter()
+            .find(|cj| &cj.name == name && &cj.namespace == ns)
+            .map(|cj| {
+                vec![
+                    "SCHEDULE".to_string(),
+                    format!("schedule: {}", cj.schedule),
+                    format!("suspended: {}", cj.suspend),
+                    format!("active: {}", cj.active_jobs),
+                    format!(
+                        "lastSchedule: {}",
+                        cj.last_schedule_time
+                            .map(|t| t.to_rfc3339())
+                            .unwrap_or_else(|| "never".to_string())
+                    ),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::Endpoint(name, ns) => snapshot
+            .endpoints
+            .iter()
+            .find(|e| &e.name == name && &e.namespace == ns)
+            .map(|e| {
+                let mut lines = vec!["ADDRESSES".to_string()];
+                for addr in e.addresses.iter().take(10) {
+                    lines.push(format!("- {addr}"));
+                }
+                if !e.ports.is_empty() {
+                    lines.push("PORTS".to_string());
+                    for port in e.ports.iter().take(10) {
+                        lines.push(format!("- {port}"));
+                    }
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::Ingress(name, ns) => snapshot
+            .ingresses
+            .iter()
+            .find(|i| &i.name == name && &i.namespace == ns)
+            .map(|i| {
+                let mut lines = vec!["RULES".to_string()];
+                for host in i.hosts.iter().take(10) {
+                    lines.push(format!("- {host}"));
+                }
+                if let Some(addr) = &i.address {
+                    lines.push(format!("address: {addr}"));
+                }
+                if let Some(class) = &i.class {
+                    lines.push(format!("class: {class}"));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::IngressClass(name) => snapshot
+            .ingress_classes
+            .iter()
+            .find(|ic| &ic.name == name)
+            .map(|ic| {
+                vec![
+                    format!("controller: {}", ic.controller),
+                    format!("default: {}", ic.is_default),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::NetworkPolicy(name, ns) => snapshot
+            .network_policies
+            .iter()
+            .find(|np| &np.name == name && &np.namespace == ns)
+            .map(|np| {
+                vec![
+                    format!("podSelector: {}", np.pod_selector),
+                    format!("ingressRules: {}", np.ingress_rules),
+                    format!("egressRules: {}", np.egress_rules),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::ConfigMap(name, ns) => snapshot
+            .config_maps
+            .iter()
+            .find(|cm| &cm.name == name && &cm.namespace == ns)
+            .map(|cm| vec![format!("keys: {}", cm.data_count)])
+            .unwrap_or_default(),
+        ResourceRef::Secret(name, ns) => snapshot
+            .secrets
+            .iter()
+            .find(|s| &s.name == name && &s.namespace == ns)
+            .map(|s| {
+                vec![
+                    format!("type: {}", s.type_),
+                    format!("keys: {}", s.data_count),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::Hpa(name, ns) => snapshot
+            .hpas
+            .iter()
+            .find(|h| &h.name == name && &h.namespace == ns)
+            .map(|h| {
+                vec![
+                    format!("reference: {}", h.reference),
+                    format!("minReplicas: {}", h.min_replicas.unwrap_or(1)),
+                    format!("maxReplicas: {}", h.max_replicas),
+                    format!("currentReplicas: {}", h.current_replicas),
+                    format!("desiredReplicas: {}", h.desired_replicas),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::PriorityClass(name) => snapshot
+            .priority_classes
+            .iter()
+            .find(|pc| &pc.name == name)
+            .map(|pc| {
+                vec![
+                    format!("value: {}", pc.value),
+                    format!("globalDefault: {}", pc.global_default),
+                    format!("description: {}", pc.description),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::Pvc(name, ns) => snapshot
+            .pvcs
+            .iter()
+            .find(|pvc| &pvc.name == name && &pvc.namespace == ns)
+            .map(|pvc| {
+                vec![
+                    format!("status: {}", pvc.status),
+                    format!("capacity: {}", pvc.capacity.as_deref().unwrap_or("-")),
+                    format!("accessModes: {}", pvc.access_modes.join(", ")),
+                    format!(
+                        "storageClass: {}",
+                        pvc.storage_class.as_deref().unwrap_or("-")
+                    ),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::Pv(name) => snapshot
+            .pvs
+            .iter()
+            .find(|pv| &pv.name == name)
+            .map(|pv| {
+                vec![
+                    format!("status: {}", pv.status),
+                    format!("capacity: {}", pv.capacity.as_deref().unwrap_or("-")),
+                    format!("accessModes: {}", pv.access_modes.join(", ")),
+                    format!("reclaimPolicy: {}", pv.reclaim_policy),
+                    format!("claim: {}", pv.claim.as_deref().unwrap_or("-")),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::StorageClass(name) => snapshot
+            .storage_classes
+            .iter()
+            .find(|sc| &sc.name == name)
+            .map(|sc| {
+                vec![
+                    format!("provisioner: {}", sc.provisioner),
+                    format!(
+                        "reclaimPolicy: {}",
+                        sc.reclaim_policy.as_deref().unwrap_or("-")
+                    ),
+                    format!(
+                        "volumeBindingMode: {}",
+                        sc.volume_binding_mode.as_deref().unwrap_or("-")
+                    ),
+                    format!("allowVolumeExpansion: {}", sc.allow_volume_expansion),
+                    format!("default: {}", sc.is_default),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::Namespace(name) => snapshot
+            .namespace_list
+            .iter()
+            .find(|ns| &ns.name == name)
+            .map(|ns| vec![format!("status: {}", ns.status)])
+            .unwrap_or_default(),
+        ResourceRef::Event(name, ns) => snapshot
+            .events
+            .iter()
+            .find(|ev| &ev.name == name && &ev.namespace == ns)
+            .map(|ev| {
+                vec![
+                    format!("reason: {}", ev.reason),
+                    format!("type: {}", ev.type_),
+                    format!("count: {}", ev.count),
+                    format!("object: {}", ev.involved_object),
+                    format!("message: {}", ev.message),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::ServiceAccount(name, ns) => snapshot
+            .service_accounts
+            .iter()
+            .find(|sa| &sa.name == name && &sa.namespace == ns)
+            .map(|sa| {
+                vec![
+                    format!("secrets: {}", sa.secrets_count),
+                    format!("imagePullSecrets: {}", sa.image_pull_secrets_count),
+                    format!(
+                        "automountToken: {}",
+                        sa.automount_service_account_token
+                            .map(|v| v.to_string())
+                            .unwrap_or_else(|| "unset".to_string())
+                    ),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::Role(name, ns) => snapshot
+            .roles
+            .iter()
+            .find(|r| &r.name == name && &r.namespace == ns)
+            .map(|r| {
+                let mut lines = vec![format!("rules: {}", r.rules.len())];
+                for rule in r.rules.iter().take(5) {
+                    lines.push(format!(
+                        "  {} on {}",
+                        rule.verbs.join(","),
+                        rule.resources.join(",")
+                    ));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::RoleBinding(name, ns) => snapshot
+            .role_bindings
+            .iter()
+            .find(|rb| &rb.name == name && &rb.namespace == ns)
+            .map(|rb| {
+                let mut lines = vec![
+                    format!("roleRef: {}/{}", rb.role_ref_kind, rb.role_ref_name),
+                    format!("subjects: {}", rb.subjects.len()),
+                ];
+                for subj in rb.subjects.iter().take(5) {
+                    lines.push(format!("  {} {}", subj.kind, subj.name));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::ClusterRole(name) => snapshot
+            .cluster_roles
+            .iter()
+            .find(|cr| &cr.name == name)
+            .map(|cr| {
+                let mut lines = vec![format!("rules: {}", cr.rules.len())];
+                for rule in cr.rules.iter().take(5) {
+                    lines.push(format!(
+                        "  {} on {}",
+                        rule.verbs.join(","),
+                        rule.resources.join(",")
+                    ));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::ClusterRoleBinding(name) => snapshot
+            .cluster_role_bindings
+            .iter()
+            .find(|crb| &crb.name == name)
+            .map(|crb| {
+                let mut lines = vec![
+                    format!("roleRef: {}/{}", crb.role_ref_kind, crb.role_ref_name),
+                    format!("subjects: {}", crb.subjects.len()),
+                ];
+                for subj in crb.subjects.iter().take(5) {
+                    lines.push(format!("  {} {}", subj.kind, subj.name));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::HelmRelease(name, ns) => snapshot
+            .helm_releases
+            .iter()
+            .find(|r| &r.name == name && &r.namespace == ns)
+            .map(|r| {
+                let updated = r
+                    .updated
+                    .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_else(|| "-".to_string());
+                vec![
+                    "HELM RELEASE".to_string(),
+                    format!("chart: {}", r.chart),
+                    format!("chartVersion: {}", r.chart_version),
+                    format!("appVersion: {}", r.app_version),
+                    format!("revision: {}", r.revision),
+                    format!("status: {}", r.status),
+                    format!("updated: {updated}"),
                 ]
             })
             .unwrap_or_default(),

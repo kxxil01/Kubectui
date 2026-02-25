@@ -101,7 +101,8 @@ pub fn render_jobs(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = cluster.jobs.len();
+        active_block(&format!(" ⚙  Jobs ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(

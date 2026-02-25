@@ -1,16 +1,26 @@
 //! View-specific renderers.
 
+pub mod config;
 pub mod cronjobs;
 pub mod daemonsets;
 pub mod dashboard;
 pub mod deployments;
 pub mod detail;
+pub mod endpoints;
+pub mod events;
 pub mod extensions;
 pub mod governance;
+pub mod helm;
+pub mod hpas;
+pub mod ingresses;
 pub mod jobs;
+pub mod namespaces;
+pub mod network_policies;
 pub mod nodes;
+pub mod priority_classes;
 pub mod replicasets;
 pub mod replication_controllers;
 pub mod security;
 pub mod services;
 pub mod statefulsets;
+pub mod storage;

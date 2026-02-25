@@ -12,11 +12,13 @@ use std::{collections::BTreeSet, fmt, time::Duration};
 use crate::k8s::{
     client::K8sClient,
     dtos::{
-        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo,
-        CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo,
-        NodeInfo, PodDisruptionBudgetInfo, PodInfo, ReplicaSetInfo, ReplicationControllerInfo,
-        ResourceQuotaInfo, RoleBindingInfo, RoleInfo, ServiceAccountInfo, ServiceInfo,
-        StatefulSetInfo,
+        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
+        CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo, HelmReleaseInfo,
+        HpaInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo, NamespaceInfo,
+        NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo,
+        PriorityClassInfo, PvInfo, PvcInfo, ReplicaSetInfo, ReplicationControllerInfo,
+        ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo, ServiceAccountInfo, ServiceInfo,
+        StatefulSetInfo, StorageClassInfo,
     },
 };
 
@@ -69,6 +71,22 @@ pub struct ClusterSnapshot {
     pub cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
     pub custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
     pub cluster_info: Option<ClusterInfo>,
+    // New fields for previously-placeholder views
+    pub endpoints: Vec<EndpointInfo>,
+    pub ingresses: Vec<IngressInfo>,
+    pub ingress_classes: Vec<IngressClassInfo>,
+    pub network_policies: Vec<NetworkPolicyInfo>,
+    pub config_maps: Vec<ConfigMapInfo>,
+    pub secrets: Vec<SecretInfo>,
+    pub hpas: Vec<HpaInfo>,
+    pub pvcs: Vec<PvcInfo>,
+    pub pvs: Vec<PvInfo>,
+    pub storage_classes: Vec<StorageClassInfo>,
+    pub namespace_list: Vec<NamespaceInfo>,
+    pub events: Vec<K8sEventInfo>,
+    pub priority_classes: Vec<PriorityClassInfo>,
+    pub helm_releases: Vec<HelmReleaseInfo>,
+    pub node_metrics: Vec<NodeMetricsInfo>,
     pub services_count: usize,
     pub namespaces_count: usize,
     pub phase: DataPhase,
@@ -145,6 +163,36 @@ pub trait ClusterDataSource {
     async fn fetch_custom_resource_definitions(&self) -> Result<Vec<CustomResourceDefinitionInfo>>;
     /// Fetches cluster metadata.
     async fn fetch_cluster_info(&self) -> Result<ClusterInfo>;
+    /// Fetches Endpoints.
+    async fn fetch_endpoints(&self, namespace: Option<&str>) -> Result<Vec<EndpointInfo>>;
+    /// Fetches Ingresses.
+    async fn fetch_ingresses(&self, namespace: Option<&str>) -> Result<Vec<IngressInfo>>;
+    /// Fetches IngressClasses.
+    async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>>;
+    /// Fetches NetworkPolicies.
+    async fn fetch_network_policies(&self, namespace: Option<&str>) -> Result<Vec<NetworkPolicyInfo>>;
+    /// Fetches ConfigMaps.
+    async fn fetch_config_maps(&self, namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>>;
+    /// Fetches Secrets.
+    async fn fetch_secrets(&self, namespace: Option<&str>) -> Result<Vec<SecretInfo>>;
+    /// Fetches HPAs.
+    async fn fetch_hpas(&self, namespace: Option<&str>) -> Result<Vec<HpaInfo>>;
+    /// Fetches PVCs.
+    async fn fetch_pvcs(&self, namespace: Option<&str>) -> Result<Vec<PvcInfo>>;
+    /// Fetches PVs.
+    async fn fetch_pvs(&self) -> Result<Vec<PvInfo>>;
+    /// Fetches StorageClasses.
+    async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>>;
+    /// Fetches Namespaces as NamespaceInfo.
+    async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>>;
+    /// Fetches Events.
+    async fn fetch_events(&self, namespace: Option<&str>) -> Result<Vec<K8sEventInfo>>;
+    /// Fetches PriorityClasses.
+    async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>>;
+    /// Fetches Helm releases.
+    async fn fetch_helm_releases(&self, namespace: Option<&str>) -> Result<Vec<HelmReleaseInfo>>;
+    /// Fetches metrics for all nodes (best-effort, returns empty if metrics-server absent).
+    async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>>;
 }
 
 #[async_trait]
@@ -248,19 +296,88 @@ impl ClusterDataSource for K8sClient {
     async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {
         K8sClient::fetch_cluster_info(self).await
     }
+
+    async fn fetch_endpoints(&self, namespace: Option<&str>) -> Result<Vec<EndpointInfo>> {
+        K8sClient::fetch_endpoints(self, namespace).await
+    }
+
+    async fn fetch_ingresses(&self, namespace: Option<&str>) -> Result<Vec<IngressInfo>> {
+        K8sClient::fetch_ingresses(self, namespace).await
+    }
+
+    async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
+        K8sClient::fetch_ingress_classes(self).await
+    }
+
+    async fn fetch_network_policies(&self, namespace: Option<&str>) -> Result<Vec<NetworkPolicyInfo>> {
+        K8sClient::fetch_network_policies(self, namespace).await
+    }
+
+    async fn fetch_config_maps(&self, namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> {
+        K8sClient::fetch_config_maps(self, namespace).await
+    }
+
+    async fn fetch_secrets(&self, namespace: Option<&str>) -> Result<Vec<SecretInfo>> {
+        K8sClient::fetch_secrets(self, namespace).await
+    }
+
+    async fn fetch_hpas(&self, namespace: Option<&str>) -> Result<Vec<HpaInfo>> {
+        K8sClient::fetch_hpas(self, namespace).await
+    }
+
+    async fn fetch_pvcs(&self, namespace: Option<&str>) -> Result<Vec<PvcInfo>> {
+        K8sClient::fetch_pvcs(self, namespace).await
+    }
+
+    async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> {
+        K8sClient::fetch_pvs(self).await
+    }
+
+    async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> {
+        K8sClient::fetch_storage_classes(self).await
+    }
+
+    async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
+        K8sClient::fetch_namespace_list(self).await
+    }
+
+    async fn fetch_events(&self, namespace: Option<&str>) -> Result<Vec<K8sEventInfo>> {
+        K8sClient::fetch_events(self, namespace).await
+    }
+
+    async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
+        K8sClient::fetch_priority_classes(self).await
+    }
+
+    async fn fetch_helm_releases(&self, namespace: Option<&str>) -> Result<Vec<HelmReleaseInfo>> {
+        K8sClient::fetch_helm_releases(self, namespace).await
+    }
+
+    async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> {
+        K8sClient::fetch_all_node_metrics(self).await
+    }
 }
 
 /// Mutable state holder with async refresh operations.
 #[derive(Debug, Clone, Default)]
 pub struct GlobalState {
     snapshot: ClusterSnapshot,
+    /// Cached Arc snapshot — only rebuilt when data changes.
+    arc_snapshot: std::sync::Arc<ClusterSnapshot>,
     pub namespaces: Vec<String>,
 }
 
 impl GlobalState {
-    /// Returns a cloneable immutable snapshot for UI rendering.
-    pub fn snapshot(&self) -> ClusterSnapshot {
-        self.snapshot.clone()
+    /// Returns a cheap Arc-wrapped snapshot for UI rendering.
+    /// No deep clone — just an Arc pointer bump.
+    pub fn snapshot(&self) -> std::sync::Arc<ClusterSnapshot> {
+        self.arc_snapshot.clone()
+    }
+
+    /// Rebuilds the Arc snapshot from the inner mutable snapshot.
+    /// Called after every successful refresh.
+    fn publish_snapshot(&mut self) {
+        self.arc_snapshot = std::sync::Arc::new(self.snapshot.clone());
     }
 
     /// Returns fetched namespaces.
@@ -320,6 +437,21 @@ impl GlobalState {
             cluster_role_bindings_res,
             custom_resource_definitions_res,
             cluster_info_res,
+            endpoints_res,
+            ingresses_res,
+            ingress_classes_res,
+            network_policies_res,
+            config_maps_res,
+            secrets_res,
+            hpas_res,
+            pvcs_res,
+            pvs_res,
+            storage_classes_res,
+            namespace_list_res,
+            events_res,
+            priority_classes_res,
+            helm_releases_res,
+            node_metrics_res,
         ) = tokio::join!(
             Self::fetch_with_timeout("nodes", client.fetch_nodes()),
             Self::fetch_with_timeout("pods", client.fetch_pods(namespace)),
@@ -341,6 +473,21 @@ impl GlobalState {
             Self::fetch_with_timeout("clusterrolebindings", client.fetch_cluster_role_bindings()),
             Self::fetch_with_timeout("crds", client.fetch_custom_resource_definitions()),
             Self::fetch_with_timeout("cluster info", client.fetch_cluster_info()),
+            Self::fetch_with_timeout("endpoints", client.fetch_endpoints(namespace)),
+            Self::fetch_with_timeout("ingresses", client.fetch_ingresses(namespace)),
+            Self::fetch_with_timeout("ingressclasses", client.fetch_ingress_classes()),
+            Self::fetch_with_timeout("networkpolicies", client.fetch_network_policies(namespace)),
+            Self::fetch_with_timeout("configmaps", client.fetch_config_maps(namespace)),
+            Self::fetch_with_timeout("secrets", client.fetch_secrets(namespace)),
+            Self::fetch_with_timeout("hpas", client.fetch_hpas(namespace)),
+            Self::fetch_with_timeout("pvcs", client.fetch_pvcs(namespace)),
+            Self::fetch_with_timeout("pvs", client.fetch_pvs()),
+            Self::fetch_with_timeout("storageclasses", client.fetch_storage_classes()),
+            Self::fetch_with_timeout("namespacelist", client.fetch_namespace_list()),
+            Self::fetch_with_timeout("events", client.fetch_events(namespace)),
+            Self::fetch_with_timeout("priorityclasses", client.fetch_priority_classes()),
+            Self::fetch_with_timeout("helmreleases", client.fetch_helm_releases(namespace)),
+            Self::fetch_with_timeout("nodemetrics", client.fetch_all_node_metrics()),
         );
 
         let mut errors = Vec::new();
@@ -494,6 +641,23 @@ impl GlobalState {
             }
         };
 
+        let endpoints = endpoints_res.unwrap_or_else(|e| { errors.push(format!("endpoints: {e}")); Vec::new() });
+        let ingresses = ingresses_res.unwrap_or_else(|e| { errors.push(format!("ingresses: {e}")); Vec::new() });
+        let ingress_classes = ingress_classes_res.unwrap_or_else(|e| { errors.push(format!("ingressclasses: {e}")); Vec::new() });
+        let network_policies = network_policies_res.unwrap_or_else(|e| { errors.push(format!("networkpolicies: {e}")); Vec::new() });
+        let config_maps = config_maps_res.unwrap_or_else(|e| { errors.push(format!("configmaps: {e}")); Vec::new() });
+        let secrets = secrets_res.unwrap_or_else(|e| { errors.push(format!("secrets: {e}")); Vec::new() });
+        let hpas = hpas_res.unwrap_or_else(|e| { errors.push(format!("hpas: {e}")); Vec::new() });
+        let pvcs = pvcs_res.unwrap_or_else(|e| { errors.push(format!("pvcs: {e}")); Vec::new() });
+        let pvs = pvs_res.unwrap_or_else(|e| { errors.push(format!("pvs: {e}")); Vec::new() });
+        let storage_classes = storage_classes_res.unwrap_or_else(|e| { errors.push(format!("storageclasses: {e}")); Vec::new() });
+        let namespace_list = namespace_list_res.unwrap_or_else(|e| { errors.push(format!("namespacelist: {e}")); Vec::new() });
+        let events = events_res.unwrap_or_else(|e| { errors.push(format!("events: {e}")); Vec::new() });
+        let priority_classes = priority_classes_res.unwrap_or_else(|e| { errors.push(format!("priorityclasses: {e}")); Vec::new() });
+        let helm_releases = helm_releases_res.unwrap_or_else(|e| { errors.push(format!("helmreleases: {e}")); Vec::new() });
+        // Node metrics are best-effort — silently empty if metrics-server is absent
+        let node_metrics = node_metrics_res.unwrap_or_default();
+
         let all_failed = nodes.is_empty()
             && pods.is_empty()
             && services.is_empty()
@@ -521,6 +685,7 @@ impl GlobalState {
             };
             self.snapshot.phase = DataPhase::Error;
             self.snapshot.last_error = Some(message.clone());
+            self.publish_snapshot();
             return Err(anyhow!(message));
         }
 
@@ -552,6 +717,21 @@ impl GlobalState {
         self.snapshot.cluster_role_bindings = cluster_role_bindings;
         self.snapshot.custom_resource_definitions = custom_resource_definitions;
         self.snapshot.cluster_info = cluster_info;
+        self.snapshot.endpoints = endpoints;
+        self.snapshot.ingresses = ingresses;
+        self.snapshot.ingress_classes = ingress_classes;
+        self.snapshot.network_policies = network_policies;
+        self.snapshot.config_maps = config_maps;
+        self.snapshot.secrets = secrets;
+        self.snapshot.hpas = hpas;
+        self.snapshot.pvcs = pvcs;
+        self.snapshot.pvs = pvs;
+        self.snapshot.storage_classes = storage_classes;
+        self.snapshot.namespace_list = namespace_list;
+        self.snapshot.events = events;
+        self.snapshot.priority_classes = priority_classes;
+        self.snapshot.helm_releases = helm_releases;
+        self.snapshot.node_metrics = node_metrics;
         self.snapshot.phase = DataPhase::Ready;
         self.snapshot.last_updated = Some(Utc::now());
         self.snapshot.last_error = if errors.is_empty() {
@@ -559,6 +739,8 @@ impl GlobalState {
         } else {
             Some(errors.join(" | "))
         };
+
+        self.publish_snapshot();
 
         Ok(())
     }
@@ -957,6 +1139,52 @@ mod tests {
                 .clone()
                 .ok_or_else(|| anyhow!("cluster info missing"))
         }
+
+        async fn fetch_endpoints(&self, _namespace: Option<&str>) -> Result<Vec<EndpointInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_ingresses(&self, _namespace: Option<&str>) -> Result<Vec<IngressInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_network_policies(&self, _namespace: Option<&str>) -> Result<Vec<NetworkPolicyInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_config_maps(&self, _namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_secrets(&self, _namespace: Option<&str>) -> Result<Vec<SecretInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_hpas(&self, _namespace: Option<&str>) -> Result<Vec<HpaInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_pvcs(&self, _namespace: Option<&str>) -> Result<Vec<PvcInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_events(&self, _namespace: Option<&str>) -> Result<Vec<K8sEventInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_helm_releases(&self, _namespace: Option<&str>) -> Result<Vec<HelmReleaseInfo>> {
+            Ok(vec![])
+        }
+        async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> {
+            Ok(vec![])
+        }
     }
 
     #[tokio::test]
@@ -1140,6 +1368,7 @@ mod tests {
     async fn refresh_skips_when_already_loading() {
         let mut state = GlobalState::default();
         state.snapshot.phase = DataPhase::Loading;
+        state.publish_snapshot();
         let source = MockDataSource::success().with_delay(100);
 
         state

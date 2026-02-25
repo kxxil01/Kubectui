@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use dashmap::DashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tracing::{info, instrument};
@@ -118,7 +119,7 @@ impl PortForwarderService {
             });
         }
 
-        // Create tunnel via K8s API
+        // Create tunnel via K8s API (validates pod exists and port is exposed)
         let tunnel_info = self
             .k8s_client
             .create_port_forward(&target, &config)
@@ -127,15 +128,54 @@ impl PortForwarderService {
         // Register tunnel
         self.tunnels.insert(tunnel_id.clone(), tunnel_info.clone());
 
+        // Bind local TCP listener
+        let bind_addr = format!("{}:{}", config.bind_address, tunnel_info.local_addr.port());
+        let listener = tokio::net::TcpListener::bind(&bind_addr)
+            .await
+            .map_err(|e| PortForwardError::ConnectionFailed {
+                pod_name: target.pod_name.clone(),
+                retryable: true,
+                message: format!("Failed to bind {bind_addr}: {e}"),
+            })?;
+
         // Spawn background task to maintain tunnel lifecycle
         let _tunnels = Arc::clone(&self.tunnels);
         let id = tunnel_id.clone();
+        let local_addr_clone = tunnel_info.local_addr;
+        let client_for_task = Arc::clone(&self.k8s_client);
+        let pod_name_for_task = target.pod_name.clone();
+        let namespace_for_task = target.namespace.clone();
+        let remote_port_for_task = target.remote_port;
         let task = tokio::spawn(async move {
-            // Simulate tunnel maintenance
-            // In real implementation, this would handle port forwarding stream
-            info!("Tunnel {} maintenance task running", id);
-            // Keep tunnel alive
-            tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
+            // Real port-forward: accept TCP connections and proxy through kube API
+            info!("Tunnel {} accepting connections on {}", id, local_addr_clone);
+            loop {
+                match listener.accept().await {
+                    Ok((stream, _)) => {
+                        let client_clone = Arc::clone(&client_for_task);
+                        let pod_name_clone = pod_name_for_task.clone();
+                        let namespace_clone = namespace_for_task.clone();
+                        let remote_port_clone = remote_port_for_task;
+                        tokio::spawn(async move {
+                            if let Err(e) = proxy_connection(
+                                stream,
+                                client_clone,
+                                &pod_name_clone,
+                                &namespace_clone,
+                                remote_port_clone,
+                            )
+                            .await
+                            {
+                                tracing::warn!("port-forward proxy error: {e}");
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        tracing::warn!("port-forward accept error: {e}");
+                        break;
+                    }
+                }
+            }
         });
 
         // Store the handle
@@ -213,6 +253,40 @@ impl PortForwarderService {
             .get(tunnel_id)
             .map(|entry| entry.value().clone())
     }
+}
+
+/// Proxies a single TCP connection through the kube-rs PortForward API.
+async fn proxy_connection(
+    mut local_stream: tokio::net::TcpStream,
+    client: Arc<crate::k8s::client::K8sClient>,
+    pod_name: &str,
+    namespace: &str,
+    remote_port: u16,
+) -> anyhow::Result<()> {
+    use k8s_openapi::api::core::v1::Pod;
+    use kube::Api;
+
+    let pods: Api<Pod> = Api::namespaced(client.get_client(), namespace);
+    let mut pf = pods.portforward(pod_name, &[remote_port]).await?;
+
+    let mut port_stream = pf
+        .take_stream(remote_port)
+        .ok_or_else(|| anyhow!("no stream for port {remote_port}"))?;
+
+    let (mut local_read, mut local_write) = local_stream.split();
+    let (mut remote_read, mut remote_write) = tokio::io::split(&mut port_stream);
+
+    let client_to_pod = tokio::io::copy(&mut local_read, &mut remote_write);
+    let pod_to_client = tokio::io::copy(&mut remote_read, &mut local_write);
+
+    tokio::select! {
+        r = client_to_pod => { r?; }
+        r = pod_to_client => { r?; }
+    }
+
+    // Gracefully close the port-forward stream
+    remote_write.shutdown().await.ok();
+    Ok(())
 }
 
 #[cfg(test)]

@@ -10,7 +10,13 @@ use crate::{
         client::EventInfo,
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodMetricsInfo},
     },
-    ui::components::{CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction, NamespacePicker, NamespacePickerAction},
+    ui::components::{
+        CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction,
+        NamespacePicker, NamespacePickerAction,
+        port_forward_dialog::PortForwardDialog,
+        probe_panel::ProbePanelState as ProbePanelComponentState,
+        scale_dialog::ScaleDialogState,
+    },
 };
 
 /// Sidebar navigation groups.
@@ -301,9 +307,33 @@ pub enum ResourceRef {
     Service(String, String),
     Deployment(String, String),
     StatefulSet(String, String),
+    DaemonSet(String, String),
+    ReplicaSet(String, String),
+    ReplicationController(String, String),
+    Job(String, String),
+    CronJob(String, String),
     ResourceQuota(String, String),
     LimitRange(String, String),
     PodDisruptionBudget(String, String),
+    Endpoint(String, String),
+    Ingress(String, String),
+    IngressClass(String),
+    NetworkPolicy(String, String),
+    ConfigMap(String, String),
+    Secret(String, String),
+    Hpa(String, String),
+    PriorityClass(String),
+    Pvc(String, String),
+    Pv(String),
+    StorageClass(String),
+    Namespace(String),
+    Event(String, String),
+    ServiceAccount(String, String),
+    Role(String, String),
+    RoleBinding(String, String),
+    ClusterRole(String),
+    ClusterRoleBinding(String),
+    HelmRelease(String, String),
 }
 
 impl ResourceRef {
@@ -315,9 +345,33 @@ impl ResourceRef {
             ResourceRef::Service(_, _) => "Service",
             ResourceRef::Deployment(_, _) => "Deployment",
             ResourceRef::StatefulSet(_, _) => "StatefulSet",
+            ResourceRef::DaemonSet(_, _) => "DaemonSet",
+            ResourceRef::ReplicaSet(_, _) => "ReplicaSet",
+            ResourceRef::ReplicationController(_, _) => "ReplicationController",
+            ResourceRef::Job(_, _) => "Job",
+            ResourceRef::CronJob(_, _) => "CronJob",
             ResourceRef::ResourceQuota(_, _) => "ResourceQuota",
             ResourceRef::LimitRange(_, _) => "LimitRange",
             ResourceRef::PodDisruptionBudget(_, _) => "PodDisruptionBudget",
+            ResourceRef::Endpoint(_, _) => "Endpoints",
+            ResourceRef::Ingress(_, _) => "Ingress",
+            ResourceRef::IngressClass(_) => "IngressClass",
+            ResourceRef::NetworkPolicy(_, _) => "NetworkPolicy",
+            ResourceRef::ConfigMap(_, _) => "ConfigMap",
+            ResourceRef::Secret(_, _) => "Secret",
+            ResourceRef::Hpa(_, _) => "HorizontalPodAutoscaler",
+            ResourceRef::PriorityClass(_) => "PriorityClass",
+            ResourceRef::Pvc(_, _) => "PersistentVolumeClaim",
+            ResourceRef::Pv(_) => "PersistentVolume",
+            ResourceRef::StorageClass(_) => "StorageClass",
+            ResourceRef::Namespace(_) => "Namespace",
+            ResourceRef::Event(_, _) => "Event",
+            ResourceRef::ServiceAccount(_, _) => "ServiceAccount",
+            ResourceRef::Role(_, _) => "Role",
+            ResourceRef::RoleBinding(_, _) => "RoleBinding",
+            ResourceRef::ClusterRole(_) => "ClusterRole",
+            ResourceRef::ClusterRoleBinding(_) => "ClusterRoleBinding",
+            ResourceRef::HelmRelease(_, _) => "HelmRelease",
         }
     }
 
@@ -329,23 +383,71 @@ impl ResourceRef {
             | ResourceRef::Service(name, _)
             | ResourceRef::Deployment(name, _)
             | ResourceRef::StatefulSet(name, _)
+            | ResourceRef::DaemonSet(name, _)
+            | ResourceRef::ReplicaSet(name, _)
+            | ResourceRef::ReplicationController(name, _)
+            | ResourceRef::Job(name, _)
+            | ResourceRef::CronJob(name, _)
             | ResourceRef::ResourceQuota(name, _)
             | ResourceRef::LimitRange(name, _)
-            | ResourceRef::PodDisruptionBudget(name, _) => name,
+            | ResourceRef::PodDisruptionBudget(name, _)
+            | ResourceRef::Endpoint(name, _)
+            | ResourceRef::Ingress(name, _)
+            | ResourceRef::IngressClass(name)
+            | ResourceRef::NetworkPolicy(name, _)
+            | ResourceRef::ConfigMap(name, _)
+            | ResourceRef::Secret(name, _)
+            | ResourceRef::Hpa(name, _)
+            | ResourceRef::PriorityClass(name)
+            | ResourceRef::Pvc(name, _)
+            | ResourceRef::Pv(name)
+            | ResourceRef::StorageClass(name)
+            | ResourceRef::Namespace(name)
+            | ResourceRef::Event(name, _)
+            | ResourceRef::ServiceAccount(name, _)
+            | ResourceRef::Role(name, _)
+            | ResourceRef::RoleBinding(name, _)
+            | ResourceRef::ClusterRole(name)
+            | ResourceRef::ClusterRoleBinding(name) => name,
+            ResourceRef::HelmRelease(name, _) => name,
         }
     }
 
     /// Returns namespace when this is a namespaced resource.
     pub fn namespace(&self) -> Option<&str> {
         match self {
-            ResourceRef::Node(_) => None,
+            ResourceRef::Node(_)
+            | ResourceRef::IngressClass(_)
+            | ResourceRef::PriorityClass(_)
+            | ResourceRef::Pv(_)
+            | ResourceRef::StorageClass(_)
+            | ResourceRef::Namespace(_)
+            | ResourceRef::ClusterRole(_)
+            | ResourceRef::ClusterRoleBinding(_) => None,
             ResourceRef::Pod(_, ns)
             | ResourceRef::Service(_, ns)
             | ResourceRef::Deployment(_, ns)
             | ResourceRef::StatefulSet(_, ns)
+            | ResourceRef::DaemonSet(_, ns)
+            | ResourceRef::ReplicaSet(_, ns)
+            | ResourceRef::ReplicationController(_, ns)
+            | ResourceRef::Job(_, ns)
+            | ResourceRef::CronJob(_, ns)
             | ResourceRef::ResourceQuota(_, ns)
             | ResourceRef::LimitRange(_, ns)
-            | ResourceRef::PodDisruptionBudget(_, ns) => Some(ns),
+            | ResourceRef::PodDisruptionBudget(_, ns)
+            | ResourceRef::Endpoint(_, ns)
+            | ResourceRef::Ingress(_, ns)
+            | ResourceRef::NetworkPolicy(_, ns)
+            | ResourceRef::ConfigMap(_, ns)
+            | ResourceRef::Secret(_, ns)
+            | ResourceRef::Hpa(_, ns)
+            | ResourceRef::Pvc(_, ns)
+            | ResourceRef::Event(_, ns)
+            | ResourceRef::ServiceAccount(_, ns)
+            | ResourceRef::Role(_, ns)
+            | ResourceRef::RoleBinding(_, ns) => Some(ns),
+            ResourceRef::HelmRelease(_, ns) => Some(ns),
         }
     }
 }
@@ -380,6 +482,13 @@ pub struct LogsViewerState {
     pub lines: Vec<String>,
     pub pod_name: String,
     pub pod_namespace: String,
+    pub container_name: String,
+    /// All containers in this pod — populated before logs are fetched.
+    pub containers: Vec<String>,
+    /// When true, show the container picker instead of logs.
+    pub picking_container: bool,
+    /// Cursor index in the container picker list.
+    pub container_cursor: usize,
     pub loading: bool,
     pub error: Option<String>,
 }
@@ -440,6 +549,7 @@ pub struct DetailViewState {
     pub resource: Option<ResourceRef>,
     pub metadata: DetailMetadata,
     pub yaml: Option<String>,
+    pub yaml_scroll: usize,
     pub events: Vec<EventInfo>,
     pub sections: Vec<String>,
     pub pod_metrics: Option<PodMetricsInfo>,
@@ -448,9 +558,9 @@ pub struct DetailViewState {
     pub loading: bool,
     pub error: Option<String>,
     pub logs_viewer: Option<LogsViewerState>,
-    pub port_forward_dialog: Option<PortForwardDialogState>,
-    pub scale_dialog: Option<ScaleDialogInputState>,
-    pub probe_panel: Option<ProbePanelState>,
+    pub port_forward_dialog: Option<PortForwardDialog>,
+    pub scale_dialog: Option<ScaleDialogState>,
+    pub probe_panel: Option<ProbePanelComponentState>,
 }
 
 /// A row in the sidebar — either a group header or a leaf view item.
@@ -553,22 +663,26 @@ pub enum AppAction {
     LogsViewerScrollTop,
     LogsViewerScrollBottom,
     LogsViewerToggleFollow,
+    LogsViewerSelectContainer(String),
+    LogsViewerPickerUp,
+    LogsViewerPickerDown,
     PortForwardOpen,
     PortForwardClose,
-    PortForwardNextField,
-    PortForwardPrevField,
-    PortForwardUpdateLocalPort(String),
-    PortForwardUpdateRemotePort(String),
-    PortForwardBackspace,
+    PortForwardCreate((crate::k8s::portforward::PortForwardTarget, crate::k8s::portforward::PortForwardConfig)),
     ScaleDialogOpen,
     ScaleDialogClose,
     ScaleDialogUpdateInput(char),
     ScaleDialogBackspace,
+    ScaleDialogIncrement,
+    ScaleDialogDecrement,
+    ScaleDialogSubmit,
     ProbePanelOpen,
     ProbePanelClose,
-    ProbeToggleExpand(usize),
+    ProbeToggleExpand,
     ProbeSelectNext,
     ProbeSelectPrev,
+    RolloutRestart,
+    EditYaml,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -655,7 +769,7 @@ impl Default for AppState {
             confirm_quit: false,
             error_message: None,
             detail_view: None,
-            current_namespace: "default".to_string(),
+            current_namespace: "all".to_string(),
             namespace_picker: NamespacePicker::new(vec!["all".to_string(), "default".to_string()]),
             context_picker: ContextPicker::default(),
             command_palette: CommandPalette::default(),
@@ -854,10 +968,8 @@ impl AppState {
         match rows.get(self.sidebar_cursor) {
             Some(SidebarItem::Group(g)) => AppAction::ToggleNavGroup(*g),
             Some(SidebarItem::View(v)) => {
-                self.view = *v;
-                self.selected_idx = 0;
                 self.focus = Focus::Content;
-                AppAction::None
+                AppAction::NavigateTo(*v)
             }
             None => AppAction::None,
         }
@@ -919,7 +1031,20 @@ impl AppState {
 
     pub fn open_port_forward(&mut self) {
         if let Some(detail) = &mut self.detail_view {
-            detail.port_forward_dialog = Some(PortForwardDialogState::default());
+            // Extract pod name/namespace from the current resource
+            let (namespace, pod_name, remote_port) = detail
+                .resource
+                .as_ref()
+                .and_then(|r| match r {
+                    ResourceRef::Pod(name, ns) => Some((ns.clone(), name.clone(), 0u16)),
+                    _ => None,
+                })
+                .unwrap_or_else(|| ("default".to_string(), String::new(), 0));
+            detail.port_forward_dialog = Some(PortForwardDialog::with_target(
+                &namespace,
+                &pod_name,
+                remote_port,
+            ));
         }
     }
 
@@ -931,7 +1056,16 @@ impl AppState {
 
     pub fn open_scale_dialog(&mut self) {
         if let Some(detail) = &mut self.detail_view {
-            detail.scale_dialog = Some(ScaleDialogInputState::default());
+            let (name, namespace, current_replicas) = detail
+                .resource
+                .as_ref()
+                .and_then(|r| match r {
+                    ResourceRef::Deployment(name, ns) => Some((name.clone(), ns.clone(), 1i32)),
+                    ResourceRef::StatefulSet(name, ns) => Some((name.clone(), ns.clone(), 1i32)),
+                    _ => None,
+                })
+                .unwrap_or_else(|| (String::new(), "default".to_string(), 1));
+            detail.scale_dialog = Some(ScaleDialogState::new(name, namespace, current_replicas));
         }
     }
 
@@ -943,7 +1077,19 @@ impl AppState {
 
     pub fn open_probe_panel(&mut self) {
         if let Some(detail) = &mut self.detail_view {
-            detail.probe_panel = Some(ProbePanelState::default());
+            let (pod_name, namespace) = detail
+                .resource
+                .as_ref()
+                .and_then(|r| match r {
+                    ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            detail.probe_panel = Some(ProbePanelComponentState::new(
+                pod_name,
+                namespace,
+                Vec::new(),
+            ));
         }
     }
 
@@ -1026,8 +1172,34 @@ impl AppState {
             ActiveComponent::LogsViewer => {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('k') | KeyCode::Up => AppAction::LogsViewerScrollUp,
-                    KeyCode::Char('j') | KeyCode::Down => AppAction::LogsViewerScrollDown,
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        // If picking container, move cursor up; else scroll logs
+                        let picking = self.detail_view.as_ref()
+                            .and_then(|d| d.logs_viewer.as_ref())
+                            .map(|v| v.picking_container)
+                            .unwrap_or(false);
+                        if picking { AppAction::LogsViewerPickerUp } else { AppAction::LogsViewerScrollUp }
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        let picking = self.detail_view.as_ref()
+                            .and_then(|d| d.logs_viewer.as_ref())
+                            .map(|v| v.picking_container)
+                            .unwrap_or(false);
+                        if picking { AppAction::LogsViewerPickerDown } else { AppAction::LogsViewerScrollDown }
+                    }
+                    KeyCode::Enter => {
+                        // Confirm container selection
+                        let selection = self.detail_view.as_ref()
+                            .and_then(|d| d.logs_viewer.as_ref())
+                            .filter(|v| v.picking_container)
+                            .and_then(|v| v.containers.get(v.container_cursor))
+                            .cloned();
+                        if let Some(name) = selection {
+                            AppAction::LogsViewerSelectContainer(name)
+                        } else {
+                            AppAction::None
+                        }
+                    }
                     KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
                     KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
                     KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
@@ -1037,34 +1209,29 @@ impl AppState {
             ActiveComponent::PortForward => {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Tab => AppAction::PortForwardNextField,
-                    KeyCode::BackTab => AppAction::PortForwardPrevField,
-                    KeyCode::Backspace => AppAction::PortForwardBackspace,
-                    KeyCode::Char(c) if c.is_ascii_digit() => {
-                        let field = self
-                            .detail_view
-                            .as_ref()
-                            .and_then(|d| d.port_forward_dialog.as_ref())
-                            .map(|pf| pf.active_field)
-                            .unwrap_or(PortForwardField::LocalPort);
-
-                        match field {
-                            PortForwardField::LocalPort => {
-                                AppAction::PortForwardUpdateLocalPort(c.to_string())
+                    _ => {
+                        // Delegate all key handling to the PortForwardDialog component
+                        if let Some(detail) = &mut self.detail_view {
+                            if let Some(dialog) = &mut detail.port_forward_dialog {
+                                let pf_action = dialog.handle_key(key);
+                                return match pf_action {
+                                    crate::ui::components::port_forward_dialog::PortForwardAction::Close => AppAction::PortForwardClose,
+                                    crate::ui::components::port_forward_dialog::PortForwardAction::Create(args) => AppAction::PortForwardCreate(args),
+                                    _ => AppAction::None,
+                                };
                             }
-                            PortForwardField::RemotePort => {
-                                AppAction::PortForwardUpdateRemotePort(c.to_string())
-                            }
-                            PortForwardField::TunnelList => AppAction::None,
                         }
+                        AppAction::None
                     }
-                    _ => AppAction::None,
                 };
             }
             ActiveComponent::Scale => {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Enter => AppAction::ScaleDialogSubmit,
                     KeyCode::Backspace => AppAction::ScaleDialogBackspace,
+                    KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up => AppAction::ScaleDialogIncrement,
+                    KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::Down => AppAction::ScaleDialogDecrement,
                     KeyCode::Char(c) if c.is_ascii_digit() => AppAction::ScaleDialogUpdateInput(c),
                     _ => AppAction::None,
                 };
@@ -1073,13 +1240,7 @@ impl AppState {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
                     KeyCode::Char(' ') => {
-                        let idx = self
-                            .detail_view
-                            .as_ref()
-                            .and_then(|d| d.probe_panel.as_ref())
-                            .map(|p| p.selected_idx)
-                            .unwrap_or(0);
-                        AppAction::ProbeToggleExpand(idx)
+                        AppAction::ProbeToggleExpand
                     }
                     KeyCode::Char('j') | KeyCode::Down => AppAction::ProbeSelectNext,
                     KeyCode::Char('k') | KeyCode::Up => AppAction::ProbeSelectPrev,
@@ -1116,11 +1277,91 @@ impl AppState {
                 self.confirm_quit = true;
                 AppAction::None
             }
+            // YAML scroll in detail view (j/k/g/G/PgUp/PgDn)
+            KeyCode::Char('j') | KeyCode::Down
+                if self.detail_view.is_some()
+                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.yaml_scroll = detail.yaml_scroll.saturating_add(1);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if self.detail_view.is_some()
+                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.yaml_scroll = detail.yaml_scroll.saturating_sub(1);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('g')
+                if self.detail_view.is_some()
+                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.yaml_scroll = 0;
+                }
+                AppAction::None
+            }
+            KeyCode::Char('G')
+                if self.detail_view.is_some()
+                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    let total = detail.yaml.as_ref().map(|y| y.lines().count()).unwrap_or(0);
+                    detail.yaml_scroll = total.saturating_sub(1);
+                }
+                AppAction::None
+            }
+            KeyCode::PageDown
+                if self.detail_view.is_some()
+                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.yaml_scroll = detail.yaml_scroll.saturating_add(10);
+                }
+                AppAction::None
+            }
+            KeyCode::PageUp
+                if self.detail_view.is_some()
+                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.yaml_scroll = detail.yaml_scroll.saturating_sub(10);
+                }
+                AppAction::None
+            }
             KeyCode::Char('l') | KeyCode::Char('L') if self.detail_view.is_some() => {
                 AppAction::LogsViewerOpen
             }
             KeyCode::Char('f') if self.detail_view.is_some() => AppAction::PortForwardOpen,
             KeyCode::Char('s') if self.detail_view.is_some() => AppAction::ScaleDialogOpen,
+            KeyCode::Char('p') if self.detail_view.is_some() => AppAction::ProbePanelOpen,
+            KeyCode::Char('R') if self.detail_view.is_some() => {
+                // Only for restartable workload kinds
+                let restartable = self.detail_view.as_ref().and_then(|d| d.resource.as_ref()).map(|r| {
+                    matches!(r,
+                        ResourceRef::Deployment(_, _)
+                        | ResourceRef::StatefulSet(_, _)
+                        | ResourceRef::DaemonSet(_, _)
+                    )
+                }).unwrap_or(false);
+                if restartable { AppAction::RolloutRestart } else { AppAction::None }
+            }
+            KeyCode::Char('e') if self.detail_view.is_some() => {
+                // Only allow editing when YAML is loaded and no sub-panel is open
+                let can_edit = self.detail_view.as_ref().map(|d| {
+                    d.yaml.is_some()
+                        && d.logs_viewer.is_none()
+                        && d.port_forward_dialog.is_none()
+                        && d.scale_dialog.is_none()
+                        && d.probe_panel.is_none()
+                        && !d.loading
+                }).unwrap_or(false);
+                if can_edit { AppAction::EditYaml } else { AppAction::None }
+            }
             KeyCode::Tab => {
                 self.next_view();
                 AppAction::None
@@ -1342,7 +1583,7 @@ mod tests {
     #[test]
     fn test_appstate_namespace_switching() {
         let mut app = AppState::default();
-        assert_eq!(app.get_namespace(), "default");
+        assert_eq!(app.get_namespace(), "all");
 
         app.set_namespace("kube-system".to_string());
         assert_eq!(app.get_namespace(), "kube-system");
@@ -1484,6 +1725,9 @@ mod tests {
         let pod = ResourceRef::Pod("p1".to_string(), "ns1".to_string());
         let statefulset = ResourceRef::StatefulSet("ss1".to_string(), "ns1".to_string());
         let quota = ResourceRef::ResourceQuota("rq1".to_string(), "ns1".to_string());
+        let daemonset = ResourceRef::DaemonSet("ds1".to_string(), "ns1".to_string());
+        let pv = ResourceRef::Pv("pv1".to_string());
+        let cluster_role = ResourceRef::ClusterRole("cr1".to_string());
 
         assert_eq!(node.kind(), "Node");
         assert_eq!(node.name(), "n1");
@@ -1500,5 +1744,22 @@ mod tests {
         assert_eq!(quota.kind(), "ResourceQuota");
         assert_eq!(quota.name(), "rq1");
         assert_eq!(quota.namespace(), Some("ns1"));
+
+        assert_eq!(daemonset.kind(), "DaemonSet");
+        assert_eq!(daemonset.name(), "ds1");
+        assert_eq!(daemonset.namespace(), Some("ns1"));
+
+        assert_eq!(pv.kind(), "PersistentVolume");
+        assert_eq!(pv.name(), "pv1");
+        assert_eq!(pv.namespace(), None);
+
+        assert_eq!(cluster_role.kind(), "ClusterRole");
+        assert_eq!(cluster_role.name(), "cr1");
+        assert_eq!(cluster_role.namespace(), None);
+
+        let helm = ResourceRef::HelmRelease("my-release".to_string(), "default".to_string());
+        assert_eq!(helm.kind(), "HelmRelease");
+        assert_eq!(helm.name(), "my-release");
+        assert_eq!(helm.namespace(), Some("default"));
     }
 }

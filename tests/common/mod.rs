@@ -9,11 +9,13 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use kubectui::{
     k8s::dtos::{
-        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo,
-        CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo,
-        NodeInfo, PodDisruptionBudgetInfo, PodInfo, ReplicaSetInfo, ReplicationControllerInfo,
-        ResourceQuotaInfo, RoleBindingInfo, RoleInfo, ServiceAccountInfo, ServiceInfo,
-        StatefulSetInfo,
+        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
+        CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo, HelmReleaseInfo,
+        HpaInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo,
+        NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo,
+        PriorityClassInfo, PvInfo, PvcInfo, NamespaceInfo, ReplicaSetInfo, ReplicationControllerInfo,
+        ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo, ServiceAccountInfo, ServiceInfo,
+        StatefulSetInfo, StorageClassInfo,
     },
     state::ClusterDataSource,
 };
@@ -38,6 +40,7 @@ pub fn make_service(name: &str, namespace: &str, type_: &str) -> ServiceInfo {
     }
 }
 
+#[allow(dead_code)]
 pub fn make_deployment(name: &str, namespace: &str, ready: &str) -> DeploymentInfo {
     DeploymentInfo {
         name: name.to_string(),
@@ -47,6 +50,7 @@ pub fn make_deployment(name: &str, namespace: &str, ready: &str) -> DeploymentIn
     }
 }
 
+#[allow(dead_code)]
 pub fn make_pod(name: &str, namespace: &str, status: &str) -> PodInfo {
     PodInfo {
         name: name.to_string(),
@@ -57,6 +61,7 @@ pub fn make_pod(name: &str, namespace: &str, status: &str) -> PodInfo {
 }
 
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct MockDataSource {
     pub url: String,
     pub nodes: Vec<NodeInfo>,
@@ -333,4 +338,20 @@ impl ClusterDataSource for MockDataSource {
             pod_count: self.pods.len(),
         })
     }
+
+    async fn fetch_endpoints(&self, _namespace: Option<&str>) -> Result<Vec<EndpointInfo>> { Ok(vec![]) }
+    async fn fetch_ingresses(&self, _namespace: Option<&str>) -> Result<Vec<IngressInfo>> { Ok(vec![]) }
+    async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> { Ok(vec![]) }
+    async fn fetch_network_policies(&self, _namespace: Option<&str>) -> Result<Vec<NetworkPolicyInfo>> { Ok(vec![]) }
+    async fn fetch_config_maps(&self, _namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> { Ok(vec![]) }
+    async fn fetch_secrets(&self, _namespace: Option<&str>) -> Result<Vec<SecretInfo>> { Ok(vec![]) }
+    async fn fetch_hpas(&self, _namespace: Option<&str>) -> Result<Vec<HpaInfo>> { Ok(vec![]) }
+    async fn fetch_pvcs(&self, _namespace: Option<&str>) -> Result<Vec<PvcInfo>> { Ok(vec![]) }
+    async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> { Ok(vec![]) }
+    async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> { Ok(vec![]) }
+    async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> { Ok(vec![]) }
+    async fn fetch_events(&self, _namespace: Option<&str>) -> Result<Vec<K8sEventInfo>> { Ok(vec![]) }
+    async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> { Ok(vec![]) }
+    async fn fetch_helm_releases(&self, _namespace: Option<&str>) -> Result<Vec<HelmReleaseInfo>> { Ok(vec![]) }
+    async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> { Ok(vec![]) }
 }

@@ -375,7 +375,6 @@ mod log_streaming_tests {
 #[cfg(test)]
 mod coordinator_channel_tests {
     use kubectui::coordinator::UpdateMessage;
-    use kubectui::k8s::probes::ContainerProbes;
     use tokio::sync::mpsc;
 
     #[tokio::test]

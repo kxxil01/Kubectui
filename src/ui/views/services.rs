@@ -90,7 +90,8 @@ pub fn render_services(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = snapshot.services.len();
+        active_block(&format!(" 🔌 Services ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(

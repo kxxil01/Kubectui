@@ -72,20 +72,48 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             )
         }
         AppView::HelmCharts
-        | AppView::HelmReleases
-        | AppView::Endpoints
-        | AppView::Ingresses
-        | AppView::IngressClasses
-        | AppView::NetworkPolicies
-        | AppView::ConfigMaps
-        | AppView::Secrets
-        | AppView::HPAs
-        | AppView::PriorityClasses
-        | AppView::PersistentVolumeClaims
-        | AppView::PersistentVolumes
-        | AppView::StorageClasses
-        | AppView::Namespaces
-        | AppView::Events => render_placeholder(frame, content, app.view().label()),
+        | AppView::HelmReleases => views::helm::render_helm_releases(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::Endpoints => views::endpoints::render_endpoints(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::Ingresses => views::ingresses::render_ingresses(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::IngressClasses => views::ingresses::render_ingress_classes(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::NetworkPolicies => views::network_policies::render_network_policies(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::ConfigMaps => views::config::render_config_maps(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::Secrets => views::config::render_secrets(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::HPAs => views::hpas::render_hpas(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::PriorityClasses => views::priority_classes::render_priority_classes(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::PersistentVolumeClaims => views::storage::render_pvcs(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::PersistentVolumes => views::storage::render_pvs(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::StorageClasses => views::storage::render_storage_classes(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::Namespaces => views::namespaces::render_namespaces(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::Events => views::events::render_events(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
         AppView::Services => views::services::render_services(
             frame,
             content,
@@ -285,37 +313,6 @@ fn render_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
     );
 }
 
-fn render_placeholder(frame: &mut Frame, area: ratatui::layout::Rect, label: &str) {
-    use ratatui::{
-        style::Modifier,
-        text::Line,
-        widgets::{Block, BorderType, Borders, Paragraph},
-    };
-    let theme = default_theme();
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
-        .style(ratatui::style::Style::default().bg(theme.bg));
-    let text = Paragraph::new(vec![
-        Line::from(""),
-        Line::from(vec![
-            ratatui::text::Span::styled(
-                format!("  {label}"),
-                ratatui::style::Style::default()
-                    .fg(theme.fg_dim)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(vec![ratatui::text::Span::styled(
-            "  Coming soon — not yet implemented",
-            ratatui::style::Style::default().fg(theme.fg_dim),
-        )]),
-    ])
-    .block(block);
-    frame.render_widget(text, area);
-}
-
 fn render_pods_widget(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
@@ -342,7 +339,7 @@ fn render_pods_widget(
 
     if filtered.is_empty() {
         let msg = if cluster.pods.is_empty() {
-            "  No pods available"
+            "  No pods available  (try pressing ~ to switch namespace, or select 'all')"
         } else {
             "  No pods match the search query"
         };
@@ -430,7 +427,8 @@ fn render_pods_widget(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = cluster.pods.len();
+        active_block(&format!(" 🐳 Pods ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(

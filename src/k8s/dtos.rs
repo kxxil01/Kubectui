@@ -485,3 +485,173 @@ mod tests {
         assert!(NodeMetricsInfo::from_json("worker-1".to_string(), &payload).is_none());
     }
 }
+
+/// Lightweight Endpoint view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct EndpointInfo {
+    pub name: String,
+    pub namespace: String,
+    pub addresses: Vec<String>,
+    pub ports: Vec<String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight Ingress view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IngressInfo {
+    pub name: String,
+    pub namespace: String,
+    pub class: Option<String>,
+    pub hosts: Vec<String>,
+    pub address: Option<String>,
+    pub ports: Vec<String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight ConfigMap view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ConfigMapInfo {
+    pub name: String,
+    pub namespace: String,
+    pub data_count: usize,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight Secret view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct SecretInfo {
+    pub name: String,
+    pub namespace: String,
+    pub type_: String,
+    pub data_count: usize,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight HorizontalPodAutoscaler view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HpaInfo {
+    pub name: String,
+    pub namespace: String,
+    pub reference: String,
+    pub min_replicas: Option<i32>,
+    pub max_replicas: i32,
+    pub current_replicas: i32,
+    pub desired_replicas: i32,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight PersistentVolumeClaim view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PvcInfo {
+    pub name: String,
+    pub namespace: String,
+    pub status: String,
+    pub volume: Option<String>,
+    pub capacity: Option<String>,
+    pub access_modes: Vec<String>,
+    pub storage_class: Option<String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight PersistentVolume view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PvInfo {
+    pub name: String,
+    pub capacity: Option<String>,
+    pub access_modes: Vec<String>,
+    pub reclaim_policy: String,
+    pub status: String,
+    pub claim: Option<String>,
+    pub storage_class: Option<String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight StorageClass view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StorageClassInfo {
+    pub name: String,
+    pub provisioner: String,
+    pub reclaim_policy: Option<String>,
+    pub volume_binding_mode: Option<String>,
+    pub allow_volume_expansion: bool,
+    pub is_default: bool,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight Namespace view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NamespaceInfo {
+    pub name: String,
+    pub status: String,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight Event view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct K8sEventInfo {
+    pub name: String,
+    pub namespace: String,
+    pub reason: String,
+    pub message: String,
+    pub type_: String,
+    pub count: i32,
+    pub involved_object: String,
+    pub last_seen: Option<DateTime<Utc>>,
+    pub age: Option<Duration>,
+}
+
+/// Lightweight NetworkPolicy view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct NetworkPolicyInfo {
+    pub name: String,
+    pub namespace: String,
+    pub pod_selector: String,
+    pub ingress_rules: usize,
+    pub egress_rules: usize,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight IngressClass view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct IngressClassInfo {
+    pub name: String,
+    pub controller: String,
+    pub is_default: bool,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Lightweight PriorityClass view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct PriorityClassInfo {
+    pub name: String,
+    pub value: i32,
+    pub global_default: bool,
+    pub description: String,
+    pub age: Option<Duration>,
+    pub created_at: Option<DateTime<Utc>>,
+}
+
+/// Helm release info decoded from Kubernetes Secrets (owner=helm).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HelmReleaseInfo {
+    pub name: String,
+    pub namespace: String,
+    pub chart: String,
+    pub chart_version: String,
+    pub app_version: String,
+    pub status: String,
+    pub revision: i32,
+    pub updated: Option<DateTime<Utc>>,
+    pub age: Option<Duration>,
+}

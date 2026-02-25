@@ -93,7 +93,8 @@ pub fn render_statefulsets(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = cluster.statefulsets.len();
+        active_block(&format!(" 🗄  StatefulSets ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(

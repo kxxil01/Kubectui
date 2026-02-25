@@ -131,7 +131,8 @@ pub fn render_nodes(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = snapshot.nodes.len();
+        active_block(&format!(" 🖥  Nodes ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(rows, widths)

@@ -71,7 +71,7 @@ pub fn render_cluster_role_bindings(
 
     let mut table_state = TableState::default().with_selected(Some(selected));
     let title = format!(" 🔗 ClusterRoleBindings ({total}) ");
-    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
+    let block = if query.is_empty() { active_block(&title) } else { let all = cluster.cluster_role_bindings.len(); active_block(&format!(" 🔗 ClusterRoleBindings ({total} of {all}) [/{query}]")) };
 
     let table = Table::new(rows, [Constraint::Min(30), Constraint::Length(38), Constraint::Length(9), Constraint::Length(9)])
         .header(header).block(block)

@@ -108,7 +108,8 @@ pub fn render_cronjobs(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = cluster.cronjobs.len();
+        active_block(&format!(" 🕐 CronJobs ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(

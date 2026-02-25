@@ -59,7 +59,7 @@ pub fn render_limit_ranges(
 
     let mut table_state = TableState::default().with_selected(Some(selected));
     let title = format!(" ⚖️  LimitRanges ({total}) ");
-    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
+    let block = if query.is_empty() { active_block(&title) } else { let all = cluster.limit_ranges.len(); active_block(&format!(" ⚖️  LimitRanges ({total} of {all}) [/{query}]")) };
 
     let table = Table::new(rows, [Constraint::Min(28), Constraint::Length(18), Constraint::Length(8), Constraint::Min(24), Constraint::Length(9)])
         .header(header).block(block)

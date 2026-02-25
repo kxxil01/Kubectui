@@ -103,7 +103,8 @@ pub fn render_deployments(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = snapshot.deployments.len();
+        active_block(&format!(" 🚀 Deployments ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(

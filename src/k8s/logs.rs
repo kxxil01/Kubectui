@@ -32,6 +32,7 @@ impl LogsClient {
         &self,
         pod_ref: &PodRef,
         tail_lines: Option<i64>,
+        container: Option<&str>,
     ) -> anyhow::Result<Vec<String>> {
         use kube::api::LogParams;
 
@@ -39,6 +40,7 @@ impl LogsClient {
         let params = LogParams {
             tail_lines,
             timestamps: false,
+            container: container.map(str::to_string),
             ..Default::default()
         };
         let raw = pods
@@ -49,6 +51,7 @@ impl LogsClient {
         Ok(raw.lines().map(str::to_string).collect())
     }
 
+    #[allow(dead_code)]
     async fn verify_pod_exists(&self, pod_ref: &PodRef) -> anyhow::Result<()> {
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &pod_ref.namespace);
         pods.get(&pod_ref.name).await.context("Pod not found")?;
@@ -90,7 +93,7 @@ mod tests {
         let pod_ref = PodRef::new("missing-pod".to_string(), "default".to_string());
 
         let err = logs_client
-            .tail_logs(&pod_ref, Some(10))
+            .tail_logs(&pod_ref, Some(10), None)
             .await
             .expect_err("tail_logs should fail when cluster is unreachable");
 

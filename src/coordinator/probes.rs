@@ -108,8 +108,6 @@ fn probes_equal(
     a: &crate::k8s::probes::ContainerProbes,
     b: &crate::k8s::probes::ContainerProbes,
 ) -> bool {
-    
-
     match (&a.liveness, &b.liveness) {
         (None, None) => {}
         (Some(l1), Some(l2)) => {
@@ -239,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_probes_equal_different_timing() {
-        let mut probe1 = ProbeConfig {
+        let probe1 = ProbeConfig {
             probe_type: ProbeType::Liveness,
             handler: ProbeHandler::Tcp { port: 8080 },
             initial_delay_seconds: 5,

@@ -2,7 +2,7 @@
 
 use crate::k8s::client::K8sClient;
 use anyhow::{Context, Result, anyhow};
-use k8s_openapi::api::apps::v1::Deployment;
+use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, StatefulSet};
 use kube::{Api, api::Patch, api::PatchParams};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -110,6 +110,50 @@ impl K8sClient {
                     name, namespace
                 )
             })?;
+        Ok(())
+    }
+
+    /// Triggers a rolling restart by patching the pod template annotation
+    /// `kubectl.kubernetes.io/restartedAt` with the current UTC timestamp.
+    /// Works for Deployments, StatefulSets, and DaemonSets.
+    pub async fn rollout_restart(&self, kind: &str, name: &str, namespace: &str) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        let patch = Patch::Merge(json!({
+            "spec": {
+                "template": {
+                    "metadata": {
+                        "annotations": {
+                            "kubectl.kubernetes.io/restartedAt": now
+                        }
+                    }
+                }
+            }
+        }));
+        let pp = PatchParams::apply("kubectui");
+        let client = self.get_client();
+        match kind.to_lowercase().as_str() {
+            "deployment" => {
+                let api: Api<Deployment> = Api::namespaced(client, namespace);
+                api.patch(name, &pp, &patch)
+                    .await
+                    .with_context(|| format!("failed to restart deployment '{name}' in '{namespace}'"))?;
+            }
+            "statefulset" => {
+                let api: Api<StatefulSet> = Api::namespaced(client, namespace);
+                api.patch(name, &pp, &patch)
+                    .await
+                    .with_context(|| format!("failed to restart statefulset '{name}' in '{namespace}'"))?;
+            }
+            "daemonset" => {
+                let api: Api<DaemonSet> = Api::namespaced(client, namespace);
+                api.patch(name, &pp, &patch)
+                    .await
+                    .with_context(|| format!("failed to restart daemonset '{name}' in '{namespace}'"))?;
+            }
+            other => {
+                return Err(anyhow::anyhow!("rollout restart not supported for kind '{other}'"));
+            }
+        }
         Ok(())
     }
 }

@@ -97,7 +97,7 @@ pub fn render_service_accounts(
 
     let mut table_state = TableState::default().with_selected(Some(selected));
     let title = format!(" 🔑 ServiceAccounts ({total}) ");
-    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
+    let block = if query.is_empty() { active_block(&title) } else { let all = cluster.service_accounts.len(); active_block(&format!(" 🔑 ServiceAccounts ({total} of {all}) [/{query}]")) };
 
     let table = Table::new(
         rows,

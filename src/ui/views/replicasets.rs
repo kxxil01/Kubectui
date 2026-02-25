@@ -94,7 +94,8 @@ pub fn render_replicasets(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = cluster.replicasets.len();
+        active_block(&format!(" Replica Sets ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(

@@ -65,7 +65,7 @@ pub fn render_cluster_roles(
 
     let mut table_state = TableState::default().with_selected(Some(selected));
     let title = format!(" 🛡️  ClusterRoles ({total}) ");
-    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
+    let block = if query.is_empty() { active_block(&title) } else { let all = cluster.cluster_roles.len(); active_block(&format!(" 🛡️  ClusterRoles ({total} of {all}) [/{query}]")) };
 
     let table = Table::new(rows, [Constraint::Min(36), Constraint::Length(8), Constraint::Length(9)])
         .header(header).block(block)

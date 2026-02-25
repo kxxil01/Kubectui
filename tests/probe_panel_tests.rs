@@ -1,6 +1,6 @@
 //! Integration tests for the Probe Panel component.
 
-use kubectui::k8s::probes::{ContainerProbes, ProbeConfig, ProbeHandler, ProbeStatus, ProbeType};
+use kubectui::k8s::probes::{ContainerProbes, ProbeConfig, ProbeHandler, ProbeType};
 use kubectui::ui::components::probe_panel::ProbePanelState;
 
 /// Test container navigation with up/down keys.

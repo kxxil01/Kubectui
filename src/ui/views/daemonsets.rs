@@ -93,7 +93,8 @@ pub fn render_daemonsets(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = cluster.daemonsets.len();
+        active_block(&format!(" 👾 DaemonSets ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(

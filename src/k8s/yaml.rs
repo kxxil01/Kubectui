@@ -3,7 +3,7 @@
 use anyhow::{Context, Result, anyhow};
 use kube::{
     Api, Client,
-    api::{ApiResource, DynamicObject, GroupVersionKind},
+    api::{ApiResource, DynamicObject, GroupVersionKind, Patch, PatchParams},
     error::ErrorResponse,
 };
 
@@ -61,6 +61,41 @@ pub async fn get_resource_yaml(
     Ok(truncate_yaml(rendered))
 }
 
+/// Applies edited YAML back to the cluster using server-side apply.
+///
+/// The YAML must contain `kind`, `metadata.name`, and (for namespaced resources)
+/// `metadata.namespace`. Returns `Ok(())` on success or a descriptive error.
+pub async fn apply_resource_yaml(
+    client: &Client,
+    yaml_str: &str,
+    kind: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> Result<()> {
+    let (api_resource, namespaced) = api_resource_for_kind(kind)
+        .with_context(|| format!("unsupported resource kind '{kind}'"))?;
+
+    // Parse the YAML into a DynamicObject so we can patch it
+    let obj: DynamicObject =
+        serde_yaml::from_str(yaml_str).context("invalid YAML: failed to parse")?;
+
+    let api: Api<DynamicObject> = if namespaced {
+        match namespace {
+            Some(ns) => Api::namespaced_with(client.clone(), ns, &api_resource),
+            None => return Err(anyhow!("resource kind '{kind}' requires a namespace")),
+        }
+    } else {
+        Api::all_with(client.clone(), &api_resource)
+    };
+
+    let params = PatchParams::apply("kubectui").force();
+    api.patch(name, &params, &Patch::Apply(&obj))
+        .await
+        .with_context(|| format!("failed to apply {kind}/{name}"))?;
+
+    Ok(())
+}
+
 /// Truncates YAML payload when it exceeds [`MAX_YAML_BYTES`].
 pub fn truncate_yaml(yaml: String) -> String {
     if yaml.len() <= MAX_YAML_BYTES {
@@ -83,6 +118,7 @@ fn api_resource_for_kind(kind: &str) -> Result<(ApiResource, bool)> {
     let kind = kind.to_ascii_lowercase();
 
     match kind.as_str() {
+        // ── Core v1 ──────────────────────────────────────────────────────────
         "pod" | "pods" => Ok((
             ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "Pod")),
             true,
@@ -91,13 +127,45 @@ fn api_resource_for_kind(kind: &str) -> Result<(ApiResource, bool)> {
             ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "Service")),
             true,
         )),
-        "deployment" | "deployments" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("apps", "v1", "Deployment")),
-            true,
-        )),
         "node" | "nodes" => Ok((
             ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "Node")),
             false,
+        )),
+        "namespace" | "namespaces" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "Namespace")),
+            false,
+        )),
+        "configmap" | "configmaps" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "ConfigMap")),
+            true,
+        )),
+        "secret" | "secrets" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "Secret")),
+            true,
+        )),
+        "persistentvolumeclaim" | "persistentvolumeclaims" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "PersistentVolumeClaim")),
+            true,
+        )),
+        "persistentvolume" | "persistentvolumes" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "PersistentVolume")),
+            false,
+        )),
+        "serviceaccount" | "serviceaccounts" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "ServiceAccount")),
+            true,
+        )),
+        "endpoints" | "endpoint" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "Endpoints")),
+            true,
+        )),
+        "event" | "events" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "Event")),
+            true,
+        )),
+        "replicationcontroller" | "replicationcontrollers" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "ReplicationController")),
+            true,
         )),
         "resourcequota" | "resourcequotas" => Ok((
             ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "ResourceQuota")),
@@ -107,12 +175,80 @@ fn api_resource_for_kind(kind: &str) -> Result<(ApiResource, bool)> {
             ApiResource::from_gvk(&GroupVersionKind::gvk("", "v1", "LimitRange")),
             true,
         )),
+        // ── apps/v1 ──────────────────────────────────────────────────────────
+        "deployment" | "deployments" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("apps", "v1", "Deployment")),
+            true,
+        )),
+        "statefulset" | "statefulsets" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("apps", "v1", "StatefulSet")),
+            true,
+        )),
+        "daemonset" | "daemonsets" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("apps", "v1", "DaemonSet")),
+            true,
+        )),
+        "replicaset" | "replicasets" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("apps", "v1", "ReplicaSet")),
+            true,
+        )),
+        // ── batch/v1 ─────────────────────────────────────────────────────────
+        "job" | "jobs" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("batch", "v1", "Job")),
+            true,
+        )),
+        "cronjob" | "cronjobs" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("batch", "v1", "CronJob")),
+            true,
+        )),
+        // ── networking.k8s.io/v1 ─────────────────────────────────────────────
+        "ingress" | "ingresses" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("networking.k8s.io", "v1", "Ingress")),
+            true,
+        )),
+        "ingressclass" | "ingressclasses" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("networking.k8s.io", "v1", "IngressClass")),
+            false,
+        )),
+        "networkpolicy" | "networkpolicies" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("networking.k8s.io", "v1", "NetworkPolicy")),
+            true,
+        )),
+        // ── autoscaling/v2 ───────────────────────────────────────────────────
+        "horizontalpodautoscaler" | "horizontalpodautoscalers" | "hpa" | "hpas" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("autoscaling", "v2", "HorizontalPodAutoscaler")),
+            true,
+        )),
+        // ── policy/v1 ────────────────────────────────────────────────────────
         "poddisruptionbudget" | "poddisruptionbudgets" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk(
-                "policy",
-                "v1",
-                "PodDisruptionBudget",
-            )),
+            ApiResource::from_gvk(&GroupVersionKind::gvk("policy", "v1", "PodDisruptionBudget")),
+            true,
+        )),
+        // ── scheduling.k8s.io/v1 ─────────────────────────────────────────────
+        "priorityclass" | "priorityclasses" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("scheduling.k8s.io", "v1", "PriorityClass")),
+            false,
+        )),
+        // ── storage.k8s.io/v1 ────────────────────────────────────────────────
+        "storageclass" | "storageclasses" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("storage.k8s.io", "v1", "StorageClass")),
+            false,
+        )),
+        // ── rbac.authorization.k8s.io/v1 ─────────────────────────────────────
+        "clusterrole" | "clusterroles" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "ClusterRole")),
+            false,
+        )),
+        "clusterrolebinding" | "clusterrolebindings" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "ClusterRoleBinding")),
+            false,
+        )),
+        "role" | "roles" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "Role")),
+            true,
+        )),
+        "rolebinding" | "rolebindings" => Ok((
+            ApiResource::from_gvk(&GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "RoleBinding")),
             true,
         )),
         _ => Err(anyhow!("unsupported kind: {kind}")),

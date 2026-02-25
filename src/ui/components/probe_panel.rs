@@ -44,6 +44,11 @@ impl ProbePanelState {
         }
     }
 
+    /// Update probe data from coordinator background polling.
+    pub fn update_probes(&mut self, probes: Vec<(String, ContainerProbes)>) {
+        self.container_probes = probes;
+    }
+
     /// Handle navigation: move to next container.
     pub fn select_next(&mut self) {
         if !self.container_probes.is_empty() {

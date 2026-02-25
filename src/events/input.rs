@@ -156,6 +156,29 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             }
             false
         }
+        AppAction::LogsViewerPickerUp => {
+            if let Some(detail) = &mut app_state.detail_view
+                && let Some(logs) = &mut detail.logs_viewer
+                && logs.picking_container
+            {
+                logs.container_cursor = logs.container_cursor.saturating_sub(1);
+                return true;
+            }
+            false
+        }
+        AppAction::LogsViewerPickerDown => {
+            if let Some(detail) = &mut app_state.detail_view
+                && let Some(logs) = &mut detail.logs_viewer
+                && logs.picking_container
+            {
+                let max = logs.containers.len().saturating_sub(1);
+                logs.container_cursor = (logs.container_cursor + 1).min(max);
+                return true;
+            }
+            false
+        }
+        // LogsViewerSelectContainer is handled in main.rs (needs async log fetch)
+        AppAction::LogsViewerSelectContainer(_) => true,
         AppAction::PortForwardOpen => {
             app_state.open_port_forward();
             true
@@ -164,78 +187,9 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.close_port_forward();
             true
         }
-        AppAction::PortForwardNextField => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(dialog) = &mut detail.port_forward_dialog
-            {
-                dialog.active_field = match dialog.active_field {
-                    crate::app::PortForwardField::LocalPort => {
-                        crate::app::PortForwardField::RemotePort
-                    }
-                    crate::app::PortForwardField::RemotePort => {
-                        crate::app::PortForwardField::TunnelList
-                    }
-                    crate::app::PortForwardField::TunnelList => {
-                        crate::app::PortForwardField::LocalPort
-                    }
-                };
-                return true;
-            }
-            false
-        }
-        AppAction::PortForwardPrevField => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(dialog) = &mut detail.port_forward_dialog
-            {
-                dialog.active_field = match dialog.active_field {
-                    crate::app::PortForwardField::LocalPort => {
-                        crate::app::PortForwardField::TunnelList
-                    }
-                    crate::app::PortForwardField::RemotePort => {
-                        crate::app::PortForwardField::LocalPort
-                    }
-                    crate::app::PortForwardField::TunnelList => {
-                        crate::app::PortForwardField::RemotePort
-                    }
-                };
-                return true;
-            }
-            false
-        }
-        AppAction::PortForwardUpdateLocalPort(text) => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(dialog) = &mut detail.port_forward_dialog
-            {
-                dialog.local_port.push_str(&text);
-                return true;
-            }
-            false
-        }
-        AppAction::PortForwardUpdateRemotePort(text) => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(dialog) = &mut detail.port_forward_dialog
-            {
-                dialog.remote_port.push_str(&text);
-                return true;
-            }
-            false
-        }
-        AppAction::PortForwardBackspace => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(dialog) = &mut detail.port_forward_dialog
-            {
-                match dialog.active_field {
-                    crate::app::PortForwardField::LocalPort => {
-                        dialog.local_port.pop();
-                    }
-                    crate::app::PortForwardField::RemotePort => {
-                        dialog.remote_port.pop();
-                    }
-                    crate::app::PortForwardField::TunnelList => {}
-                }
-                return true;
-            }
-            false
+        AppAction::PortForwardCreate(_) => {
+            // Handled in main.rs event loop
+            true
         }
         AppAction::ScaleDialogOpen => {
             app_state.open_scale_dialog();
@@ -249,8 +203,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(scale) = &mut detail.scale_dialog
             {
-                scale.replica_input.push(c);
-                scale.target_replicas = scale.replica_input.parse::<i32>().unwrap_or(0);
+                scale.handle_action(crate::ui::components::scale_dialog::ScaleAction::AddChar(c));
                 return true;
             }
             false
@@ -259,11 +212,40 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(scale) = &mut detail.scale_dialog
             {
-                scale.replica_input.pop();
-                scale.target_replicas = scale.replica_input.parse::<i32>().unwrap_or(0);
+                scale.handle_action(crate::ui::components::scale_dialog::ScaleAction::DeleteChar);
                 return true;
             }
             false
+        }
+        AppAction::ScaleDialogIncrement => {
+            if let Some(detail) = &mut app_state.detail_view
+                && let Some(scale) = &mut detail.scale_dialog
+            {
+                scale.handle_action(crate::ui::components::scale_dialog::ScaleAction::Increment);
+                return true;
+            }
+            false
+        }
+        AppAction::ScaleDialogDecrement => {
+            if let Some(detail) = &mut app_state.detail_view
+                && let Some(scale) = &mut detail.scale_dialog
+            {
+                scale.handle_action(crate::ui::components::scale_dialog::ScaleAction::Decrement);
+                return true;
+            }
+            false
+        }
+        AppAction::ScaleDialogSubmit => {
+            // Handled in main.rs event loop (needs async K8s call)
+            true
+        }
+        AppAction::RolloutRestart => {
+            // Handled in main.rs event loop (needs async K8s call)
+            true
+        }
+        AppAction::EditYaml => {
+            // Handled in main.rs event loop (needs terminal handoff + async apply)
+            true
         }
         AppAction::ProbePanelOpen => {
             app_state.open_probe_panel();
@@ -273,13 +255,11 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.close_probe_panel();
             true
         }
-        AppAction::ProbeToggleExpand(index) => {
+        AppAction::ProbeToggleExpand => {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(panel) = &mut detail.probe_panel
             {
-                if index < panel.expanded.len() {
-                    panel.expanded[index] = !panel.expanded[index];
-                }
+                panel.toggle_expand();
                 return true;
             }
             false
@@ -288,9 +268,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(panel) = &mut detail.probe_panel
             {
-                if !panel.probes.is_empty() {
-                    panel.selected_idx = (panel.selected_idx + 1) % panel.probes.len();
-                }
+                panel.select_next();
                 return true;
             }
             false
@@ -299,9 +277,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(detail) = &mut app_state.detail_view
                 && let Some(panel) = &mut detail.probe_panel
             {
-                if !panel.probes.is_empty() {
-                    panel.selected_idx = panel.selected_idx.saturating_sub(1);
-                }
+                panel.select_prev();
                 return true;
             }
             false

@@ -65,7 +65,7 @@ pub fn render_pdbs(
 
     let mut table_state = TableState::default().with_selected(Some(selected));
     let title = format!(" 🛡️  PodDisruptionBudgets ({total}) ");
-    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
+    let block = if query.is_empty() { active_block(&title) } else { let all = cluster.pod_disruption_budgets.len(); active_block(&format!(" 🛡️  PodDisruptionBudgets ({total} of {all}) [/{query}]")) };
 
     let table = Table::new(rows, [Constraint::Min(28), Constraint::Length(18), Constraint::Length(12), Constraint::Length(10), Constraint::Length(12), Constraint::Length(9)])
         .header(header).block(block)

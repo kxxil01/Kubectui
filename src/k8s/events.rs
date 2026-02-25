@@ -20,6 +20,41 @@ pub struct EventInfo {
     pub count: i32,
 }
 
+/// Fetches events for any resource kind in `namespace` by `involvedObject.kind` and `involvedObject.name`.
+///
+/// Degrades gracefully on RBAC-forbidden access, returning a synthetic info row.
+pub async fn fetch_resource_events(
+    client: &Client,
+    kind: &str,
+    name: &str,
+    namespace: &str,
+) -> Result<Vec<EventInfo>> {
+    let events_api: Api<Event> = Api::namespaced(client.clone(), namespace);
+    let selector = format!("involvedObject.kind={kind},involvedObject.name={name}");
+    let params = ListParams::default().fields(&selector);
+
+    let list = match events_api.list(&params).await {
+        Ok(items) => items,
+        Err(err) if is_forbidden_error(&err) => {
+            return Ok(vec![EventInfo {
+                event_type: "Info".to_string(),
+                reason: "RBAC".to_string(),
+                message: "Events unavailable (RBAC)".to_string(),
+                first_timestamp: Utc::now(),
+                last_timestamp: Utc::now(),
+                count: 1,
+            }]);
+        }
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!("failed fetching events for {kind} '{name}' in namespace '{namespace}'")
+            });
+        }
+    };
+
+    Ok(map_events(list))
+}
+
 /// Fetches Pod-scoped events in `namespace` for Pod `name`.
 ///
 /// This helper never fails for RBAC-forbidden access. Instead, it returns a

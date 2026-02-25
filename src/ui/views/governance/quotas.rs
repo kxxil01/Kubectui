@@ -61,7 +61,7 @@ pub fn render_resource_quotas(
 
     let mut table_state = TableState::default().with_selected(Some(selected));
     let title = format!(" 📊 ResourceQuotas ({total}) ");
-    let block = if query.is_empty() { active_block(&title) } else { active_block(&format!("{title} [/{query}]")) };
+    let block = if query.is_empty() { active_block(&title) } else { let all = cluster.resource_quotas.len(); active_block(&format!(" 📊 ResourceQuotas ({total} of {all}) [/{query}]")) };
 
     let table = Table::new(rows, [Constraint::Min(28), Constraint::Length(18), Constraint::Length(10), Constraint::Length(10), Constraint::Length(9)])
         .header(header).block(block)

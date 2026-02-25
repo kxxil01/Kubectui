@@ -97,7 +97,8 @@ pub fn render_replication_controllers(
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        active_block(&format!("{title} [/{query}]"))
+        let all = cluster.replication_controllers.len();
+        active_block(&format!(" Replication Controllers ({total} of {all}) [/{query}]"))
     };
 
     let table = Table::new(
