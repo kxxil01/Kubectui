@@ -111,8 +111,12 @@ pub enum AppView {
 
 impl AppView {
     const ORDER: [AppView; 35] = [
+        // Overview
         AppView::Dashboard,
         AppView::Nodes,
+        AppView::Namespaces,
+        AppView::Events,
+        // Workloads
         AppView::Pods,
         AppView::Deployments,
         AppView::StatefulSets,
@@ -121,11 +125,13 @@ impl AppView {
         AppView::ReplicationControllers,
         AppView::Jobs,
         AppView::CronJobs,
+        // Network
         AppView::Services,
         AppView::Endpoints,
         AppView::Ingresses,
         AppView::IngressClasses,
         AppView::NetworkPolicies,
+        // Config
         AppView::ConfigMaps,
         AppView::Secrets,
         AppView::ResourceQuotas,
@@ -133,18 +139,20 @@ impl AppView {
         AppView::HPAs,
         AppView::PodDisruptionBudgets,
         AppView::PriorityClasses,
+        // Storage
         AppView::PersistentVolumeClaims,
         AppView::PersistentVolumes,
         AppView::StorageClasses,
-        AppView::Namespaces,
-        AppView::Events,
+        // Helm
         AppView::HelmCharts,
         AppView::HelmReleases,
+        // Access Control
         AppView::ServiceAccounts,
         AppView::ClusterRoles,
         AppView::Roles,
         AppView::ClusterRoleBindings,
         AppView::RoleBindings,
+        // Custom Resources
         AppView::Extensions,
     ];
 
@@ -1594,7 +1602,11 @@ mod tests {
     fn tab_cycles_all_views_forward() {
         let mut app = AppState::default();
         let expected = [
+            // Overview
             AppView::Nodes,
+            AppView::Namespaces,
+            AppView::Events,
+            // Workloads
             AppView::Pods,
             AppView::Deployments,
             AppView::StatefulSets,
@@ -1603,11 +1615,13 @@ mod tests {
             AppView::ReplicationControllers,
             AppView::Jobs,
             AppView::CronJobs,
+            // Network
             AppView::Services,
             AppView::Endpoints,
             AppView::Ingresses,
             AppView::IngressClasses,
             AppView::NetworkPolicies,
+            // Config
             AppView::ConfigMaps,
             AppView::Secrets,
             AppView::ResourceQuotas,
@@ -1615,19 +1629,22 @@ mod tests {
             AppView::HPAs,
             AppView::PodDisruptionBudgets,
             AppView::PriorityClasses,
+            // Storage
             AppView::PersistentVolumeClaims,
             AppView::PersistentVolumes,
             AppView::StorageClasses,
-            AppView::Namespaces,
-            AppView::Events,
+            // Helm
             AppView::HelmCharts,
             AppView::HelmReleases,
+            // Access Control
             AppView::ServiceAccounts,
             AppView::ClusterRoles,
             AppView::Roles,
             AppView::ClusterRoleBindings,
             AppView::RoleBindings,
+            // Custom Resources
             AppView::Extensions,
+            // Wraps back to start
             AppView::Dashboard,
         ];
         for view in expected {
