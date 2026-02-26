@@ -11,8 +11,14 @@ use ratatui::{
 };
 
 use crate::{
-    state::{ClusterSnapshot, filters::filter_resource_quotas},
-    ui::components::{active_block, default_block, default_theme},
+    app::AppView,
+    state::ClusterSnapshot,
+    ui::{
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        format_small_int,
+    },
 };
 
 pub fn render_resource_quotas(
@@ -22,20 +28,47 @@ pub fn render_resource_quotas(
     selected_idx: usize,
     query: &str,
 ) {
-    let items = filter_resource_quotas(&cluster.resource_quotas, query, None);
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::ResourceQuotas,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.resource_quotas),
+        |q| {
+            if q.is_empty() {
+                return (0..cluster.resource_quotas.len()).collect();
+            }
+            cluster
+                .resource_quotas
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, rq)| {
+                    let hard_key_match = rq.hard.keys().any(|key| contains_ci(key, q));
+                    if contains_ci(&rq.name, q) || hard_key_match {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    );
 
     let theme = default_theme();
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled("  No resource quotas found", theme.inactive_style()))
-                .block(default_block("ResourceQuotas")),
+            Paragraph::new(Span::styled(
+                "  No resource quotas found",
+                theme.inactive_style(),
+            ))
+            .block(default_block("ResourceQuotas")),
             area,
         );
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -44,36 +77,82 @@ pub fn render_resource_quotas(
         Cell::from(Span::styled("Tracked", theme.header_style())),
         Cell::from(Span::styled("Max Used", theme.header_style())),
         Cell::from(Span::styled("Age", theme.header_style())),
-    ]).height(1).style(theme.header_style());
+    ])
+    .height(1)
+    .style(theme.header_style());
 
-    let rows: Vec<Row> = items.iter().enumerate().map(|(idx, rq)| {
-        let (tracked, max_pct) = quota_summary(rq);
-        let pct_style = usage_style(max_pct, &theme);
-        let row_style = if idx % 2 == 0 { Style::default().bg(theme.bg) } else { theme.row_alt_style() };
-        Row::new(vec![
-            Cell::from(Span::styled(format!("  {}", rq.name), Style::default().fg(theme.fg))),
-            Cell::from(Span::styled(rq.namespace.clone(), Style::default().fg(theme.fg_dim))),
-            Cell::from(Span::styled(tracked.to_string(), Style::default().fg(theme.fg_dim))),
-            Cell::from(Span::styled(format!("{max_pct:.0}%"), pct_style)),
-            Cell::from(Span::styled(format_age(rq.age), theme.inactive_style())),
-        ]).style(row_style)
-    }).collect();
+    let rows: Vec<Row> = indices
+        .iter()
+        .enumerate()
+        .map(|(idx, &rq_idx)| {
+            let rq = &cluster.resource_quotas[rq_idx];
+            let (tracked, max_pct) = quota_summary(rq);
+            let pct_style = usage_style(max_pct, &theme);
+            let row_style = if idx % 2 == 0 {
+                Style::default().bg(theme.bg)
+            } else {
+                theme.row_alt_style()
+            };
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("  {}", rq.name),
+                    Style::default().fg(theme.fg),
+                )),
+                Cell::from(Span::styled(
+                    rq.namespace.clone(),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(
+                    format_small_int(tracked as i64),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(format!("{max_pct:.0}%"), pct_style)),
+                Cell::from(Span::styled(format_age(rq.age), theme.inactive_style())),
+            ])
+            .style(row_style)
+        })
+        .collect();
 
     let mut table_state = TableState::default().with_selected(Some(selected));
     let title = format!(" 📊 ResourceQuotas ({total}) ");
-    let block = if query.is_empty() { active_block(&title) } else { let all = cluster.resource_quotas.len(); active_block(&format!(" 📊 ResourceQuotas ({total} of {all}) [/{query}]")) };
+    let block = if query.is_empty() {
+        active_block(&title)
+    } else {
+        let all = cluster.resource_quotas.len();
+        active_block(&format!(" 📊 ResourceQuotas ({total} of {all}) [/{query}]"))
+    };
 
-    let table = Table::new(rows, [Constraint::Min(28), Constraint::Length(18), Constraint::Length(10), Constraint::Length(10), Constraint::Length(9)])
-        .header(header).block(block)
-        .row_highlight_style(theme.selection_style())
-        .highlight_symbol(theme.highlight_symbol())
-        .highlight_spacing(HighlightSpacing::Always);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Min(28),
+            Constraint::Length(18),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(9),
+        ],
+    )
+    .header(header)
+    .block(block)
+    .row_highlight_style(theme.selection_style())
+    .highlight_symbol(theme.highlight_symbol())
+    .highlight_spacing(HighlightSpacing::Always);
     frame.render_stateful_widget(table, area, &mut table_state);
 
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲")).end_symbol(Some("▼")).track_symbol(Some("│")).thumb_symbol("█");
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(scrollbar, area.inner(Margin { vertical: 1, horizontal: 0 }), &mut scrollbar_state);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut scrollbar_state,
+    );
 }
 
 fn quota_summary(rq: &crate::k8s::dtos::ResourceQuotaInfo) -> (usize, f64) {

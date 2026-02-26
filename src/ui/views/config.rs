@@ -7,7 +7,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Row, Table},
 };
 
-use crate::{state::ClusterSnapshot, ui::components::default_theme};
+use crate::{
+    state::ClusterSnapshot,
+    ui::{components::default_theme, format_small_int},
+};
 
 pub fn render_config_maps(
     frame: &mut Frame,
@@ -27,11 +30,15 @@ pub fn render_config_maps(
         .iter()
         .enumerate()
         .map(|(i, cm)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             Row::new(vec![
                 Cell::from(cm.name.clone()),
                 Cell::from(cm.namespace.clone()),
-                Cell::from(cm.data_count.to_string()),
+                Cell::from(format_small_int(cm.data_count as i64)),
             ])
             .style(style)
         })
@@ -43,7 +50,11 @@ pub fn render_config_maps(
 
     let table = Table::new(
         rows,
-        [Constraint::Percentage(45), Constraint::Percentage(35), Constraint::Percentage(20)],
+        [
+            Constraint::Percentage(45),
+            Constraint::Percentage(35),
+            Constraint::Percentage(20),
+        ],
     )
     .header(header)
     .block(
@@ -56,7 +67,10 @@ pub fn render_config_maps(
             } else {
                 vec![
                     Span::styled(" ConfigMaps ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.config_maps.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.config_maps.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))
@@ -86,12 +100,16 @@ pub fn render_secrets(
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             Row::new(vec![
                 Cell::from(s.name.clone()),
                 Cell::from(s.namespace.clone()),
                 Cell::from(s.type_.clone()),
-                Cell::from(s.data_count.to_string()),
+                Cell::from(format_small_int(s.data_count as i64)),
             ])
             .style(style)
         })
@@ -121,7 +139,10 @@ pub fn render_secrets(
             } else {
                 vec![
                     Span::styled(" Secrets ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.secrets.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.secrets.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))

@@ -9,9 +9,16 @@ use ratatui::{
 };
 
 use crate::{
+    app::AppView,
     k8s::dtos::RoleBindingSubject,
     state::ClusterSnapshot,
-    ui::components::{active_block, default_block, default_theme},
+    ui::{
+        cmp_ci,
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        format_small_int,
+    },
 };
 
 pub fn render_role_bindings(
@@ -21,30 +28,52 @@ pub fn render_role_bindings(
     selected_idx: usize,
     query: &str,
 ) {
-    let query = query.trim().to_ascii_lowercase();
-    let mut items: Vec<_> = cluster
-        .role_bindings
-        .iter()
-        .filter(|rb| {
-            query.is_empty()
-                || rb.name.to_ascii_lowercase().contains(&query)
-                || rb.namespace.to_ascii_lowercase().contains(&query)
-                || rb.role_ref_name.to_ascii_lowercase().contains(&query)
-        })
-        .collect();
-    items.sort_by_key(|rb| {
-        (
-            rb.namespace.to_ascii_lowercase(),
-            rb.name.to_ascii_lowercase(),
-        )
-    });
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::RoleBindings,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.role_bindings),
+        |q| {
+            let mut out: Vec<usize> = cluster
+                .role_bindings
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, rb)| {
+                    if q.is_empty()
+                        || contains_ci(&rb.name, q)
+                        || contains_ci(&rb.namespace, q)
+                        || contains_ci(&rb.role_ref_name, q)
+                    {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            out.sort_unstable_by(|a, b| {
+                let left = &cluster.role_bindings[*a];
+                let right = &cluster.role_bindings[*b];
+                let ns_order = cmp_ci(&left.namespace, &right.namespace);
+                if ns_order == std::cmp::Ordering::Equal {
+                    cmp_ci(&left.name, &right.name)
+                } else {
+                    ns_order
+                }
+            });
+            out
+        },
+    );
 
     let theme = default_theme();
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled("  No rolebindings found", theme.inactive_style()))
-                .block(default_block("RoleBindings")),
+            Paragraph::new(Span::styled(
+                "  No rolebindings found",
+                theme.inactive_style(),
+            ))
+            .block(default_block("RoleBindings")),
             area,
         );
         return;
@@ -55,7 +84,7 @@ pub fn render_role_bindings(
         .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
         .split(area);
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -64,36 +93,85 @@ pub fn render_role_bindings(
         Cell::from(Span::styled("RoleRef", theme.header_style())),
         Cell::from(Span::styled("Subjects", theme.header_style())),
         Cell::from(Span::styled("Age", theme.header_style())),
-    ]).height(1).style(theme.header_style());
+    ])
+    .height(1)
+    .style(theme.header_style());
 
-    let rows: Vec<Row> = items.iter().enumerate().map(|(idx, rb)| {
-        let row_style = if idx % 2 == 0 { Style::default().bg(theme.bg) } else { theme.row_alt_style() };
-        Row::new(vec![
-            Cell::from(Span::styled(format!("  {}", rb.name), Style::default().fg(theme.fg))),
-            Cell::from(Span::styled(rb.namespace.clone(), Style::default().fg(theme.fg_dim))),
-            Cell::from(Span::styled(format!("{}/{}", rb.role_ref_kind, rb.role_ref_name), Style::default().fg(theme.accent2))),
-            Cell::from(Span::styled(rb.subjects.len().to_string(), Style::default().fg(theme.fg_dim))),
-            Cell::from(Span::styled(format_age(rb.age), theme.inactive_style())),
-        ]).style(row_style)
-    }).collect();
+    let rows: Vec<Row> = indices
+        .iter()
+        .enumerate()
+        .map(|(idx, &rb_idx)| {
+            let rb = &cluster.role_bindings[rb_idx];
+            let row_style = if idx % 2 == 0 {
+                Style::default().bg(theme.bg)
+            } else {
+                theme.row_alt_style()
+            };
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    format!("  {}", rb.name),
+                    Style::default().fg(theme.fg),
+                )),
+                Cell::from(Span::styled(
+                    rb.namespace.clone(),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(
+                    format!("{}/{}", rb.role_ref_kind, rb.role_ref_name),
+                    Style::default().fg(theme.accent2),
+                )),
+                Cell::from(Span::styled(
+                    format_small_int(rb.subjects.len() as i64),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(format_age(rb.age), theme.inactive_style())),
+            ])
+            .style(row_style)
+        })
+        .collect();
 
     let mut table_state = TableState::default().with_selected(Some(selected));
     let title = format!(" 🔗 RoleBindings ({total}) ");
-    let block = if query.is_empty() { active_block(&title) } else { let all = cluster.role_bindings.len(); active_block(&format!(" 🔗 RoleBindings ({total} of {all}) [/{query}]")) };
+    let block = if query.is_empty() {
+        active_block(&title)
+    } else {
+        let all = cluster.role_bindings.len();
+        active_block(&format!(" 🔗 RoleBindings ({total} of {all}) [/{query}]"))
+    };
 
-    let table = Table::new(rows, [Constraint::Min(24), Constraint::Length(16), Constraint::Length(34), Constraint::Length(9), Constraint::Length(9)])
-        .header(header).block(block)
-        .row_highlight_style(theme.selection_style())
-        .highlight_symbol(theme.highlight_symbol())
-        .highlight_spacing(HighlightSpacing::Always);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Min(24),
+            Constraint::Length(16),
+            Constraint::Length(34),
+            Constraint::Length(9),
+            Constraint::Length(9),
+        ],
+    )
+    .header(header)
+    .block(block)
+    .row_highlight_style(theme.selection_style())
+    .highlight_symbol(theme.highlight_symbol())
+    .highlight_spacing(HighlightSpacing::Always);
     frame.render_stateful_widget(table, chunks[0], &mut table_state);
 
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲")).end_symbol(Some("▼")).track_symbol(Some("│")).thumb_symbol("█");
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(scrollbar, chunks[0].inner(Margin { vertical: 1, horizontal: 0 }), &mut scrollbar_state);
+    frame.render_stateful_widget(
+        scrollbar,
+        chunks[0].inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut scrollbar_state,
+    );
 
-    let sel_item = items[selected];
+    let sel_item = &cluster.role_bindings[indices[selected]];
     let detail = render_subjects(&sel_item.subjects, &theme);
     frame.render_widget(
         Paragraph::new(detail).block(active_block("Selected Binding Subjects")),
@@ -101,9 +179,15 @@ pub fn render_role_bindings(
     );
 }
 
-fn render_subjects(subjects: &[RoleBindingSubject], theme: &crate::ui::theme::Theme) -> Vec<Line<'static>> {
+fn render_subjects(
+    subjects: &[RoleBindingSubject],
+    theme: &crate::ui::theme::Theme,
+) -> Vec<Line<'static>> {
     if subjects.is_empty() {
-        return vec![Line::from(Span::styled("  No subjects", theme.inactive_style()))];
+        return vec![Line::from(Span::styled(
+            "  No subjects",
+            theme.inactive_style(),
+        ))];
     }
     subjects
         .iter()
@@ -112,8 +196,14 @@ fn render_subjects(subjects: &[RoleBindingSubject], theme: &crate::ui::theme::Th
             let api_group = subject.api_group.as_deref().unwrap_or("—");
             Line::from(vec![
                 Span::styled("  ● ", theme.title_style()),
-                Span::styled(format!("{}/{}", subject.kind, subject.name), Style::default().fg(theme.fg)),
-                Span::styled(format!("  ns={ns}  apiGroup={api_group}"), theme.inactive_style()),
+                Span::styled(
+                    format!("{}/{}", subject.kind, subject.name),
+                    Style::default().fg(theme.fg),
+                ),
+                Span::styled(
+                    format!("  ns={ns}  apiGroup={api_group}"),
+                    theme.inactive_style(),
+                ),
             ])
         })
         .collect()
@@ -144,12 +234,15 @@ mod tests {
     #[test]
     fn subjects_render_as_human_readable_lines() {
         let theme = Theme::dark();
-        let lines = render_subjects(&[RoleBindingSubject {
-            kind: "ServiceAccount".to_string(),
-            name: "builder".to_string(),
-            namespace: Some("default".to_string()),
-            api_group: None,
-        }], &theme);
+        let lines = render_subjects(
+            &[RoleBindingSubject {
+                kind: "ServiceAccount".to_string(),
+                name: "builder".to_string(),
+                namespace: Some("default".to_string()),
+                api_group: None,
+            }],
+            &theme,
+        );
 
         let text = lines[0].to_string();
         assert!(text.contains("ServiceAccount/builder"));

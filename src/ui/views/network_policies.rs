@@ -7,7 +7,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Row, Table},
 };
 
-use crate::{state::ClusterSnapshot, ui::components::default_theme};
+use crate::{
+    state::ClusterSnapshot,
+    ui::{components::default_theme, format_small_int},
+};
 
 pub fn render_network_policies(
     frame: &mut Frame,
@@ -27,21 +30,31 @@ pub fn render_network_policies(
         .iter()
         .enumerate()
         .map(|(i, np)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             Row::new(vec![
                 Cell::from(np.name.clone()),
                 Cell::from(np.namespace.clone()),
                 Cell::from(np.pod_selector.clone()),
-                Cell::from(np.ingress_rules.to_string()),
-                Cell::from(np.egress_rules.to_string()),
+                Cell::from(format_small_int(np.ingress_rules as i64)),
+                Cell::from(format_small_int(np.egress_rules as i64)),
             ])
             .style(style)
         })
         .collect();
 
-    let header = Row::new(vec!["NAME", "NAMESPACE", "POD SELECTOR", "INGRESS", "EGRESS"])
-        .style(theme.header_style())
-        .height(1);
+    let header = Row::new(vec![
+        "NAME",
+        "NAMESPACE",
+        "POD SELECTOR",
+        "INGRESS",
+        "EGRESS",
+    ])
+    .style(theme.header_style())
+    .height(1);
 
     let table = Table::new(
         rows,
@@ -64,7 +77,10 @@ pub fn render_network_policies(
             } else {
                 vec![
                     Span::styled(" NetworkPolicies ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.network_policies.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.network_policies.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))

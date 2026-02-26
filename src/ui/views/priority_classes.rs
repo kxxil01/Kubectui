@@ -7,7 +7,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Row, Table},
 };
 
-use crate::{state::ClusterSnapshot, ui::components::default_theme};
+use crate::{
+    state::ClusterSnapshot,
+    ui::{components::default_theme, format_small_int},
+};
 
 pub fn render_priority_classes(
     frame: &mut Frame,
@@ -27,11 +30,15 @@ pub fn render_priority_classes(
         .iter()
         .enumerate()
         .map(|(i, pc)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             let default_label = if pc.global_default { "✓" } else { "" };
             Row::new(vec![
                 Cell::from(pc.name.clone()),
-                Cell::from(pc.value.to_string()),
+                Cell::from(format_small_int(i64::from(pc.value))),
                 Cell::from(default_label),
                 Cell::from(pc.description.chars().take(60).collect::<String>()),
             ])
@@ -63,7 +70,10 @@ pub fn render_priority_classes(
             } else {
                 vec![
                     Span::styled(" PriorityClasses ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.priority_classes.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.priority_classes.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))

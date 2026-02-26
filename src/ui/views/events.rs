@@ -7,7 +7,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Row, Table},
 };
 
-use crate::{state::ClusterSnapshot, ui::components::default_theme};
+use crate::{
+    state::ClusterSnapshot,
+    ui::{components::default_theme, format_small_int},
+};
 
 pub fn render_events(
     frame: &mut Frame,
@@ -33,7 +36,11 @@ pub fn render_events(
         .iter()
         .enumerate()
         .map(|(i, ev)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             let type_style = if ev.type_ == "Warning" {
                 theme.badge_warning_style()
             } else {
@@ -44,16 +51,23 @@ pub fn render_events(
                 Cell::from(ev.namespace.clone()),
                 Cell::from(ev.involved_object.clone()),
                 Cell::from(ev.reason.clone()),
-                Cell::from(ev.count.to_string()),
+                Cell::from(format_small_int(i64::from(ev.count))),
                 Cell::from(ev.message.chars().take(60).collect::<String>()),
             ])
             .style(style)
         })
         .collect();
 
-    let header = Row::new(vec!["TYPE", "NAMESPACE", "OBJECT", "REASON", "COUNT", "MESSAGE"])
-        .style(theme.header_style())
-        .height(1);
+    let header = Row::new(vec![
+        "TYPE",
+        "NAMESPACE",
+        "OBJECT",
+        "REASON",
+        "COUNT",
+        "MESSAGE",
+    ])
+    .style(theme.header_style())
+    .height(1);
 
     let table = Table::new(
         rows,
@@ -77,7 +91,10 @@ pub fn render_events(
             } else {
                 vec![
                     Span::styled(" Events ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.events.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.events.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))

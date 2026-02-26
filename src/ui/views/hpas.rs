@@ -7,7 +7,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Cell, Row, Table},
 };
 
-use crate::{state::ClusterSnapshot, ui::components::default_theme};
+use crate::{
+    state::ClusterSnapshot,
+    ui::{components::default_theme, format_small_int},
+};
 
 pub fn render_hpas(
     frame: &mut Frame,
@@ -27,24 +30,35 @@ pub fn render_hpas(
         .iter()
         .enumerate()
         .map(|(i, hpa)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
-            let min = hpa.min_replicas.map(|m| m.to_string()).unwrap_or_else(|| "1".to_string());
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
+            let min = hpa.min_replicas.unwrap_or(1);
             let replicas = format!("{}/{}", hpa.current_replicas, hpa.desired_replicas);
             Row::new(vec![
                 Cell::from(hpa.name.clone()),
                 Cell::from(hpa.namespace.clone()),
                 Cell::from(hpa.reference.clone()),
-                Cell::from(min),
-                Cell::from(hpa.max_replicas.to_string()),
+                Cell::from(format_small_int(i64::from(min))),
+                Cell::from(format_small_int(i64::from(hpa.max_replicas))),
                 Cell::from(replicas),
             ])
             .style(style)
         })
         .collect();
 
-    let header = Row::new(vec!["NAME", "NAMESPACE", "REFERENCE", "MIN", "MAX", "REPLICAS"])
-        .style(theme.header_style())
-        .height(1);
+    let header = Row::new(vec![
+        "NAME",
+        "NAMESPACE",
+        "REFERENCE",
+        "MIN",
+        "MAX",
+        "REPLICAS",
+    ])
+    .style(theme.header_style())
+    .height(1);
 
     let table = Table::new(
         rows,
@@ -68,7 +82,10 @@ pub fn render_hpas(
             } else {
                 vec![
                     Span::styled(" HorizontalPodAutoscalers ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.hpas.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.hpas.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))
