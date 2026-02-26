@@ -255,6 +255,52 @@ fn api_resource_for_kind(kind: &str) -> Result<(ApiResource, bool)> {
     }
 }
 
+/// Fetches YAML for a custom resource using explicit API coordinates.
+///
+/// Unlike `get_resource_yaml` which uses a hardcoded kind map, this function
+/// accepts the full CRD coordinates (group, version, kind, plural) to construct
+/// the dynamic API request.
+pub async fn get_custom_resource_yaml(
+    client: &Client,
+    group: &str,
+    version: &str,
+    kind: &str,
+    plural: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> Result<String> {
+    let gvk = GroupVersionKind::gvk(group, version, kind);
+    let mut ar = ApiResource::from_gvk(&gvk);
+    ar.plural = plural.to_string();
+
+    let api: Api<DynamicObject> = match namespace {
+        Some(ns) => Api::namespaced_with(client.clone(), ns, &ar),
+        None => Api::all_with(client.clone(), &ar),
+    };
+
+    let fetched = match api.get(name).await {
+        Ok(obj) => obj,
+        Err(err) if is_forbidden_error(&err) => {
+            return Ok(format!(
+                "# YAML unavailable (RBAC)\n# kind: {kind}\n# name: {name}\n# namespace: {}",
+                namespace.unwrap_or("<cluster-scope>")
+            ));
+        }
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!(
+                    "failed fetching custom resource {group}/{version}/{kind} name='{name}' namespace='{}'",
+                    namespace.unwrap_or("<cluster-scope>")
+                )
+            });
+        }
+    };
+
+    let rendered =
+        serde_yaml::to_string(&fetched).context("failed serializing custom resource to YAML")?;
+    Ok(truncate_yaml(rendered))
+}
+
 fn is_forbidden_error(err: &kube::Error) -> bool {
     match err {
         kube::Error::Api(ErrorResponse { code, .. }) => *code == 403,

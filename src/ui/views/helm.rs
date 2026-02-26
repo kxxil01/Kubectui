@@ -12,6 +12,8 @@ use crate::{
     ui::components::{active_block, default_theme},
 };
 
+use super::super::contains_ci;
+
 /// Renders the Helm releases table.
 pub fn render_helm_releases(
     frame: &mut Frame,
@@ -27,9 +29,9 @@ pub fn render_helm_releases(
         .iter()
         .filter(|r| {
             search_query.is_empty()
-                || r.name.to_lowercase().contains(&search_query.to_lowercase())
-                || r.namespace.to_lowercase().contains(&search_query.to_lowercase())
-                || r.chart.to_lowercase().contains(&search_query.to_lowercase())
+                || contains_ci(&r.name, search_query)
+                || contains_ci(&r.namespace, search_query)
+                || contains_ci(&r.chart, search_query)
         })
         .collect();
 
@@ -124,6 +126,86 @@ pub fn render_helm_releases(
     .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
 
     let clamped = selected_idx.min(releases.len().saturating_sub(1));
+    let mut state = TableState::default().with_selected(Some(clamped));
+    frame.render_stateful_widget(table, area, &mut state);
+}
+
+
+/// Renders the Helm repositories table (local config from ~/.config/helm/repositories.yaml).
+pub fn render_helm_repos(
+    frame: &mut Frame,
+    area: Rect,
+    cluster: &ClusterSnapshot,
+    selected_idx: usize,
+    search_query: &str,
+) {
+    let theme = default_theme();
+
+    let repos: Vec<_> = cluster
+        .helm_repositories
+        .iter()
+        .filter(|r| {
+            search_query.is_empty()
+                || contains_ci(&r.name, search_query)
+                || contains_ci(&r.url, search_query)
+        })
+        .collect();
+
+    let header = Row::new(vec![
+        Cell::from("NAME").style(theme.header_style()),
+        Cell::from("URL").style(theme.header_style()),
+    ])
+    .height(1);
+
+    let rows: Vec<Row> = repos
+        .iter()
+        .map(|r| {
+            Row::new(vec![
+                Cell::from(r.name.clone()).style(Style::default().fg(theme.fg)),
+                Cell::from(r.url.clone()).style(Style::default().fg(theme.accent2)),
+            ])
+        })
+        .collect();
+
+    let empty_msg = if cluster.helm_repositories.is_empty() {
+        "No Helm repositories configured (helm repo add <name> <url>)"
+    } else {
+        "No repositories match search"
+    };
+
+    let title = if search_query.is_empty() {
+        format!(" Helm Repositories ({}) ", repos.len())
+    } else {
+        let all = cluster.helm_repositories.len();
+        format!(" Helm Repositories ({} of {all}) [/{search_query}]", repos.len())
+    };
+    let block = active_block(&title);
+
+    if rows.is_empty() {
+        frame.render_widget(
+            ratatui::widgets::Paragraph::new(Span::styled(
+                format!("  {empty_msg}"),
+                Style::default().fg(theme.fg_dim),
+            ))
+            .block(block),
+            area,
+        );
+        return;
+    }
+
+    let table = Table::new(
+        rows,
+        [
+            ratatui::layout::Constraint::Percentage(30),
+            ratatui::layout::Constraint::Percentage(70),
+        ],
+    )
+    .header(header)
+    .block(block)
+    .row_highlight_style(theme.selection_style())
+    .highlight_spacing(ratatui::widgets::HighlightSpacing::Always);
+
+    let clamped = selected_idx.min(repos.len().saturating_sub(1));
     let mut state = TableState::default().with_selected(Some(clamped));
     frame.render_stateful_widget(table, area, &mut state);
 }

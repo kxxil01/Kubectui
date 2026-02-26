@@ -17,6 +17,7 @@ pub struct ProbePanelState {
     pub container_probes: Vec<(String, ContainerProbes)>,
     pub expanded_containers: HashSet<String>,
     pub selected_index: usize,
+    pub error: Option<String>,
 }
 
 /// Actions that can be performed on the probe panel.
@@ -41,6 +42,7 @@ impl ProbePanelState {
             container_probes,
             expanded_containers: HashSet::new(),
             selected_index: 0,
+            error: None,
         }
     }
 
@@ -114,6 +116,15 @@ pub fn render_probe_panel(frame: &mut Frame, area: Rect, state: &ProbePanelState
     // Build the content
     let mut lines: Vec<Line> = Vec::new();
 
+    // Show error banner if present
+    if let Some(err) = &state.error {
+        lines.push(Line::from(vec![
+            Span::styled(" ✗ ", Style::default().fg(Color::Red)),
+            Span::styled(err.clone(), Style::default().fg(Color::Red)),
+        ]));
+        lines.push(Line::from(""));
+    }
+
     if state.container_probes.is_empty() {
         lines.push(Line::from(Span::raw(
             "No probes configured for any containers.",
@@ -133,10 +144,10 @@ pub fn render_probe_panel(frame: &mut Frame, area: Rect, state: &ProbePanelState
                 } else {
                     let mut count_str = String::new();
                     if probes.liveness.is_some() {
-                        count_str.push_str("L");
+                        count_str.push('L');
                     }
                     if probes.readiness.is_some() {
-                        count_str.push_str("R");
+                        count_str.push('R');
                     }
                     count_str
                 };

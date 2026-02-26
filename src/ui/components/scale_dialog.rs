@@ -120,8 +120,8 @@ impl ScaleDialogState {
 
         match self.input_buffer.parse::<i32>() {
             Ok(n) => {
-                if n < 0 || n > 100 {
-                    self.error_message = Some(format!("Invalid range (must be 0-100)"));
+                if !(0..=100).contains(&n) {
+                    self.error_message = Some("Invalid range (must be 0-100)".to_string());
                 } else {
                     self.desired_replicas = n.to_string();
                     // Check for large jump warning
@@ -149,7 +149,7 @@ impl ScaleDialogState {
         }
 
         match self.input_buffer.parse::<i32>() {
-            Ok(n) => n >= 0 && n <= 100,
+            Ok(n) => (0..=100).contains(&n),
             Err(_) => false,
         }
     }

@@ -1,3 +1,4 @@
+#![allow(clippy::field_reassign_with_default)]
 //! Event Loop Integration & Keyboard Input Tests
 //!
 //! Tests for:
@@ -50,11 +51,10 @@ fn test_logs_viewer_follow_mode_toggle() {
     assert_eq!(action, AppAction::LogsViewerToggleFollow);
     apply_action(action, &mut app);
 
-    if let Some(detail) = &app.detail_view {
-        if let Some(logs) = &detail.logs_viewer {
+    if let Some(detail) = &app.detail_view
+        && let Some(logs) = &detail.logs_viewer {
             assert!(logs.follow_mode);
         }
-    }
 }
 
 #[test]
@@ -96,11 +96,10 @@ fn test_scale_dialog_numeric_input() {
         apply_action(action, &mut app);
     }
 
-    if let Some(detail) = &app.detail_view {
-        if let Some(scale) = &detail.scale_dialog {
+    if let Some(detail) = &app.detail_view
+        && let Some(scale) = &detail.scale_dialog {
             assert_eq!(scale.desired_replicas, "35");
         }
-    }
 }
 
 #[test]
@@ -117,11 +116,10 @@ fn test_scale_dialog_backspace() {
     let action = route_keyboard_input(KeyEvent::from(KeyCode::Backspace), &mut app);
     apply_action(action, &mut app);
 
-    if let Some(detail) = &app.detail_view {
-        if let Some(scale) = &detail.scale_dialog {
+    if let Some(detail) = &app.detail_view
+        && let Some(scale) = &detail.scale_dialog {
             assert_eq!(scale.desired_replicas, "4");
         }
-    }
 }
 
 #[test]
@@ -232,29 +230,26 @@ fn test_component_state_persistence() {
     app.detail_view = Some(DetailViewState::default());
     app.open_logs_viewer();
 
-    if let Some(detail) = &mut app.detail_view {
-        if let Some(logs) = &mut detail.logs_viewer {
+    if let Some(detail) = &mut app.detail_view
+        && let Some(logs) = &mut detail.logs_viewer {
             logs.scroll_offset = 42;
             logs.follow_mode = true;
         }
-    }
 
-    if let Some(detail) = &app.detail_view {
-        if let Some(logs) = &detail.logs_viewer {
+    if let Some(detail) = &app.detail_view
+        && let Some(logs) = &detail.logs_viewer {
             assert_eq!(logs.scroll_offset, 42);
             assert!(logs.follow_mode);
         }
-    }
 
     app.close_logs_viewer();
     app.open_logs_viewer();
 
-    if let Some(detail) = &app.detail_view {
-        if let Some(logs) = &detail.logs_viewer {
+    if let Some(detail) = &app.detail_view
+        && let Some(logs) = &detail.logs_viewer {
             assert_eq!(logs.scroll_offset, 0);
             assert!(!logs.follow_mode);
         }
-    }
 }
 
 #[test]

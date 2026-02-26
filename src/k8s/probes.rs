@@ -135,18 +135,16 @@ pub fn extract_probes_from_pod(pod: &Pod) -> Result<Vec<(String, ContainerProbes
             let mut container_probes = ContainerProbes::default();
 
             // Extract liveness probe
-            if let Some(probe) = &container.liveness_probe {
-                if let Some(config) = parse_probe(probe, ProbeType::Liveness) {
+            if let Some(probe) = &container.liveness_probe
+                && let Some(config) = parse_probe(probe, ProbeType::Liveness) {
                     container_probes.liveness = Some(config);
                 }
-            }
 
             // Extract readiness probe
-            if let Some(probe) = &container.readiness_probe {
-                if let Some(config) = parse_probe(probe, ProbeType::Readiness) {
+            if let Some(probe) = &container.readiness_probe
+                && let Some(config) = parse_probe(probe, ProbeType::Readiness) {
                     container_probes.readiness = Some(config);
                 }
-            }
 
             if container_probes.has_probes() {
                 probes.push((container_name, container_probes));

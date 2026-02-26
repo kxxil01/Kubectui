@@ -3,6 +3,8 @@
 //! This module wires terminal lifecycle management, the application state machine,
 //! the Kubernetes client, and the ratatui rendering pipeline.
 
+#![cfg_attr(test, allow(clippy::field_reassign_with_default))]
+
 use std::{io, time::Duration};
 
 use anyhow::{Context, Result};
@@ -21,7 +23,7 @@ use kubectui::{
         AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState, ResourceRef,
         load_config, save_config,
     },
-    coordinator::{UpdateCoordinator, UpdateMessage},
+    coordinator::{LogStreamStatus, UpdateCoordinator, UpdateMessage},
     events::apply_action,
     k8s::{
         client::K8sClient,
@@ -53,27 +55,45 @@ async fn main() -> Result<()> {
 fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
     match msg {
         UpdateMessage::LogUpdate { pod_name, line, .. } => {
-            if let Some(detail) = &mut app.detail_view {
-                if let Some(viewer) = &mut detail.logs_viewer {
-                    if viewer.pod_name == pod_name {
+            if let Some(detail) = &mut app.detail_view
+                && let Some(viewer) = &mut detail.logs_viewer
+                    && viewer.pod_name == pod_name {
                         viewer.lines.push(line);
                         if viewer.follow_mode {
                             viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
                         }
                     }
-                }
-            }
         }
         UpdateMessage::ProbeUpdate { pod_name, namespace, probes } => {
-            if let Some(detail) = &mut app.detail_view {
-                if let Some(panel) = &mut detail.probe_panel {
-                    if panel.pod_name == pod_name && panel.namespace == namespace {
+            if let Some(detail) = &mut app.detail_view
+                && let Some(panel) = &mut detail.probe_panel
+                    && panel.pod_name == pod_name && panel.namespace == namespace {
                         panel.update_probes(probes);
                     }
-                }
-            }
         }
-        UpdateMessage::LogStreamStatus { .. } | UpdateMessage::ProbeError { .. } => {}
+        UpdateMessage::LogStreamStatus { pod_name, status, .. } => {
+            if let Some(detail) = &mut app.detail_view
+                && let Some(viewer) = &mut detail.logs_viewer
+                    && viewer.pod_name == pod_name {
+                        match status {
+                            LogStreamStatus::Error(err) => {
+                                viewer.error = Some(err);
+                                viewer.loading = false;
+                            }
+                            LogStreamStatus::Ended | LogStreamStatus::Cancelled => {
+                                viewer.follow_mode = false;
+                            }
+                            LogStreamStatus::Started => {}
+                        }
+                    }
+        }
+        UpdateMessage::ProbeError { pod_name, namespace, error } => {
+            if let Some(detail) = &mut app.detail_view
+                && let Some(panel) = &mut detail.probe_panel
+                    && panel.pod_name == pod_name && panel.namespace == namespace {
+                        panel.error = Some(error);
+                    }
+        }
     }
 }
 
@@ -177,6 +197,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         selected_resource(&app, &cached_snapshot)
                             .map(AppAction::OpenDetail)
                             .unwrap_or(AppAction::None)
+                    } else if app.focus == kubectui::app::Focus::Content
+                        && app.view() == AppView::Extensions
+                        && !app.extension_in_instances
+                    {
+                        // Drill into instances pane
+                        if !app.extension_instances.is_empty() {
+                            app.extension_in_instances = true;
+                            app.extension_instance_cursor = 0;
+                        }
+                        AppAction::None
                     } else if app.focus == kubectui::app::Focus::Content {
                         selected_resource(&app, &cached_snapshot)
                             .map(AppAction::OpenDetail)
@@ -184,6 +214,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     } else {
                         app.sidebar_activate()
                     }
+                } else if key.code == KeyCode::Esc
+                    && app.view() == AppView::Extensions
+                    && app.extension_in_instances
+                    && app.detail_view.is_none()
+                    && !app.is_search_mode()
+                {
+                    // Return from instances pane to CRD picker
+                    app.extension_in_instances = false;
+                    AppAction::None
                 } else {
                     app.handle_key_event(key)
                 };
@@ -225,6 +264,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.view = view;
                         app.selected_idx = 0;
                         app.focus = kubectui::app::Focus::Content;
+                        app.extension_in_instances = false;
                         // Trigger extensions sync when navigating to Extensions view
                         if view == kubectui::app::AppView::Extensions {
                             sync_extensions_instances(&client, &mut app, &cached_snapshot).await;
@@ -295,9 +335,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         });
                     }
                     AppAction::CloseDetail => {
-                        if let Some(detail) = &app.detail_view {
-                            if let Some(viewer) = &detail.logs_viewer {
-                                if viewer.follow_mode && !viewer.pod_name.is_empty() {
+                        if let Some(detail) = &app.detail_view
+                            && let Some(viewer) = &detail.logs_viewer
+                                && viewer.follow_mode && !viewer.pod_name.is_empty() {
                                     let _ = coordinator
                                         .stop_log_streaming(
                                             &viewer.pod_name,
@@ -306,8 +346,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         )
                                         .await;
                                 }
-                            }
-                        }
                         app.detail_view = None;
                     }
                     AppAction::LogsViewerOpen => {
@@ -351,20 +389,18 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 let cname = if first_container.is_empty() { None } else { Some(first_container.as_str()) };
                                 match logs_client.tail_logs(&pod_ref, Some(500), cname).await {
                                     Ok(lines) => {
-                                        if let Some(detail) = &mut app.detail_view {
-                                            if let Some(viewer) = &mut detail.logs_viewer {
+                                        if let Some(detail) = &mut app.detail_view
+                                            && let Some(viewer) = &mut detail.logs_viewer {
                                                 viewer.lines = lines;
                                                 viewer.loading = false;
                                             }
-                                        }
                                     }
                                     Err(err) => {
-                                        if let Some(detail) = &mut app.detail_view {
-                                            if let Some(viewer) = &mut detail.logs_viewer {
+                                        if let Some(detail) = &mut app.detail_view
+                                            && let Some(viewer) = &mut detail.logs_viewer {
                                                 viewer.loading = false;
                                                 viewer.error = Some(err.to_string());
                                             }
-                                        }
                                     }
                                 }
                             }
@@ -377,35 +413,32 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             .map(|v| (v.pod_name.clone(), v.pod_namespace.clone()))
                             .unwrap_or_default();
 
-                        if let Some(detail) = &mut app.detail_view {
-                            if let Some(viewer) = &mut detail.logs_viewer {
+                        if let Some(detail) = &mut app.detail_view
+                            && let Some(viewer) = &mut detail.logs_viewer {
                                 viewer.picking_container = false;
                                 viewer.container_name = container.clone();
                                 viewer.loading = true;
                                 viewer.lines.clear();
                                 viewer.error = None;
                             }
-                        }
 
                         if !pod_name.is_empty() {
                             let logs_client = LogsClient::new(client.get_client());
                             let pod_ref = PodRef::new(pod_name, pod_ns);
                             match logs_client.tail_logs(&pod_ref, Some(500), Some(container.as_str())).await {
                                 Ok(lines) => {
-                                    if let Some(detail) = &mut app.detail_view {
-                                        if let Some(viewer) = &mut detail.logs_viewer {
+                                    if let Some(detail) = &mut app.detail_view
+                                        && let Some(viewer) = &mut detail.logs_viewer {
                                             viewer.lines = lines;
                                             viewer.loading = false;
                                         }
-                                    }
                                 }
                                 Err(err) => {
-                                    if let Some(detail) = &mut app.detail_view {
-                                        if let Some(viewer) = &mut detail.logs_viewer {
+                                    if let Some(detail) = &mut app.detail_view
+                                        && let Some(viewer) = &mut detail.logs_viewer {
                                             viewer.loading = false;
                                             viewer.error = Some(err.to_string());
                                         }
-                                    }
                                 }
                             }
                         }
@@ -417,8 +450,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             })
                         });
                         apply_action(AppAction::LogsViewerToggleFollow, &mut app);
-                        if let Some((pod_name, pod_ns, container_name, was_following)) = follow_info {
-                            if !pod_name.is_empty() {
+                        if let Some((pod_name, pod_ns, container_name, was_following)) = follow_info
+                            && !pod_name.is_empty() {
                                 let cname = if container_name.is_empty() { "default".to_string() } else { container_name };
                                 if !was_following {
                                     let _ = coordinator
@@ -430,7 +463,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         .await;
                                 }
                             }
-                        }
                     }
                     AppAction::ScaleDialogSubmit => {
                         let scale_info = app.detail_view.as_ref().and_then(|d| {
@@ -449,11 +481,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     }
                                 }
                                 Err(err) => {
-                                    if let Some(detail) = &mut app.detail_view {
-                                        if let Some(scale) = &mut detail.scale_dialog {
+                                    if let Some(detail) = &mut app.detail_view
+                                        && let Some(scale) = &mut detail.scale_dialog {
                                             scale.error_message = Some(format!("Scale failed: {err:#}"));
                                         }
-                                    }
                                 }
                             }
                         }
@@ -575,22 +606,20 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         match port_forwarder.create_tunnel_async(target, config).await {
                             Ok(tunnel_id) => {
                                 app.clear_error();
-                                if let Some(detail) = &mut app.detail_view {
-                                    if let Some(dialog) = &mut detail.port_forward_dialog {
+                                if let Some(detail) = &mut app.detail_view
+                                    && let Some(dialog) = &mut detail.port_forward_dialog {
                                         dialog.success = Some(format!("Tunnel created: {tunnel_id}"));
                                         let tunnels = port_forwarder.list_tunnels();
                                         let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
                                         registry.update_tunnels(tunnels);
                                         dialog.update_registry(registry);
                                     }
-                                }
                             }
                             Err(err) => {
-                                if let Some(detail) = &mut app.detail_view {
-                                    if let Some(dialog) = &mut detail.port_forward_dialog {
+                                if let Some(detail) = &mut app.detail_view
+                                    && let Some(dialog) = &mut detail.port_forward_dialog {
                                         dialog.error = Some(format!("{err}"));
                                     }
-                                }
                             }
                         }
                     }
@@ -615,11 +644,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 _ => None,
                             })
                         });
-                        if let Some((name, namespace, replicas)) = scale_info {
-                            if let Some(detail) = &mut app.detail_view {
+                        if let Some((name, namespace, replicas)) = scale_info
+                            && let Some(detail) = &mut app.detail_view {
                                 detail.scale_dialog = Some(kubectui::ui::components::scale_dialog::ScaleDialogState::new(name, namespace, replicas));
                             }
-                        }
                     }
                     AppAction::ProbePanelOpen => {
                         let pod_info = app.detail_view.as_ref().and_then(|d| {
@@ -707,17 +735,31 @@ fn namespace_scope(namespace: &str) -> Option<&str> {
 
 /// Filters a slice by a text query matching name and optional namespace fields,
 /// then returns the item at the given index in the filtered result.
+/// Case-insensitive substring match without allocating a new lowercase string.
+#[inline]
+fn contains_ci(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
 fn filtered_get<'a, T, F>(items: &'a [T], idx: usize, query: &str, text_fields: F) -> Option<&'a T>
 where
-    F: Fn(&T) -> Vec<&str>,
+    F: Fn(&T, &str) -> bool,
 {
     if query.is_empty() {
         return items.get(idx);
     }
-    let q = query.to_lowercase();
     items
         .iter()
-        .filter(|item| text_fields(item).iter().any(|f| f.to_lowercase().contains(&q)))
+        .filter(|item| text_fields(item, query))
         .nth(idx)
 }
 
@@ -726,70 +768,92 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
     let q = app.search_query();
     match app.view() {
         AppView::Dashboard => None,
-        AppView::Nodes => filtered_get(&snapshot.nodes, idx, q, |n| vec![&n.name, &n.role])
+        AppView::Nodes => filtered_get(&snapshot.nodes, idx, q, |n, q| contains_ci(&n.name, q) || contains_ci(&n.role, q))
             .map(|n| ResourceRef::Node(n.name.clone())),
-        AppView::Pods => filtered_get(&snapshot.pods, idx, q, |p| vec![&p.name, &p.namespace, &p.status])
+        AppView::Pods => filtered_get(&snapshot.pods, idx, q, |p, q| contains_ci(&p.name, q) || contains_ci(&p.namespace, q) || contains_ci(&p.status, q))
             .map(|p| ResourceRef::Pod(p.name.clone(), p.namespace.clone())),
-        AppView::Services => filtered_get(&snapshot.services, idx, q, |s| vec![&s.name, &s.namespace, &s.type_])
+        AppView::Services => filtered_get(&snapshot.services, idx, q, |s, q| contains_ci(&s.name, q) || contains_ci(&s.namespace, q) || contains_ci(&s.type_, q))
             .map(|s| ResourceRef::Service(s.name.clone(), s.namespace.clone())),
-        AppView::Deployments => filtered_get(&snapshot.deployments, idx, q, |d| vec![&d.name, &d.namespace])
+        AppView::Deployments => filtered_get(&snapshot.deployments, idx, q, |d, q| contains_ci(&d.name, q) || contains_ci(&d.namespace, q))
             .map(|d| ResourceRef::Deployment(d.name.clone(), d.namespace.clone())),
-        AppView::StatefulSets => filtered_get(&snapshot.statefulsets, idx, q, |ss| vec![&ss.name, &ss.namespace])
+        AppView::StatefulSets => filtered_get(&snapshot.statefulsets, idx, q, |ss, q| contains_ci(&ss.name, q) || contains_ci(&ss.namespace, q))
             .map(|ss| ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone())),
-        AppView::ResourceQuotas => filtered_get(&snapshot.resource_quotas, idx, q, |rq| vec![&rq.name, &rq.namespace])
+        AppView::ResourceQuotas => filtered_get(&snapshot.resource_quotas, idx, q, |rq, q| contains_ci(&rq.name, q) || contains_ci(&rq.namespace, q))
             .map(|rq| ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone())),
-        AppView::LimitRanges => filtered_get(&snapshot.limit_ranges, idx, q, |lr| vec![&lr.name, &lr.namespace])
+        AppView::LimitRanges => filtered_get(&snapshot.limit_ranges, idx, q, |lr, q| contains_ci(&lr.name, q) || contains_ci(&lr.namespace, q))
             .map(|lr| ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone())),
-        AppView::PodDisruptionBudgets => filtered_get(&snapshot.pod_disruption_budgets, idx, q, |pdb| vec![&pdb.name, &pdb.namespace])
+        AppView::PodDisruptionBudgets => filtered_get(&snapshot.pod_disruption_budgets, idx, q, |pdb, q| contains_ci(&pdb.name, q) || contains_ci(&pdb.namespace, q))
             .map(|pdb| ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone())),
-        AppView::DaemonSets => filtered_get(&snapshot.daemonsets, idx, q, |ds| vec![&ds.name, &ds.namespace])
+        AppView::DaemonSets => filtered_get(&snapshot.daemonsets, idx, q, |ds, q| contains_ci(&ds.name, q) || contains_ci(&ds.namespace, q))
             .map(|ds| ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone())),
-        AppView::ReplicaSets => filtered_get(&snapshot.replicasets, idx, q, |rs| vec![&rs.name, &rs.namespace])
+        AppView::ReplicaSets => filtered_get(&snapshot.replicasets, idx, q, |rs, q| contains_ci(&rs.name, q) || contains_ci(&rs.namespace, q))
             .map(|rs| ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone())),
-        AppView::ReplicationControllers => filtered_get(&snapshot.replication_controllers, idx, q, |rc| vec![&rc.name, &rc.namespace])
+        AppView::ReplicationControllers => filtered_get(&snapshot.replication_controllers, idx, q, |rc, q| contains_ci(&rc.name, q) || contains_ci(&rc.namespace, q))
             .map(|rc| ResourceRef::ReplicationController(rc.name.clone(), rc.namespace.clone())),
-        AppView::Jobs => filtered_get(&snapshot.jobs, idx, q, |j| vec![&j.name, &j.namespace, &j.status])
+        AppView::Jobs => filtered_get(&snapshot.jobs, idx, q, |j, q| contains_ci(&j.name, q) || contains_ci(&j.namespace, q) || contains_ci(&j.status, q))
             .map(|j| ResourceRef::Job(j.name.clone(), j.namespace.clone())),
-        AppView::CronJobs => filtered_get(&snapshot.cronjobs, idx, q, |cj| vec![&cj.name, &cj.namespace, &cj.schedule])
+        AppView::CronJobs => filtered_get(&snapshot.cronjobs, idx, q, |cj, q| contains_ci(&cj.name, q) || contains_ci(&cj.namespace, q) || contains_ci(&cj.schedule, q))
             .map(|cj| ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone())),
-        AppView::Endpoints => filtered_get(&snapshot.endpoints, idx, q, |e| vec![&e.name, &e.namespace])
+        AppView::Endpoints => filtered_get(&snapshot.endpoints, idx, q, |e, q| contains_ci(&e.name, q) || contains_ci(&e.namespace, q))
             .map(|e| ResourceRef::Endpoint(e.name.clone(), e.namespace.clone())),
-        AppView::Ingresses => filtered_get(&snapshot.ingresses, idx, q, |i| vec![&i.name, &i.namespace])
+        AppView::Ingresses => filtered_get(&snapshot.ingresses, idx, q, |i, q| contains_ci(&i.name, q) || contains_ci(&i.namespace, q))
             .map(|i| ResourceRef::Ingress(i.name.clone(), i.namespace.clone())),
-        AppView::IngressClasses => filtered_get(&snapshot.ingress_classes, idx, q, |ic| vec![&ic.name])
+        AppView::IngressClasses => filtered_get(&snapshot.ingress_classes, idx, q, |ic, q| contains_ci(&ic.name, q))
             .map(|ic| ResourceRef::IngressClass(ic.name.clone())),
-        AppView::NetworkPolicies => filtered_get(&snapshot.network_policies, idx, q, |np| vec![&np.name, &np.namespace])
+        AppView::NetworkPolicies => filtered_get(&snapshot.network_policies, idx, q, |np, q| contains_ci(&np.name, q) || contains_ci(&np.namespace, q))
             .map(|np| ResourceRef::NetworkPolicy(np.name.clone(), np.namespace.clone())),
-        AppView::ConfigMaps => filtered_get(&snapshot.config_maps, idx, q, |cm| vec![&cm.name, &cm.namespace])
+        AppView::ConfigMaps => filtered_get(&snapshot.config_maps, idx, q, |cm, q| contains_ci(&cm.name, q) || contains_ci(&cm.namespace, q))
             .map(|cm| ResourceRef::ConfigMap(cm.name.clone(), cm.namespace.clone())),
-        AppView::Secrets => filtered_get(&snapshot.secrets, idx, q, |s| vec![&s.name, &s.namespace, &s.type_])
+        AppView::Secrets => filtered_get(&snapshot.secrets, idx, q, |s, q| contains_ci(&s.name, q) || contains_ci(&s.namespace, q) || contains_ci(&s.type_, q))
             .map(|s| ResourceRef::Secret(s.name.clone(), s.namespace.clone())),
-        AppView::HPAs => filtered_get(&snapshot.hpas, idx, q, |h| vec![&h.name, &h.namespace])
+        AppView::HPAs => filtered_get(&snapshot.hpas, idx, q, |h, q| contains_ci(&h.name, q) || contains_ci(&h.namespace, q))
             .map(|h| ResourceRef::Hpa(h.name.clone(), h.namespace.clone())),
-        AppView::PriorityClasses => filtered_get(&snapshot.priority_classes, idx, q, |pc| vec![&pc.name])
+        AppView::PriorityClasses => filtered_get(&snapshot.priority_classes, idx, q, |pc, q| contains_ci(&pc.name, q))
             .map(|pc| ResourceRef::PriorityClass(pc.name.clone())),
-        AppView::PersistentVolumeClaims => filtered_get(&snapshot.pvcs, idx, q, |pvc| vec![&pvc.name, &pvc.namespace])
+        AppView::PersistentVolumeClaims => filtered_get(&snapshot.pvcs, idx, q, |pvc, q| contains_ci(&pvc.name, q) || contains_ci(&pvc.namespace, q))
             .map(|pvc| ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone())),
-        AppView::PersistentVolumes => filtered_get(&snapshot.pvs, idx, q, |pv| vec![&pv.name])
+        AppView::PersistentVolumes => filtered_get(&snapshot.pvs, idx, q, |pv, q| contains_ci(&pv.name, q))
             .map(|pv| ResourceRef::Pv(pv.name.clone())),
-        AppView::StorageClasses => filtered_get(&snapshot.storage_classes, idx, q, |sc| vec![&sc.name])
+        AppView::StorageClasses => filtered_get(&snapshot.storage_classes, idx, q, |sc, q| contains_ci(&sc.name, q))
             .map(|sc| ResourceRef::StorageClass(sc.name.clone())),
-        AppView::Namespaces => filtered_get(&snapshot.namespace_list, idx, q, |ns| vec![&ns.name, &ns.status])
+        AppView::Namespaces => filtered_get(&snapshot.namespace_list, idx, q, |ns, q| contains_ci(&ns.name, q) || contains_ci(&ns.status, q))
             .map(|ns| ResourceRef::Namespace(ns.name.clone())),
-        AppView::Events => filtered_get(&snapshot.events, idx, q, |ev| vec![&ev.name, &ev.namespace, &ev.reason])
+        AppView::Events => filtered_get(&snapshot.events, idx, q, |ev, q| contains_ci(&ev.name, q) || contains_ci(&ev.namespace, q) || contains_ci(&ev.reason, q))
             .map(|ev| ResourceRef::Event(ev.name.clone(), ev.namespace.clone())),
-        AppView::ServiceAccounts => filtered_get(&snapshot.service_accounts, idx, q, |sa| vec![&sa.name, &sa.namespace])
+        AppView::ServiceAccounts => filtered_get(&snapshot.service_accounts, idx, q, |sa, q| contains_ci(&sa.name, q) || contains_ci(&sa.namespace, q))
             .map(|sa| ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone())),
-        AppView::Roles => filtered_get(&snapshot.roles, idx, q, |r| vec![&r.name, &r.namespace])
+        AppView::Roles => filtered_get(&snapshot.roles, idx, q, |r, q| contains_ci(&r.name, q) || contains_ci(&r.namespace, q))
             .map(|r| ResourceRef::Role(r.name.clone(), r.namespace.clone())),
-        AppView::RoleBindings => filtered_get(&snapshot.role_bindings, idx, q, |rb| vec![&rb.name, &rb.namespace])
+        AppView::RoleBindings => filtered_get(&snapshot.role_bindings, idx, q, |rb, q| contains_ci(&rb.name, q) || contains_ci(&rb.namespace, q))
             .map(|rb| ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone())),
-        AppView::ClusterRoles => filtered_get(&snapshot.cluster_roles, idx, q, |cr| vec![&cr.name])
+        AppView::ClusterRoles => filtered_get(&snapshot.cluster_roles, idx, q, |cr, q| contains_ci(&cr.name, q))
             .map(|cr| ResourceRef::ClusterRole(cr.name.clone())),
-        AppView::ClusterRoleBindings => filtered_get(&snapshot.cluster_role_bindings, idx, q, |crb| vec![&crb.name])
+        AppView::ClusterRoleBindings => filtered_get(&snapshot.cluster_role_bindings, idx, q, |crb, q| contains_ci(&crb.name, q))
             .map(|crb| ResourceRef::ClusterRoleBinding(crb.name.clone())),
-        AppView::HelmCharts | AppView::Extensions => None,
-        AppView::HelmReleases => filtered_get(&snapshot.helm_releases, idx, q, |r| vec![&r.name, &r.namespace, &r.chart])
+        AppView::HelmCharts => None, // Helm repos are local config, no detail view
+        AppView::Extensions => {
+            // The Extensions view has a split pane: CRDs (left) and instances (right).
+            // When extension_in_instances is true, Enter opens the selected instance's detail.
+            if !app.extension_in_instances {
+                return None;
+            }
+            let crd = app.extension_selected_crd.as_ref().and_then(|crd_name| {
+                snapshot.custom_resource_definitions.iter().find(|c| &c.name == crd_name)
+            })?;
+            let inst = app.extension_instances.get(
+                app.extension_instance_cursor
+                    .min(app.extension_instances.len().saturating_sub(1)),
+            )?;
+            Some(ResourceRef::CustomResource {
+                name: inst.name.clone(),
+                namespace: inst.namespace.clone(),
+                group: crd.group.clone(),
+                version: crd.version.clone(),
+                kind: crd.kind.clone(),
+                plural: crd.plural.clone(),
+            })
+        }
+        AppView::HelmReleases => filtered_get(&snapshot.helm_releases, idx, q, |r, q| contains_ci(&r.name, q) || contains_ci(&r.namespace, q) || contains_ci(&r.chart, q))
             .map(|r| ResourceRef::HelmRelease(r.name.clone(), r.namespace.clone())),
     }
 }
@@ -814,10 +878,27 @@ async fn fetch_detail_view(
     let name = resource.name().to_string();
     let namespace = resource.namespace().map(str::to_owned);
 
-    let yaml = client
-        .fetch_resource_yaml(&kind, &name, namespace.as_deref())
-        .await
-        .ok();
+    let yaml = match &resource {
+        ResourceRef::CustomResource { group, version, kind, plural, name, namespace } => {
+            client
+                .fetch_custom_resource_yaml(group, version, kind, plural, name, namespace.as_deref())
+                .await
+                .ok()
+        }
+        ResourceRef::HelmRelease(name, ns) => {
+            // Helm releases are stored as Secrets — fetch the latest revision secret
+            client
+                .fetch_helm_release_yaml(name, ns)
+                .await
+                .ok()
+        }
+        _ => {
+            client
+                .fetch_resource_yaml(&kind, &name, namespace.as_deref())
+                .await
+                .ok()
+        }
+    };
 
     let events = match &resource {
         ResourceRef::Pod(name, ns) => client.fetch_pod_events(name, ns).await.unwrap_or_default(),
@@ -1289,6 +1370,14 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 name: name.clone(),
                 namespace: Some(ns.clone()),
                 status,
+                ..DetailMetadata::default()
+            }
+        }
+        ResourceRef::CustomResource { name, namespace, kind, group, .. } => {
+            DetailMetadata {
+                name: name.clone(),
+                namespace: namespace.clone(),
+                status: Some(format!("{kind}.{group}")),
                 ..DetailMetadata::default()
             }
         }
@@ -1781,6 +1870,13 @@ fn sections_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 ]
             })
             .unwrap_or_default(),
+        ResourceRef::CustomResource { kind, group, version, .. } => {
+            vec![
+                "CUSTOM RESOURCE".to_string(),
+                format!("kind: {kind}"),
+                format!("apiVersion: {group}/{version}"),
+            ]
+        }
     }
 }
 
@@ -1816,8 +1912,8 @@ async fn pick_context_at_startup(
             .draw(|frame| ui::render(frame, app, &snapshot))
             .context("failed to render startup context picker")?;
 
-        if event::poll(Duration::from_millis(16)).context("failed to poll events")? {
-            if let Event::Key(key) = event::read().context("failed to read event")? {
+        if event::poll(Duration::from_millis(16)).context("failed to poll events")?
+            && let Event::Key(key) = event::read().context("failed to read event")? {
                 match app.handle_key_event(key) {
                     AppAction::SelectContext(ctx) => {
                         app.close_context_picker();
@@ -1834,7 +1930,6 @@ async fn pick_context_at_startup(
                     _ => {}
                 }
             }
-        }
     }
 }
 

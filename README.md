@@ -10,12 +10,15 @@ A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream log
 ## Features
 
 - **35 resource views** — Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Services, Endpoints, Ingresses, ConfigMaps, Secrets, HPAs, PVCs, PVs, StorageClasses, RBAC, Events, Namespaces, and more
-- **Real-time log streaming** with follow mode and line-number display
+- **Custom Resource Definitions** — browse CRDs, drill into instances, view full YAML via dynamic API
+- **Real-time log streaming** with follow mode, line-number display, and multi-container picker
 - **Port-forwarding** via kube-rs — no `kubectl` binary required
 - **Scale deployments** directly from the detail view
 - **Rollout restart** for Deployments, StatefulSets, and DaemonSets
+- **YAML editing** — press `e` to open resource YAML in `$EDITOR`, apply changes on save
 - **Health probe inspector** — view liveness/readiness configs per container
 - **Helm release browser** — reads Helm v3 releases from cluster secrets
+- **Helm repository viewer** — reads local Helm repo config from filesystem
 - **Multi-context switching** at startup and runtime
 - **Namespace filtering** across all views
 - **Fuzzy search** on every resource list
@@ -98,6 +101,7 @@ Press `Enter` on any resource to open its detail view. The detail view shows met
 | `s` | Open scale dialog | Deployments, StatefulSets |
 | `p` | Open probe inspector | Pods |
 | `R` | Rollout restart | Deployments, StatefulSets, DaemonSets |
+| `e` | Edit YAML in `$EDITOR` | All (when YAML is loaded) |
 | `Esc` | Close detail view | All |
 
 ---

@@ -1,3 +1,4 @@
+#![allow(clippy::field_reassign_with_default)]
 //! Integration tests for the Probe Panel component.
 
 use kubectui::k8s::probes::{ContainerProbes, ProbeConfig, ProbeHandler, ProbeType};

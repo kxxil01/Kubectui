@@ -20,6 +20,21 @@ use crate::{
     ui::components::{active_block, default_block, default_theme},
 };
 
+/// Case-insensitive substring match without allocating a new lowercase string.
+#[inline]
+pub(crate) fn contains_ci(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
 /// Renders a full frame for the current app and cluster state.
 pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     let root = Layout::default()
@@ -71,8 +86,10 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
             )
         }
-        AppView::HelmCharts
-        | AppView::HelmReleases => views::helm::render_helm_releases(
+        AppView::HelmCharts => views::helm::render_helm_repos(
+            frame, content, cluster, app.selected_idx(), app.search_query(),
+        ),
+        AppView::HelmReleases => views::helm::render_helm_releases(
             frame, content, cluster, app.selected_idx(), app.search_query(),
         ),
         AppView::Endpoints => views::endpoints::render_endpoints(
@@ -322,20 +339,19 @@ fn render_pods_widget(
 ) {
     let theme = default_theme();
 
-    let filtered: Vec<_> = cluster
-        .pods
-        .iter()
-        .filter(|p| {
-            if query.is_empty() {
-                true
-            } else {
-                let q = query.to_lowercase();
-                p.name.to_lowercase().contains(&q)
-                    || p.namespace.to_lowercase().contains(&q)
-                    || p.status.to_lowercase().contains(&q)
-            }
-        })
-        .collect();
+    let filtered: Vec<_> = if query.is_empty() {
+        cluster.pods.iter().collect()
+    } else {
+        cluster
+            .pods
+            .iter()
+            .filter(|p| {
+                contains_ci(&p.name, query)
+                    || contains_ci(&p.namespace, query)
+                    || contains_ci(&p.status, query)
+            })
+            .collect()
+    };
 
     if filtered.is_empty() {
         let msg = if cluster.pods.is_empty() {
@@ -855,6 +871,129 @@ mod tests {
                 ..DetailMetadata::default()
             },
             yaml: Some("kind: Pod\nmetadata:\n  name: p1\n".to_string()),
+            ..DetailViewState::default()
+        });
+
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies Extensions view renders with instance selection cursor without panic.
+    #[test]
+    fn render_extensions_with_instance_focus_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot
+            .custom_resource_definitions
+            .push(CustomResourceDefinitionInfo {
+                name: "widgets.demo.io".to_string(),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                plural: "widgets".to_string(),
+                scope: "Namespaced".to_string(),
+                instances: 2,
+            });
+
+        let mut app = app_with_view(AppView::Extensions);
+        app.set_extension_instances(
+            "widgets.demo.io".to_string(),
+            vec![
+                CustomResourceInfo {
+                    name: "alpha".to_string(),
+                    namespace: Some("default".to_string()),
+                    ..CustomResourceInfo::default()
+                },
+                CustomResourceInfo {
+                    name: "beta".to_string(),
+                    namespace: Some("staging".to_string()),
+                    ..CustomResourceInfo::default()
+                },
+            ],
+            None,
+        );
+        app.extension_in_instances = true;
+        app.extension_instance_cursor = 1;
+
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies Helm repositories view renders without panic.
+    #[test]
+    fn render_helm_repos_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.helm_repositories.push(
+            crate::k8s::dtos::HelmRepoInfo {
+                name: "bitnami".to_string(),
+                url: "https://charts.bitnami.com/bitnami".to_string(),
+            },
+        );
+
+        let app = app_with_view(AppView::HelmCharts);
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies Helm repos view renders empty state without panic.
+    #[test]
+    fn render_helm_repos_empty_smoke() {
+        let app = app_with_view(AppView::HelmCharts);
+        draw(&app, &ClusterSnapshot::default());
+    }
+
+    /// Verifies detail overlay renders for a CustomResource without panic.
+    #[test]
+    fn render_detail_custom_resource_smoke() {
+        let snapshot = ClusterSnapshot::default();
+        let mut app = app_with_view(AppView::Extensions);
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CustomResource {
+                name: "my-widget".to_string(),
+                namespace: Some("default".to_string()),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                plural: "widgets".to_string(),
+            }),
+            metadata: DetailMetadata {
+                name: "my-widget".to_string(),
+                namespace: Some("default".to_string()),
+                status: Some("Widget.demo.io".to_string()),
+                ..DetailMetadata::default()
+            },
+            yaml: Some("apiVersion: demo.io/v1\nkind: Widget\nmetadata:\n  name: my-widget\n".to_string()),
+            sections: vec![
+                "CUSTOM RESOURCE".to_string(),
+                "kind: Widget".to_string(),
+                "apiVersion: demo.io/v1".to_string(),
+            ],
+            ..DetailViewState::default()
+        });
+
+        draw(&app, &snapshot);
+    }
+
+    /// Verifies detail overlay renders for a HelmRelease without panic.
+    #[test]
+    fn render_detail_helm_release_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.helm_releases.push(crate::k8s::dtos::HelmReleaseInfo {
+            name: "my-app".to_string(),
+            namespace: "default".to_string(),
+            chart: "nginx".to_string(),
+            chart_version: "15.0.0".to_string(),
+            status: "deployed".to_string(),
+            revision: 3,
+            ..crate::k8s::dtos::HelmReleaseInfo::default()
+        });
+
+        let mut app = app_with_view(AppView::HelmReleases);
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::HelmRelease("my-app".to_string(), "default".to_string())),
+            metadata: DetailMetadata {
+                name: "my-app".to_string(),
+                namespace: Some("default".to_string()),
+                status: Some("deployed".to_string()),
+                ..DetailMetadata::default()
+            },
+            yaml: Some("apiVersion: v1\nkind: Secret\nmetadata:\n  name: sh.helm.release.v1.my-app.v3\n".to_string()),
             ..DetailViewState::default()
         });
 

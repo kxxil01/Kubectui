@@ -7,7 +7,7 @@ pub mod port_forward;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::{collections::BTreeSet, fmt, time::Duration};
+use std::{collections::HashSet, fmt, time::Duration};
 
 use crate::k8s::{
     client::K8sClient,
@@ -86,6 +86,7 @@ pub struct ClusterSnapshot {
     pub events: Vec<K8sEventInfo>,
     pub priority_classes: Vec<PriorityClassInfo>,
     pub helm_releases: Vec<HelmReleaseInfo>,
+    pub helm_repositories: Vec<crate::k8s::dtos::HelmRepoInfo>,
     pub node_metrics: Vec<NodeMetricsInfo>,
     pub services_count: usize,
     pub namespaces_count: usize,
@@ -692,7 +693,7 @@ impl GlobalState {
         let namespaces_count = pods
             .iter()
             .map(|pod| pod.namespace.as_str())
-            .collect::<BTreeSet<_>>()
+            .collect::<HashSet<_>>()
             .len();
 
         self.snapshot.services_count = services.len();
@@ -731,6 +732,7 @@ impl GlobalState {
         self.snapshot.events = events;
         self.snapshot.priority_classes = priority_classes;
         self.snapshot.helm_releases = helm_releases;
+        self.snapshot.helm_repositories = crate::k8s::helm::read_helm_repositories();
         self.snapshot.node_metrics = node_metrics;
         self.snapshot.phase = DataPhase::Ready;
         self.snapshot.last_updated = Some(Utc::now());

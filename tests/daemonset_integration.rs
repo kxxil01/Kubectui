@@ -78,7 +78,7 @@ fn test_daemonset_complete_workflow() {
 
     // Simulate sorting by readiness (unavailable first)
     let mut sorted = mock.daemonsets.clone();
-    sorted.sort_by_key(|ds| (-(ds.unavailable_count as i32), ds.name.clone()));
+    sorted.sort_by_key(|ds| (-ds.unavailable_count, ds.name.clone()));
     assert_eq!(sorted[0].name, "logging-collector");
     assert_eq!(sorted[0].unavailable_count, 1);
 }
@@ -247,8 +247,7 @@ fn test_daemonset_update_strategies() {
 /// Tests daemonset selector label extraction.
 #[test]
 fn test_daemonset_selector_extraction() {
-    let daemonsets = vec![
-        DaemonSetInfo {
+    let daemonsets = [DaemonSetInfo {
             name: "app-agent".to_string(),
             namespace: "default".to_string(),
             selector: "app=agent,tier=system".to_string(),
@@ -259,8 +258,7 @@ fn test_daemonset_selector_extraction() {
             namespace: "default".to_string(),
             selector: "-".to_string(),
             ..DaemonSetInfo::default()
-        },
-    ];
+        }];
 
     // Verify selector parsing
     let agent_selectors: Vec<&str> = daemonsets[0].selector.split(',').collect();

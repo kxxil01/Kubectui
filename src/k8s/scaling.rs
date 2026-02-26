@@ -86,7 +86,7 @@ impl ScaleRequest {
 
 impl K8sClient {
     pub async fn scale_deployment(&self, name: &str, namespace: &str, replicas: i32) -> Result<()> {
-        if replicas < 0 || replicas > 100 {
+        if !(0..=100).contains(&replicas) {
             return Err(anyhow!(
                 "invalid replica count {}: must be between 0 and 100",
                 replicas

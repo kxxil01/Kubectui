@@ -297,7 +297,7 @@ fn render_node_metrics(
     let cpu_data: Vec<(String, u64)> = metrics
         .iter()
         .map(|m| {
-            let short_name = m.name.split('-').last().unwrap_or(&m.name).to_string();
+            let short_name = m.name.split('-').next_back().unwrap_or(&m.name).to_string();
             (short_name, parse_millicores(&m.cpu))
         })
         .collect();
@@ -330,7 +330,7 @@ fn render_node_metrics(
     let mem_data: Vec<(String, u64)> = metrics
         .iter()
         .map(|m| {
-            let short_name = m.name.split('-').last().unwrap_or(&m.name).to_string();
+            let short_name = m.name.split('-').next_back().unwrap_or(&m.name).to_string();
             (short_name, parse_mib(&m.memory))
         })
         .collect();

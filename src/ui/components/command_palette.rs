@@ -159,8 +159,8 @@ impl CommandPalette {
         use crate::ui::components::default_theme;
         let theme = default_theme();
 
-        let popup_width = (area.width * 2 / 5).max(44).min(60);
-        let popup_height = (area.height / 2).max(16).min(24);
+        let popup_width = (area.width * 2 / 5).clamp(44, 60);
+        let popup_height = (area.height / 2).clamp(16, 24);
         let popup = Rect {
             x: (area.width.saturating_sub(popup_width)) / 2,
             y: area.height.saturating_sub(popup_height) / 3,

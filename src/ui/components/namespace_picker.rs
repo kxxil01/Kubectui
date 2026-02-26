@@ -128,8 +128,8 @@ impl NamespacePicker {
 
         let theme = default_theme();
 
-        let popup_width = (area.width * 2 / 5).max(40).min(60);
-        let popup_height = (area.height * 2 / 3).max(12).min(30);
+        let popup_width = (area.width * 2 / 5).clamp(40, 60);
+        let popup_height = (area.height * 2 / 3).clamp(12, 30);
         let popup = Rect {
             x: (area.width.saturating_sub(popup_width)) / 2,
             y: (area.height.saturating_sub(popup_height)) / 2,

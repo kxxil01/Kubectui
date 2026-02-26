@@ -13,6 +13,7 @@ use ratatui::{
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::ui::theme::Theme;
+use crate::ui::contains_ci;
 use crate::k8s::logs::PodRef;
 
 /// Action emitted by logs view based on keyboard input
@@ -198,12 +199,11 @@ impl LogsViewState {
             self.filtered_indices = None;
             self.search_query.clear();
         } else {
-            let query_lower = query.to_lowercase();
             let indices: Vec<usize> = self
                 .logs
                 .iter()
                 .enumerate()
-                .filter(|(_, log)| log.content.to_lowercase().contains(&query_lower))
+                .filter(|(_, log)| contains_ci(&log.content, &query))
                 .map(|(i, _)| i)
                 .collect();
 
@@ -436,7 +436,7 @@ fn render_log_area(
             };
 
             let highlight = !state.search_query.is_empty()
-                && log.content.to_lowercase().contains(&state.search_query.to_lowercase());
+                && contains_ci(&log.content, &state.search_query);
 
             let row_bg = if highlight {
                 Style::default().bg(theme.selection_bg)

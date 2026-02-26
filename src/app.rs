@@ -178,7 +178,7 @@ impl AppView {
             AppView::StorageClasses => "Storage Classes",
             AppView::Namespaces => "Namespaces",
             AppView::Events => "Events",
-            AppView::HelmCharts => "Charts",
+            AppView::HelmCharts => "Repositories",
             AppView::HelmReleases => "Releases",
             AppView::ServiceAccounts => "Service Accounts",
             AppView::ClusterRoles => "Cluster Roles",
@@ -334,11 +334,21 @@ pub enum ResourceRef {
     ClusterRole(String),
     ClusterRoleBinding(String),
     HelmRelease(String, String),
+    /// A custom resource instance identified by its CRD coordinates.
+    /// Fields: (name, namespace_opt, group, version, kind, plural)
+    CustomResource {
+        name: String,
+        namespace: Option<String>,
+        group: String,
+        version: String,
+        kind: String,
+        plural: String,
+    },
 }
 
 impl ResourceRef {
     /// Returns resource kind label used by UI and fetch routing.
-    pub fn kind(&self) -> &'static str {
+    pub fn kind(&self) -> &str {
         match self {
             ResourceRef::Node(_) => "Node",
             ResourceRef::Pod(_, _) => "Pod",
@@ -372,6 +382,7 @@ impl ResourceRef {
             ResourceRef::ClusterRole(_) => "ClusterRole",
             ResourceRef::ClusterRoleBinding(_) => "ClusterRoleBinding",
             ResourceRef::HelmRelease(_, _) => "HelmRelease",
+            ResourceRef::CustomResource { kind, .. } => kind.as_str(),
         }
     }
 
@@ -410,6 +421,7 @@ impl ResourceRef {
             | ResourceRef::ClusterRole(name)
             | ResourceRef::ClusterRoleBinding(name) => name,
             ResourceRef::HelmRelease(name, _) => name,
+            ResourceRef::CustomResource { name, .. } => name,
         }
     }
 
@@ -448,6 +460,7 @@ impl ResourceRef {
             | ResourceRef::Role(_, ns)
             | ResourceRef::RoleBinding(_, ns) => Some(ns),
             ResourceRef::HelmRelease(_, ns) => Some(ns),
+            ResourceRef::CustomResource { namespace, .. } => namespace.as_deref(),
         }
     }
 }
@@ -521,19 +534,12 @@ impl Default for PortForwardDialogState {
 
 /// In-detail scale dialog state used by keyboard routing tests.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub struct ScaleDialogInputState {
     pub replica_input: String,
     pub target_replicas: i32,
 }
 
-impl Default for ScaleDialogInputState {
-    fn default() -> Self {
-        Self {
-            replica_input: String::new(),
-            target_replicas: 0,
-        }
-    }
-}
 
 /// In-detail probe panel state used by keyboard routing tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -756,6 +762,10 @@ pub struct AppState {
     pub extension_instances: Vec<CustomResourceInfo>,
     pub extension_error: Option<String>,
     pub extension_selected_crd: Option<String>,
+    /// When true, keyboard focus is on the instances pane (right) instead of CRD picker (left).
+    pub extension_in_instances: bool,
+    /// Cursor index within the instances list.
+    pub extension_instance_cursor: usize,
 }
 
 impl Default for AppState {
@@ -779,6 +789,8 @@ impl Default for AppState {
             extension_instances: Vec::new(),
             extension_error: None,
             extension_selected_crd: None,
+            extension_in_instances: false,
+            extension_instance_cursor: 0,
         }
     }
 }
@@ -904,6 +916,7 @@ impl AppState {
         self.extension_selected_crd = Some(crd_name);
         self.extension_instances = instances;
         self.extension_error = error;
+        self.extension_instance_cursor = 0;
     }
 
     /// Advances to the next view in [`AppView::ORDER`], wrapping around.
@@ -1211,8 +1224,8 @@ impl AppState {
                     KeyCode::Esc => AppAction::EscapePressed,
                     _ => {
                         // Delegate all key handling to the PortForwardDialog component
-                        if let Some(detail) = &mut self.detail_view {
-                            if let Some(dialog) = &mut detail.port_forward_dialog {
+                        if let Some(detail) = &mut self.detail_view
+                            && let Some(dialog) = &mut detail.port_forward_dialog {
                                 let pf_action = dialog.handle_key(key);
                                 return match pf_action {
                                     crate::ui::components::port_forward_dialog::PortForwardAction::Close => AppAction::PortForwardClose,
@@ -1220,7 +1233,6 @@ impl AppState {
                                     _ => AppAction::None,
                                 };
                             }
-                        }
                         AppAction::None
                     }
                 };
@@ -1373,6 +1385,12 @@ impl AppState {
             KeyCode::Char('j') | KeyCode::Down if self.detail_view.is_none() => {
                 match self.focus {
                     Focus::Sidebar => self.sidebar_cursor_down(),
+                    Focus::Content if self.view == AppView::Extensions && self.extension_in_instances => {
+                        if !self.extension_instances.is_empty() {
+                            self.extension_instance_cursor =
+                                (self.extension_instance_cursor + 1) % self.extension_instances.len();
+                        }
+                    }
                     Focus::Content => self.select_next(),
                 }
                 AppAction::None
@@ -1380,6 +1398,15 @@ impl AppState {
             KeyCode::Char('k') | KeyCode::Up if self.detail_view.is_none() => {
                 match self.focus {
                     Focus::Sidebar => self.sidebar_cursor_up(),
+                    Focus::Content if self.view == AppView::Extensions && self.extension_in_instances => {
+                        if !self.extension_instances.is_empty() {
+                            self.extension_instance_cursor = if self.extension_instance_cursor == 0 {
+                                self.extension_instances.len() - 1
+                            } else {
+                                self.extension_instance_cursor - 1
+                            };
+                        }
+                    }
                     Focus::Content => self.select_previous(),
                 }
                 AppAction::None
@@ -1761,5 +1788,29 @@ mod tests {
         assert_eq!(helm.kind(), "HelmRelease");
         assert_eq!(helm.name(), "my-release");
         assert_eq!(helm.namespace(), Some("default"));
+
+        let cr = ResourceRef::CustomResource {
+            name: "my-widget".to_string(),
+            namespace: Some("prod".to_string()),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+        };
+        assert_eq!(cr.kind(), "Widget");
+        assert_eq!(cr.name(), "my-widget");
+        assert_eq!(cr.namespace(), Some("prod"));
+
+        let cr_cluster = ResourceRef::CustomResource {
+            name: "global".to_string(),
+            namespace: None,
+            group: "infra.io".to_string(),
+            version: "v1beta1".to_string(),
+            kind: "ClusterWidget".to_string(),
+            plural: "clusterwidgets".to_string(),
+        };
+        assert_eq!(cr_cluster.kind(), "ClusterWidget");
+        assert_eq!(cr_cluster.name(), "global");
+        assert_eq!(cr_cluster.namespace(), None);
     }
 }

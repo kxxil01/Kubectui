@@ -13,6 +13,8 @@ pub fn render_custom_resources(
     area: Rect,
     resources: &[CustomResourceInfo],
     error: Option<&str>,
+    selected_idx: usize,
+    is_focused: bool,
 ) {
     if let Some(err) = error {
         frame.render_widget(
@@ -32,7 +34,12 @@ pub fn render_custom_resources(
         return;
     }
 
-    let rows = resources.iter().map(|item| {
+    let rows = resources.iter().enumerate().map(|(idx, item)| {
+        let style = if is_focused && idx == selected_idx {
+            Style::default().bg(Color::DarkGray)
+        } else {
+            Style::default()
+        };
         Row::new(vec![
             Cell::from(item.name.clone()),
             Cell::from(
@@ -42,9 +49,16 @@ pub fn render_custom_resources(
             ),
             Cell::from(format_age(item.age)),
         ])
+        .style(style)
     });
 
     let header = Row::new(["Name", "Namespace", "Age"]).style(Style::default().fg(Color::Cyan));
+
+    let title = if is_focused {
+        format!("Custom Resources ({}) ▸ Enter to view", resources.len())
+    } else {
+        format!("Custom Resources ({})", resources.len())
+    };
 
     let table = Table::new(
         rows,
@@ -55,7 +69,7 @@ pub fn render_custom_resources(
         ],
     )
     .header(header)
-    .block(crate::ui::components::default_block("Custom Resources"));
+    .block(crate::ui::components::default_block(&title));
 
     frame.render_widget(table, area);
 }

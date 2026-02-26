@@ -124,8 +124,8 @@ impl ContextPicker {
 
         let theme = default_theme();
 
-        let popup_width = (area.width * 3 / 5).max(50).min(80);
-        let popup_height = (area.height * 2 / 3).max(14).min(32);
+        let popup_width = (area.width * 3 / 5).clamp(50, 80);
+        let popup_height = (area.height * 2 / 3).clamp(14, 32);
         let popup = Rect {
             x: (area.width.saturating_sub(popup_width)) / 2,
             y: (area.height.saturating_sub(popup_height)) / 2,

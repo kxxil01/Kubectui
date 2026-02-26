@@ -655,3 +655,10 @@ pub struct HelmReleaseInfo {
     pub updated: Option<DateTime<Utc>>,
     pub age: Option<Duration>,
 }
+
+/// Information about a configured Helm repository (from ~/.config/helm/repositories.yaml).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HelmRepoInfo {
+    pub name: String,
+    pub url: String,
+}

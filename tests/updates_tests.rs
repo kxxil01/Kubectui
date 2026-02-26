@@ -1,3 +1,4 @@
+#![allow(clippy::field_reassign_with_default)]
 //! Comprehensive tests for the update coordinator and real-time updates system.
 
 #[cfg(test)]

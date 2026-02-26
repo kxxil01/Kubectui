@@ -1339,7 +1339,7 @@ impl K8sClient {
             let spec = pvc.spec.as_ref();
             let status = pvc.status.as_ref();
             let access_modes = spec.and_then(|s| s.access_modes.as_ref())
-                .map(|modes| modes.iter().map(|m| m.clone()).collect())
+                .map(|modes| modes.to_vec())
                 .unwrap_or_default();
             let capacity = status.and_then(|s| s.capacity.as_ref())
                 .and_then(|c| c.get("storage"))
@@ -1369,7 +1369,7 @@ impl K8sClient {
                 .map(|dt| dt.with_timezone(&Utc));
             let spec = pv.spec.as_ref();
             let access_modes = spec.and_then(|s| s.access_modes.as_ref())
-                .map(|modes| modes.iter().map(|m| m.clone()).collect())
+                .map(|modes| modes.to_vec())
                 .unwrap_or_default();
             let capacity = spec.and_then(|s| s.capacity.as_ref())
                 .and_then(|c| c.get("storage"))
@@ -1706,6 +1706,26 @@ impl K8sClient {
             })
     }
 
+    /// Fetches YAML for a custom resource using explicit CRD API coordinates.
+    pub async fn fetch_custom_resource_yaml(
+        &self,
+        group: &str,
+        version: &str,
+        kind: &str,
+        plural: &str,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<String> {
+        yaml::get_custom_resource_yaml(&self.client, group, version, kind, plural, name, namespace)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed preparing YAML for CRD {group}/{version}/{kind} name='{name}' namespace='{}'",
+                    namespace.unwrap_or("<cluster-scope>")
+                )
+            })
+    }
+
     /// Applies edited YAML back to the cluster (server-side apply).
     pub async fn apply_resource_yaml(
         &self,
@@ -1715,6 +1735,49 @@ impl K8sClient {
         namespace: Option<&str>,
     ) -> Result<()> {
         yaml::apply_resource_yaml(&self.client, yaml_str, kind, name, namespace).await
+    }
+
+    /// Fetches the Helm release secret as YAML.
+    ///
+    /// Helm v3 stores releases as Secrets named `sh.helm.release.v1.{name}.v{revision}`.
+    /// This finds the latest revision secret for the given release name.
+    pub async fn fetch_helm_release_yaml(
+        &self,
+        release_name: &str,
+        namespace: &str,
+    ) -> Result<String> {
+        use k8s_openapi::api::core::v1::Secret;
+        use kube::api::ListParams;
+
+        let secrets_api: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
+        let lp = ListParams::default().labels(&format!("owner=helm,name={release_name}"));
+        let list = secrets_api
+            .list(&lp)
+            .await
+            .with_context(|| format!("failed fetching Helm release secrets for '{release_name}'"))?;
+
+        // Find the latest revision (highest version label)
+        let latest = list
+            .into_iter()
+            .max_by_key(|s| {
+                s.metadata
+                    .labels
+                    .as_ref()
+                    .and_then(|l| l.get("version"))
+                    .and_then(|v| v.parse::<i32>().ok())
+                    .unwrap_or(0)
+            });
+
+        match latest {
+            Some(secret) => {
+                let rendered = serde_yaml::to_string(&secret)
+                    .context("failed serializing Helm release secret to YAML")?;
+                Ok(yaml::truncate_yaml(rendered))
+            }
+            None => Ok(format!(
+                "# No Helm release secret found for '{release_name}' in namespace '{namespace}'"
+            )),
+        }
     }
 
     /// Fetches pod events and degrades gracefully when RBAC denies access.

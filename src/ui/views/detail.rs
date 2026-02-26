@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::DetailViewState,
+    app::{DetailViewState, ResourceRef},
     ui::{
         theme::Theme,
         components::{
@@ -530,22 +530,53 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
     render_yaml_panel(frame, chunks[2], detail_state);
 
     // ── Footer ──
-    let footer_line = Line::from(vec![
-        Span::styled(" [l] ", theme.keybind_key_style()),
-        Span::styled("Logs  ", theme.keybind_desc_style()),
-        Span::styled("[f] ", theme.keybind_key_style()),
-        Span::styled("Port-Fwd  ", theme.keybind_desc_style()),
-        Span::styled("[s] ", theme.keybind_key_style()),
-        Span::styled("Scale  ", theme.keybind_desc_style()),
-        Span::styled("[p] ", theme.keybind_key_style()),
-        Span::styled("Probes  ", theme.keybind_desc_style()),
-        Span::styled("[e] ", theme.keybind_key_style()),
-        Span::styled("Edit  ", theme.keybind_desc_style()),
-        Span::styled("[R] ", theme.keybind_key_style()),
-        Span::styled("Restart  ", theme.keybind_desc_style()),
-        Span::styled("[Esc] ", theme.keybind_key_style()),
-        Span::styled("Close", theme.keybind_desc_style()),
-    ]);
+    let mut footer_spans = Vec::new();
+
+    let is_pod = matches!(detail_state.resource.as_ref(), Some(ResourceRef::Pod(_, _)));
+    let is_scalable = matches!(
+        detail_state.resource.as_ref(),
+        Some(ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _))
+    );
+    let is_restartable = matches!(
+        detail_state.resource.as_ref(),
+        Some(ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _) | ResourceRef::DaemonSet(_, _))
+    );
+    let has_yaml = detail_state.yaml.is_some();
+
+    if is_pod {
+        footer_spans.push(Span::styled(" [l] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Logs  ", theme.keybind_desc_style()));
+        footer_spans.push(Span::styled("[f] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Port-Fwd  ", theme.keybind_desc_style()));
+        footer_spans.push(Span::styled("[p] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Probes  ", theme.keybind_desc_style()));
+    }
+    if is_scalable {
+        footer_spans.push(Span::styled("[s] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Scale  ", theme.keybind_desc_style()));
+    }
+    if is_restartable {
+        footer_spans.push(Span::styled("[R] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Restart  ", theme.keybind_desc_style()));
+    }
+    if has_yaml {
+        footer_spans.push(Span::styled("[e] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Edit  ", theme.keybind_desc_style()));
+    }
+    footer_spans.push(Span::styled("[j/k] ", theme.keybind_key_style()));
+    footer_spans.push(Span::styled("Scroll  ", theme.keybind_desc_style()));
+    footer_spans.push(Span::styled("[Esc] ", theme.keybind_key_style()));
+    footer_spans.push(Span::styled("Close", theme.keybind_desc_style()));
+
+    if footer_spans.is_empty() {
+        footer_spans.push(Span::styled(" [Esc] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Close", theme.keybind_desc_style()));
+    } else {
+        // Prepend a space for padding
+        footer_spans.insert(0, Span::raw(" "));
+    }
+
+    let footer_line = Line::from(footer_spans);
     let footer_block = Block::default()
         .borders(Borders::TOP)
         .border_style(theme.border_style())

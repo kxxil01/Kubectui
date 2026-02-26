@@ -171,7 +171,7 @@ async fn test_tunnel_registry_navigation() {
 
     // Add multiple tunnels
     for i in 1..=3 {
-        let target = PortForwardTarget::new("default", &format!("pod-{}", i), 8000 + i as u16);
+        let target = PortForwardTarget::new("default", format!("pod-{}", i), 8000 + i as u16);
         let tunnel = PortForwardTunnelInfo {
             id: target.id(),
             target: target.clone(),

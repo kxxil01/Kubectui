@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::k8s::dtos::CustomResourceDefinitionInfo;
+use crate::ui::contains_ci;
 
 pub fn render_crd_picker(
     frame: &mut Frame,
@@ -14,17 +15,18 @@ pub fn render_crd_picker(
     crds: &[CustomResourceDefinitionInfo],
     selected_idx: usize,
     query: &str,
+    is_focused: bool,
 ) {
-    let query_lc = query.trim().to_lowercase();
+    let query_trimmed = query.trim();
     let filtered: Vec<&CustomResourceDefinitionInfo> = crds
         .iter()
         .filter(|crd| {
-            if query_lc.is_empty() {
+            if query_trimmed.is_empty() {
                 true
             } else {
-                crd.name.to_lowercase().contains(&query_lc)
-                    || crd.kind.to_lowercase().contains(&query_lc)
-                    || crd.group.to_lowercase().contains(&query_lc)
+                contains_ci(&crd.name, query_trimmed)
+                    || contains_ci(&crd.kind, query_trimmed)
+                    || contains_ci(&crd.group, query_trimmed)
             }
         })
         .collect();
@@ -38,7 +40,7 @@ pub fn render_crd_picker(
     }
 
     let rows = filtered.iter().enumerate().map(|(idx, crd)| {
-        let style = if idx == selected_idx {
+        let style = if is_focused && idx == selected_idx {
             Style::default().bg(Color::DarkGray)
         } else {
             Style::default()

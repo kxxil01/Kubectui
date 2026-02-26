@@ -28,6 +28,7 @@ pub fn render_extensions(
         &snapshot.custom_resource_definitions,
         app.selected_idx(),
         app.search_query(),
+        !app.extension_in_instances,
     );
 
     custom_resources::render_custom_resources(
@@ -35,5 +36,7 @@ pub fn render_extensions(
         chunks[1],
         &app.extension_instances,
         app.extension_error.as_deref(),
+        app.extension_instance_cursor,
+        app.extension_in_instances,
     );
 }
