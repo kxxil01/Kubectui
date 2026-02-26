@@ -17,6 +17,7 @@ pub mod jobs;
 pub mod namespaces;
 pub mod network_policies;
 pub mod nodes;
+pub mod port_forwarding;
 pub mod priority_classes;
 pub mod replicasets;
 pub mod replication_controllers;

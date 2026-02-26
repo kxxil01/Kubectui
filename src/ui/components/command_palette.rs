@@ -43,6 +43,7 @@ const COMMANDS: &[Command] = &[
     Command { view: AppView::ResourceQuotas,       aliases: &["resourcequotas", "resourcequota", "quota", "rq"] },
     Command { view: AppView::LimitRanges,          aliases: &["limitranges", "limitrange", "limits", "lr"] },
     Command { view: AppView::PodDisruptionBudgets, aliases: &["poddisruptionbudgets", "pdb", "pdbs"] },
+    Command { view: AppView::PortForwarding,       aliases: &["portforwarding", "portforward", "pf", "tunnel", "tunnels"] },
     Command { view: AppView::Extensions,           aliases: &["extensions", "ext", "crd", "crds"] },
 ];
 

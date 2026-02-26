@@ -83,6 +83,16 @@ impl TunnelRegistry {
     pub fn len(&self) -> usize {
         self.tunnels.len()
     }
+
+    /// Returns tunnels in insertion order.
+    pub fn ordered_tunnels(&self) -> Vec<&PortForwardTunnelInfo> {
+        self.tunnel_ids.iter().filter_map(|id| self.tunnels.get(id)).collect()
+    }
+
+    /// Returns the selected index.
+    pub fn selected_index(&self) -> usize {
+        self.selected_index
+    }
 }
 
 #[cfg(test)]

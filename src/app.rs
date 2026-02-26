@@ -81,6 +81,7 @@ pub enum AppView {
     Ingresses,
     IngressClasses,
     NetworkPolicies,
+    PortForwarding,
     // Config
     ConfigMaps,
     Secrets,
@@ -110,7 +111,7 @@ pub enum AppView {
 }
 
 impl AppView {
-    const ORDER: [AppView; 35] = [
+    const ORDER: [AppView; 36] = [
         // Overview
         AppView::Dashboard,
         AppView::Nodes,
@@ -131,6 +132,7 @@ impl AppView {
         AppView::Ingresses,
         AppView::IngressClasses,
         AppView::NetworkPolicies,
+        AppView::PortForwarding,
         // Config
         AppView::ConfigMaps,
         AppView::Secrets,
@@ -174,6 +176,7 @@ impl AppView {
             AppView::Ingresses => "Ingresses",
             AppView::IngressClasses => "Ingress Classes",
             AppView::NetworkPolicies => "Network Policies",
+            AppView::PortForwarding => "Port Forwarding",
             AppView::ConfigMaps => "Config Maps",
             AppView::Secrets => "Secrets",
             AppView::ResourceQuotas => "Resource Quotas",
@@ -215,6 +218,7 @@ impl AppView {
             AppView::Ingresses => "󰱓",
             AppView::IngressClasses => "󰱓",
             AppView::NetworkPolicies => "󰒃",
+            AppView::PortForwarding => "󰛳",
             AppView::ConfigMaps => "󰒓",
             AppView::Secrets => "󰌋",
             AppView::ResourceQuotas => "󰏗",
@@ -254,7 +258,8 @@ impl AppView {
             | AppView::Endpoints
             | AppView::Ingresses
             | AppView::IngressClasses
-            | AppView::NetworkPolicies => NavGroup::Network,
+            | AppView::NetworkPolicies
+            | AppView::PortForwarding => NavGroup::Network,
             AppView::ConfigMaps
             | AppView::Secrets
             | AppView::ResourceQuotas
@@ -302,7 +307,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 35] {
+    pub const fn tabs() -> &'static [AppView; 36] {
         &Self::ORDER
     }
 }
@@ -627,6 +632,7 @@ pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> Vec<SidebarItem> {
             AppView::Ingresses,
             AppView::IngressClasses,
             AppView::NetworkPolicies,
+            AppView::PortForwarding,
         ]),
         (NavGroup::Config, &[
             AppView::ConfigMaps,
@@ -796,6 +802,8 @@ pub struct AppState {
     pub extension_instance_cursor: usize,
     /// Auto-refresh interval in seconds (0 = disabled).
     pub refresh_interval_secs: u64,
+    /// Active port-forward tunnels displayed in the PortForwarding view.
+    pub tunnel_registry: crate::state::port_forward::TunnelRegistry,
 }
 
 impl Default for AppState {
@@ -822,6 +830,7 @@ impl Default for AppState {
             extension_in_instances: false,
             extension_instance_cursor: 0,
             refresh_interval_secs: 30,
+            tunnel_registry: crate::state::port_forward::TunnelRegistry::new(),
         }
     }
 }
@@ -1621,6 +1630,7 @@ mod tests {
             AppView::Ingresses,
             AppView::IngressClasses,
             AppView::NetworkPolicies,
+            AppView::PortForwarding,
             // Config
             AppView::ConfigMaps,
             AppView::Secrets,
@@ -1814,7 +1824,7 @@ mod tests {
     fn rapid_tab_switching_is_stable() {
         let mut app = AppState::default();
 
-        for _ in 0..(35 * 3) {
+        for _ in 0..(36 * 3) {
             app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         }
 

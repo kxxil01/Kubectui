@@ -146,6 +146,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (detail_tx, mut detail_rx) =
         tokio::sync::mpsc::unbounded_channel::<Result<DetailViewState, (ResourceRef, String)>>();
 
+    // Channel for background data refreshes — namespace switches, manual refresh, auto-refresh
+    // all go through here so the UI stays responsive during API calls.
+    let (refresh_tx, mut refresh_rx) =
+        tokio::sync::mpsc::unbounded_channel::<Result<GlobalState, String>>();
+    // Whether a background refresh is currently in flight.
+    let mut refresh_in_flight = false;
+
     // Cached snapshot — only re-clone when state is marked dirty
     let mut cached_snapshot = global_state.snapshot();
     let mut snapshot_dirty = false;
@@ -222,6 +229,28 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
+            // Background refresh completed (namespace switch, manual refresh, auto-refresh)
+            result = refresh_rx.recv() => {
+                refresh_in_flight = false;
+                if let Some(result) = result {
+                    needs_redraw = true;
+                    match result {
+                        Ok(new_state) => {
+                            global_state = new_state;
+                            consecutive_refresh_failures = 0;
+                            app.clear_error();
+                            app.set_available_namespaces(global_state.namespaces().to_vec());
+                            snapshot_dirty = true;
+                            sync_extensions_instances(&client, &mut app, &global_state.snapshot()).await;
+                        }
+                        Err(err) => {
+                            consecutive_refresh_failures += 1;
+                            app.set_error(format!("Refresh failed: {err}"));
+                        }
+                    }
+                }
+            }
+
             // Periodic tick — heartbeat for follow-mode log scrolling
             _ = tick.tick() => {
                 // Only redraw on tick if logs are actively streaming (follow mode)
@@ -237,26 +266,25 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             _ = auto_refresh.tick() => {
                 // Skip auto-refresh if a detail view is open (avoid disrupting user)
                 // or if we're in a backoff period from consecutive failures
+                // or if a refresh is already in flight
                 let backoff_secs = match consecutive_refresh_failures {
                     0 => 0,
                     1 => 30,
                     2 => 60,
                     _ => 120,
                 };
-                if app.detail_view.is_none() && backoff_secs == 0 {
-                    match global_state
-                        .refresh(&client, namespace_scope(app.get_namespace()))
-                        .await
-                    {
-                        Ok(()) => {
-                            consecutive_refresh_failures = 0;
-                            app.set_available_namespaces(global_state.namespaces().to_vec());
-                            snapshot_dirty = true;
+                if app.detail_view.is_none() && backoff_secs == 0 && !refresh_in_flight {
+                    refresh_in_flight = true;
+                    let mut gs = global_state.clone();
+                    let c = client.clone();
+                    let ns = namespace_scope(app.get_namespace()).map(str::to_string);
+                    let tx = refresh_tx.clone();
+                    tokio::spawn(async move {
+                        match gs.refresh(&c, ns.as_deref()).await {
+                            Ok(()) => { let _ = tx.send(Ok(gs)); }
+                            Err(e) => { let _ = tx.send(Err(e.to_string())); }
                         }
-                        Err(_) => {
-                            consecutive_refresh_failures += 1;
-                        }
-                    }
+                    });
                 } else if backoff_secs > 0 {
                     // Decrement backoff counter each tick
                     consecutive_refresh_failures = consecutive_refresh_failures.saturating_sub(1);
@@ -314,19 +342,18 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                     AppAction::Quit => break,
                     AppAction::RefreshData => {
-                        if let Err(err) = global_state
-                            .refresh(&client, namespace_scope(app.get_namespace()))
-                            .await
-                        {
-                            app.set_error(format!("Refresh failed: {err:#}"));
-                            consecutive_refresh_failures += 1;
-                        } else {
-                            app.clear_error();
-                            consecutive_refresh_failures = 0;
-                            app.set_available_namespaces(global_state.namespaces().to_vec());
-                            snapshot_dirty = true;
-                            sync_extensions_instances(&client, &mut app, &global_state.snapshot())
-                                .await;
+                        if !refresh_in_flight {
+                            refresh_in_flight = true;
+                            let mut gs = global_state.clone();
+                            let c = client.clone();
+                            let ns = namespace_scope(app.get_namespace()).map(str::to_string);
+                            let tx = refresh_tx.clone();
+                            tokio::spawn(async move {
+                                match gs.refresh(&c, ns.as_deref()).await {
+                                    Ok(()) => { let _ = tx.send(Ok(gs)); }
+                                    Err(e) => { let _ = tx.send(Err(e.to_string())); }
+                                }
+                            });
                         }
                         // Reset auto-refresh timer after manual refresh
                         auto_refresh.reset();
@@ -369,19 +396,22 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.close_context_picker();
                         match K8sClient::connect_with_context(&ctx).await {
                             Ok(new_client) => {
-                                global_state = GlobalState::default();
-                                if let Err(err) = global_state
-                                    .refresh(&new_client, namespace_scope(app.get_namespace()))
-                                    .await
-                                {
-                                    app.set_error(format!("Refresh failed after context switch: {err:#}"));
-                                } else {
-                                    app.clear_error();
-                                    app.set_available_namespaces(global_state.namespaces().to_vec());
-                                    snapshot_dirty = true;
-                                    sync_extensions_instances(&new_client, &mut app, &global_state.snapshot()).await;
-                                }
                                 client = new_client;
+                                global_state = GlobalState::default();
+                                // Non-blocking refresh after context switch
+                                if !refresh_in_flight {
+                                    refresh_in_flight = true;
+                                    let mut gs = global_state.clone();
+                                    let c = client.clone();
+                                    let ns = namespace_scope(app.get_namespace()).map(str::to_string);
+                                    let tx = refresh_tx.clone();
+                                    tokio::spawn(async move {
+                                        match gs.refresh(&c, ns.as_deref()).await {
+                                            Ok(()) => { let _ = tx.send(Ok(gs)); }
+                                            Err(e) => { let _ = tx.send(Err(e.to_string())); }
+                                        }
+                                    });
+                                }
                             }
                             Err(err) => {
                                 app.set_error(format!("Failed to connect to context '{ctx}': {err:#}"));
@@ -393,17 +423,19 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.close_namespace_picker();
                         save_config(&app);
 
-                        if let Err(err) = global_state
-                            .refresh(&client, namespace_scope(app.get_namespace()))
-                            .await
-                        {
-                            app.set_error(format!("Refresh failed: {err:#}"));
-                        } else {
-                            app.clear_error();
-                            app.set_available_namespaces(global_state.namespaces().to_vec());
-                            snapshot_dirty = true;
-                            sync_extensions_instances(&client, &mut app, &global_state.snapshot())
-                                .await;
+                        // Non-blocking refresh — UI stays responsive
+                        if !refresh_in_flight {
+                            refresh_in_flight = true;
+                            let mut gs = global_state.clone();
+                            let c = client.clone();
+                            let ns = namespace_scope(app.get_namespace()).map(str::to_string);
+                            let tx = refresh_tx.clone();
+                            tokio::spawn(async move {
+                                match gs.refresh(&c, ns.as_deref()).await {
+                                    Ok(()) => { let _ = tx.send(Ok(gs)); }
+                                    Err(e) => { let _ = tx.send(Err(e.to_string())); }
+                                }
+                            });
                         }
                     }
                     AppAction::OpenDetail(resource) => {
@@ -739,9 +771,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         dialog.success = Some(format!("Tunnel created: {tunnel_id}"));
                                         let tunnels = port_forwarder.list_tunnels();
                                         let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
-                                        registry.update_tunnels(tunnels);
+                                        registry.update_tunnels(tunnels.clone());
                                         dialog.update_registry(registry);
                                     }
+                                // Sync top-level registry for PortForwarding view
+                                let tunnels = port_forwarder.list_tunnels();
+                                app.tunnel_registry.update_tunnels(tunnels);
                             }
                             Err(err) => {
                                 if let Some(detail) = &mut app.detail_view
@@ -963,6 +998,7 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
         AppView::ClusterRoleBindings => filtered_get(&snapshot.cluster_role_bindings, idx, q, |crb, q| contains_ci(&crb.name, q))
             .map(|crb| ResourceRef::ClusterRoleBinding(crb.name.clone())),
         AppView::HelmCharts => None, // Helm repos are local config, no detail view
+        AppView::PortForwarding => None, // Port forwards are managed via the dialog
         AppView::Extensions => {
             // The Extensions view has a split pane: CRDs (left) and instances (right).
             // When extension_in_instances is true, Enter opens the selected instance's detail.

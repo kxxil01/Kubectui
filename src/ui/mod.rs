@@ -119,6 +119,9 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         AppView::NetworkPolicies => views::network_policies::render_network_policies(
             frame, content, cluster, app.selected_idx(), app.search_query(),
         ),
+        AppView::PortForwarding => views::port_forwarding::render_port_forwarding(
+            frame, content, &app.tunnel_registry, app.selected_idx(), app.search_query(),
+        ),
         AppView::ConfigMaps => views::config::render_config_maps(
             frame, content, cluster, app.selected_idx(), app.search_query(),
         ),
