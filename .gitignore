@@ -1,1 +1,30 @@
+# Build artifacts
 /target
+debug/
+*.d
+*.o
+*.so
+*.dylib
+
+# Cargo
+# Note: Cargo.lock is committed for binary projects (reproducible builds)
+**/*.rs.bk
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.*
+
+# Logs
+*.log
+
+# OS
+Thumbs.db
+.DS_Store
