@@ -37,6 +37,21 @@ pub(crate) fn contains_ci(haystack: &str, needle: &str) -> bool {
 
 /// Renders a full frame for the current app and cluster state.
 pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
+    let area = frame.area();
+
+    // Guard against terminals too small to render the layout
+    if area.height < 10 || area.width < 40 {
+        let msg = format!(
+            "Terminal too small ({}x{}). Need at least 40x10.",
+            area.width, area.height
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, ratatui::style::Style::default())),
+            area,
+        );
+        return;
+    }
+
     let root = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(2)])
