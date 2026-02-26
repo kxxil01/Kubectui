@@ -308,6 +308,73 @@ fn is_forbidden_error(err: &kube::Error) -> bool {
     }
 }
 
+/// Deletes a Kubernetes resource by kind, name, and optional namespace.
+///
+/// Uses the same dynamic API lookup as `get_resource_yaml`. Returns a
+/// human-readable error for RBAC-forbidden or not-found cases.
+pub async fn delete_resource(
+    client: &Client,
+    kind: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> Result<()> {
+    let (api_resource, namespaced) = api_resource_for_kind(kind)
+        .with_context(|| format!("unsupported resource kind '{kind}'"))?;
+
+    let api: Api<DynamicObject> = if namespaced {
+        match namespace {
+            Some(ns) => Api::namespaced_with(client.clone(), ns, &api_resource),
+            None => return Err(anyhow!("resource kind '{kind}' requires a namespace")),
+        }
+    } else {
+        Api::all_with(client.clone(), &api_resource)
+    };
+
+    let dp = kube::api::DeleteParams::default();
+    api.delete(name, &dp)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to delete {kind}/{name} in namespace '{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            )
+        })?;
+
+    Ok(())
+}
+
+/// Deletes a custom resource using explicit API coordinates.
+pub async fn delete_custom_resource(
+    client: &Client,
+    group: &str,
+    version: &str,
+    kind: &str,
+    plural: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> Result<()> {
+    let gvk = GroupVersionKind::gvk(group, version, kind);
+    let mut ar = ApiResource::from_gvk(&gvk);
+    ar.plural = plural.to_string();
+
+    let api: Api<DynamicObject> = match namespace {
+        Some(ns) => Api::namespaced_with(client.clone(), ns, &ar),
+        None => Api::all_with(client.clone(), &ar),
+    };
+
+    let dp = kube::api::DeleteParams::default();
+    api.delete(name, &dp)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to delete custom resource {group}/{version}/{kind} name='{name}' namespace='{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            )
+        })?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use kube::error::ErrorResponse;

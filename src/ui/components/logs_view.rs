@@ -435,16 +435,7 @@ fn render_log_area(
                 LogLevel::Unknown => Style::default().fg(theme.fg_dim),
             };
 
-            let highlight = !state.search_query.is_empty()
-                && contains_ci(&log.content, &state.search_query);
-
-            let row_bg = if highlight {
-                Style::default().bg(theme.selection_bg)
-            } else {
-                Style::default()
-            };
-
-            Line::from(vec![
+            let mut spans = vec![
                 Span::styled(format!("{line_num} "), theme.inactive_style()),
                 Span::styled("│ ", theme.inactive_style()),
                 Span::styled(
@@ -452,8 +443,51 @@ fn render_log_area(
                     level_style,
                 ),
                 Span::styled(" ", Style::default()),
-                Span::styled(log.content.clone(), if highlight { row_bg.patch(content_style) } else { content_style }),
-            ])
+            ];
+
+            let has_match = !state.search_query.is_empty()
+                && contains_ci(&log.content, &state.search_query);
+
+            if has_match {
+                // Split content into normal + highlighted spans at each match
+                let highlight_style = Style::default()
+                    .fg(theme.bg)
+                    .bg(theme.warning);
+                let needle_len = state.search_query.len();
+                let content_bytes = log.content.as_bytes();
+                let needle_bytes = state.search_query.as_bytes();
+                let mut pos = 0usize;
+                for window_start in 0..=content_bytes.len().saturating_sub(needle_len) {
+                    if content_bytes[window_start..window_start + needle_len]
+                        .eq_ignore_ascii_case(needle_bytes)
+                    {
+                        // Text before the match
+                        if window_start > pos {
+                            spans.push(Span::styled(
+                                log.content[pos..window_start].to_string(),
+                                content_style,
+                            ));
+                        }
+                        // The matched text
+                        spans.push(Span::styled(
+                            log.content[window_start..window_start + needle_len].to_string(),
+                            highlight_style,
+                        ));
+                        pos = window_start + needle_len;
+                    }
+                }
+                // Remaining text after last match
+                if pos < log.content.len() {
+                    spans.push(Span::styled(
+                        log.content[pos..].to_string(),
+                        content_style,
+                    ));
+                }
+            } else {
+                spans.push(Span::styled(log.content.clone(), content_style));
+            }
+
+            Line::from(spans)
         })
         .collect();
 

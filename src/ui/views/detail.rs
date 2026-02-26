@@ -563,6 +563,8 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         footer_spans.push(Span::styled("[e] ", theme.keybind_key_style()));
         footer_spans.push(Span::styled("Edit  ", theme.keybind_desc_style()));
     }
+    footer_spans.push(Span::styled("[d] ", theme.keybind_key_style()));
+    footer_spans.push(Span::styled("Delete  ", theme.keybind_desc_style()));
     footer_spans.push(Span::styled("[j/k] ", theme.keybind_key_style()));
     footer_spans.push(Span::styled("Scroll  ", theme.keybind_desc_style()));
     footer_spans.push(Span::styled("[Esc] ", theme.keybind_key_style()));
@@ -582,6 +584,11 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.statusbar_bg));
     frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
+
+    // ── Delete confirmation overlay ──
+    if detail_state.confirm_delete {
+        render_delete_confirm(frame, popup, detail_state);
+    }
 }
 
 // ─── Logs overlay ─────────────────────────────────────────────────────────────
@@ -761,6 +768,79 @@ fn render_logs_overlay(frame: &mut Frame, area: Rect, viewer: &crate::app::LogsV
         .style(Style::default().bg(theme.statusbar_bg));
     frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[2]);
 }
+/// Renders a centered delete confirmation popup over the detail modal.
+fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
+    use ratatui::style::Modifier;
+
+    let theme = default_theme();
+
+    let (kind_label, name_label) = if let Some(resource) = &detail_state.resource {
+        (resource.kind().to_string(), resource.name().to_string())
+    } else {
+        ("resource".to_string(), "unknown".to_string())
+    };
+
+    let w = 48u16;
+    let h = 6u16;
+    let popup = Rect {
+        x: parent.x + (parent.width.saturating_sub(w)) / 2,
+        y: parent.y + (parent.height.saturating_sub(h)) / 2,
+        width: w.min(parent.width),
+        height: h.min(parent.height),
+    };
+
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.badge_error_style())
+        .style(Style::default().bg(theme.bg));
+    frame.render_widget(block, popup);
+
+    let inner = Rect {
+        x: popup.x + 1,
+        y: popup.y + 1,
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(2)])
+        .split(inner);
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  ⚠ Delete ", theme.title_style()),
+            Span::styled(kind_label, Style::default().fg(theme.warning).add_modifier(Modifier::BOLD)),
+            Span::styled("?", theme.title_style()),
+        ])),
+        chunks[0],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled("  ", theme.inactive_style()),
+            Span::styled(name_label, Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        ])),
+        chunks[1],
+    );
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                "  [D/y/Enter] ",
+                Style::default().fg(theme.error).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled("delete  ", theme.inactive_style()),
+            Span::styled("[Esc] ", theme.keybind_key_style()),
+            Span::styled("cancel", theme.keybind_desc_style()),
+        ])),
+        chunks[2],
+    );
+}
+
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

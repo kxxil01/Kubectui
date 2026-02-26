@@ -16,6 +16,7 @@ A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream log
 - **Scale deployments** directly from the detail view
 - **Rollout restart** for Deployments, StatefulSets, and DaemonSets
 - **YAML editing** — press `e` to open resource YAML in `$EDITOR`, apply changes on save
+- **Resource deletion** — press `d` to delete any resource with a confirmation prompt
 - **Health probe inspector** — view liveness/readiness configs per container
 - **Helm release browser** — reads Helm v3 releases from cluster secrets
 - **Helm repository viewer** — reads local Helm repo config from filesystem
@@ -102,6 +103,7 @@ Press `Enter` on any resource to open its detail view. The detail view shows met
 | `p` | Open probe inspector | Pods |
 | `R` | Rollout restart | Deployments, StatefulSets, DaemonSets |
 | `e` | Edit YAML in `$EDITOR` | All (when YAML is loaded) |
+| `d` | Delete resource (with confirmation) | All |
 | `Esc` | Close detail view | All |
 
 ---

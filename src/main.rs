@@ -512,6 +512,49 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             }
                         }
                     }
+                    AppAction::DeleteResource => {
+                        let delete_info = app.detail_view.as_ref().and_then(|d| {
+                            d.resource.clone()
+                        });
+                        if let Some(resource) = delete_info {
+                            let result = match &resource {
+                                ResourceRef::CustomResource { name, namespace, group, version, kind, plural } => {
+                                    client.delete_custom_resource(
+                                        group, version, kind, plural, name, namespace.as_deref(),
+                                    ).await
+                                }
+                                _ => {
+                                    client.delete_resource(
+                                        &resource.kind().to_ascii_lowercase(),
+                                        resource.name(),
+                                        resource.namespace(),
+                                    ).await
+                                }
+                            };
+                            match result {
+                                Ok(()) => {
+                                    app.clear_error();
+                                    app.detail_view = None;
+                                    // Refresh data to reflect the deletion
+                                    if let Err(err) = global_state
+                                        .refresh(&client, namespace_scope(app.get_namespace()))
+                                        .await
+                                    {
+                                        app.set_error(format!("Refresh failed: {err:#}"));
+                                    } else {
+                                        app.set_available_namespaces(global_state.namespaces().to_vec());
+                                        snapshot_dirty = true;
+                                    }
+                                }
+                                Err(err) => {
+                                    app.set_error(format!("Delete failed: {err:#}"));
+                                    if let Some(detail) = &mut app.detail_view {
+                                        detail.confirm_delete = false;
+                                    }
+                                }
+                            }
+                        }
+                    }
                     AppAction::EditYaml => {
                         // Gather what we need before suspending the TUI
                         let edit_info = app.detail_view.as_ref().and_then(|d| {
@@ -966,6 +1009,7 @@ async fn fetch_detail_view(
         port_forward_dialog: None,
         scale_dialog: None,
         probe_panel: None,
+        confirm_delete: false,
     })
 }
 

@@ -567,6 +567,8 @@ pub struct DetailViewState {
     pub port_forward_dialog: Option<PortForwardDialog>,
     pub scale_dialog: Option<ScaleDialogState>,
     pub probe_panel: Option<ProbePanelComponentState>,
+    /// When true, a delete confirmation prompt is shown in the detail view.
+    pub confirm_delete: bool,
 }
 
 /// A row in the sidebar — either a group header or a leaf view item.
@@ -689,6 +691,7 @@ pub enum AppAction {
     ProbeSelectPrev,
     RolloutRestart,
     EditYaml,
+    DeleteResource,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -1280,6 +1283,12 @@ impl AppState {
                 self.confirm_quit = true;
                 AppAction::None
             }
+            KeyCode::Esc if self.detail_view.as_ref().map(|d| d.confirm_delete).unwrap_or(false) => {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.confirm_delete = false;
+                }
+                AppAction::None
+            }
             KeyCode::Esc if self.detail_view.is_some() => AppAction::CloseDetail,
             KeyCode::Esc if self.focus == Focus::Content => {
                 self.focus = Focus::Sidebar;
@@ -1373,6 +1382,33 @@ impl AppState {
                         && !d.loading
                 }).unwrap_or(false);
                 if can_edit { AppAction::EditYaml } else { AppAction::None }
+            }
+            KeyCode::Char('d') if self.detail_view.is_some() => {
+                // Toggle delete confirmation prompt
+                let can_delete = self.detail_view.as_ref().map(|d| {
+                    d.resource.is_some()
+                        && d.logs_viewer.is_none()
+                        && d.port_forward_dialog.is_none()
+                        && d.scale_dialog.is_none()
+                        && d.probe_panel.is_none()
+                        && !d.loading
+                        && !d.confirm_delete
+                }).unwrap_or(false);
+                if can_delete
+                    && let Some(detail) = &mut self.detail_view {
+                        detail.confirm_delete = true;
+                    }
+                AppAction::None
+            }
+            KeyCode::Char('D') if self.detail_view.as_ref().map(|d| d.confirm_delete).unwrap_or(false) => {
+                // Confirm delete
+                AppAction::DeleteResource
+            }
+            KeyCode::Char('y') if self.detail_view.as_ref().map(|d| d.confirm_delete).unwrap_or(false) => {
+                AppAction::DeleteResource
+            }
+            KeyCode::Enter if self.detail_view.as_ref().map(|d| d.confirm_delete).unwrap_or(false) => {
+                AppAction::DeleteResource
             }
             KeyCode::Tab => {
                 self.next_view();

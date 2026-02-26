@@ -247,6 +247,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs event loop (needs terminal handoff + async apply)
             true
         }
+        AppAction::DeleteResource => {
+            // Handled in main.rs event loop (needs async K8s call)
+            true
+        }
         AppAction::ProbePanelOpen => {
             app_state.open_probe_panel();
             true
