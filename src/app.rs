@@ -692,6 +692,7 @@ pub enum AppAction {
     RolloutRestart,
     EditYaml,
     DeleteResource,
+    CycleTheme,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -801,6 +802,8 @@ impl Default for AppState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppConfig {
     namespace: String,
+    #[serde(default)]
+    theme: Option<String>,
 }
 
 impl AppState {
@@ -1466,6 +1469,7 @@ impl AppState {
             KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 AppAction::RefreshData
             }
+            KeyCode::Char('T') if self.detail_view.is_none() => AppAction::CycleTheme,
             _ => AppAction::None,
         }
     }
@@ -1500,9 +1504,19 @@ pub fn load_config_from_path(path: &Path) -> AppState {
 
     if let Ok(content) = fs::read_to_string(path)
         && let Ok(cfg) = serde_json::from_str::<AppConfig>(&content)
-        && !cfg.namespace.trim().is_empty()
     {
-        app.set_namespace(cfg.namespace);
+        if !cfg.namespace.trim().is_empty() {
+            app.set_namespace(cfg.namespace);
+        }
+        if let Some(theme_name) = &cfg.theme {
+            let idx = match theme_name.to_lowercase().as_str() {
+                "nord" => 1,
+                "dracula" => 2,
+                "catppuccin" | "mocha" => 3,
+                _ => 0,
+            };
+            crate::ui::theme::set_active_theme(idx);
+        }
     }
 
     app
@@ -1510,8 +1524,10 @@ pub fn load_config_from_path(path: &Path) -> AppState {
 
 /// Saves app namespace config to a given path.
 pub fn save_config_to_path(app: &AppState, path: &Path) {
+    let theme_name = crate::ui::theme::active_theme().name;
     let cfg = AppConfig {
         namespace: app.current_namespace.clone(),
+        theme: Some(theme_name),
     };
 
     if let Some(parent) = path.parent() {

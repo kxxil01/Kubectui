@@ -26,9 +26,9 @@ use ratatui::{
 
 use crate::{app::{AppView, NavGroup}, ui::theme::Theme};
 
-/// Global theme singleton — dark by default, can be overridden via CLI.
+/// Global theme singleton — reads from the active theme setting.
 pub fn default_theme() -> Theme {
-    Theme::dark()
+    crate::ui::theme::active_theme()
 }
 
 /// Renders the top header bar with app title, version badge, and cluster endpoint.
@@ -131,10 +131,11 @@ pub fn render_sidebar(
                 SidebarItem::Group(group) => {
                     let collapsed = collapsed.contains(group);
                     let toggle = if collapsed { "▶" } else { "▼" };
+                    let icon = group.icon();
                     let label = group.label();
                     if is_cursor {
                         Line::from(vec![Span::styled(
-                            format!(" {toggle} {label}"),
+                            format!(" {toggle} {icon} {label}"),
                             Style::default()
                                 .fg(theme.selection_fg)
                                 .bg(theme.selection_bg)
@@ -143,7 +144,7 @@ pub fn render_sidebar(
                     } else {
                         Line::from(vec![
                             Span::styled(
-                                format!(" {toggle} "),
+                                format!(" {toggle} {icon} "),
                                 Style::default().fg(theme.accent),
                             ),
                             Span::styled(
@@ -157,10 +158,11 @@ pub fn render_sidebar(
                 }
                 SidebarItem::View(view) => {
                     let is_active = *view == active;
+                    let icon = view.icon();
                     let label = view.label();
                     if is_cursor && is_active && sidebar_active {
                         Line::from(vec![Span::styled(
-                            format!("  ● {label}"),
+                            format!("  {icon} {label}"),
                             Style::default()
                                 .fg(theme.selection_fg)
                                 .bg(theme.selection_bg)
@@ -168,7 +170,7 @@ pub fn render_sidebar(
                         )])
                     } else if is_cursor && sidebar_active {
                         Line::from(vec![Span::styled(
-                            format!("    {label}"),
+                            format!("  {icon} {label}"),
                             Style::default()
                                 .fg(theme.fg)
                                 .bg(theme.bg_surface)
@@ -176,7 +178,7 @@ pub fn render_sidebar(
                         )])
                     } else if is_active {
                         Line::from(vec![
-                            Span::styled("  ● ", Style::default().fg(theme.accent)),
+                            Span::styled(format!("  {icon} "), Style::default().fg(theme.accent)),
                             Span::styled(
                                 label,
                                 Style::default()
@@ -186,7 +188,7 @@ pub fn render_sidebar(
                         ])
                     } else {
                         Line::from(vec![Span::styled(
-                            format!("    {label}"),
+                            format!("  {icon} {label}"),
                             Style::default().fg(theme.fg_dim),
                         )])
                     }

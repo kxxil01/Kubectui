@@ -20,6 +20,7 @@ A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream log
 - **Health probe inspector** — view liveness/readiness configs per container
 - **Helm release browser** — reads Helm v3 releases from cluster secrets
 - **Helm repository viewer** — reads local Helm repo config from filesystem
+- **5 color themes** — Dark (default), Nord, Dracula, Catppuccin Mocha, Light — cycle with `T`, persist in config
 - **Multi-context switching** at startup and runtime
 - **Namespace filtering** across all views
 - **Fuzzy search** on every resource list
@@ -84,6 +85,7 @@ cargo build --release
 | `~` | Open namespace picker |
 | `c` | Open context switcher |
 | `:` | Open command palette |
+| `T` | Cycle color theme (dark → nord → dracula → catppuccin) |
 | `q` | Quit (asks for confirmation) |
 | `Esc` | Cancel quit confirmation / close overlays |
 
@@ -226,6 +228,30 @@ Press `:` to open. Type any resource name to jump directly to that view.
 | `↑` / `↓` | Navigate results |
 | `Enter` | Navigate to selected view |
 | `Esc` | Close |
+
+---
+
+## Themes
+
+KubecTUI ships with 5 color themes. Press `T` (shift+t) from the main view to cycle through them. The current theme is shown in the status bar.
+
+| Theme | Description |
+|-------|-------------|
+| `dark` | GitHub-inspired deep dark (default) |
+| `nord` | Arctic, north-bluish color palette |
+| `dracula` | Dark with vibrant purple/pink accents |
+| `catppuccin` | Warm dark with pastel accents (Mocha variant) |
+| `light` | Clean, high-contrast light background |
+
+Your theme choice is saved automatically to `~/.config/kubectui/config.json` and restored on next launch.
+
+### CLI flag
+
+```bash
+kubectui --theme nord
+```
+
+Valid values: `dark`, `nord`, `dracula`, `catppuccin`, `mocha`, `light`.
 
 ---
 

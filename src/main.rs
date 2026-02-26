@@ -40,6 +40,29 @@ use kubectui::{
 async fn main() -> Result<()> {
     env_logger::init();
 
+    // Simple --theme flag: kubectui --theme nord
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("KubecTUI — keyboard-driven terminal UI for Kubernetes\n");
+        println!("USAGE: kubectui [OPTIONS]\n");
+        println!("OPTIONS:");
+        println!("  --theme <name>  Set color theme (dark, nord, dracula, catppuccin, light)");
+        println!("  --help, -h      Show this help message");
+        return Ok(());
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--theme")
+        && let Some(name) = args.get(pos + 1)
+    {
+        let idx = match name.to_lowercase().as_str() {
+            "nord" => 1,
+            "dracula" => 2,
+            "catppuccin" | "mocha" => 3,
+            "light" => 4,
+            _ => 0,
+        };
+        kubectui::ui::theme::set_active_theme(idx);
+    }
+
     let mut terminal = setup_terminal().context("failed to initialize terminal")?;
     let run_result = run_app(&mut terminal).await;
     let restore_result = restore_terminal(&mut terminal);
@@ -716,6 +739,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         } else {
                             apply_action(AppAction::ProbePanelOpen, &mut app);
                         }
+                    }
+                    AppAction::CycleTheme => {
+                        apply_action(AppAction::CycleTheme, &mut app);
+                        save_config(&app);
                     }
                     other => {
                         apply_action(other, &mut app);

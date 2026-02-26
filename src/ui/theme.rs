@@ -1,9 +1,45 @@
 //! Color theme system for KubecTUI
 
+use std::sync::atomic::{AtomicU8, Ordering};
+
 use ratatui::{
     style::{Color, Modifier, Style},
     widgets::BorderType,
 };
+
+/// Global theme index: 0=dark, 1=nord, 2=dracula, 3=catppuccin, 4=light
+static ACTIVE_THEME: AtomicU8 = AtomicU8::new(0);
+
+/// Number of available themes.
+pub const THEME_COUNT: u8 = 5;
+
+/// Sets the active theme by index (wraps around).
+pub fn set_active_theme(index: u8) {
+    ACTIVE_THEME.store(index % THEME_COUNT, Ordering::Relaxed);
+}
+
+/// Returns the current active theme index.
+pub fn active_theme_index() -> u8 {
+    ACTIVE_THEME.load(Ordering::Relaxed)
+}
+
+/// Cycles to the next theme and returns it.
+pub fn cycle_theme() -> Theme {
+    let next = (active_theme_index() + 1) % THEME_COUNT;
+    set_active_theme(next);
+    active_theme()
+}
+
+/// Returns the currently active theme.
+pub fn active_theme() -> Theme {
+    match active_theme_index() {
+        1 => Theme::nord(),
+        2 => Theme::dracula(),
+        3 => Theme::catppuccin_mocha(),
+        4 => Theme::light(),
+        _ => Theme::dark(),
+    }
+}
 
 /// Represents a color theme for the application
 #[derive(Debug, Clone)]
@@ -59,6 +95,7 @@ impl Theme {
             "nord" => Self::nord(),
             "dracula" => Self::dracula(),
             "catppuccin" | "mocha" => Self::catppuccin_mocha(),
+            "light" => Self::light(),
             _ => Self::dark(),
         }
     }
@@ -168,6 +205,33 @@ impl Theme {
             tab_inactive_fg: Color::Rgb(108, 112, 134),
             statusbar_bg: Color::Rgb(36, 36, 54),
             info: Color::Rgb(116, 199, 236),
+        }
+    }
+
+    /// Light theme — clean, high-contrast light background
+    pub fn light() -> Self {
+        Self {
+            name: "light".to_string(),
+            bg: Color::Rgb(255, 255, 255),
+            bg_surface: Color::Rgb(243, 244, 246),
+            fg: Color::Rgb(31, 41, 55),
+            fg_dim: Color::Rgb(107, 114, 128),
+            border: Color::Rgb(209, 213, 219),
+            border_active: Color::Rgb(37, 99, 235),
+            accent: Color::Rgb(37, 99, 235),
+            accent2: Color::Rgb(124, 58, 237),
+            success: Color::Rgb(22, 163, 74),
+            warning: Color::Rgb(202, 138, 4),
+            error: Color::Rgb(220, 38, 38),
+            muted: Color::Rgb(156, 163, 175),
+            selection_bg: Color::Rgb(219, 234, 254),
+            selection_fg: Color::Rgb(37, 99, 235),
+            header_bg: Color::Rgb(243, 244, 246),
+            tab_active_bg: Color::Rgb(219, 234, 254),
+            tab_active_fg: Color::Rgb(37, 99, 235),
+            tab_inactive_fg: Color::Rgb(107, 114, 128),
+            statusbar_bg: Color::Rgb(243, 244, 246),
+            info: Color::Rgb(37, 99, 235),
         }
     }
 
@@ -362,6 +426,12 @@ mod tests {
     fn test_load_catppuccin_theme() {
         let theme = Theme::load("catppuccin");
         assert_eq!(theme.name, "catppuccin");
+    }
+
+    #[test]
+    fn test_load_light_theme() {
+        let theme = Theme::load("light");
+        assert_eq!(theme.name, "light");
     }
 
     #[test]

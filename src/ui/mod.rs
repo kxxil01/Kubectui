@@ -51,7 +51,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     let body = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(22), Constraint::Min(0)])
+        .constraints([Constraint::Length(26), Constraint::Min(0)])
         .split(root[1]);
 
     components::render_sidebar(frame, body[0], app.view(), app.sidebar_cursor, &app.collapsed_groups, app.focus);
@@ -239,8 +239,9 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     } else if app.is_search_mode() {
         format!("[{}] Search: {}", app.get_namespace(), app.search_query())
     } else {
+        let theme_name = theme::active_theme().name;
         format!(
-            "[{}]  [j/k] navigate • [/] search • [~] namespace • [c] context • [Enter] detail • [r] refresh • [q] quit",
+            "[{}]  [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name} • [r] refresh • [q] quit",
             app.get_namespace()
         )
     };
