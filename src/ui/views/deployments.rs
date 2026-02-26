@@ -11,11 +11,17 @@ use ratatui::{
 };
 
 use crate::{
+    app::AppView,
     state::{
         ClusterSnapshot,
-        filters::{DeploymentHealth, deployment_health_from_ready, filter_deployments},
+        filters::{DeploymentHealth, deployment_health_from_ready},
     },
-    ui::components::{active_block, default_block, default_theme},
+    ui::{
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        format_small_int,
+    },
 };
 
 /// Renders the Deployments table with stateful selection and scrollbar.
@@ -27,9 +33,26 @@ pub fn render_deployments(
     query: &str,
 ) {
     let theme = default_theme();
-    let items = filter_deployments(&snapshot.deployments, query, None, None);
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::Deployments,
+        query,
+        snapshot.snapshot_version,
+        data_fingerprint(&snapshot.deployments),
+        |q| {
+            if q.is_empty() {
+                return (0..snapshot.deployments.len()).collect();
+            }
+            snapshot
+                .deployments
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, deploy)| contains_ci(&deploy.name, q).then_some(idx))
+                .collect()
+        },
+    );
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled(
                 "  No deployments found",
@@ -41,7 +64,7 @@ pub fn render_deployments(
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -55,47 +78,44 @@ pub fn render_deployments(
     ])
     .height(1)
     .style(theme.header_style());
+    let name_style = Style::default().fg(theme.fg);
+    let dim_style = Style::default().fg(theme.fg_dim);
+    let muted_style = Style::default().fg(theme.muted);
 
-    let rows: Vec<Row> = items
-        .iter()
-        .enumerate()
-        .map(|(idx, deploy)| {
-            let health = deployment_health_from_ready(&deploy.ready);
-            let ready_style = health_style(health, &theme);
+    let mut rows: Vec<Row> = Vec::with_capacity(total);
+    for (idx, &deploy_idx) in indices.iter().enumerate() {
+        let deploy = &snapshot.deployments[deploy_idx];
+        let health = deployment_health_from_ready(&deploy.ready);
+        let ready_style = health_style(health, &theme);
 
-            let row_style = if idx % 2 == 0 {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
+        let row_style = if idx % 2 == 0 {
+            Style::default().bg(theme.bg)
+        } else {
+            theme.row_alt_style()
+        };
 
+        rows.push(
             Row::new(vec![
+                Cell::from(Span::styled(format!("  {}", deploy.name), name_style)),
+                Cell::from(Span::styled(deploy.namespace.as_str(), dim_style)),
+                Cell::from(Span::styled(deploy.ready.as_str(), ready_style)),
                 Cell::from(Span::styled(
-                    format!("  {}", deploy.name),
-                    Style::default().fg(theme.fg),
+                    format_small_int(i64::from(deploy.updated)),
+                    dim_style,
                 )),
                 Cell::from(Span::styled(
-                    deploy.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(deploy.ready.clone(), ready_style)),
-                Cell::from(Span::styled(
-                    deploy.updated.to_string(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    deploy.available.to_string(),
-                    Style::default().fg(theme.fg_dim),
+                    format_small_int(i64::from(deploy.available)),
+                    dim_style,
                 )),
                 Cell::from(Span::styled(format_age(deploy.age), theme.inactive_style())),
                 Cell::from(Span::styled(
                     format_image(deploy.image.as_deref()),
-                    Style::default().fg(theme.muted),
+                    muted_style,
                 )),
             ])
-            .style(row_style)
-        })
-        .collect();
+            .style(row_style),
+        );
+    }
 
     let mut table_state = TableState::default().with_selected(Some(selected));
 
@@ -136,7 +156,10 @@ pub fn render_deployments(
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
     frame.render_stateful_widget(
         scrollbar,
-        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
         &mut scrollbar_state,
     );
 }
@@ -155,8 +178,10 @@ fn format_image(image: Option<&str>) -> String {
     };
 
     const MAX_LEN: usize = 34;
-    if image.chars().count() <= MAX_LEN {
+    if image.len() <= MAX_LEN {
         image.to_string()
+    } else if image.is_ascii() {
+        format!("{}...", &image[..MAX_LEN.saturating_sub(3)])
     } else {
         format!(
             "{}...",
@@ -204,7 +229,10 @@ mod tests {
             health_style(DeploymentHealth::Degraded, &theme).fg,
             Some(theme.warning)
         );
-        assert_eq!(health_style(DeploymentHealth::Failed, &theme).fg, Some(theme.error));
+        assert_eq!(
+            health_style(DeploymentHealth::Failed, &theme).fg,
+            Some(theme.error)
+        );
     }
 
     /// Verifies image values are truncated when exceeding render width.

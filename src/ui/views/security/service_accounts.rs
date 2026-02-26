@@ -9,8 +9,15 @@ use ratatui::{
 };
 
 use crate::{
+    app::AppView,
     state::ClusterSnapshot,
-    ui::components::{active_block, default_block, default_theme},
+    ui::{
+        cmp_ci,
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        format_small_int,
+    },
 };
 
 pub fn render_service_accounts(
@@ -20,35 +27,54 @@ pub fn render_service_accounts(
     selected_idx: usize,
     query: &str,
 ) {
-    let query = query.trim().to_ascii_lowercase();
-    let mut items: Vec<_> = cluster
-        .service_accounts
-        .iter()
-        .filter(|sa| {
-            query.is_empty()
-                || sa.name.to_ascii_lowercase().contains(&query)
-                || sa.namespace.to_ascii_lowercase().contains(&query)
-        })
-        .collect();
-    items.sort_by_key(|sa| {
-        (
-            sa.namespace.to_ascii_lowercase(),
-            sa.name.to_ascii_lowercase(),
-        )
-    });
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::ServiceAccounts,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.service_accounts),
+        |q| {
+            let mut out: Vec<usize> = cluster
+                .service_accounts
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, sa)| {
+                    if q.is_empty() || contains_ci(&sa.name, q) || contains_ci(&sa.namespace, q) {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            out.sort_unstable_by(|a, b| {
+                let left = &cluster.service_accounts[*a];
+                let right = &cluster.service_accounts[*b];
+                let ns_order = cmp_ci(&left.namespace, &right.namespace);
+                if ns_order == std::cmp::Ordering::Equal {
+                    cmp_ci(&left.name, &right.name)
+                } else {
+                    ns_order
+                }
+            });
+            out
+        },
+    );
 
     let theme = default_theme();
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled("  No serviceaccounts found", theme.inactive_style()))
-                .block(default_block("ServiceAccounts")),
+            Paragraph::new(Span::styled(
+                "  No serviceaccounts found",
+                theme.inactive_style(),
+            ))
+            .block(default_block("ServiceAccounts")),
             area,
         );
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -62,10 +88,11 @@ pub fn render_service_accounts(
     .height(1)
     .style(theme.header_style());
 
-    let rows: Vec<Row> = items
+    let rows: Vec<Row> = indices
         .iter()
         .enumerate()
-        .map(|(idx, sa)| {
+        .map(|(idx, &sa_idx)| {
+            let sa = &cluster.service_accounts[sa_idx];
             let row_style = if idx % 2 == 0 {
                 Style::default().bg(theme.bg)
             } else {
@@ -77,10 +104,22 @@ pub fn render_service_accounts(
                 None => theme.inactive_style(),
             };
             Row::new(vec![
-                Cell::from(Span::styled(format!("  {}", sa.name), Style::default().fg(theme.fg))),
-                Cell::from(Span::styled(sa.namespace.clone(), Style::default().fg(theme.fg_dim))),
-                Cell::from(Span::styled(sa.secrets_count.to_string(), Style::default().fg(theme.fg_dim))),
-                Cell::from(Span::styled(sa.image_pull_secrets_count.to_string(), Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(
+                    format!("  {}", sa.name),
+                    Style::default().fg(theme.fg),
+                )),
+                Cell::from(Span::styled(
+                    sa.namespace.clone(),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(
+                    format_small_int(sa.secrets_count as i64),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(
+                    format_small_int(sa.image_pull_secrets_count as i64),
+                    Style::default().fg(theme.fg_dim),
+                )),
                 Cell::from(Span::styled(
                     match sa.automount_service_account_token {
                         Some(true) => "true",
@@ -97,7 +136,14 @@ pub fn render_service_accounts(
 
     let mut table_state = TableState::default().with_selected(Some(selected));
     let title = format!(" 🔑 ServiceAccounts ({total}) ");
-    let block = if query.is_empty() { active_block(&title) } else { let all = cluster.service_accounts.len(); active_block(&format!(" 🔑 ServiceAccounts ({total} of {all}) [/{query}]")) };
+    let block = if query.is_empty() {
+        active_block(&title)
+    } else {
+        let all = cluster.service_accounts.len();
+        active_block(&format!(
+            " 🔑 ServiceAccounts ({total} of {all}) [/{query}]"
+        ))
+    };
 
     let table = Table::new(
         rows,
@@ -119,9 +165,19 @@ pub fn render_service_accounts(
     frame.render_stateful_widget(table, area, &mut table_state);
 
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲")).end_symbol(Some("▼")).track_symbol(Some("│")).thumb_symbol("█");
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(scrollbar, area.inner(Margin { vertical: 1, horizontal: 0 }), &mut scrollbar_state);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut scrollbar_state,
+    );
 }
 
 fn format_age(age: Option<std::time::Duration>) -> String {

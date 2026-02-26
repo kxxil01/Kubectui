@@ -12,8 +12,14 @@ use ratatui::{
 };
 
 use crate::{
-    state::{ClusterSnapshot, filters::filter_cronjobs},
-    ui::components::{active_block, default_block, default_theme},
+    app::AppView,
+    state::ClusterSnapshot,
+    ui::{
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        format_small_int,
+    },
 };
 
 pub fn render_cronjobs(
@@ -24,9 +30,32 @@ pub fn render_cronjobs(
     query: &str,
 ) {
     let theme = default_theme();
-    let items = filter_cronjobs(&cluster.cronjobs, query, None);
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::CronJobs,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.cronjobs),
+        |q| {
+            if q.is_empty() {
+                return (0..cluster.cronjobs.len()).collect();
+            }
+            cluster
+                .cronjobs
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, cj)| {
+                    if contains_ci(&cj.name, q) || contains_ci(&cj.schedule, q) {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    );
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled("  No cronjobs found", theme.inactive_style()))
                 .block(default_block("CronJobs")),
@@ -35,7 +64,7 @@ pub fn render_cronjobs(
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -50,47 +79,36 @@ pub fn render_cronjobs(
     ])
     .height(1)
     .style(theme.header_style());
+    let name_style = Style::default().fg(theme.fg);
+    let dim_style = Style::default().fg(theme.fg_dim);
+    let accent_style = Style::default().fg(theme.accent2);
+    let info_style = Style::default().fg(theme.info);
 
-    let rows: Vec<Row> = items
-        .iter()
-        .enumerate()
-        .map(|(idx, cj)| {
-            let suspend_style = if cj.suspend {
-                theme.badge_warning_style()
-            } else {
-                theme.badge_success_style()
-            };
-            let row_style = if idx % 2 == 0 {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
+    let mut rows: Vec<Row> = Vec::with_capacity(total);
+    for (idx, &cj_idx) in indices.iter().enumerate() {
+        let cj = &cluster.cronjobs[cj_idx];
+        let suspend_style = if cj.suspend {
+            theme.badge_warning_style()
+        } else {
+            theme.badge_success_style()
+        };
+        let row_style = if idx % 2 == 0 {
+            Style::default().bg(theme.bg)
+        } else {
+            theme.row_alt_style()
+        };
 
+        rows.push(
             Row::new(vec![
+                Cell::from(Span::styled(format!("  {}", cj.name), name_style)),
+                Cell::from(Span::styled(cj.namespace.as_str(), dim_style)),
+                Cell::from(Span::styled(cj.schedule.as_str(), accent_style)),
+                Cell::from(Span::styled(format_time(cj.last_schedule_time), dim_style)),
+                Cell::from(Span::styled(format_time(cj.next_schedule_time), info_style)),
                 Cell::from(Span::styled(
-                    format!("  {}", cj.name),
-                    Style::default().fg(theme.fg),
-                )),
-                Cell::from(Span::styled(
-                    cj.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    cj.schedule.clone(),
-                    Style::default().fg(theme.accent2),
-                )),
-                Cell::from(Span::styled(
-                    format_time(cj.last_schedule_time),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    format_time(cj.next_schedule_time),
-                    Style::default().fg(theme.info),
-                )),
-                Cell::from(Span::styled(
-                    cj.active_jobs.to_string(),
+                    format_small_int(i64::from(cj.active_jobs)),
                     if cj.active_jobs > 0 {
-                        Style::default().fg(theme.info)
+                        info_style
                     } else {
                         theme.inactive_style()
                     },
@@ -98,9 +116,9 @@ pub fn render_cronjobs(
                 Cell::from(Span::styled(suspend_label(cj.suspend), suspend_style)),
                 Cell::from(Span::styled(format_age(cj.age), theme.inactive_style())),
             ])
-            .style(row_style)
-        })
-        .collect();
+            .style(row_style),
+        );
+    }
 
     let mut table_state = TableState::default().with_selected(Some(selected));
 
@@ -142,7 +160,10 @@ pub fn render_cronjobs(
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
     frame.render_stateful_widget(
         scrollbar,
-        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
         &mut scrollbar_state,
     );
 }
@@ -152,13 +173,14 @@ fn suspend_label(suspend: bool) -> &'static str {
 }
 
 fn format_time(ts: Option<DateTime<Utc>>) -> String {
-    ts.map(|value| {
+    if let Some(value) = ts {
         value
             .with_timezone(&Local)
             .format("%m-%d %H:%M")
             .to_string()
-    })
-    .unwrap_or_else(|| "-".to_string())
+    } else {
+        "-".to_string()
+    }
 }
 
 fn format_age(age: Option<std::time::Duration>) -> String {

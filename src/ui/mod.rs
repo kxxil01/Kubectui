@@ -1,6 +1,8 @@
 //! User interface composition and rendering utilities.
 
 pub mod components;
+mod filter_cache;
+pub mod profiling;
 pub mod theme;
 pub mod views;
 
@@ -13,12 +15,14 @@ use ratatui::{
         Table, TableState,
     },
 };
+use std::{borrow::Cow, cmp::Ordering};
 
 use crate::{
     app::{AppState, AppView},
     state::ClusterSnapshot,
     ui::components::{active_block, default_block, default_theme},
 };
+use filter_cache::{cached_filter_indices, data_fingerprint};
 
 /// Case-insensitive substring match without allocating a new lowercase string.
 #[inline]
@@ -35,8 +39,50 @@ pub(crate) fn contains_ci(haystack: &str, needle: &str) -> bool {
         .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
+/// ASCII case-insensitive lexicographic compare without allocating lowercase copies.
+#[inline]
+pub(crate) fn cmp_ci(left: &str, right: &str) -> Ordering {
+    let mut l = left.bytes();
+    let mut r = right.bytes();
+    loop {
+        match (l.next(), r.next()) {
+            (Some(lb), Some(rb)) => {
+                let lc = lb.to_ascii_lowercase();
+                let rc = rb.to_ascii_lowercase();
+                if lc != rc {
+                    return lc.cmp(&rc);
+                }
+            }
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (None, None) => return Ordering::Equal,
+        }
+    }
+}
+
+/// Formats small integer values without heap allocation for common cases.
+#[inline]
+pub(crate) fn format_small_int(value: i64) -> Cow<'static, str> {
+    match value {
+        0 => Cow::Borrowed("0"),
+        1 => Cow::Borrowed("1"),
+        2 => Cow::Borrowed("2"),
+        3 => Cow::Borrowed("3"),
+        4 => Cow::Borrowed("4"),
+        5 => Cow::Borrowed("5"),
+        6 => Cow::Borrowed("6"),
+        7 => Cow::Borrowed("7"),
+        8 => Cow::Borrowed("8"),
+        9 => Cow::Borrowed("9"),
+        10 => Cow::Borrowed("10"),
+        _ => Cow::Owned(value.to_string()),
+    }
+}
+
 /// Renders a full frame for the current app and cluster state.
 pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
+    let _frame_scope = profiling::frame_scope(app.view());
+    let _render_scope = profiling::span_scope("render");
     let area = frame.area();
 
     // Guard against terminals too small to render the layout
@@ -52,204 +98,297 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         return;
     }
 
-    let root = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(8), Constraint::Length(2)])
-        .split(frame.area());
+    let root = {
+        let _layout_scope = profiling::span_scope("layout");
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(8),
+                Constraint::Length(2),
+            ])
+            .split(frame.area())
+    };
 
-    components::render_header(
-        frame,
-        root[0],
-        "KubecTUI v0.1.0",
-        cluster.cluster_summary(),
-    );
+    {
+        let _header_scope = profiling::span_scope("header");
+        components::render_header(frame, root[0], "KubecTUI v0.1.0", cluster.cluster_summary());
+    }
 
-    let body = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(26), Constraint::Min(0)])
-        .split(root[1]);
+    let body = {
+        let _body_layout_scope = profiling::span_scope("body_layout");
+        Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Length(26), Constraint::Min(0)])
+            .split(root[1])
+    };
 
-    components::render_sidebar(frame, body[0], app.view(), app.sidebar_cursor, &app.collapsed_groups, app.focus);
+    {
+        let _sidebar_scope = profiling::span_scope("sidebar");
+        components::render_sidebar(
+            frame,
+            body[0],
+            app.view(),
+            app.sidebar_cursor,
+            &app.collapsed_groups,
+            app.focus,
+        );
+    }
 
     let content = body[1];
 
-    match app.view() {
-        AppView::Dashboard => views::dashboard::render_dashboard(frame, content, cluster),
-        AppView::Nodes => views::nodes::render_nodes(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::Pods => {
-            render_pods_widget(frame, content, cluster, app.selected_idx(), app.search_query());
-        }
-        AppView::ReplicaSets => views::replicasets::render_replicasets(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::ReplicationControllers => {
-            views::replication_controllers::render_replication_controllers(
+    {
+        let _view_scope = profiling::span_scope(app.view().profiling_key());
+        match app.view() {
+            AppView::Dashboard => views::dashboard::render_dashboard(frame, content, cluster),
+            AppView::Nodes => views::nodes::render_nodes(
                 frame,
                 content,
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
-            )
-        }
-        AppView::HelmCharts => views::helm::render_helm_repos(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::HelmReleases => views::helm::render_helm_releases(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::Endpoints => views::endpoints::render_endpoints(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::Ingresses => views::ingresses::render_ingresses(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::IngressClasses => views::ingresses::render_ingress_classes(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::NetworkPolicies => views::network_policies::render_network_policies(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::PortForwarding => views::port_forwarding::render_port_forwarding(
-            frame, content, &app.tunnel_registry, app.selected_idx(), app.search_query(),
-        ),
-        AppView::ConfigMaps => views::config::render_config_maps(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::Secrets => views::config::render_secrets(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::HPAs => views::hpas::render_hpas(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::PriorityClasses => views::priority_classes::render_priority_classes(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::PersistentVolumeClaims => views::storage::render_pvcs(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::PersistentVolumes => views::storage::render_pvs(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::StorageClasses => views::storage::render_storage_classes(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::Namespaces => views::namespaces::render_namespaces(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::Events => views::events::render_events(
-            frame, content, cluster, app.selected_idx(), app.search_query(),
-        ),
-        AppView::Services => views::services::render_services(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::Deployments => views::deployments::render_deployments(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::StatefulSets => views::statefulsets::render_statefulsets(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::DaemonSets => views::daemonsets::render_daemonsets(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::Jobs => views::jobs::render_jobs(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::CronJobs => views::cronjobs::render_cronjobs(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::ServiceAccounts => views::security::service_accounts::render_service_accounts(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::Roles => views::security::roles::render_roles(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::RoleBindings => views::security::role_bindings::render_role_bindings(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::ClusterRoles => views::security::cluster_roles::render_cluster_roles(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::ClusterRoleBindings => {
-            views::security::cluster_role_bindings::render_cluster_role_bindings(
+            ),
+            AppView::Pods => {
+                render_pods_widget(
+                    frame,
+                    content,
+                    cluster,
+                    app.selected_idx(),
+                    app.search_query(),
+                );
+            }
+            AppView::ReplicaSets => views::replicasets::render_replicasets(
                 frame,
                 content,
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
-            )
+            ),
+            AppView::ReplicationControllers => {
+                views::replication_controllers::render_replication_controllers(
+                    frame,
+                    content,
+                    cluster,
+                    app.selected_idx(),
+                    app.search_query(),
+                )
+            }
+            AppView::HelmCharts => views::helm::render_helm_repos(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::HelmReleases => views::helm::render_helm_releases(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Endpoints => views::endpoints::render_endpoints(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Ingresses => views::ingresses::render_ingresses(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::IngressClasses => views::ingresses::render_ingress_classes(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::NetworkPolicies => views::network_policies::render_network_policies(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::PortForwarding => views::port_forwarding::render_port_forwarding(
+                frame,
+                content,
+                &app.tunnel_registry,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::ConfigMaps => views::config::render_config_maps(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Secrets => views::config::render_secrets(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::HPAs => views::hpas::render_hpas(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::PriorityClasses => views::priority_classes::render_priority_classes(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::PersistentVolumeClaims => views::storage::render_pvcs(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::PersistentVolumes => views::storage::render_pvs(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::StorageClasses => views::storage::render_storage_classes(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Namespaces => views::namespaces::render_namespaces(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Events => views::events::render_events(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Services => views::services::render_services(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Deployments => views::deployments::render_deployments(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::StatefulSets => views::statefulsets::render_statefulsets(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::DaemonSets => views::daemonsets::render_daemonsets(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Jobs => views::jobs::render_jobs(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::CronJobs => views::cronjobs::render_cronjobs(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::ServiceAccounts => views::security::service_accounts::render_service_accounts(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Roles => views::security::roles::render_roles(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::RoleBindings => views::security::role_bindings::render_role_bindings(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::ClusterRoles => views::security::cluster_roles::render_cluster_roles(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::ClusterRoleBindings => {
+                views::security::cluster_role_bindings::render_cluster_role_bindings(
+                    frame,
+                    content,
+                    cluster,
+                    app.selected_idx(),
+                    app.search_query(),
+                )
+            }
+            AppView::ResourceQuotas => views::governance::quotas::render_resource_quotas(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::LimitRanges => views::governance::limits::render_limit_ranges(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::PodDisruptionBudgets => views::governance::pdbs::render_pdbs(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
+            AppView::Extensions => {
+                views::extensions::render_extensions(frame, content, cluster, app)
+            }
         }
-        AppView::ResourceQuotas => views::governance::quotas::render_resource_quotas(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::LimitRanges => views::governance::limits::render_limit_ranges(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::PodDisruptionBudgets => views::governance::pdbs::render_pdbs(
-            frame,
-            content,
-            cluster,
-            app.selected_idx(),
-            app.search_query(),
-        ),
-        AppView::Extensions => views::extensions::render_extensions(frame, content, cluster, app),
     }
 
     let status = if let Some(err) = app.error_message() {
@@ -264,25 +403,33 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         )
     };
 
-    components::render_status_bar(frame, root[2], &status, app.error_message().is_some());
+    {
+        let _status_scope = profiling::span_scope("status");
+        components::render_status_bar(frame, root[2], &status, app.error_message().is_some());
+    }
 
     if let Some(detail_state) = app.detail_view.as_ref() {
+        let _detail_scope = profiling::span_scope("overlay.detail");
         views::detail::render_detail(frame, frame.area(), detail_state);
     }
 
     if app.is_namespace_picker_open() {
+        let _namespace_scope = profiling::span_scope("overlay.namespace_picker");
         app.namespace_picker().render(frame, frame.area());
     }
 
     if app.is_context_picker_open() {
+        let _context_scope = profiling::span_scope("overlay.context_picker");
         app.context_picker.render(frame, frame.area());
     }
 
     if app.command_palette.is_open() {
+        let _command_scope = profiling::span_scope("overlay.command_palette");
         app.command_palette.render(frame, frame.area());
     }
 
     if app.confirm_quit {
+        let _quit_scope = profiling::span_scope("overlay.quit_confirm");
         render_quit_confirm(frame, frame.area());
     }
 }
@@ -327,9 +474,10 @@ fn render_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
         .split(inner);
 
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("  Quit KubecTUI? ", theme.title_style()),
-        ])),
+        Paragraph::new(Line::from(vec![Span::styled(
+            "  Quit KubecTUI? ",
+            theme.title_style(),
+        )])),
         chunks[0],
     );
 
@@ -357,36 +505,47 @@ fn render_pods_widget(
     query: &str,
 ) {
     let theme = default_theme();
+    let indices = cached_filter_indices(
+        AppView::Pods,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.pods),
+        |q| {
+            if q.is_empty() {
+                return (0..cluster.pods.len()).collect();
+            }
+            cluster
+                .pods
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, pod)| {
+                    if contains_ci(&pod.name, q)
+                        || contains_ci(&pod.namespace, q)
+                        || contains_ci(&pod.status, q)
+                    {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    );
 
-    let filtered: Vec<_> = if query.is_empty() {
-        cluster.pods.iter().collect()
-    } else {
-        cluster
-            .pods
-            .iter()
-            .filter(|p| {
-                contains_ci(&p.name, query)
-                    || contains_ci(&p.namespace, query)
-                    || contains_ci(&p.status, query)
-            })
-            .collect()
-    };
-
-    if filtered.is_empty() {
+    if indices.is_empty() {
         let msg = if cluster.pods.is_empty() {
             "  No pods available  (try pressing ~ to switch namespace, or select 'all')"
         } else {
             "  No pods match the search query"
         };
         frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("Pods")),
+            Paragraph::new(Span::styled(msg, theme.inactive_style())).block(default_block("Pods")),
             area,
         );
         return;
     }
 
-    let total = filtered.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -399,62 +558,46 @@ fn render_pods_widget(
     ])
     .height(1)
     .style(theme.header_style());
+    let name_style = ratatui::prelude::Style::default().fg(theme.fg);
+    let dim_style = ratatui::prelude::Style::default().fg(theme.fg_dim);
+    let now_unix = chrono::Utc::now().timestamp();
+    let mut rows: Vec<Row> = Vec::with_capacity(total);
+    for (idx, &pod_idx) in indices.iter().enumerate() {
+        let pod = &cluster.pods[pod_idx];
+        let status = pod.status.as_str();
+        let status_style = theme.get_status_style(status);
+        let restart_style = if pod.restarts > 5 {
+            theme.badge_error_style()
+        } else if pod.restarts > 0 {
+            theme.badge_warning_style()
+        } else {
+            theme.inactive_style()
+        };
+        let row_style = if idx % 2 == 0 {
+            ratatui::prelude::Style::default().bg(theme.bg)
+        } else {
+            theme.row_alt_style()
+        };
+        let age = format_age_from_timestamp(pod.created_at, now_unix);
 
-    let rows: Vec<Row> = filtered
-        .iter()
-        .enumerate()
-        .map(|(idx, pod)| {
-            let status_style = theme.get_status_style(&pod.status);
-            let restart_style = if pod.restarts > 5 {
-                theme.badge_error_style()
-            } else if pod.restarts > 0 {
-                theme.badge_warning_style()
-            } else {
-                theme.inactive_style()
-            };
-            let row_style = if idx % 2 == 0 {
-                ratatui::prelude::Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
-
-            let age = pod
-                .created_at
-                .map(|ts| {
-                    let delta = chrono::Utc::now().signed_duration_since(ts);
-                    let days = delta.num_days();
-                    let hours = delta.num_hours() % 24;
-                    let mins = delta.num_minutes() % 60;
-                    if days > 0 {
-                        format!("{days}d{hours}h")
-                    } else if hours > 0 {
-                        format!("{hours}h{mins}m")
-                    } else {
-                        format!("{mins}m")
-                    }
-                })
-                .unwrap_or_else(|| "-".to_string());
-
+        rows.push(
             Row::new(vec![
+                Cell::from(Span::styled(format!("  {}", pod.name), name_style)),
+                Cell::from(Span::styled(pod.namespace.as_str(), dim_style)),
+                Cell::from(Span::styled(status, status_style)),
                 Cell::from(Span::styled(
-                    format!("  {}", pod.name),
-                    ratatui::prelude::Style::default().fg(theme.fg),
+                    pod.node.as_deref().unwrap_or("n/a"),
+                    dim_style,
                 )),
                 Cell::from(Span::styled(
-                    pod.namespace.clone(),
-                    ratatui::prelude::Style::default().fg(theme.fg_dim),
+                    format_small_int(i64::from(pod.restarts)),
+                    restart_style,
                 )),
-                Cell::from(Span::styled(pod.status.clone(), status_style)),
-                Cell::from(Span::styled(
-                    pod.node.clone().unwrap_or_else(|| "n/a".to_string()),
-                    ratatui::prelude::Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(pod.restarts.to_string(), restart_style)),
                 Cell::from(Span::styled(age, theme.inactive_style())),
             ])
-            .style(row_style)
-        })
-        .collect();
+            .style(row_style),
+        );
+    }
 
     let mut table_state = TableState::default().with_selected(Some(selected));
 
@@ -494,9 +637,33 @@ fn render_pods_widget(
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
     frame.render_stateful_widget(
         scrollbar,
-        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
         &mut scrollbar_state,
     );
+}
+
+#[inline]
+fn format_age_from_timestamp(
+    created_at: Option<chrono::DateTime<chrono::Utc>>,
+    now_unix: i64,
+) -> String {
+    let Some(created_at) = created_at else {
+        return "-".to_string();
+    };
+    let age_secs = now_unix.saturating_sub(created_at.timestamp());
+    let days = age_secs / 86_400;
+    let hours = (age_secs % 86_400) / 3_600;
+    let mins = (age_secs % 3_600) / 60;
+    if days > 0 {
+        format!("{days}d{hours}h")
+    } else if hours > 0 {
+        format!("{hours}h{mins}m")
+    } else {
+        format!("{mins}m")
+    }
 }
 
 #[cfg(test)]
@@ -939,12 +1106,12 @@ mod tests {
     #[test]
     fn render_helm_repos_smoke() {
         let mut snapshot = ClusterSnapshot::default();
-        snapshot.helm_repositories.push(
-            crate::k8s::dtos::HelmRepoInfo {
+        snapshot
+            .helm_repositories
+            .push(crate::k8s::dtos::HelmRepoInfo {
                 name: "bitnami".to_string(),
                 url: "https://charts.bitnami.com/bitnami".to_string(),
-            },
-        );
+            });
 
         let app = app_with_view(AppView::HelmCharts);
         draw(&app, &snapshot);
@@ -977,7 +1144,9 @@ mod tests {
                 status: Some("Widget.demo.io".to_string()),
                 ..DetailMetadata::default()
             },
-            yaml: Some("apiVersion: demo.io/v1\nkind: Widget\nmetadata:\n  name: my-widget\n".to_string()),
+            yaml: Some(
+                "apiVersion: demo.io/v1\nkind: Widget\nmetadata:\n  name: my-widget\n".to_string(),
+            ),
             sections: vec![
                 "CUSTOM RESOURCE".to_string(),
                 "kind: Widget".to_string(),
@@ -993,26 +1162,34 @@ mod tests {
     #[test]
     fn render_detail_helm_release_smoke() {
         let mut snapshot = ClusterSnapshot::default();
-        snapshot.helm_releases.push(crate::k8s::dtos::HelmReleaseInfo {
-            name: "my-app".to_string(),
-            namespace: "default".to_string(),
-            chart: "nginx".to_string(),
-            chart_version: "15.0.0".to_string(),
-            status: "deployed".to_string(),
-            revision: 3,
-            ..crate::k8s::dtos::HelmReleaseInfo::default()
-        });
+        snapshot
+            .helm_releases
+            .push(crate::k8s::dtos::HelmReleaseInfo {
+                name: "my-app".to_string(),
+                namespace: "default".to_string(),
+                chart: "nginx".to_string(),
+                chart_version: "15.0.0".to_string(),
+                status: "deployed".to_string(),
+                revision: 3,
+                ..crate::k8s::dtos::HelmReleaseInfo::default()
+            });
 
         let mut app = app_with_view(AppView::HelmReleases);
         app.detail_view = Some(DetailViewState {
-            resource: Some(ResourceRef::HelmRelease("my-app".to_string(), "default".to_string())),
+            resource: Some(ResourceRef::HelmRelease(
+                "my-app".to_string(),
+                "default".to_string(),
+            )),
             metadata: DetailMetadata {
                 name: "my-app".to_string(),
                 namespace: Some("default".to_string()),
                 status: Some("deployed".to_string()),
                 ..DetailMetadata::default()
             },
-            yaml: Some("apiVersion: v1\nkind: Secret\nmetadata:\n  name: sh.helm.release.v1.my-app.v3\n".to_string()),
+            yaml: Some(
+                "apiVersion: v1\nkind: Secret\nmetadata:\n  name: sh.helm.release.v1.my-app.v3\n"
+                    .to_string(),
+            ),
             ..DetailViewState::default()
         });
 

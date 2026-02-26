@@ -11,8 +11,14 @@ use ratatui::{
 };
 
 use crate::{
-    state::{ClusterSnapshot, filters::filter_replication_controllers},
-    ui::components::{active_block, default_block, default_theme},
+    app::AppView,
+    state::ClusterSnapshot,
+    ui::{
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        format_small_int,
+    },
 };
 
 pub fn render_replication_controllers(
@@ -23,9 +29,32 @@ pub fn render_replication_controllers(
     query: &str,
 ) {
     let theme = default_theme();
-    let items = filter_replication_controllers(&cluster.replication_controllers, query, None);
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::ReplicationControllers,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.replication_controllers),
+        |q| {
+            if q.is_empty() {
+                return (0..cluster.replication_controllers.len()).collect();
+            }
+            cluster
+                .replication_controllers
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, rc)| {
+                    if contains_ci(&rc.name, q) || contains_ci(&rc.namespace, q) {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    );
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled(
                 "  No replication controllers found",
@@ -37,7 +66,7 @@ pub fn render_replication_controllers(
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -51,45 +80,42 @@ pub fn render_replication_controllers(
     ])
     .height(1)
     .style(theme.header_style());
+    let name_style = Style::default().fg(theme.fg);
+    let dim_style = Style::default().fg(theme.fg_dim);
+    let muted_style = Style::default().fg(theme.muted);
 
-    let rows: Vec<Row> = items
-        .iter()
-        .enumerate()
-        .map(|(idx, rc)| {
-            let ready_style = readiness_style(rc.ready, rc.desired, &theme);
-            let row_style = if idx % 2 == 0 {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
+    let mut rows: Vec<Row> = Vec::with_capacity(total);
+    for (idx, &rc_idx) in indices.iter().enumerate() {
+        let rc = &cluster.replication_controllers[rc_idx];
+        let ready_style = readiness_style(rc.ready, rc.desired, &theme);
+        let row_style = if idx % 2 == 0 {
+            Style::default().bg(theme.bg)
+        } else {
+            theme.row_alt_style()
+        };
 
+        rows.push(
             Row::new(vec![
+                Cell::from(Span::styled(format!("  {}", rc.name), name_style)),
+                Cell::from(Span::styled(rc.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(
-                    format!("  {}", rc.name),
-                    Style::default().fg(theme.fg),
+                    format_small_int(i64::from(rc.desired)),
+                    dim_style,
                 )),
                 Cell::from(Span::styled(
-                    rc.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
+                    format_small_int(i64::from(rc.ready)),
+                    ready_style,
                 )),
                 Cell::from(Span::styled(
-                    rc.desired.to_string(),
-                    Style::default().fg(theme.fg_dim),
+                    format_small_int(i64::from(rc.available)),
+                    dim_style,
                 )),
-                Cell::from(Span::styled(rc.ready.to_string(), ready_style)),
-                Cell::from(Span::styled(
-                    rc.available.to_string(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    format_image(rc.image.as_deref()),
-                    Style::default().fg(theme.muted),
-                )),
+                Cell::from(Span::styled(format_image(rc.image.as_deref()), muted_style)),
                 Cell::from(Span::styled(format_age(rc.age), theme.inactive_style())),
             ])
-            .style(row_style)
-        })
-        .collect();
+            .style(row_style),
+        );
+    }
 
     let mut table_state = TableState::default().with_selected(Some(selected));
 
@@ -98,7 +124,9 @@ pub fn render_replication_controllers(
         active_block(&title)
     } else {
         let all = cluster.replication_controllers.len();
-        active_block(&format!(" Replication Controllers ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " Replication Controllers ({total} of {all}) [/{query}]"
+        ))
     };
 
     let table = Table::new(
@@ -130,7 +158,10 @@ pub fn render_replication_controllers(
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
     frame.render_stateful_widget(
         scrollbar,
-        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
         &mut scrollbar_state,
     );
 }
@@ -150,10 +181,18 @@ fn format_image(image: Option<&str>) -> String {
         return "-".to_string();
     };
     const MAX_LEN: usize = 32;
-    if image.chars().count() <= MAX_LEN {
+    if image.len() <= MAX_LEN {
         image.to_string()
+    } else if image.is_ascii() {
+        format!("{}...", &image[..MAX_LEN.saturating_sub(3)])
     } else {
-        format!("{}...", image.chars().take(MAX_LEN.saturating_sub(3)).collect::<String>())
+        format!(
+            "{}...",
+            image
+                .chars()
+                .take(MAX_LEN.saturating_sub(3))
+                .collect::<String>()
+        )
     }
 }
 

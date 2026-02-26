@@ -11,8 +11,14 @@ use ratatui::{
 };
 
 use crate::{
-    state::{ClusterSnapshot, filters::filter_replicasets},
-    ui::components::{active_block, default_block, default_theme},
+    app::AppView,
+    state::ClusterSnapshot,
+    ui::{
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        format_small_int,
+    },
 };
 
 pub fn render_replicasets(
@@ -23,18 +29,44 @@ pub fn render_replicasets(
     query: &str,
 ) {
     let theme = default_theme();
-    let items = filter_replicasets(&cluster.replicasets, query, None);
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::ReplicaSets,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.replicasets),
+        |q| {
+            if q.is_empty() {
+                return (0..cluster.replicasets.len()).collect();
+            }
+            cluster
+                .replicasets
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, rs)| {
+                    if contains_ci(&rs.name, q) || contains_ci(&rs.namespace, q) {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    );
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled("  No replica sets found", theme.inactive_style()))
-                .block(default_block("Replica Sets")),
+            Paragraph::new(Span::styled(
+                "  No replica sets found",
+                theme.inactive_style(),
+            ))
+            .block(default_block("Replica Sets")),
             area,
         );
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -48,45 +80,42 @@ pub fn render_replicasets(
     ])
     .height(1)
     .style(theme.header_style());
+    let name_style = Style::default().fg(theme.fg);
+    let dim_style = Style::default().fg(theme.fg_dim);
+    let muted_style = Style::default().fg(theme.muted);
 
-    let rows: Vec<Row> = items
-        .iter()
-        .enumerate()
-        .map(|(idx, rs)| {
-            let ready_style = readiness_style(rs.ready, rs.desired, &theme);
-            let row_style = if idx % 2 == 0 {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
+    let mut rows: Vec<Row> = Vec::with_capacity(total);
+    for (idx, &rs_idx) in indices.iter().enumerate() {
+        let rs = &cluster.replicasets[rs_idx];
+        let ready_style = readiness_style(rs.ready, rs.desired, &theme);
+        let row_style = if idx % 2 == 0 {
+            Style::default().bg(theme.bg)
+        } else {
+            theme.row_alt_style()
+        };
 
+        rows.push(
             Row::new(vec![
+                Cell::from(Span::styled(format!("  {}", rs.name), name_style)),
+                Cell::from(Span::styled(rs.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(
-                    format!("  {}", rs.name),
-                    Style::default().fg(theme.fg),
+                    format_small_int(i64::from(rs.desired)),
+                    dim_style,
                 )),
                 Cell::from(Span::styled(
-                    rs.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
+                    format_small_int(i64::from(rs.ready)),
+                    ready_style,
                 )),
                 Cell::from(Span::styled(
-                    rs.desired.to_string(),
-                    Style::default().fg(theme.fg_dim),
+                    format_small_int(i64::from(rs.available)),
+                    dim_style,
                 )),
-                Cell::from(Span::styled(rs.ready.to_string(), ready_style)),
-                Cell::from(Span::styled(
-                    rs.available.to_string(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    format_image(rs.image.as_deref()),
-                    Style::default().fg(theme.muted),
-                )),
+                Cell::from(Span::styled(format_image(rs.image.as_deref()), muted_style)),
                 Cell::from(Span::styled(format_age(rs.age), theme.inactive_style())),
             ])
-            .style(row_style)
-        })
-        .collect();
+            .style(row_style),
+        );
+    }
 
     let mut table_state = TableState::default().with_selected(Some(selected));
 
@@ -127,7 +156,10 @@ pub fn render_replicasets(
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
     frame.render_stateful_widget(
         scrollbar,
-        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
         &mut scrollbar_state,
     );
 }
@@ -147,10 +179,18 @@ fn format_image(image: Option<&str>) -> String {
         return "-".to_string();
     };
     const MAX_LEN: usize = 32;
-    if image.chars().count() <= MAX_LEN {
+    if image.len() <= MAX_LEN {
         image.to_string()
+    } else if image.is_ascii() {
+        format!("{}...", &image[..MAX_LEN.saturating_sub(3)])
     } else {
-        format!("{}...", image.chars().take(MAX_LEN.saturating_sub(3)).collect::<String>())
+        format!(
+            "{}...",
+            image
+                .chars()
+                .take(MAX_LEN.saturating_sub(3))
+                .collect::<String>()
+        )
     }
 }
 

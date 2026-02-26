@@ -11,8 +11,14 @@ use ratatui::{
 };
 
 use crate::{
-    state::{ClusterSnapshot, filters::filter_jobs},
-    ui::components::{active_block, default_block, default_theme},
+    app::AppView,
+    state::ClusterSnapshot,
+    ui::{
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        format_small_int,
+    },
 };
 
 pub fn render_jobs(
@@ -23,9 +29,32 @@ pub fn render_jobs(
     query: &str,
 ) {
     let theme = default_theme();
-    let items = filter_jobs(&cluster.jobs, query, None);
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::Jobs,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.jobs),
+        |q| {
+            if q.is_empty() {
+                return (0..cluster.jobs.len()).collect();
+            }
+            cluster
+                .jobs
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, job)| {
+                    if contains_ci(&job.name, q) || contains_ci(&job.status, q) {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    );
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled("  No jobs found", theme.inactive_style()))
                 .block(default_block("Jobs")),
@@ -34,7 +63,7 @@ pub fn render_jobs(
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -50,10 +79,11 @@ pub fn render_jobs(
     .height(1)
     .style(theme.header_style());
 
-    let rows: Vec<Row> = items
+    let rows: Vec<Row> = indices
         .iter()
         .enumerate()
-        .map(|(idx, job)| {
+        .map(|(idx, &job_idx)| {
+            let job = &cluster.jobs[job_idx];
             let st = status_style(&job.status, &theme);
             let failed_style = if job.failed_pods > 0 {
                 theme.badge_error_style()
@@ -85,10 +115,13 @@ pub fn render_jobs(
                     Style::default().fg(theme.fg_dim),
                 )),
                 Cell::from(Span::styled(
-                    job.active_pods.to_string(),
+                    format_small_int(i64::from(job.active_pods)),
                     Style::default().fg(theme.info),
                 )),
-                Cell::from(Span::styled(job.failed_pods.to_string(), failed_style)),
+                Cell::from(Span::styled(
+                    format_small_int(i64::from(job.failed_pods)),
+                    failed_style,
+                )),
                 Cell::from(Span::styled(format_age(job.age), theme.inactive_style())),
             ])
             .style(row_style)
@@ -135,7 +168,10 @@ pub fn render_jobs(
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
     frame.render_stateful_widget(
         scrollbar,
-        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
         &mut scrollbar_state,
     );
 }

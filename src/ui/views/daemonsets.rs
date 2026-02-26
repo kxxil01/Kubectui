@@ -11,8 +11,14 @@ use ratatui::{
 };
 
 use crate::{
-    state::{ClusterSnapshot, filters},
-    ui::components::{active_block, default_block, default_theme},
+    app::AppView,
+    state::ClusterSnapshot,
+    ui::{
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        format_small_int,
+    },
 };
 
 /// Renders the DaemonSets table with stateful selection and scrollbar.
@@ -24,18 +30,52 @@ pub fn render_daemonsets(
     query: &str,
 ) {
     let theme = default_theme();
-    let items = filters::filter_daemonsets(&cluster.daemonsets, query, None);
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::DaemonSets,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.daemonsets),
+        |q| {
+            if q.is_empty() {
+                return (0..cluster.daemonsets.len()).collect();
+            }
+            cluster
+                .daemonsets
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, ds)| {
+                    let label_match = ds
+                        .labels
+                        .iter()
+                        .any(|(k, v)| contains_ci(k, q) || contains_ci(v, q));
+                    if contains_ci(&ds.name, q)
+                        || contains_ci(&ds.selector, q)
+                        || contains_ci(ds.image.as_deref().unwrap_or_default(), q)
+                        || label_match
+                    {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    );
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled("  No daemonsets found", theme.inactive_style()))
-                .block(default_block("DaemonSets")),
+            Paragraph::new(Span::styled(
+                "  No daemonsets found",
+                theme.inactive_style(),
+            ))
+            .block(default_block("DaemonSets")),
             area,
         );
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -49,11 +89,11 @@ pub fn render_daemonsets(
     ])
     .height(1)
     .style(theme.header_style());
-
-    let rows: Vec<Row> = items
+    let rows: Vec<Row> = indices
         .iter()
         .enumerate()
-        .map(|(idx, ds)| {
+        .map(|(idx, &ds_idx)| {
+            let ds = &cluster.daemonsets[ds_idx];
             let ready_style = readiness_style(ds.ready_count, ds.desired_count, &theme);
             let unavail_style = unavailable_style(ds.unavailable_count, &theme);
             let row_style = if idx % 2 == 0 {
@@ -72,11 +112,17 @@ pub fn render_daemonsets(
                     Style::default().fg(theme.fg_dim),
                 )),
                 Cell::from(Span::styled(
-                    ds.desired_count.to_string(),
+                    format_small_int(i64::from(ds.desired_count)),
                     Style::default().fg(theme.fg_dim),
                 )),
-                Cell::from(Span::styled(ds.ready_count.to_string(), ready_style)),
-                Cell::from(Span::styled(ds.unavailable_count.to_string(), unavail_style)),
+                Cell::from(Span::styled(
+                    format_small_int(i64::from(ds.ready_count)),
+                    ready_style,
+                )),
+                Cell::from(Span::styled(
+                    format_small_int(i64::from(ds.unavailable_count)),
+                    unavail_style,
+                )),
                 Cell::from(Span::styled(
                     format_image(ds.image.as_deref()),
                     Style::default().fg(theme.muted),
@@ -126,7 +172,10 @@ pub fn render_daemonsets(
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
     frame.render_stateful_widget(
         scrollbar,
-        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
         &mut scrollbar_state,
     );
 }
