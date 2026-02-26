@@ -81,7 +81,7 @@ fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
             if let Some(detail) = &mut app.detail_view
                 && let Some(viewer) = &mut detail.logs_viewer
                     && viewer.pod_name == pod_name {
-                        viewer.lines.push(line);
+                        viewer.push_line(line);
                         if viewer.follow_mode {
                             viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
                         }
@@ -150,8 +150,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let mut cached_snapshot = global_state.snapshot();
     let mut snapshot_dirty = false;
 
+    // Render-skip: only redraw when state actually changed
+    let mut needs_redraw = true;
+
     let mut tick = tokio::time::interval(Duration::from_millis(200));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    // Auto-refresh: periodically re-fetch cluster data
+    let refresh_secs = if app.refresh_interval_secs == 0 { 86400 } else { app.refresh_interval_secs };
+    let mut auto_refresh = tokio::time::interval(Duration::from_secs(refresh_secs));
+    auto_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // Skip the first immediate tick — we already fetched at startup
+    auto_refresh.reset();
+
+    // Track consecutive refresh failures for backoff
+    let mut consecutive_refresh_failures: u32 = 0;
 
     let mut event_stream = EventStream::new();
 
@@ -160,17 +173,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         if snapshot_dirty {
             cached_snapshot = global_state.snapshot();
             snapshot_dirty = false;
+            needs_redraw = true;
         }
 
-        terminal
-            .draw(|frame| ui::render(frame, &app, &cached_snapshot))
-            .context("failed to render frame")?;
+        if needs_redraw {
+            terminal
+                .draw(|frame| ui::render(frame, &app, &cached_snapshot))
+                .context("failed to render frame")?;
+            needs_redraw = false;
+        }
 
         if app.should_quit() {
             break;
         }
 
-        // Wait concurrently on: tick, input event, coordinator update, or detail fetch result.
+        // Wait concurrently on: tick, input event, coordinator update, detail fetch, or auto-refresh.
         // `biased` ensures coordinator messages and detail results are drained before blocking on input.
         tokio::select! {
             biased;
@@ -179,6 +196,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             msg = update_rx.recv() => {
                 if let Some(msg) = msg {
                     apply_coordinator_msg(msg, &mut app);
+                    needs_redraw = true;
                 }
                 // Drain any additional queued messages without blocking
                 while let Ok(msg) = update_rx.try_recv() {
@@ -189,6 +207,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             // Detail view fetch completed in background task
             result = detail_rx.recv() => {
                 if let Some(result) = result {
+                    needs_redraw = true;
                     match result {
                         Ok(state) => app.detail_view = Some(state),
                         Err((resource, err)) => {
@@ -203,12 +222,51 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
-            // Periodic tick — just a heartbeat to keep rendering at ~200ms when idle
-            _ = tick.tick() => {}
+            // Periodic tick — heartbeat for follow-mode log scrolling
+            _ = tick.tick() => {
+                // Only redraw on tick if logs are actively streaming (follow mode)
+                if app.detail_view.as_ref()
+                    .and_then(|d| d.logs_viewer.as_ref())
+                    .is_some_and(|v| v.follow_mode)
+                {
+                    needs_redraw = true;
+                }
+            }
+
+            // Auto-refresh: re-fetch cluster data periodically
+            _ = auto_refresh.tick() => {
+                // Skip auto-refresh if a detail view is open (avoid disrupting user)
+                // or if we're in a backoff period from consecutive failures
+                let backoff_secs = match consecutive_refresh_failures {
+                    0 => 0,
+                    1 => 30,
+                    2 => 60,
+                    _ => 120,
+                };
+                if app.detail_view.is_none() && backoff_secs == 0 {
+                    match global_state
+                        .refresh(&client, namespace_scope(app.get_namespace()))
+                        .await
+                    {
+                        Ok(()) => {
+                            consecutive_refresh_failures = 0;
+                            app.set_available_namespaces(global_state.namespaces().to_vec());
+                            snapshot_dirty = true;
+                        }
+                        Err(_) => {
+                            consecutive_refresh_failures += 1;
+                        }
+                    }
+                } else if backoff_secs > 0 {
+                    // Decrement backoff counter each tick
+                    consecutive_refresh_failures = consecutive_refresh_failures.saturating_sub(1);
+                }
+            }
 
             // Keyboard / terminal input — lowest priority so messages are drained first
             maybe_event = event_stream.next() => {
                 let Some(Ok(Event::Key(key))) = maybe_event else { continue; };
+                needs_redraw = true;
 
                 let action = if key.code == KeyCode::Enter
                     && !app.is_search_mode()
@@ -261,13 +319,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             .await
                         {
                             app.set_error(format!("Refresh failed: {err:#}"));
+                            consecutive_refresh_failures += 1;
                         } else {
                             app.clear_error();
+                            consecutive_refresh_failures = 0;
                             app.set_available_namespaces(global_state.namespaces().to_vec());
                             snapshot_dirty = true;
                             sync_extensions_instances(&client, &mut app, &global_state.snapshot())
                                 .await;
                         }
+                        // Reset auto-refresh timer after manual refresh
+                        auto_refresh.reset();
                     }
                     AppAction::OpenNamespacePicker => {
                         app.set_available_namespaces(global_state.namespaces().to_vec());

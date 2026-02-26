@@ -264,6 +264,7 @@ Valid values: `dark`, `nord`, `dracula`, `catppuccin`, `mocha`, `light`.
 - **Metrics**: CPU/memory metrics in the detail view require `metrics-server` to be installed in the cluster. If unavailable, a note is shown instead of an error.
 - **YAML view**: every resource detail view includes a YAML preview at the bottom — useful for quick inspection without switching to a terminal.
 - **Restart vs Scale**: use `R` for a rolling restart (zero-downtime pod replacement), use `s` to change the replica count.
+- **Auto-refresh**: cluster data refreshes automatically every 30 seconds. Customize via `refresh_interval_secs` in `~/.kube/kubectui-config.json` (set to `0` to disable).
 
 ---
 

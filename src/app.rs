@@ -487,6 +487,10 @@ pub enum ActiveComponent {
     ProbePanel,
 }
 
+/// Maximum number of log lines retained in the viewer buffer.
+/// Older lines are dropped when this limit is exceeded.
+pub const MAX_LOG_LINES: usize = 50_000;
+
 /// In-detail logs viewer state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct LogsViewerState {
@@ -504,6 +508,18 @@ pub struct LogsViewerState {
     pub container_cursor: usize,
     pub loading: bool,
     pub error: Option<String>,
+}
+
+impl LogsViewerState {
+    /// Appends a log line, evicting the oldest lines if the buffer exceeds [`MAX_LOG_LINES`].
+    pub fn push_line(&mut self, line: String) {
+        self.lines.push(line);
+        if self.lines.len() > MAX_LOG_LINES {
+            let excess = self.lines.len() - MAX_LOG_LINES;
+            self.lines.drain(..excess);
+            self.scroll_offset = self.scroll_offset.saturating_sub(excess);
+        }
+    }
 }
 
 /// Active form field in the lightweight port-forward dialog state.
@@ -770,6 +786,8 @@ pub struct AppState {
     pub extension_in_instances: bool,
     /// Cursor index within the instances list.
     pub extension_instance_cursor: usize,
+    /// Auto-refresh interval in seconds (0 = disabled).
+    pub refresh_interval_secs: u64,
 }
 
 impl Default for AppState {
@@ -795,6 +813,7 @@ impl Default for AppState {
             extension_selected_crd: None,
             extension_in_instances: false,
             extension_instance_cursor: 0,
+            refresh_interval_secs: 30,
         }
     }
 }
@@ -804,6 +823,13 @@ struct AppConfig {
     namespace: String,
     #[serde(default)]
     theme: Option<String>,
+    /// Auto-refresh interval in seconds (0 = disabled, default = 30).
+    #[serde(default = "default_refresh_interval")]
+    refresh_interval_secs: u64,
+}
+
+fn default_refresh_interval() -> u64 {
+    30
 }
 
 impl AppState {
@@ -1513,10 +1539,12 @@ pub fn load_config_from_path(path: &Path) -> AppState {
                 "nord" => 1,
                 "dracula" => 2,
                 "catppuccin" | "mocha" => 3,
+                "light" => 4,
                 _ => 0,
             };
             crate::ui::theme::set_active_theme(idx);
         }
+        app.refresh_interval_secs = cfg.refresh_interval_secs;
     }
 
     app
@@ -1528,6 +1556,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
     let cfg = AppConfig {
         namespace: app.current_namespace.clone(),
         theme: Some(theme_name),
+        refresh_interval_secs: app.refresh_interval_secs,
     };
 
     if let Some(parent) = path.parent() {

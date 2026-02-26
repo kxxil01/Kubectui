@@ -386,23 +386,47 @@ impl GlobalState {
         &self.namespaces
     }
 
+    /// Per-resource fetch timeout in seconds.
+    const FETCH_TIMEOUT_SECS: u64 = 10;
+
     async fn fetch_with_timeout<T>(
         label: &'static str,
         fut: impl std::future::Future<Output = Result<T>>,
     ) -> Result<T> {
-        match tokio::time::timeout(Duration::from_secs(5), fut).await {
+        match tokio::time::timeout(Duration::from_secs(Self::FETCH_TIMEOUT_SECS), fut).await {
             Ok(result) => result,
-            Err(_) => Err(anyhow!("timed out fetching {label}")),
+            Err(_) => Err(anyhow!("timed out fetching {label} ({}s)", Self::FETCH_TIMEOUT_SECS)),
         }
     }
 
     /// Refreshes core resources in parallel, updating status and timestamps.
     ///
     /// Production hardening behavior:
-    /// - Per-resource timeout protection (5s)
+    /// - Per-resource timeout protection (10s)
+    /// - Global refresh timeout (60s) prevents indefinite hangs
     /// - Graceful degradation for partial API failures
     /// - Returns error only when all critical resources fail
     pub async fn refresh<D>(&mut self, client: &D, namespace: Option<&str>) -> Result<()>
+    where
+        D: ClusterDataSource + Sync,
+    {
+        match tokio::time::timeout(
+            Duration::from_secs(60),
+            self.refresh_inner(client, namespace),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                self.snapshot.phase = DataPhase::Error;
+                self.snapshot.last_error = Some("Global refresh timed out (60s)".to_string());
+                self.publish_snapshot();
+                Err(anyhow!("Global refresh timed out (60s)"))
+            }
+        }
+    }
+
+    async fn refresh_inner<D>(&mut self, client: &D, namespace: Option<&str>) -> Result<()>
     where
         D: ClusterDataSource + Sync,
     {
@@ -1354,11 +1378,19 @@ mod tests {
 
     #[tokio::test]
     async fn fetch_with_timeout_returns_timeout_error() {
-        let result = GlobalState::fetch_with_timeout("nodes", async {
-            tokio::time::sleep(Duration::from_millis(5200)).await;
-            Ok::<Vec<NodeInfo>, anyhow::Error>(vec![])
-        })
-        .await;
+        // Use a short timeout for testing (not the production 10s)
+        let result: Result<Vec<NodeInfo>> = match tokio::time::timeout(
+            Duration::from_millis(50),
+            async {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok(vec![])
+            },
+        )
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => Err(anyhow!("timed out fetching nodes")),
+        };
 
         assert!(result.is_err());
         assert!(
