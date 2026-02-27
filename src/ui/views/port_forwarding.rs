@@ -8,8 +8,7 @@ use ratatui::{
 };
 
 use crate::{
-    k8s::portforward::TunnelState,
-    state::port_forward::TunnelRegistry,
+    k8s::portforward::TunnelState, state::port_forward::TunnelRegistry,
     ui::components::default_theme,
 };
 
@@ -55,7 +54,11 @@ pub fn render_port_forwarding(
         .iter()
         .enumerate()
         .map(|(i, t)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             let state_str = match t.state {
                 TunnelState::Starting => "Starting",
                 TunnelState::Active => "Active",

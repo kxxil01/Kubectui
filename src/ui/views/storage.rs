@@ -27,7 +27,11 @@ pub fn render_pvcs(
         .iter()
         .enumerate()
         .map(|(i, pvc)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             let status_style = match pvc.status.as_str() {
                 "Bound" => theme.badge_success_style(),
                 "Pending" => theme.badge_warning_style(),
@@ -48,9 +52,16 @@ pub fn render_pvcs(
         })
         .collect();
 
-    let header = Row::new(vec!["NAME", "NAMESPACE", "STATUS", "CAPACITY", "ACCESS MODES", "STORAGECLASS"])
-        .style(theme.header_style())
-        .height(1);
+    let header = Row::new(vec![
+        "NAME",
+        "NAMESPACE",
+        "STATUS",
+        "CAPACITY",
+        "ACCESS MODES",
+        "STORAGECLASS",
+    ])
+    .style(theme.header_style())
+    .height(1);
 
     let table = Table::new(
         rows,
@@ -74,7 +85,10 @@ pub fn render_pvcs(
             } else {
                 vec![
                     Span::styled(" PersistentVolumeClaims ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.pvcs.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.pvcs.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))
@@ -104,7 +118,11 @@ pub fn render_pvs(
         .iter()
         .enumerate()
         .map(|(i, pv)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             let status_style = match pv.status.as_str() {
                 "Bound" => theme.badge_success_style(),
                 "Available" => theme.badge_warning_style(),
@@ -127,9 +145,17 @@ pub fn render_pvs(
         })
         .collect();
 
-    let header = Row::new(vec!["NAME", "CAPACITY", "ACCESS MODES", "RECLAIM", "STATUS", "CLAIM", "STORAGECLASS"])
-        .style(theme.header_style())
-        .height(1);
+    let header = Row::new(vec![
+        "NAME",
+        "CAPACITY",
+        "ACCESS MODES",
+        "RECLAIM",
+        "STATUS",
+        "CLAIM",
+        "STORAGECLASS",
+    ])
+    .style(theme.header_style())
+    .height(1);
 
     let table = Table::new(
         rows,
@@ -154,7 +180,10 @@ pub fn render_pvs(
             } else {
                 vec![
                     Span::styled(" PersistentVolumes ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.pvs.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.pvs.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))
@@ -184,7 +213,11 @@ pub fn render_storage_classes(
         .iter()
         .enumerate()
         .map(|(i, sc)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             let default_label = if sc.is_default { "(default)" } else { "" };
             let reclaim = sc.reclaim_policy.as_deref().unwrap_or("Delete");
             let binding = sc.volume_binding_mode.as_deref().unwrap_or("Immediate");
@@ -200,9 +233,15 @@ pub fn render_storage_classes(
         })
         .collect();
 
-    let header = Row::new(vec!["NAME", "PROVISIONER", "RECLAIM", "BINDING MODE", "EXPAND"])
-        .style(theme.header_style())
-        .height(1);
+    let header = Row::new(vec![
+        "NAME",
+        "PROVISIONER",
+        "RECLAIM",
+        "BINDING MODE",
+        "EXPAND",
+    ])
+    .style(theme.header_style())
+    .height(1);
 
     let table = Table::new(
         rows,
@@ -225,7 +264,10 @@ pub fn render_storage_classes(
             } else {
                 vec![
                     Span::styled(" StorageClasses ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.storage_classes.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.storage_classes.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))

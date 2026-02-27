@@ -4,9 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        BarChart, Block, BorderType, Borders, Gauge, LineGauge, Paragraph, Sparkline, Wrap,
-    },
+    widgets::{BarChart, Block, BorderType, Borders, Gauge, LineGauge, Paragraph, Sparkline, Wrap},
 };
 
 use crate::{
@@ -97,16 +95,17 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
 
 // ── cluster info ──────────────────────────────────────────────────────────────
 
-fn render_cluster_info(
-    frame: &mut Frame,
-    area: Rect,
-    snapshot: &ClusterSnapshot,
-    theme: &Theme,
-) {
+fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, theme: &Theme) {
     let cluster_info = snapshot.cluster_info.as_ref();
-    let context = cluster_info.and_then(|i| i.context.as_deref()).unwrap_or("unknown");
-    let server = cluster_info.map(|i| i.server.as_str()).unwrap_or("unavailable");
-    let version = cluster_info.and_then(|i| i.git_version.as_deref()).unwrap_or("unknown");
+    let context = cluster_info
+        .and_then(|i| i.context.as_deref())
+        .unwrap_or("unknown");
+    let server = cluster_info
+        .map(|i| i.server.as_str())
+        .unwrap_or("unavailable");
+    let version = cluster_info
+        .and_then(|i| i.git_version.as_deref())
+        .unwrap_or("unknown");
     let phase_label = format!("{}", snapshot.phase);
 
     let phase_style = match snapshot.phase {
@@ -149,7 +148,12 @@ fn render_cluster_info(
         .border_style(theme.border_active_style())
         .style(Style::default().bg(theme.bg));
 
-    frame.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 // ── resource counts ───────────────────────────────────────────────────────────
@@ -174,21 +178,33 @@ fn render_resource_counts(
     let lines = vec![
         Line::from(vec![
             Span::styled("  Nodes      ", theme.inactive_style()),
-            Span::styled(format!("{}/{} ready", stats.ready_nodes, stats.total_nodes), node_style),
+            Span::styled(
+                format!("{}/{} ready", stats.ready_nodes, stats.total_nodes),
+                node_style,
+            ),
         ]),
         Line::from(vec![
             Span::styled("  Pods       ", theme.inactive_style()),
-            Span::styled(format!("{} running", stats.running_pods), theme.badge_success_style()),
+            Span::styled(
+                format!("{} running", stats.running_pods),
+                theme.badge_success_style(),
+            ),
             Span::styled("  ", theme.inactive_style()),
             Span::styled(format!("{} failed", stats.failed_pods), pod_style),
         ]),
         Line::from(vec![
             Span::styled("  Services   ", theme.inactive_style()),
-            Span::styled(stats.services_count.to_string(), Style::default().fg(theme.info)),
+            Span::styled(
+                stats.services_count.to_string(),
+                Style::default().fg(theme.info),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  Namespaces ", theme.inactive_style()),
-            Span::styled(stats.namespaces_count.to_string(), Style::default().fg(theme.accent2)),
+            Span::styled(
+                stats.namespaces_count.to_string(),
+                Style::default().fg(theme.accent2),
+            ),
         ]),
     ];
 
@@ -199,7 +215,12 @@ fn render_resource_counts(
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.bg));
 
-    frame.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 // ── health gauges ─────────────────────────────────────────────────────────────
@@ -254,12 +275,7 @@ fn render_health_gauges(
 
 // ── node metrics bar charts ───────────────────────────────────────────────────
 
-fn render_node_metrics(
-    frame: &mut Frame,
-    area: Rect,
-    snapshot: &ClusterSnapshot,
-    theme: &Theme,
-) {
+fn render_node_metrics(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, theme: &Theme) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -383,18 +399,35 @@ fn render_workload_health(
 
     // Compute ready ratios
     let (dep_ready, dep_total) = snapshot.deployments.iter().fold((0i32, 0i32), |(r, t), d| {
-        (r + d.ready_replicas.min(d.desired_replicas), t + d.desired_replicas.max(1))
+        (
+            r + d.ready_replicas.min(d.desired_replicas),
+            t + d.desired_replicas.max(1),
+        )
     });
-    let (ss_ready, ss_total) = snapshot.statefulsets.iter().fold((0i32, 0i32), |(r, t), s| {
-        (r + s.ready_replicas.min(s.desired_replicas), t + s.desired_replicas.max(1))
-    });
+    let (ss_ready, ss_total) = snapshot
+        .statefulsets
+        .iter()
+        .fold((0i32, 0i32), |(r, t), s| {
+            (
+                r + s.ready_replicas.min(s.desired_replicas),
+                t + s.desired_replicas.max(1),
+            )
+        });
     let (ds_ready, ds_total) = snapshot.daemonsets.iter().fold((0i32, 0i32), |(r, t), d| {
-        (r + d.ready_count.min(d.desired_count), t + d.desired_count.max(1))
+        (
+            r + d.ready_count.min(d.desired_count),
+            t + d.desired_count.max(1),
+        )
     });
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Min(0)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Min(0),
+        ])
         .split(inner);
 
     render_line_gauge(frame, rows[0], "Deployments ", dep_ready, dep_total, theme);
@@ -410,7 +443,11 @@ fn render_line_gauge(
     total: i32,
     theme: &Theme,
 ) {
-    let ratio = if total > 0 { ready as f64 / total as f64 } else { 1.0 };
+    let ratio = if total > 0 {
+        ready as f64 / total as f64
+    } else {
+        1.0
+    };
     let pct = (ratio * 100.0) as u8;
     let color = if pct >= 100 {
         theme.success
@@ -438,12 +475,7 @@ fn render_line_gauge(
 
 // ── pod status sparkline ──────────────────────────────────────────────────────
 
-fn render_pod_sparkline(
-    frame: &mut Frame,
-    area: Rect,
-    snapshot: &ClusterSnapshot,
-    theme: &Theme,
-) {
+fn render_pod_sparkline(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, theme: &Theme) {
     // Build a per-namespace pod count sparkline (sorted by namespace name)
     let mut ns_counts: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
     for pod in &snapshot.pods {
@@ -451,12 +483,23 @@ fn render_pod_sparkline(
     }
     let spark_data: Vec<u64> = ns_counts.values().copied().collect();
 
-    // Pod status breakdown as text lines
-    let running = snapshot.pods.iter().filter(|p| p.status.eq_ignore_ascii_case("running")).count();
-    let pending = snapshot.pods.iter().filter(|p| p.status.eq_ignore_ascii_case("pending")).count();
-    let failed = snapshot.pods.iter().filter(|p| p.status.eq_ignore_ascii_case("failed")).count();
-    let succeeded = snapshot.pods.iter().filter(|p| p.status.eq_ignore_ascii_case("succeeded")).count();
-    let other = snapshot.pods.len().saturating_sub(running + pending + failed + succeeded);
+    // Pod status breakdown as text lines (single pass to avoid repeated scans)
+    let (mut running, mut pending, mut failed, mut succeeded) = (0usize, 0usize, 0usize, 0usize);
+    for pod in &snapshot.pods {
+        if pod.status.eq_ignore_ascii_case("running") {
+            running += 1;
+        } else if pod.status.eq_ignore_ascii_case("pending") {
+            pending += 1;
+        } else if pod.status.eq_ignore_ascii_case("failed") {
+            failed += 1;
+        } else if pod.status.eq_ignore_ascii_case("succeeded") {
+            succeeded += 1;
+        }
+    }
+    let other = snapshot
+        .pods
+        .len()
+        .saturating_sub(running + pending + failed + succeeded);
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -482,15 +525,24 @@ fn render_pod_sparkline(
     let status_lines = vec![
         Line::from(vec![
             Span::styled("  ● ", Style::default().fg(theme.success)),
-            Span::styled(format!("{running} Running  "), Style::default().fg(theme.fg)),
+            Span::styled(
+                format!("{running} Running  "),
+                Style::default().fg(theme.fg),
+            ),
             Span::styled("● ", Style::default().fg(theme.warning)),
-            Span::styled(format!("{pending} Pending  "), Style::default().fg(theme.fg)),
+            Span::styled(
+                format!("{pending} Pending  "),
+                Style::default().fg(theme.fg),
+            ),
         ]),
         Line::from(vec![
             Span::styled("  ● ", Style::default().fg(theme.error)),
             Span::styled(format!("{failed} Failed   "), Style::default().fg(theme.fg)),
             Span::styled("● ", Style::default().fg(theme.muted)),
-            Span::styled(format!("{succeeded} Succeeded  {other} Other"), Style::default().fg(theme.fg_dim)),
+            Span::styled(
+                format!("{succeeded} Succeeded  {other} Other"),
+                Style::default().fg(theme.fg_dim),
+            ),
         ]),
     ];
 
@@ -502,7 +554,9 @@ fn render_pod_sparkline(
         .style(Style::default().bg(theme.bg));
 
     frame.render_widget(
-        Paragraph::new(status_lines).block(status_block).wrap(Wrap { trim: false }),
+        Paragraph::new(status_lines)
+            .block(status_block)
+            .wrap(Wrap { trim: false }),
         rows[1],
     );
 }
@@ -550,18 +604,25 @@ fn render_alerts(frame: &mut Frame, area: Rect, alerts: &[AlertItem], theme: &Th
     };
 
     let block = Block::default()
-        .title(Span::styled(format!(" ⚡ Alerts ({}) ", alerts.len()), title_style))
+        .title(Span::styled(
+            format!(" ⚡ Alerts ({}) ", alerts.len()),
+            title_style,
+        ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(if alerts.iter().any(|a| a.severity == AlertSeverity::Error) {
-            theme.badge_error_style()
-        } else {
-            theme.border_style()
-        })
+        .border_style(
+            if alerts.iter().any(|a| a.severity == AlertSeverity::Error) {
+                theme.badge_error_style()
+            } else {
+                theme.border_style()
+            },
+        )
         .style(Style::default().bg(theme.bg));
 
     frame.render_widget(
-        Paragraph::new(alert_lines).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(alert_lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
         area,
     );
 }

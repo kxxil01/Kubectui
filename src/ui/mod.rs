@@ -7,7 +7,7 @@ pub mod theme;
 pub mod views;
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Margin},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     prelude::Frame,
     text::Span,
     widgets::{
@@ -15,7 +15,11 @@ use ratatui::{
         Table, TableState,
     },
 };
-use std::{borrow::Cow, cmp::Ordering};
+use std::{
+    borrow::Cow,
+    cmp::Ordering,
+    sync::{Arc, LazyLock, Mutex},
+};
 
 use crate::{
     app::{AppState, AppView},
@@ -77,6 +81,100 @@ pub(crate) fn format_small_int(value: i64) -> Cow<'static, str> {
         10 => Cow::Borrowed("10"),
         _ => Cow::Owned(value.to_string()),
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TableWindow {
+    pub start: usize,
+    pub end: usize,
+    pub selected: usize,
+}
+
+/// Computes how many table rows can be displayed inside a bordered table with a one-line header.
+#[inline]
+pub(crate) fn table_viewport_rows(area: Rect) -> usize {
+    usize::from(area.height.saturating_sub(3)).max(1)
+}
+
+/// Computes the visible window for a selected row, centered when possible.
+#[inline]
+pub(crate) fn table_window(total: usize, selected: usize, viewport_rows: usize) -> TableWindow {
+    if total == 0 {
+        return TableWindow {
+            start: 0,
+            end: 0,
+            selected: 0,
+        };
+    }
+    let selected = selected.min(total.saturating_sub(1));
+    let visible = viewport_rows.max(1).min(total);
+    let mut start = selected.saturating_sub(visible / 2);
+    let max_start = total.saturating_sub(visible);
+    if start > max_start {
+        start = max_start;
+    }
+    let end = start + visible;
+    TableWindow {
+        start,
+        end,
+        selected: selected.saturating_sub(start),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PodDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+    minute_bucket: i64,
+}
+
+#[derive(Debug, Clone)]
+struct PodDerivedCell {
+    age: String,
+}
+
+type PodDerivedCacheValue = Arc<Vec<PodDerivedCell>>;
+static POD_DERIVED_CACHE: LazyLock<Mutex<Option<(PodDerivedCacheKey, PodDerivedCacheValue)>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+fn cached_pod_derived(
+    cluster: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+    now_unix: i64,
+) -> PodDerivedCacheValue {
+    let key = PodDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: cluster.snapshot_version,
+        data_fingerprint: data_fingerprint(&cluster.pods),
+        minute_bucket: now_unix / 60,
+    };
+
+    if let Ok(cache) = POD_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&pod_idx| {
+                let pod = &cluster.pods[pod_idx];
+                PodDerivedCell {
+                    age: format_age_from_timestamp(pod.created_at, now_unix),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = POD_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
 }
 
 /// Renders a full frame for the current app and cluster state.
@@ -547,6 +645,7 @@ fn render_pods_widget(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -561,8 +660,10 @@ fn render_pods_widget(
     let name_style = ratatui::prelude::Style::default().fg(theme.fg);
     let dim_style = ratatui::prelude::Style::default().fg(theme.fg_dim);
     let now_unix = chrono::Utc::now().timestamp();
-    let mut rows: Vec<Row> = Vec::with_capacity(total);
-    for (idx, &pod_idx) in indices.iter().enumerate() {
+    let derived = cached_pod_derived(cluster, query, indices.as_ref(), now_unix);
+    let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
+    for (local_idx, &pod_idx) in indices[window.start..window.end].iter().enumerate() {
+        let idx = window.start + local_idx;
         let pod = &cluster.pods[pod_idx];
         let status = pod.status.as_str();
         let status_style = theme.get_status_style(status);
@@ -573,12 +674,15 @@ fn render_pods_widget(
         } else {
             theme.inactive_style()
         };
-        let row_style = if idx % 2 == 0 {
+        let row_style = if idx.is_multiple_of(2) {
             ratatui::prelude::Style::default().bg(theme.bg)
         } else {
             theme.row_alt_style()
         };
-        let age = format_age_from_timestamp(pod.created_at, now_unix);
+        let age = derived
+            .get(idx)
+            .map(|cell| cell.age.as_str())
+            .unwrap_or("-");
 
         rows.push(
             Row::new(vec![
@@ -599,7 +703,7 @@ fn render_pods_widget(
         );
     }
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = format!(" 🐳 Pods ({total}) ");
     let block = if query.is_empty() {
@@ -699,6 +803,49 @@ mod tests {
             ));
         }
         app
+    }
+
+    #[test]
+    fn table_window_keeps_selected_visible_near_top() {
+        let window = table_window(100, 0, 10);
+        assert_eq!(window.start, 0);
+        assert_eq!(window.end, 10);
+        assert_eq!(window.selected, 0);
+    }
+
+    #[test]
+    fn table_window_centers_selection_in_middle() {
+        let window = table_window(100, 50, 11);
+        assert_eq!(window.start, 45);
+        assert_eq!(window.end, 56);
+        assert_eq!(window.selected, 5);
+    }
+
+    #[test]
+    fn table_window_clamps_selection_near_bottom() {
+        let window = table_window(100, 99, 10);
+        assert_eq!(window.start, 90);
+        assert_eq!(window.end, 100);
+        assert_eq!(window.selected, 9);
+    }
+
+    #[test]
+    fn table_window_handles_empty_lists() {
+        let window = table_window(0, 0, 10);
+        assert_eq!(window.start, 0);
+        assert_eq!(window.end, 0);
+        assert_eq!(window.selected, 0);
+    }
+
+    #[test]
+    fn table_viewport_rows_has_minimum_one_row() {
+        let area = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: 80,
+            height: 2,
+        };
+        assert_eq!(table_viewport_rows(area), 1);
     }
 
     /// Verifies dashboard renders without panic for empty snapshot.

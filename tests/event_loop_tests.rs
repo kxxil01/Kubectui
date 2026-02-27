@@ -8,9 +8,7 @@
 //! - Priority ordering (LogsViewer > PortForward > Scale > ProbePanel > DetailView > MainView)
 
 use crossterm::event::{KeyCode, KeyEvent};
-use kubectui::app::{
-    ActiveComponent, AppAction, AppState, DetailViewState, ResourceRef,
-};
+use kubectui::app::{ActiveComponent, AppAction, AppState, DetailViewState, ResourceRef};
 use kubectui::events::{apply_action, route_keyboard_input};
 
 #[test]
@@ -35,10 +33,22 @@ fn test_logs_viewer_scroll_controls() {
     app.detail_view = Some(DetailViewState::default());
     app.open_logs_viewer();
 
-    assert_eq!(route_keyboard_input(KeyEvent::from(KeyCode::Char('k')), &mut app), AppAction::LogsViewerScrollUp);
-    assert_eq!(route_keyboard_input(KeyEvent::from(KeyCode::Char('j')), &mut app), AppAction::LogsViewerScrollDown);
-    assert_eq!(route_keyboard_input(KeyEvent::from(KeyCode::Up), &mut app), AppAction::LogsViewerScrollUp);
-    assert_eq!(route_keyboard_input(KeyEvent::from(KeyCode::Down), &mut app), AppAction::LogsViewerScrollDown);
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('k')), &mut app),
+        AppAction::LogsViewerScrollUp
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('j')), &mut app),
+        AppAction::LogsViewerScrollDown
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Up), &mut app),
+        AppAction::LogsViewerScrollUp
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Down), &mut app),
+        AppAction::LogsViewerScrollDown
+    );
 }
 
 #[test]
@@ -52,9 +62,10 @@ fn test_logs_viewer_follow_mode_toggle() {
     apply_action(action, &mut app);
 
     if let Some(detail) = &app.detail_view
-        && let Some(logs) = &detail.logs_viewer {
-            assert!(logs.follow_mode);
-        }
+        && let Some(logs) = &detail.logs_viewer
+    {
+        assert!(logs.follow_mode);
+    }
 }
 
 #[test]
@@ -97,9 +108,10 @@ fn test_scale_dialog_numeric_input() {
     }
 
     if let Some(detail) = &app.detail_view
-        && let Some(scale) = &detail.scale_dialog {
-            assert_eq!(scale.desired_replicas, "35");
-        }
+        && let Some(scale) = &detail.scale_dialog
+    {
+        assert_eq!(scale.desired_replicas, "35");
+    }
 }
 
 #[test]
@@ -117,9 +129,10 @@ fn test_scale_dialog_backspace() {
     apply_action(action, &mut app);
 
     if let Some(detail) = &app.detail_view
-        && let Some(scale) = &detail.scale_dialog {
-            assert_eq!(scale.desired_replicas, "4");
-        }
+        && let Some(scale) = &detail.scale_dialog
+    {
+        assert_eq!(scale.desired_replicas, "4");
+    }
 }
 
 #[test]
@@ -231,25 +244,28 @@ fn test_component_state_persistence() {
     app.open_logs_viewer();
 
     if let Some(detail) = &mut app.detail_view
-        && let Some(logs) = &mut detail.logs_viewer {
-            logs.scroll_offset = 42;
-            logs.follow_mode = true;
-        }
+        && let Some(logs) = &mut detail.logs_viewer
+    {
+        logs.scroll_offset = 42;
+        logs.follow_mode = true;
+    }
 
     if let Some(detail) = &app.detail_view
-        && let Some(logs) = &detail.logs_viewer {
-            assert_eq!(logs.scroll_offset, 42);
-            assert!(logs.follow_mode);
-        }
+        && let Some(logs) = &detail.logs_viewer
+    {
+        assert_eq!(logs.scroll_offset, 42);
+        assert!(logs.follow_mode);
+    }
 
     app.close_logs_viewer();
     app.open_logs_viewer();
 
     if let Some(detail) = &app.detail_view
-        && let Some(logs) = &detail.logs_viewer {
-            assert_eq!(logs.scroll_offset, 0);
-            assert!(!logs.follow_mode);
-        }
+        && let Some(logs) = &detail.logs_viewer
+    {
+        assert_eq!(logs.scroll_offset, 0);
+        assert!(!logs.follow_mode);
+    }
 }
 
 #[test]
@@ -258,7 +274,16 @@ fn test_probe_panel_navigation() {
     app.detail_view = Some(DetailViewState::default());
     app.open_probe_panel();
 
-    assert_eq!(route_keyboard_input(KeyEvent::from(KeyCode::Char(' ')), &mut app), AppAction::ProbeToggleExpand);
-    assert_eq!(route_keyboard_input(KeyEvent::from(KeyCode::Char('j')), &mut app), AppAction::ProbeSelectNext);
-    assert_eq!(route_keyboard_input(KeyEvent::from(KeyCode::Char('k')), &mut app), AppAction::ProbeSelectPrev);
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char(' ')), &mut app),
+        AppAction::ProbeToggleExpand
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('j')), &mut app),
+        AppAction::ProbeSelectNext
+    );
+    assert_eq!(
+        route_keyboard_input(KeyEvent::from(KeyCode::Char('k')), &mut app),
+        AppAction::ProbeSelectPrev
+    );
 }

@@ -217,6 +217,7 @@ mod coordinator_tests {
         // Send status transitions
         tx.send(UpdateMessage::LogStreamStatus {
             pod_name: "test".to_string(),
+            namespace: "default".to_string(),
             container_name: "app".to_string(),
             status: LogStreamStatus::Started,
         })
@@ -224,6 +225,7 @@ mod coordinator_tests {
 
         tx.send(UpdateMessage::LogStreamStatus {
             pod_name: "test".to_string(),
+            namespace: "default".to_string(),
             container_name: "app".to_string(),
             status: LogStreamStatus::Ended,
         })
@@ -356,6 +358,7 @@ mod log_streaming_tests {
         for i in 0..5 {
             tx.send(UpdateMessage::LogUpdate {
                 pod_name: "test".to_string(),
+                namespace: "default".to_string(),
                 container_name: "app".to_string(),
                 line: format!("log line {}", i),
             })
@@ -386,6 +389,7 @@ mod coordinator_channel_tests {
         for i in 0..1000 {
             let msg = UpdateMessage::LogUpdate {
                 pod_name: format!("pod-{}", i),
+                namespace: "default".to_string(),
                 container_name: "app".to_string(),
                 line: format!("line {}", i),
             };
@@ -420,6 +424,7 @@ mod coordinator_channel_tests {
         // Send different message types
         tx.send(UpdateMessage::LogUpdate {
             pod_name: "pod1".to_string(),
+            namespace: "default".to_string(),
             container_name: "app".to_string(),
             line: "test".to_string(),
         })

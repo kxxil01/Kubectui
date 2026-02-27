@@ -28,18 +28,21 @@ impl TunnelRegistry {
             self.tunnel_ids.push(tunnel.id.clone());
             self.tunnels.insert(tunnel.id.clone(), tunnel);
         }
+        self.clamp_selected_index();
     }
 
     /// Add a tunnel
     pub fn add_tunnel(&mut self, tunnel: PortForwardTunnelInfo) {
         self.tunnel_ids.push(tunnel.id.clone());
         self.tunnels.insert(tunnel.id.clone(), tunnel);
+        self.clamp_selected_index();
     }
 
     /// Remove a tunnel
     pub fn remove_tunnel(&mut self, tunnel_id: &str) {
         self.tunnels.remove(tunnel_id);
         self.tunnel_ids.retain(|id| id != tunnel_id);
+        self.clamp_selected_index();
     }
 
     /// Get selected tunnel
@@ -86,12 +89,23 @@ impl TunnelRegistry {
 
     /// Returns tunnels in insertion order.
     pub fn ordered_tunnels(&self) -> Vec<&PortForwardTunnelInfo> {
-        self.tunnel_ids.iter().filter_map(|id| self.tunnels.get(id)).collect()
+        self.tunnel_ids
+            .iter()
+            .filter_map(|id| self.tunnels.get(id))
+            .collect()
     }
 
     /// Returns the selected index.
     pub fn selected_index(&self) -> usize {
         self.selected_index
+    }
+
+    fn clamp_selected_index(&mut self) {
+        if self.tunnel_ids.is_empty() {
+            self.selected_index = 0;
+        } else if self.selected_index >= self.tunnel_ids.len() {
+            self.selected_index = self.tunnel_ids.len() - 1;
+        }
     }
 }
 
@@ -154,5 +168,19 @@ mod tests {
         registry.add_tunnel(create_test_tunnel("test-2"));
 
         assert_eq!(registry.active_count(), 2);
+    }
+
+    #[test]
+    fn selected_index_is_clamped_after_removal() {
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(create_test_tunnel("test-1"));
+        registry.add_tunnel(create_test_tunnel("test-2"));
+
+        registry.select_next();
+        assert_eq!(registry.selected().map(|t| t.id.as_str()), Some("test-2"));
+
+        registry.remove_tunnel("test-2");
+        assert_eq!(registry.selected().map(|t| t.id.as_str()), Some("test-1"));
+        assert_eq!(registry.selected_index(), 0);
     }
 }

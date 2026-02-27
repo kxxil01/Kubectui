@@ -3,13 +3,9 @@
 //! Helm repositories, probe panel error state, and context-aware detail footer.
 
 use crossterm::event::{KeyCode, KeyEvent};
-use kubectui::app::{
-    AppAction, AppState, AppView, DetailViewState, Focus, ResourceRef,
-};
+use kubectui::app::{AppAction, AppState, AppView, DetailViewState, Focus, ResourceRef};
 use kubectui::events::route_keyboard_input;
-use kubectui::k8s::dtos::{
-    CustomResourceDefinitionInfo, CustomResourceInfo, HelmRepoInfo,
-};
+use kubectui::k8s::dtos::{CustomResourceDefinitionInfo, CustomResourceInfo, HelmRepoInfo};
 use kubectui::ui::components::probe_panel::ProbePanelState;
 
 // ─── ResourceRef::CustomResource helpers ─────────────────────────────────────
@@ -304,7 +300,9 @@ fn detail_footer_deployment_is_scalable_and_restartable() {
     );
     let is_restartable = matches!(
         &resource,
-        ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _) | ResourceRef::DaemonSet(_, _)
+        ResourceRef::Deployment(_, _)
+            | ResourceRef::StatefulSet(_, _)
+            | ResourceRef::DaemonSet(_, _)
     );
     assert!(is_scalable);
     assert!(is_restartable);
@@ -319,7 +317,9 @@ fn detail_footer_configmap_not_scalable_not_restartable() {
     );
     let is_restartable = matches!(
         &resource,
-        ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _) | ResourceRef::DaemonSet(_, _)
+        ResourceRef::Deployment(_, _)
+            | ResourceRef::StatefulSet(_, _)
+            | ResourceRef::DaemonSet(_, _)
     );
     let is_pod = matches!(&resource, ResourceRef::Pod(_, _));
     assert!(!is_scalable);
@@ -344,7 +344,9 @@ fn detail_footer_custom_resource_not_scalable_not_restartable_not_pod() {
     );
     let is_restartable = matches!(
         &resource,
-        ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _) | ResourceRef::DaemonSet(_, _)
+        ResourceRef::Deployment(_, _)
+            | ResourceRef::StatefulSet(_, _)
+            | ResourceRef::DaemonSet(_, _)
     );
     assert!(!is_pod);
     assert!(!is_scalable);

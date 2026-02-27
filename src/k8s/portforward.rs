@@ -148,7 +148,10 @@ impl PortForwarderService {
         let remote_port_for_task = target.remote_port;
         let task = tokio::spawn(async move {
             // Real port-forward: accept TCP connections and proxy through kube API
-            info!("Tunnel {} accepting connections on {}", id, local_addr_clone);
+            info!(
+                "Tunnel {} accepting connections on {}",
+                id, local_addr_clone
+            );
             loop {
                 match listener.accept().await {
                     Ok((stream, _)) => {

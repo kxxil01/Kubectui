@@ -10,10 +10,11 @@ fn all_tab_transitions_work() {
     let mut app = AppState::default();
     let expected = [
         AppView::Nodes,
+        AppView::Namespaces,
+        AppView::Events,
         AppView::Pods,
-        AppView::Services,
         AppView::Deployments,
-        AppView::Dashboard,
+        AppView::StatefulSets,
     ];
 
     for view in expected {
@@ -27,6 +28,7 @@ fn all_tab_transitions_work() {
 #[ignore = "Optional integration run"]
 fn selection_index_wraps_at_boundaries() {
     let mut app = AppState::default();
+    let initial_sidebar_cursor = app.sidebar_cursor;
 
     app.handle_key_event(KeyEvent::from(KeyCode::Up));
     assert_eq!(app.selected_idx(), 0);
@@ -34,7 +36,8 @@ fn selection_index_wraps_at_boundaries() {
     for _ in 0..3 {
         app.handle_key_event(KeyEvent::from(KeyCode::Down));
     }
-    assert_eq!(app.selected_idx(), 3);
+    assert_eq!(app.selected_idx(), 0);
+    assert_ne!(app.sidebar_cursor, initial_sidebar_cursor);
 }
 
 /// Verifies entering and exiting search mode routes keys correctly.

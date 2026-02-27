@@ -26,25 +26,82 @@ struct Command {
 }
 
 const COMMANDS: &[Command] = &[
-    Command { view: AppView::Dashboard,            aliases: &["dashboard", "dash", "home"] },
-    Command { view: AppView::Nodes,                aliases: &["nodes", "node", "no"] },
-    Command { view: AppView::Pods,                 aliases: &["pods", "pod", "po"] },
-    Command { view: AppView::Deployments,          aliases: &["deployments", "deployment", "deploy", "dep"] },
-    Command { view: AppView::StatefulSets,         aliases: &["statefulsets", "statefulset", "sts"] },
-    Command { view: AppView::DaemonSets,           aliases: &["daemonsets", "daemonset", "ds"] },
-    Command { view: AppView::Jobs,                 aliases: &["jobs", "job"] },
-    Command { view: AppView::CronJobs,             aliases: &["cronjobs", "cronjob", "cj"] },
-    Command { view: AppView::Services,             aliases: &["services", "service", "svc"] },
-    Command { view: AppView::ServiceAccounts,      aliases: &["serviceaccounts", "serviceaccount", "sa"] },
-    Command { view: AppView::Roles,                aliases: &["roles", "role"] },
-    Command { view: AppView::RoleBindings,         aliases: &["rolebindings", "rolebinding", "rb"] },
-    Command { view: AppView::ClusterRoles,         aliases: &["clusterroles", "clusterrole", "cr"] },
-    Command { view: AppView::ClusterRoleBindings,  aliases: &["clusterrolebindings", "clusterrolebinding", "crb"] },
-    Command { view: AppView::ResourceQuotas,       aliases: &["resourcequotas", "resourcequota", "quota", "rq"] },
-    Command { view: AppView::LimitRanges,          aliases: &["limitranges", "limitrange", "limits", "lr"] },
-    Command { view: AppView::PodDisruptionBudgets, aliases: &["poddisruptionbudgets", "pdb", "pdbs"] },
-    Command { view: AppView::PortForwarding,       aliases: &["portforwarding", "portforward", "pf", "tunnel", "tunnels"] },
-    Command { view: AppView::Extensions,           aliases: &["extensions", "ext", "crd", "crds"] },
+    Command {
+        view: AppView::Dashboard,
+        aliases: &["dashboard", "dash", "home"],
+    },
+    Command {
+        view: AppView::Nodes,
+        aliases: &["nodes", "node", "no"],
+    },
+    Command {
+        view: AppView::Pods,
+        aliases: &["pods", "pod", "po"],
+    },
+    Command {
+        view: AppView::Deployments,
+        aliases: &["deployments", "deployment", "deploy", "dep"],
+    },
+    Command {
+        view: AppView::StatefulSets,
+        aliases: &["statefulsets", "statefulset", "sts"],
+    },
+    Command {
+        view: AppView::DaemonSets,
+        aliases: &["daemonsets", "daemonset", "ds"],
+    },
+    Command {
+        view: AppView::Jobs,
+        aliases: &["jobs", "job"],
+    },
+    Command {
+        view: AppView::CronJobs,
+        aliases: &["cronjobs", "cronjob", "cj"],
+    },
+    Command {
+        view: AppView::Services,
+        aliases: &["services", "service", "svc"],
+    },
+    Command {
+        view: AppView::ServiceAccounts,
+        aliases: &["serviceaccounts", "serviceaccount", "sa"],
+    },
+    Command {
+        view: AppView::Roles,
+        aliases: &["roles", "role"],
+    },
+    Command {
+        view: AppView::RoleBindings,
+        aliases: &["rolebindings", "rolebinding", "rb"],
+    },
+    Command {
+        view: AppView::ClusterRoles,
+        aliases: &["clusterroles", "clusterrole", "cr"],
+    },
+    Command {
+        view: AppView::ClusterRoleBindings,
+        aliases: &["clusterrolebindings", "clusterrolebinding", "crb"],
+    },
+    Command {
+        view: AppView::ResourceQuotas,
+        aliases: &["resourcequotas", "resourcequota", "quota", "rq"],
+    },
+    Command {
+        view: AppView::LimitRanges,
+        aliases: &["limitranges", "limitrange", "limits", "lr"],
+    },
+    Command {
+        view: AppView::PodDisruptionBudgets,
+        aliases: &["poddisruptionbudgets", "pdb", "pdbs"],
+    },
+    Command {
+        view: AppView::PortForwarding,
+        aliases: &["portforwarding", "portforward", "pf", "tunnel", "tunnels"],
+    },
+    Command {
+        view: AppView::Extensions,
+        aliases: &["extensions", "ext", "crd", "crds"],
+    },
 ];
 
 /// Fuzzy-match: returns true if every character of `needle` appears in
@@ -254,19 +311,13 @@ impl CommandPalette {
                                     .bg(theme.selection_bg)
                                     .add_modifier(Modifier::BOLD),
                             ),
-                            Span::styled(
-                                format!("  {group_label}"),
-                                theme.inactive_style(),
-                            ),
+                            Span::styled(format!("  {group_label}"), theme.inactive_style()),
                         ]))
                     } else {
                         ListItem::new(Line::from(vec![
                             Span::styled("   ", theme.inactive_style()),
                             Span::styled(view.label(), Style::default().fg(theme.fg_dim)),
-                            Span::styled(
-                                format!("  {group_label}"),
-                                theme.inactive_style(),
-                            ),
+                            Span::styled(format!("  {group_label}"), theme.inactive_style()),
                         ]))
                     }
                 })

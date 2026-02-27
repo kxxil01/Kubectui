@@ -4,18 +4,20 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
 };
 
 use crate::{
     app::{DetailViewState, ResourceRef},
     ui::{
-        theme::Theme,
         components::{
-            default_theme,
-            probe_panel::render_probe_panel,
-            scale_dialog::render_scale_dialog,
+            default_theme, probe_panel::render_probe_panel, scale_dialog::render_scale_dialog,
         },
+        contains_ci,
+        theme::Theme,
     },
 };
 
@@ -89,7 +91,12 @@ fn highlight_yaml_line<'a>(line: &'a str, theme: &Theme) -> Line<'a> {
 
     // List item: "- key: value" or "- value"
     if let Some(rest) = content.strip_prefix("- ") {
-        let dash = Span::styled("- ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD));
+        let dash = Span::styled(
+            "- ",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        );
         if let Some(colon_pos) = find_key_colon(rest) {
             let key = &rest[..colon_pos];
             let after_colon = &rest[colon_pos + 1..];
@@ -99,7 +106,9 @@ fn highlight_yaml_line<'a>(line: &'a str, theme: &Theme) -> Line<'a> {
                 dash,
                 Span::styled(
                     key.to_string(),
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(": ", Style::default().fg(theme.muted)),
             ];
@@ -124,7 +133,9 @@ fn highlight_yaml_line<'a>(line: &'a str, theme: &Theme) -> Line<'a> {
             Span::raw(indent.to_string()),
             Span::styled(
                 key.to_string(),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(": ", Style::default().fg(theme.muted)),
         ];
@@ -143,7 +154,9 @@ fn highlight_yaml_line<'a>(line: &'a str, theme: &Theme) -> Line<'a> {
 
 /// Convert a YAML string into a vec of syntax-highlighted `Line`s.
 fn highlight_yaml<'a>(yaml: &'a str, theme: &Theme) -> Vec<Line<'a>> {
-    yaml.lines().map(|l| highlight_yaml_line(l, theme)).collect()
+    yaml.lines()
+        .map(|l| highlight_yaml_line(l, theme))
+        .collect()
 }
 
 // ─── Sub-panel renderers ──────────────────────────────────────────────────────
@@ -178,7 +191,12 @@ fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailVie
         Line::from(vec![
             Span::styled(" Namespace ", theme.inactive_style()),
             Span::styled(
-                detail_state.metadata.namespace.as_deref().unwrap_or("cluster-scope").to_string(),
+                detail_state
+                    .metadata
+                    .namespace
+                    .as_deref()
+                    .unwrap_or("cluster-scope")
+                    .to_string(),
                 Style::default().fg(theme.accent2),
             ),
         ]),
@@ -189,7 +207,12 @@ fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailVie
         Line::from(vec![
             Span::styled(" Created   ", theme.inactive_style()),
             Span::styled(
-                detail_state.metadata.created.as_deref().unwrap_or("n/a").to_string(),
+                detail_state
+                    .metadata
+                    .created
+                    .as_deref()
+                    .unwrap_or("n/a")
+                    .to_string(),
                 Style::default().fg(theme.fg_dim),
             ),
         ]),
@@ -205,7 +228,12 @@ fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailVie
         .border_type(BorderType::Rounded)
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.bg));
-    frame.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn render_details_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
@@ -227,7 +255,10 @@ fn render_details_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
     }
 
     for section in &detail_state.sections {
-        if section.chars().all(|c| c.is_uppercase() || c == '_' || c == ' ') {
+        if section
+            .chars()
+            .all(|c| c.is_uppercase() || c == '_' || c == ' ')
+        {
             lines.push(Line::from(Span::styled(
                 format!(" {section}"),
                 theme.section_title_style(),
@@ -244,7 +275,10 @@ fn render_details_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
         if !lines.is_empty() {
             lines.push(Line::from(""));
         }
-        lines.push(Line::from(Span::styled(" EVENTS", theme.section_title_style())));
+        lines.push(Line::from(Span::styled(
+            " EVENTS",
+            theme.section_title_style(),
+        )));
         for event in detail_state.events.iter().take(5) {
             let (icon, ev_style) = if event.event_type.eq_ignore_ascii_case("warning") {
                 (" ⚠ ", theme.badge_warning_style())
@@ -275,7 +309,12 @@ fn render_details_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
         .border_type(BorderType::Rounded)
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.bg));
-    frame.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn render_metrics_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
@@ -299,7 +338,10 @@ fn render_metrics_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
         ]
     } else if let Some(pm) = &detail_state.pod_metrics {
         if pm.containers.is_empty() {
-            vec![Line::from(Span::styled(" No container metrics", theme.inactive_style()))]
+            vec![Line::from(Span::styled(
+                " No container metrics",
+                theme.inactive_style(),
+            ))]
         } else {
             pm.containers
                 .iter()
@@ -308,13 +350,19 @@ fn render_metrics_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
                         Span::styled(format!(" {} ", c.name), theme.hover_style()),
                         Span::styled(format!("cpu={}", c.cpu), Style::default().fg(theme.accent)),
                         Span::styled("  ", theme.inactive_style()),
-                        Span::styled(format!("mem={}", c.memory), Style::default().fg(theme.accent2)),
+                        Span::styled(
+                            format!("mem={}", c.memory),
+                            Style::default().fg(theme.accent2),
+                        ),
                     ])
                 })
                 .collect()
         }
     } else {
-        vec![Line::from(Span::styled(" Metrics unavailable", theme.inactive_style()))]
+        vec![Line::from(Span::styled(
+            " Metrics unavailable",
+            theme.inactive_style(),
+        ))]
     };
 
     let block = Block::default()
@@ -323,7 +371,12 @@ fn render_metrics_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
         .border_type(BorderType::Rounded)
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.bg));
-    frame.render_widget(Paragraph::new(lines).block(block).wrap(Wrap { trim: false }), area);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
 }
 
 fn render_yaml_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
@@ -349,7 +402,10 @@ fn render_yaml_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
 
     if detail_state.loading {
         frame.render_widget(
-            Paragraph::new(Span::styled(" ⟳ Loading YAML…", theme.badge_warning_style())),
+            Paragraph::new(Span::styled(
+                " ⟳ Loading YAML…",
+                theme.badge_warning_style(),
+            )),
             inner,
         );
         return;
@@ -427,7 +483,10 @@ fn render_yaml_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         let mut scrollbar_state = ScrollbarState::new(total).position(scroll);
         frame.render_stateful_widget(
             scrollbar,
-            cols[2].inner(Margin { vertical: 0, horizontal: 0 }),
+            cols[2].inner(Margin {
+                vertical: 0,
+                horizontal: 0,
+            }),
             &mut scrollbar_state,
         );
     }
@@ -481,16 +540,19 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(2),  // header
-            Constraint::Length(9),  // 3-column info row
-            Constraint::Min(6),     // YAML panel
-            Constraint::Length(2),  // footer
+            Constraint::Length(2), // header
+            Constraint::Length(9), // 3-column info row
+            Constraint::Min(6),    // YAML panel
+            Constraint::Length(2), // footer
         ])
         .split(inner);
 
     // ── Header ──
     let (kind_label, name_label) = if let Some(resource) = &detail_state.resource {
-        (resource.kind().to_ascii_uppercase(), resource.name().to_string())
+        (
+            resource.kind().to_ascii_uppercase(),
+            resource.name().to_string(),
+        )
     } else {
         ("RESOURCE".to_string(), "unknown".to_string())
     };
@@ -499,7 +561,10 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         Span::styled(" ◆ ", theme.title_style()),
         Span::styled(kind_label, theme.title_style()),
         Span::styled("  /  ", theme.muted_style()),
-        Span::styled(name_label, Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            name_label,
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ),
         if detail_state.loading {
             Span::styled("  ⟳ Loading…", theme.badge_warning_style())
         } else {
@@ -539,7 +604,11 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
     );
     let is_restartable = matches!(
         detail_state.resource.as_ref(),
-        Some(ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _) | ResourceRef::DaemonSet(_, _))
+        Some(
+            ResourceRef::Deployment(_, _)
+                | ResourceRef::StatefulSet(_, _)
+                | ResourceRef::DaemonSet(_, _)
+        )
     );
     let has_yaml = detail_state.yaml.is_some();
 
@@ -614,14 +683,21 @@ fn render_logs_overlay(frame: &mut Frame, area: Rect, viewer: &crate::app::LogsV
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(4), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(4),
+            Constraint::Length(2),
+        ])
         .split(inner);
 
     let title_line = Line::from(vec![
         Span::styled(" 📋 ", theme.title_style()),
         Span::styled(viewer.pod_name.clone(), theme.title_style()),
         Span::styled(" · ", theme.inactive_style()),
-        Span::styled(viewer.pod_namespace.clone(), Style::default().fg(theme.accent2)),
+        Span::styled(
+            viewer.pod_namespace.clone(),
+            Style::default().fg(theme.accent2),
+        ),
         if !viewer.container_name.is_empty() {
             Span::styled(
                 format!("  [{}]", viewer.container_name),
@@ -635,7 +711,10 @@ fn render_logs_overlay(frame: &mut Frame, area: Rect, viewer: &crate::app::LogsV
         } else {
             Span::raw("")
         },
-        Span::styled(format!("  {} lines", viewer.lines.len()), theme.inactive_style()),
+        Span::styled(
+            format!("  {} lines", viewer.lines.len()),
+            theme.inactive_style(),
+        ),
         if viewer.loading {
             Span::styled("  ⟳ Loading…", Style::default().fg(theme.warning))
         } else {
@@ -656,40 +735,59 @@ fn render_logs_overlay(frame: &mut Frame, area: Rect, viewer: &crate::app::LogsV
 
     if viewer.loading && viewer.lines.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled("  ⟳ Fetching logs…", Style::default().fg(theme.warning))),
+            Paragraph::new(Span::styled(
+                "  ⟳ Fetching logs…",
+                Style::default().fg(theme.warning),
+            )),
             log_inner,
         );
     } else if let Some(ref err) = viewer.error {
         frame.render_widget(
-            Paragraph::new(Span::styled(format!("  ✗ {err}"), theme.badge_error_style())),
+            Paragraph::new(Span::styled(
+                format!("  ✗ {err}"),
+                theme.badge_error_style(),
+            )),
             log_inner,
         );
     } else if viewer.picking_container {
         // Container picker — shown when pod has multiple containers
-        let lines: Vec<Line> = viewer.containers.iter().enumerate().map(|(i, name)| {
-            if i == viewer.container_cursor {
-                Line::from(vec![
-                    Span::styled(" ▶ ", Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)),
-                    Span::styled(name.clone(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
-                ])
-            } else {
-                Line::from(vec![
-                    Span::styled("   ", theme.inactive_style()),
-                    Span::styled(name.clone(), Style::default().fg(theme.fg_dim)),
-                ])
-            }
-        }).collect();
+        let lines: Vec<Line> = viewer
+            .containers
+            .iter()
+            .enumerate()
+            .map(|(i, name)| {
+                if i == viewer.container_cursor {
+                    Line::from(vec![
+                        Span::styled(
+                            " ▶ ",
+                            Style::default()
+                                .fg(theme.accent)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            name.clone(),
+                            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                        ),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::styled("   ", theme.inactive_style()),
+                        Span::styled(name.clone(), Style::default().fg(theme.fg_dim)),
+                    ])
+                }
+            })
+            .collect();
 
         let picker_block = Block::default()
-            .title(Span::styled(" Select Container ", theme.section_title_style()))
+            .title(Span::styled(
+                " Select Container ",
+                theme.section_title_style(),
+            ))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(theme.border_active_style())
             .style(Style::default().bg(theme.bg));
-        frame.render_widget(
-            Paragraph::new(lines).block(picker_block),
-            log_inner,
-        );
+        frame.render_widget(Paragraph::new(lines).block(picker_block), log_inner);
     } else if viewer.lines.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled("  No logs available", theme.inactive_style())),
@@ -707,16 +805,16 @@ fn render_logs_overlay(frame: &mut Frame, area: Rect, viewer: &crate::app::LogsV
             .enumerate()
             .map(|(i, content)| {
                 let num = format!("{:>width$} ", start + i + 1, width = line_num_width);
-                let upper = content.to_uppercase();
-                let content_style = if upper.contains("ERROR") || upper.contains(" ERR ") {
-                    Style::default().fg(theme.error)
-                } else if upper.contains("WARN") {
-                    Style::default().fg(theme.warning)
-                } else if upper.contains("INFO") {
-                    Style::default().fg(theme.fg)
-                } else {
-                    Style::default().fg(theme.fg_dim)
-                };
+                let content_style =
+                    if contains_ci(content, "ERROR") || contains_ci(content, " ERR ") {
+                        Style::default().fg(theme.error)
+                    } else if contains_ci(content, "WARN") {
+                        Style::default().fg(theme.warning)
+                    } else if contains_ci(content, "INFO") {
+                        Style::default().fg(theme.fg)
+                    } else {
+                        Style::default().fg(theme.fg_dim)
+                    };
                 Line::from(vec![
                     Span::styled(num, theme.inactive_style()),
                     Span::styled("│ ", theme.inactive_style()),
@@ -725,10 +823,7 @@ fn render_logs_overlay(frame: &mut Frame, area: Rect, viewer: &crate::app::LogsV
             })
             .collect();
 
-        frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
-            log_inner,
-        );
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_inner);
 
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("▲"))
@@ -738,7 +833,10 @@ fn render_logs_overlay(frame: &mut Frame, area: Rect, viewer: &crate::app::LogsV
         let mut scrollbar_state = ScrollbarState::new(total).position(start);
         frame.render_stateful_widget(
             scrollbar,
-            chunks[1].inner(Margin { vertical: 0, horizontal: 0 }),
+            chunks[1].inner(Margin {
+                vertical: 0,
+                horizontal: 0,
+            }),
             &mut scrollbar_state,
         );
     }
@@ -807,13 +905,22 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(2),
+        ])
         .split(inner);
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("  ⚠ Delete ", theme.title_style()),
-            Span::styled(kind_label, Style::default().fg(theme.warning).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                kind_label,
+                Style::default()
+                    .fg(theme.warning)
+                    .add_modifier(Modifier::BOLD),
+            ),
             Span::styled("?", theme.title_style()),
         ])),
         chunks[0],
@@ -822,7 +929,10 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled("  ", theme.inactive_style()),
-            Span::styled(name_label, Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                name_label,
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+            ),
         ])),
         chunks[1],
     );
@@ -831,7 +941,9 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
         Paragraph::new(Line::from(vec![
             Span::styled(
                 "  [D/y/Enter] ",
-                Style::default().fg(theme.error).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled("delete  ", theme.inactive_style()),
             Span::styled("[Esc] ", theme.keybind_key_style()),
@@ -840,7 +952,6 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
         chunks[2],
     );
 }
-
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

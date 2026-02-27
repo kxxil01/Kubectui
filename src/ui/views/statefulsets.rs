@@ -11,8 +11,13 @@ use ratatui::{
 };
 
 use crate::{
-    state::{ClusterSnapshot, filters},
-    ui::components::{active_block, default_block, default_theme},
+    app::AppView,
+    state::ClusterSnapshot,
+    ui::{
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+    },
 };
 
 /// Renders the StatefulSets table with stateful selection and scrollbar.
@@ -24,18 +29,46 @@ pub fn render_statefulsets(
     query: &str,
 ) {
     let theme = default_theme();
-    let items = filters::filter_statefulsets(&cluster.statefulsets, query, None);
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::StatefulSets,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.statefulsets),
+        |q| {
+            if q.is_empty() {
+                return (0..cluster.statefulsets.len()).collect();
+            }
+            cluster
+                .statefulsets
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, ss)| {
+                    if contains_ci(&ss.name, q)
+                        || contains_ci(ss.image.as_deref().unwrap_or_default(), q)
+                    {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    );
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled("  No statefulsets found", theme.inactive_style()))
-                .block(default_block("StatefulSets")),
+            Paragraph::new(Span::styled(
+                "  No statefulsets found",
+                theme.inactive_style(),
+            ))
+            .block(default_block("StatefulSets")),
             area,
         );
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
 
     let header = Row::new([
@@ -48,11 +81,11 @@ pub fn render_statefulsets(
     ])
     .height(1)
     .style(theme.header_style());
-
-    let rows: Vec<Row> = items
+    let rows: Vec<Row> = indices
         .iter()
         .enumerate()
-        .map(|(idx, ss)| {
+        .map(|(idx, &ss_idx)| {
+            let ss = &cluster.statefulsets[ss_idx];
             let ready_style = readiness_style(ss.ready_replicas, ss.desired_replicas, &theme);
             let row_style = if idx % 2 == 0 {
                 Style::default().bg(theme.bg)
@@ -125,7 +158,10 @@ pub fn render_statefulsets(
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
     frame.render_stateful_widget(
         scrollbar,
-        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
         &mut scrollbar_state,
     );
 }

@@ -42,10 +42,10 @@ pub fn active_theme() -> Theme {
 }
 
 /// Represents a color theme for the application
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Theme {
     /// Theme name (e.g., "dark", "nord", "dracula", "catppuccin")
-    pub name: String,
+    pub name: &'static str,
     /// Primary background color
     pub bg: Color,
     /// Secondary/surface background (slightly lighter)
@@ -91,19 +91,23 @@ pub struct Theme {
 impl Theme {
     /// Load theme by name, returns dark theme if not found
     pub fn load(name: &str) -> Self {
-        match name.to_lowercase().as_str() {
-            "nord" => Self::nord(),
-            "dracula" => Self::dracula(),
-            "catppuccin" | "mocha" => Self::catppuccin_mocha(),
-            "light" => Self::light(),
-            _ => Self::dark(),
+        if name.eq_ignore_ascii_case("nord") {
+            Self::nord()
+        } else if name.eq_ignore_ascii_case("dracula") {
+            Self::dracula()
+        } else if name.eq_ignore_ascii_case("catppuccin") || name.eq_ignore_ascii_case("mocha") {
+            Self::catppuccin_mocha()
+        } else if name.eq_ignore_ascii_case("light") {
+            Self::light()
+        } else {
+            Self::dark()
         }
     }
 
     /// Dark theme — GitHub-inspired deep dark (default)
     pub fn dark() -> Self {
         Self {
-            name: "dark".to_string(),
+            name: "dark",
             bg: Color::Rgb(13, 17, 23),
             bg_surface: Color::Rgb(22, 27, 34),
             fg: Color::Rgb(230, 237, 243),
@@ -130,7 +134,7 @@ impl Theme {
     /// Nord theme — Arctic, north-bluish color palette
     pub fn nord() -> Self {
         Self {
-            name: "nord".to_string(),
+            name: "nord",
             bg: Color::Rgb(46, 52, 64),
             bg_surface: Color::Rgb(59, 66, 82),
             fg: Color::Rgb(236, 239, 244),
@@ -157,7 +161,7 @@ impl Theme {
     /// Dracula theme — dark with vibrant purple/pink accents
     pub fn dracula() -> Self {
         Self {
-            name: "dracula".to_string(),
+            name: "dracula",
             bg: Color::Rgb(40, 42, 54),
             bg_surface: Color::Rgb(50, 52, 68),
             fg: Color::Rgb(248, 248, 242),
@@ -184,7 +188,7 @@ impl Theme {
     /// Catppuccin Mocha — warm dark theme with pastel accents
     pub fn catppuccin_mocha() -> Self {
         Self {
-            name: "catppuccin".to_string(),
+            name: "catppuccin",
             bg: Color::Rgb(30, 30, 46),
             bg_surface: Color::Rgb(36, 36, 54),
             fg: Color::Rgb(205, 214, 244),
@@ -211,7 +215,7 @@ impl Theme {
     /// Light theme — clean, high-contrast light background
     pub fn light() -> Self {
         Self {
-            name: "light".to_string(),
+            name: "light",
             bg: Color::Rgb(255, 255, 255),
             bg_surface: Color::Rgb(243, 244, 246),
             fg: Color::Rgb(31, 41, 55),
@@ -254,30 +258,51 @@ impl Theme {
 
     /// Get a style for log levels
     pub fn get_log_level_style(&self, level: &str) -> Style {
-        match level.to_uppercase().as_str() {
-            "ERROR" | "ERR" => Style::default().fg(self.error).add_modifier(Modifier::BOLD),
-            "WARN" | "WARNING" => Style::default().fg(self.warning),
-            "INFO" | "INFORMATION" => Style::default().fg(self.fg),
-            "DEBUG" => Style::default().fg(self.muted),
-            "TRACE" => Style::default().fg(self.muted).add_modifier(Modifier::DIM),
-            _ => Style::default().fg(self.fg_dim),
+        if level.eq_ignore_ascii_case("ERROR") || level.eq_ignore_ascii_case("ERR") {
+            Style::default().fg(self.error).add_modifier(Modifier::BOLD)
+        } else if level.eq_ignore_ascii_case("WARN") || level.eq_ignore_ascii_case("WARNING") {
+            Style::default().fg(self.warning)
+        } else if level.eq_ignore_ascii_case("INFO") || level.eq_ignore_ascii_case("INFORMATION") {
+            Style::default().fg(self.fg)
+        } else if level.eq_ignore_ascii_case("DEBUG") {
+            Style::default().fg(self.muted)
+        } else if level.eq_ignore_ascii_case("TRACE") {
+            Style::default().fg(self.muted).add_modifier(Modifier::DIM)
+        } else {
+            Style::default().fg(self.fg_dim)
         }
     }
 
     /// Get a style for Kubernetes resource status strings
     pub fn get_status_style(&self, status: &str) -> Style {
-        match status.to_lowercase().as_str() {
-            "running" | "active" | "true" | "ready" | "succeeded" | "complete" | "bound" => {
-                Style::default().fg(self.success)
-            }
-            "pending" | "starting" | "containercreating" | "init" | "terminating" => {
-                Style::default().fg(self.warning)
-            }
-            "failed" | "error" | "false" | "crashloopbackoff" | "oomkilled" | "evicted" => {
-                Style::default().fg(self.error).add_modifier(Modifier::BOLD)
-            }
-            "unknown" => Style::default().fg(self.muted),
-            _ => Style::default().fg(self.fg_dim),
+        if status.eq_ignore_ascii_case("running")
+            || status.eq_ignore_ascii_case("active")
+            || status.eq_ignore_ascii_case("true")
+            || status.eq_ignore_ascii_case("ready")
+            || status.eq_ignore_ascii_case("succeeded")
+            || status.eq_ignore_ascii_case("complete")
+            || status.eq_ignore_ascii_case("bound")
+        {
+            Style::default().fg(self.success)
+        } else if status.eq_ignore_ascii_case("pending")
+            || status.eq_ignore_ascii_case("starting")
+            || status.eq_ignore_ascii_case("containercreating")
+            || status.eq_ignore_ascii_case("init")
+            || status.eq_ignore_ascii_case("terminating")
+        {
+            Style::default().fg(self.warning)
+        } else if status.eq_ignore_ascii_case("failed")
+            || status.eq_ignore_ascii_case("error")
+            || status.eq_ignore_ascii_case("false")
+            || status.eq_ignore_ascii_case("crashloopbackoff")
+            || status.eq_ignore_ascii_case("oomkilled")
+            || status.eq_ignore_ascii_case("evicted")
+        {
+            Style::default().fg(self.error).add_modifier(Modifier::BOLD)
+        } else if status.eq_ignore_ascii_case("unknown") {
+            Style::default().fg(self.muted)
+        } else {
+            Style::default().fg(self.fg_dim)
         }
     }
 
@@ -371,9 +396,7 @@ impl Theme {
 
     /// Badge/chip style for error state
     pub fn badge_error_style(&self) -> Style {
-        Style::default()
-            .fg(self.error)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(self.error).add_modifier(Modifier::BOLD)
     }
 
     /// Gauge/progress bar style (filled portion)
@@ -397,7 +420,6 @@ impl Theme {
     pub fn highlight_symbol(&self) -> &'static str {
         " ▶ "
     }
-
 }
 
 #[cfg(test)]

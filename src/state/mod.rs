@@ -14,9 +14,9 @@ use crate::k8s::{
     dtos::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
         CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo, HelmReleaseInfo,
-        HpaInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo, NamespaceInfo,
-        NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo,
-        PriorityClassInfo, PvInfo, PvcInfo, ReplicaSetInfo, ReplicationControllerInfo,
+        HpaInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo,
+        NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo,
+        PodInfo, PriorityClassInfo, PvInfo, PvcInfo, ReplicaSetInfo, ReplicationControllerInfo,
         ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo, ServiceAccountInfo, ServiceInfo,
         StatefulSetInfo, StorageClassInfo,
     },
@@ -51,6 +51,8 @@ impl fmt::Display for DataPhase {
 /// Snapshot used by rendering layer.
 #[derive(Debug, Clone, Default)]
 pub struct ClusterSnapshot {
+    /// Monotonic snapshot revision incremented after each successful refresh.
+    pub snapshot_version: u64,
     pub nodes: Vec<NodeInfo>,
     pub pods: Vec<PodInfo>,
     pub services: Vec<ServiceInfo>,
@@ -171,7 +173,10 @@ pub trait ClusterDataSource {
     /// Fetches IngressClasses.
     async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>>;
     /// Fetches NetworkPolicies.
-    async fn fetch_network_policies(&self, namespace: Option<&str>) -> Result<Vec<NetworkPolicyInfo>>;
+    async fn fetch_network_policies(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<NetworkPolicyInfo>>;
     /// Fetches ConfigMaps.
     async fn fetch_config_maps(&self, namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>>;
     /// Fetches Secrets.
@@ -310,7 +315,10 @@ impl ClusterDataSource for K8sClient {
         K8sClient::fetch_ingress_classes(self).await
     }
 
-    async fn fetch_network_policies(&self, namespace: Option<&str>) -> Result<Vec<NetworkPolicyInfo>> {
+    async fn fetch_network_policies(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<NetworkPolicyInfo>> {
         K8sClient::fetch_network_policies(self, namespace).await
     }
 
@@ -395,7 +403,10 @@ impl GlobalState {
     ) -> Result<T> {
         match tokio::time::timeout(Duration::from_secs(Self::FETCH_TIMEOUT_SECS), fut).await {
             Ok(result) => result,
-            Err(_) => Err(anyhow!("timed out fetching {label} ({}s)", Self::FETCH_TIMEOUT_SECS)),
+            Err(_) => Err(anyhow!(
+                "timed out fetching {label} ({}s)",
+                Self::FETCH_TIMEOUT_SECS
+            )),
         }
     }
 
@@ -485,7 +496,10 @@ impl GlobalState {
             Self::fetch_with_timeout("statefulsets", client.fetch_statefulsets(namespace)),
             Self::fetch_with_timeout("daemonsets", client.fetch_daemonsets(namespace)),
             Self::fetch_with_timeout("replicasets", client.fetch_replicasets(namespace)),
-            Self::fetch_with_timeout("replicationcontrollers", client.fetch_replication_controllers(namespace)),
+            Self::fetch_with_timeout(
+                "replicationcontrollers",
+                client.fetch_replication_controllers(namespace)
+            ),
             Self::fetch_with_timeout("jobs", client.fetch_jobs(namespace)),
             Self::fetch_with_timeout("cronjobs", client.fetch_cronjobs(namespace)),
             Self::fetch_with_timeout("resourcequotas", client.fetch_resource_quotas(namespace)),
@@ -666,20 +680,62 @@ impl GlobalState {
             }
         };
 
-        let endpoints = endpoints_res.unwrap_or_else(|e| { errors.push(format!("endpoints: {e}")); Vec::new() });
-        let ingresses = ingresses_res.unwrap_or_else(|e| { errors.push(format!("ingresses: {e}")); Vec::new() });
-        let ingress_classes = ingress_classes_res.unwrap_or_else(|e| { errors.push(format!("ingressclasses: {e}")); Vec::new() });
-        let network_policies = network_policies_res.unwrap_or_else(|e| { errors.push(format!("networkpolicies: {e}")); Vec::new() });
-        let config_maps = config_maps_res.unwrap_or_else(|e| { errors.push(format!("configmaps: {e}")); Vec::new() });
-        let secrets = secrets_res.unwrap_or_else(|e| { errors.push(format!("secrets: {e}")); Vec::new() });
-        let hpas = hpas_res.unwrap_or_else(|e| { errors.push(format!("hpas: {e}")); Vec::new() });
-        let pvcs = pvcs_res.unwrap_or_else(|e| { errors.push(format!("pvcs: {e}")); Vec::new() });
-        let pvs = pvs_res.unwrap_or_else(|e| { errors.push(format!("pvs: {e}")); Vec::new() });
-        let storage_classes = storage_classes_res.unwrap_or_else(|e| { errors.push(format!("storageclasses: {e}")); Vec::new() });
-        let namespace_list = namespace_list_res.unwrap_or_else(|e| { errors.push(format!("namespacelist: {e}")); Vec::new() });
-        let events = events_res.unwrap_or_else(|e| { errors.push(format!("events: {e}")); Vec::new() });
-        let priority_classes = priority_classes_res.unwrap_or_else(|e| { errors.push(format!("priorityclasses: {e}")); Vec::new() });
-        let helm_releases = helm_releases_res.unwrap_or_else(|e| { errors.push(format!("helmreleases: {e}")); Vec::new() });
+        let endpoints = endpoints_res.unwrap_or_else(|e| {
+            errors.push(format!("endpoints: {e}"));
+            Vec::new()
+        });
+        let ingresses = ingresses_res.unwrap_or_else(|e| {
+            errors.push(format!("ingresses: {e}"));
+            Vec::new()
+        });
+        let ingress_classes = ingress_classes_res.unwrap_or_else(|e| {
+            errors.push(format!("ingressclasses: {e}"));
+            Vec::new()
+        });
+        let network_policies = network_policies_res.unwrap_or_else(|e| {
+            errors.push(format!("networkpolicies: {e}"));
+            Vec::new()
+        });
+        let config_maps = config_maps_res.unwrap_or_else(|e| {
+            errors.push(format!("configmaps: {e}"));
+            Vec::new()
+        });
+        let secrets = secrets_res.unwrap_or_else(|e| {
+            errors.push(format!("secrets: {e}"));
+            Vec::new()
+        });
+        let hpas = hpas_res.unwrap_or_else(|e| {
+            errors.push(format!("hpas: {e}"));
+            Vec::new()
+        });
+        let pvcs = pvcs_res.unwrap_or_else(|e| {
+            errors.push(format!("pvcs: {e}"));
+            Vec::new()
+        });
+        let pvs = pvs_res.unwrap_or_else(|e| {
+            errors.push(format!("pvs: {e}"));
+            Vec::new()
+        });
+        let storage_classes = storage_classes_res.unwrap_or_else(|e| {
+            errors.push(format!("storageclasses: {e}"));
+            Vec::new()
+        });
+        let namespace_list = namespace_list_res.unwrap_or_else(|e| {
+            errors.push(format!("namespacelist: {e}"));
+            Vec::new()
+        });
+        let events = events_res.unwrap_or_else(|e| {
+            errors.push(format!("events: {e}"));
+            Vec::new()
+        });
+        let priority_classes = priority_classes_res.unwrap_or_else(|e| {
+            errors.push(format!("priorityclasses: {e}"));
+            Vec::new()
+        });
+        let helm_releases = helm_releases_res.unwrap_or_else(|e| {
+            errors.push(format!("helmreleases: {e}"));
+            Vec::new()
+        });
         // Node metrics are best-effort — silently empty if metrics-server is absent
         let node_metrics = node_metrics_res.unwrap_or_default();
 
@@ -689,6 +745,8 @@ impl GlobalState {
             && deployments.is_empty()
             && statefulsets.is_empty()
             && daemonsets.is_empty()
+            && replicasets.is_empty()
+            && replication_controllers.is_empty()
             && jobs.is_empty()
             && cronjobs.is_empty()
             && resource_quotas.is_empty()
@@ -758,6 +816,7 @@ impl GlobalState {
         self.snapshot.helm_releases = helm_releases;
         self.snapshot.helm_repositories = crate::k8s::helm::read_helm_repositories();
         self.snapshot.node_metrics = node_metrics;
+        self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
         self.snapshot.phase = DataPhase::Ready;
         self.snapshot.last_updated = Some(Utc::now());
         self.snapshot.last_error = if errors.is_empty() {
@@ -1049,10 +1108,7 @@ mod tests {
             Ok(self.daemonsets.clone())
         }
 
-        async fn fetch_replicasets(
-            &self,
-            _namespace: Option<&str>,
-        ) -> Result<Vec<ReplicaSetInfo>> {
+        async fn fetch_replicasets(&self, _namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>> {
             Ok(self.replicasets.clone())
         }
 
@@ -1175,7 +1231,10 @@ mod tests {
         async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
             Ok(vec![])
         }
-        async fn fetch_network_policies(&self, _namespace: Option<&str>) -> Result<Vec<NetworkPolicyInfo>> {
+        async fn fetch_network_policies(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<NetworkPolicyInfo>> {
             Ok(vec![])
         }
         async fn fetch_config_maps(&self, _namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> {
@@ -1205,7 +1264,10 @@ mod tests {
         async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
             Ok(vec![])
         }
-        async fn fetch_helm_releases(&self, _namespace: Option<&str>) -> Result<Vec<HelmReleaseInfo>> {
+        async fn fetch_helm_releases(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<HelmReleaseInfo>> {
             Ok(vec![])
         }
         async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> {
@@ -1268,6 +1330,46 @@ mod tests {
                 .unwrap_or_default()
                 .contains("services")
         );
+    }
+
+    #[tokio::test]
+    async fn refresh_with_only_replicasets_does_not_mark_all_failed() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource {
+            nodes: vec![],
+            pods: vec![],
+            services: vec![],
+            deployments: vec![],
+            statefulsets: vec![],
+            daemonsets: vec![],
+            replicasets: vec![ReplicaSetInfo {
+                name: "rs-only".to_string(),
+                namespace: "default".to_string(),
+                ..ReplicaSetInfo::default()
+            }],
+            replication_controllers: vec![],
+            jobs: vec![],
+            cronjobs: vec![],
+            resource_quotas: vec![],
+            limit_ranges: vec![],
+            pod_disruption_budgets: vec![],
+            service_accounts: vec![],
+            roles: vec![],
+            role_bindings: vec![],
+            cluster_roles: vec![],
+            cluster_role_bindings: vec![],
+            custom_resource_definitions: vec![],
+            cluster_info: None,
+            ..MockDataSource::success()
+        };
+
+        state
+            .refresh(&source, None)
+            .await
+            .expect("replicasets-only snapshot should be valid");
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.phase, DataPhase::Ready);
+        assert_eq!(snapshot.replicasets.len(), 1);
     }
 
     #[tokio::test]
@@ -1379,18 +1481,16 @@ mod tests {
     #[tokio::test]
     async fn fetch_with_timeout_returns_timeout_error() {
         // Use a short timeout for testing (not the production 10s)
-        let result: Result<Vec<NodeInfo>> = match tokio::time::timeout(
-            Duration::from_millis(50),
-            async {
+        let result: Result<Vec<NodeInfo>> =
+            match tokio::time::timeout(Duration::from_millis(50), async {
                 tokio::time::sleep(Duration::from_millis(200)).await;
                 Ok(vec![])
-            },
-        )
-        .await
-        {
-            Ok(r) => r,
-            Err(_) => Err(anyhow!("timed out fetching nodes")),
-        };
+            })
+            .await
+            {
+                Ok(r) => r,
+                Err(_) => Err(anyhow!("timed out fetching nodes")),
+            };
 
         assert!(result.is_err());
         assert!(

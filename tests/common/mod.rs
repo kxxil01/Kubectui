@@ -12,8 +12,8 @@ use kubectui::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
         CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo, HelmReleaseInfo,
         HpaInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo,
-        NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo,
-        PriorityClassInfo, PvInfo, PvcInfo, NamespaceInfo, ReplicaSetInfo, ReplicationControllerInfo,
+        NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo,
+        PodInfo, PriorityClassInfo, PvInfo, PvcInfo, ReplicaSetInfo, ReplicationControllerInfo,
         ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo, ServiceAccountInfo, ServiceInfo,
         StatefulSetInfo, StorageClassInfo,
     },
@@ -204,10 +204,7 @@ impl ClusterDataSource for MockDataSource {
         Ok(self.daemonsets.clone())
     }
 
-    async fn fetch_replicasets(
-        &self,
-        _namespace: Option<&str>,
-    ) -> Result<Vec<ReplicaSetInfo>> {
+    async fn fetch_replicasets(&self, _namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.fail {
             return Err(anyhow!("mock replicasets error"));
@@ -339,19 +336,52 @@ impl ClusterDataSource for MockDataSource {
         })
     }
 
-    async fn fetch_endpoints(&self, _namespace: Option<&str>) -> Result<Vec<EndpointInfo>> { Ok(vec![]) }
-    async fn fetch_ingresses(&self, _namespace: Option<&str>) -> Result<Vec<IngressInfo>> { Ok(vec![]) }
-    async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> { Ok(vec![]) }
-    async fn fetch_network_policies(&self, _namespace: Option<&str>) -> Result<Vec<NetworkPolicyInfo>> { Ok(vec![]) }
-    async fn fetch_config_maps(&self, _namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> { Ok(vec![]) }
-    async fn fetch_secrets(&self, _namespace: Option<&str>) -> Result<Vec<SecretInfo>> { Ok(vec![]) }
-    async fn fetch_hpas(&self, _namespace: Option<&str>) -> Result<Vec<HpaInfo>> { Ok(vec![]) }
-    async fn fetch_pvcs(&self, _namespace: Option<&str>) -> Result<Vec<PvcInfo>> { Ok(vec![]) }
-    async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> { Ok(vec![]) }
-    async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> { Ok(vec![]) }
-    async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> { Ok(vec![]) }
-    async fn fetch_events(&self, _namespace: Option<&str>) -> Result<Vec<K8sEventInfo>> { Ok(vec![]) }
-    async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> { Ok(vec![]) }
-    async fn fetch_helm_releases(&self, _namespace: Option<&str>) -> Result<Vec<HelmReleaseInfo>> { Ok(vec![]) }
-    async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> { Ok(vec![]) }
+    async fn fetch_endpoints(&self, _namespace: Option<&str>) -> Result<Vec<EndpointInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_ingresses(&self, _namespace: Option<&str>) -> Result<Vec<IngressInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_network_policies(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<NetworkPolicyInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_config_maps(&self, _namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_secrets(&self, _namespace: Option<&str>) -> Result<Vec<SecretInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_hpas(&self, _namespace: Option<&str>) -> Result<Vec<HpaInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_pvcs(&self, _namespace: Option<&str>) -> Result<Vec<PvcInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_events(&self, _namespace: Option<&str>) -> Result<Vec<K8sEventInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_helm_releases(&self, _namespace: Option<&str>) -> Result<Vec<HelmReleaseInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> {
+        Ok(vec![])
+    }
 }

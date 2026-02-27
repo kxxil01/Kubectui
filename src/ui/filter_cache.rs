@@ -1,0 +1,125 @@
+use std::{
+    collections::{HashMap, VecDeque},
+    sync::{Arc, LazyLock, Mutex},
+};
+
+use crate::app::AppView;
+
+const MAX_CACHE_ENTRIES: usize = 256;
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FilterCacheKey {
+    view: AppView,
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct FilterCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub entries: usize,
+}
+
+#[derive(Debug, Default)]
+struct FilterCache {
+    map: HashMap<FilterCacheKey, Arc<Vec<usize>>>,
+    order: VecDeque<FilterCacheKey>,
+    hits: u64,
+    misses: u64,
+}
+
+impl FilterCache {
+    fn get(&mut self, key: &FilterCacheKey) -> Option<Arc<Vec<usize>>> {
+        let value = self.map.get(key).cloned();
+        if value.is_some() {
+            self.hits = self.hits.saturating_add(1);
+            self.touch(key);
+        } else {
+            self.misses = self.misses.saturating_add(1);
+        }
+        value
+    }
+
+    fn insert(&mut self, key: FilterCacheKey, value: Arc<Vec<usize>>) {
+        if self.map.contains_key(&key) {
+            self.map.insert(key.clone(), value);
+            self.touch(&key);
+            return;
+        }
+        self.map.insert(key.clone(), value);
+        self.order.push_back(key);
+        self.evict_if_needed();
+    }
+
+    fn touch(&mut self, key: &FilterCacheKey) {
+        if let Some(pos) = self.order.iter().position(|item| item == key) {
+            self.order.remove(pos);
+            self.order.push_back(key.clone());
+        }
+    }
+
+    fn evict_if_needed(&mut self) {
+        while self.order.len() > MAX_CACHE_ENTRIES {
+            if let Some(oldest) = self.order.pop_front() {
+                self.map.remove(&oldest);
+            }
+        }
+    }
+
+    fn stats(&self) -> FilterCacheStats {
+        FilterCacheStats {
+            hits: self.hits,
+            misses: self.misses,
+            entries: self.map.len(),
+        }
+    }
+}
+
+static FILTER_CACHE: LazyLock<Mutex<FilterCache>> =
+    LazyLock::new(|| Mutex::new(FilterCache::default()));
+
+pub(crate) fn cached_filter_indices<F>(
+    view: AppView,
+    query: &str,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+    build: F,
+) -> Arc<Vec<usize>>
+where
+    F: FnOnce(&str) -> Vec<usize>,
+{
+    let query = query.trim();
+    let key = FilterCacheKey {
+        view,
+        query: query.to_string(),
+        snapshot_version,
+        data_fingerprint,
+    };
+
+    if let Ok(mut cache) = FILTER_CACHE.lock()
+        && let Some(hit) = cache.get(&key)
+    {
+        return hit;
+    }
+
+    let built = Arc::new(build(query));
+    if let Ok(mut cache) = FILTER_CACHE.lock() {
+        cache.insert(key, built.clone());
+    }
+    built
+}
+
+pub(crate) fn data_fingerprint<T>(items: &[T]) -> u64 {
+    let ptr = items.as_ptr() as usize as u64;
+    let len = items.len() as u64;
+    ptr ^ len.rotate_left(13)
+}
+
+pub(crate) fn filter_cache_stats() -> FilterCacheStats {
+    FILTER_CACHE
+        .lock()
+        .map(|cache| cache.stats())
+        .unwrap_or_default()
+}

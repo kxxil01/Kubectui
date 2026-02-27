@@ -207,48 +207,88 @@ fn api_resource_for_kind(kind: &str) -> Result<(ApiResource, bool)> {
             true,
         )),
         "ingressclass" | "ingressclasses" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("networking.k8s.io", "v1", "IngressClass")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "networking.k8s.io",
+                "v1",
+                "IngressClass",
+            )),
             false,
         )),
         "networkpolicy" | "networkpolicies" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("networking.k8s.io", "v1", "NetworkPolicy")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "networking.k8s.io",
+                "v1",
+                "NetworkPolicy",
+            )),
             true,
         )),
         // ── autoscaling/v2 ───────────────────────────────────────────────────
         "horizontalpodautoscaler" | "horizontalpodautoscalers" | "hpa" | "hpas" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("autoscaling", "v2", "HorizontalPodAutoscaler")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "autoscaling",
+                "v2",
+                "HorizontalPodAutoscaler",
+            )),
             true,
         )),
         // ── policy/v1 ────────────────────────────────────────────────────────
         "poddisruptionbudget" | "poddisruptionbudgets" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("policy", "v1", "PodDisruptionBudget")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "policy",
+                "v1",
+                "PodDisruptionBudget",
+            )),
             true,
         )),
         // ── scheduling.k8s.io/v1 ─────────────────────────────────────────────
         "priorityclass" | "priorityclasses" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("scheduling.k8s.io", "v1", "PriorityClass")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "scheduling.k8s.io",
+                "v1",
+                "PriorityClass",
+            )),
             false,
         )),
         // ── storage.k8s.io/v1 ────────────────────────────────────────────────
         "storageclass" | "storageclasses" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("storage.k8s.io", "v1", "StorageClass")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "storage.k8s.io",
+                "v1",
+                "StorageClass",
+            )),
             false,
         )),
         // ── rbac.authorization.k8s.io/v1 ─────────────────────────────────────
         "clusterrole" | "clusterroles" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "ClusterRole")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "rbac.authorization.k8s.io",
+                "v1",
+                "ClusterRole",
+            )),
             false,
         )),
         "clusterrolebinding" | "clusterrolebindings" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "ClusterRoleBinding")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "rbac.authorization.k8s.io",
+                "v1",
+                "ClusterRoleBinding",
+            )),
             false,
         )),
         "role" | "roles" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "Role")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "rbac.authorization.k8s.io",
+                "v1",
+                "Role",
+            )),
             true,
         )),
         "rolebinding" | "rolebindings" => Ok((
-            ApiResource::from_gvk(&GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "RoleBinding")),
+            ApiResource::from_gvk(&GroupVersionKind::gvk(
+                "rbac.authorization.k8s.io",
+                "v1",
+                "RoleBinding",
+            )),
             true,
         )),
         _ => Err(anyhow!("unsupported kind: {kind}")),
@@ -331,14 +371,12 @@ pub async fn delete_resource(
     };
 
     let dp = kube::api::DeleteParams::default();
-    api.delete(name, &dp)
-        .await
-        .with_context(|| {
-            format!(
-                "failed to delete {kind}/{name} in namespace '{}'",
-                namespace.unwrap_or("<cluster-scope>")
-            )
-        })?;
+    api.delete(name, &dp).await.with_context(|| {
+        format!(
+            "failed to delete {kind}/{name} in namespace '{}'",
+            namespace.unwrap_or("<cluster-scope>")
+        )
+    })?;
 
     Ok(())
 }

@@ -247,7 +247,8 @@ fn test_daemonset_update_strategies() {
 /// Tests daemonset selector label extraction.
 #[test]
 fn test_daemonset_selector_extraction() {
-    let daemonsets = [DaemonSetInfo {
+    let daemonsets = [
+        DaemonSetInfo {
             name: "app-agent".to_string(),
             namespace: "default".to_string(),
             selector: "app=agent,tier=system".to_string(),
@@ -258,7 +259,8 @@ fn test_daemonset_selector_extraction() {
             namespace: "default".to_string(),
             selector: "-".to_string(),
             ..DaemonSetInfo::default()
-        }];
+        },
+    ];
 
     // Verify selector parsing
     let agent_selectors: Vec<&str> = daemonsets[0].selector.split(',').collect();

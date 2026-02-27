@@ -1,5 +1,10 @@
 //! Services list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -11,9 +16,34 @@ use ratatui::{
 };
 
 use crate::{
-    state::{ClusterSnapshot, filters::filter_services},
-    ui::components::{active_block, default_block, default_theme},
+    app::AppView,
+    state::ClusterSnapshot,
+    ui::{
+        components::{active_block, default_block, default_theme},
+        contains_ci,
+        filter_cache::{cached_filter_indices, data_fingerprint},
+        table_viewport_rows, table_window,
+    },
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServiceDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ServiceDerivedCell {
+    cluster_ip: String,
+    ports: String,
+    age: String,
+}
+
+type ServiceDerivedCacheValue = Arc<Vec<ServiceDerivedCell>>;
+static SERVICE_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(ServiceDerivedCacheKey, ServiceDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
 
 /// Renders the Services table with stateful selection and scrollbar.
 pub fn render_services(
@@ -24,9 +54,26 @@ pub fn render_services(
     query: &str,
 ) {
     let theme = default_theme();
-    let items = filter_services(&snapshot.services, query, None, None);
+    let query = query.trim();
+    let indices = cached_filter_indices(
+        AppView::Services,
+        query,
+        snapshot.snapshot_version,
+        data_fingerprint(&snapshot.services),
+        |q| {
+            if q.is_empty() {
+                return (0..snapshot.services.len()).collect();
+            }
+            snapshot
+                .services
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, svc)| contains_ci(&svc.name, q).then_some(idx))
+                .collect()
+        },
+    );
 
-    if items.is_empty() {
+    if indices.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled("  No services found", theme.inactive_style()))
                 .block(default_block("Services")),
@@ -35,8 +82,9 @@ pub fn render_services(
         return;
     }
 
-    let total = items.len();
+    let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -49,12 +97,28 @@ pub fn render_services(
     .height(1)
     .style(theme.header_style());
 
-    let rows: Vec<Row> = items
+    let derived = cached_service_derived(snapshot, query, indices.as_ref());
+    let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
-        .map(|(idx, svc)| {
+        .map(|(local_idx, &svc_idx)| {
+            let idx = window.start + local_idx;
+            let svc = &snapshot.services[svc_idx];
+            let (cluster_ip, ports, age) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.cluster_ip.as_str()),
+                    Cow::Borrowed(cell.ports.as_str()),
+                    Cow::Borrowed(cell.age.as_str()),
+                )
+            } else {
+                (
+                    Cow::Owned(svc.cluster_ip.clone().unwrap_or_else(|| "None".to_string())),
+                    Cow::Owned(format_ports(&svc.ports)),
+                    Cow::Owned(format_age(svc.age)),
+                )
+            };
             let type_style = service_type_style(&svc.type_, &theme);
-            let row_style = if idx % 2 == 0 {
+            let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
@@ -70,21 +134,15 @@ pub fn render_services(
                     Style::default().fg(theme.fg_dim),
                 )),
                 Cell::from(Span::styled(svc.type_.clone(), type_style)),
-                Cell::from(Span::styled(
-                    svc.cluster_ip.clone().unwrap_or_else(|| "None".to_string()),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    format_ports(&svc.ports),
-                    Style::default().fg(theme.accent2),
-                )),
-                Cell::from(Span::styled(format_age(svc.age), theme.inactive_style())),
+                Cell::from(Span::styled(cluster_ip, Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(ports, Style::default().fg(theme.accent2))),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = format!(" 🔌 Services ({total}) ");
     let block = if query.is_empty() {
@@ -122,9 +180,51 @@ pub fn render_services(
     let mut scrollbar_state = ScrollbarState::new(total).position(selected);
     frame.render_stateful_widget(
         scrollbar,
-        area.inner(Margin { vertical: 1, horizontal: 0 }),
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
         &mut scrollbar_state,
     );
+}
+
+fn cached_service_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> ServiceDerivedCacheValue {
+    let key = ServiceDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.services),
+    };
+
+    if let Ok(cache) = SERVICE_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&svc_idx| {
+                let svc = &snapshot.services[svc_idx];
+                ServiceDerivedCell {
+                    cluster_ip: svc.cluster_ip.clone().unwrap_or_else(|| "None".to_string()),
+                    ports: format_ports(&svc.ports),
+                    age: format_age(svc.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = SERVICE_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
 }
 
 fn service_type_style(type_: &str, theme: &crate::ui::theme::Theme) -> Style {
@@ -215,8 +315,17 @@ mod tests {
         use crate::ui::theme::Theme;
         let theme = Theme::dark();
         assert_eq!(service_type_style("ClusterIP", &theme).fg, Some(theme.info));
-        assert_eq!(service_type_style("NodePort", &theme).fg, Some(theme.warning));
-        assert_eq!(service_type_style("LoadBalancer", &theme).fg, Some(theme.success));
-        assert_eq!(service_type_style("ExternalName", &theme).fg, Some(theme.accent2));
+        assert_eq!(
+            service_type_style("NodePort", &theme).fg,
+            Some(theme.warning)
+        );
+        assert_eq!(
+            service_type_style("LoadBalancer", &theme).fg,
+            Some(theme.success)
+        );
+        assert_eq!(
+            service_type_style("ExternalName", &theme).fg,
+            Some(theme.accent2)
+        );
     }
 }

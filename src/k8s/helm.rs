@@ -10,9 +10,10 @@ pub fn read_helm_repositories() -> Vec<HelmRepoInfo> {
     let candidates = helm_repo_paths();
     for path in candidates {
         if let Ok(content) = std::fs::read_to_string(&path)
-            && let Some(repos) = parse_helm_repositories(&content) {
-                return repos;
-            }
+            && let Some(repos) = parse_helm_repositories(&content)
+        {
+            return repos;
+        }
     }
     Vec::new()
 }

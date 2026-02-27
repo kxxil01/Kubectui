@@ -24,7 +24,10 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Paragraph, Tabs},
 };
 
-use crate::{app::{AppView, NavGroup}, ui::theme::Theme};
+use crate::{
+    app::{AppView, NavGroup},
+    ui::theme::Theme,
+};
 
 /// Global theme singleton — reads from the active theme setting.
 pub fn default_theme() -> Theme {
@@ -34,26 +37,29 @@ pub fn default_theme() -> Theme {
 /// Renders the top header bar with app title, version badge, and cluster endpoint.
 pub fn render_header(frame: &mut Frame, area: Rect, title: &str, cluster_meta: &str) {
     let theme = default_theme();
+    let title_style = theme.title_style();
+    let dim_style = Style::default().fg(theme.fg_dim);
 
     let text = Line::from(vec![
-        Span::styled(" ⎈ ", theme.title_style()),
-        Span::styled(title, theme.title_style()),
+        Span::styled(" ⎈ ", title_style),
+        Span::styled(title, title_style),
         Span::styled("  │  ", theme.muted_style()),
-        Span::styled("⛅ ", theme.get_style("fg_dim")),
-        Span::styled(cluster_meta, theme.get_style("fg_dim")),
+        Span::styled("⛅ ", dim_style),
+        Span::styled(cluster_meta, dim_style),
     ]);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_type(theme.border_type())
-        .border_style(theme.border_active_style())
-        .style(Style::default().bg(theme.header_bg));
-
-    let widget = Paragraph::new(text)
-        .block(block)
-        .alignment(Alignment::Left);
-
-    frame.render_widget(widget, area);
+    frame.render_widget(
+        Paragraph::new(text)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(theme.border_type())
+                    .border_style(theme.border_active_style())
+                    .style(Style::default().bg(theme.header_bg)),
+            )
+            .alignment(Alignment::Left),
+        area,
+    );
 }
 
 /// Renders the tab navigation bar for all primary app views.
@@ -119,8 +125,24 @@ pub fn render_sidebar(
         .style(Style::default().bg(theme.bg_surface));
     frame.render_widget(outer, area);
 
-    let inner = area.inner(Margin { horizontal: 1, vertical: 1 });
+    let inner = area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
     let rows = sidebar_rows(collapsed);
+    let selected_active_style = Style::default()
+        .fg(theme.selection_fg)
+        .bg(theme.selection_bg)
+        .add_modifier(Modifier::BOLD);
+    let selected_inactive_style = Style::default()
+        .fg(theme.fg)
+        .bg(theme.bg_surface)
+        .add_modifier(Modifier::BOLD);
+    let group_label_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let active_label_style = Style::default().fg(theme.fg).add_modifier(Modifier::BOLD);
+    let inactive_view_style = Style::default().fg(theme.fg_dim);
 
     let lines: Vec<Line> = rows
         .iter()
@@ -130,67 +152,24 @@ pub fn render_sidebar(
             match item {
                 SidebarItem::Group(group) => {
                     let collapsed = collapsed.contains(group);
-                    let toggle = if collapsed { "▶" } else { "▼" };
-                    let icon = group.icon();
-                    let label = group.label();
+                    let line = group.sidebar_text(collapsed);
                     if is_cursor {
-                        Line::from(vec![Span::styled(
-                            format!(" {toggle} {icon} {label}"),
-                            Style::default()
-                                .fg(theme.selection_fg)
-                                .bg(theme.selection_bg)
-                                .add_modifier(Modifier::BOLD),
-                        )])
+                        Line::from(vec![Span::styled(line, selected_active_style)])
                     } else {
-                        Line::from(vec![
-                            Span::styled(
-                                format!(" {toggle} {icon} "),
-                                Style::default().fg(theme.accent),
-                            ),
-                            Span::styled(
-                                label,
-                                Style::default()
-                                    .fg(theme.accent)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                        ])
+                        Line::from(vec![Span::styled(line, group_label_style)])
                     }
                 }
                 SidebarItem::View(view) => {
                     let is_active = *view == active;
-                    let icon = view.icon();
-                    let label = view.label();
+                    let line = view.sidebar_text();
                     if is_cursor && is_active && sidebar_active {
-                        Line::from(vec![Span::styled(
-                            format!("  {icon} {label}"),
-                            Style::default()
-                                .fg(theme.selection_fg)
-                                .bg(theme.selection_bg)
-                                .add_modifier(Modifier::BOLD),
-                        )])
+                        Line::from(vec![Span::styled(line, selected_active_style)])
                     } else if is_cursor && sidebar_active {
-                        Line::from(vec![Span::styled(
-                            format!("  {icon} {label}"),
-                            Style::default()
-                                .fg(theme.fg)
-                                .bg(theme.bg_surface)
-                                .add_modifier(Modifier::BOLD),
-                        )])
+                        Line::from(vec![Span::styled(line, selected_inactive_style)])
                     } else if is_active {
-                        Line::from(vec![
-                            Span::styled(format!("  {icon} "), Style::default().fg(theme.accent)),
-                            Span::styled(
-                                label,
-                                Style::default()
-                                    .fg(theme.fg)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                        ])
+                        Line::from(vec![Span::styled(line, active_label_style)])
                     } else {
-                        Line::from(vec![Span::styled(
-                            format!("  {icon} {label}"),
-                            Style::default().fg(theme.fg_dim),
-                        )])
+                        Line::from(vec![Span::styled(line, inactive_view_style)])
                     }
                 }
             }
@@ -244,10 +223,7 @@ pub fn default_block(title: &str) -> Block<'static> {
 pub fn active_block(title: &str) -> Block<'static> {
     let theme = default_theme();
     Block::default()
-        .title(Span::styled(
-            format!(" {title} "),
-            theme.title_style(),
-        ))
+        .title(Span::styled(format!(" {title} "), theme.title_style()))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(theme.border_active_style())

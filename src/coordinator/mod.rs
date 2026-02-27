@@ -34,12 +34,14 @@ pub enum UpdateMessage {
     /// Log line update
     LogUpdate {
         pod_name: String,
+        namespace: String,
         container_name: String,
         line: String,
     },
     /// Log streaming error or end
     LogStreamStatus {
         pod_name: String,
+        namespace: String,
         container_name: String,
         status: LogStreamStatus,
     },

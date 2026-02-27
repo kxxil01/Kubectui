@@ -1,11 +1,11 @@
 //! Common UI components and utilities for KubecTUI
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
-    Frame,
 };
 
 use crate::ui::theme::Theme;
@@ -30,7 +30,10 @@ pub fn draw_badge(theme: &Theme, status: BadgeStatus, label: &str) -> Span<'stat
     };
 
     let text = format!(" {} {} ", symbol, label);
-    Span::styled(text, Style::default().fg(color).add_modifier(Modifier::BOLD))
+    Span::styled(
+        text,
+        Style::default().fg(color).add_modifier(Modifier::BOLD),
+    )
 }
 
 /// Draw a styled block with theme colors
@@ -61,10 +64,7 @@ pub fn draw_title_bar<'a>(
     title: &'a str,
     metadata: Vec<(&'a str, &'a str)>,
 ) -> Line<'a> {
-    let mut spans = vec![
-        Span::styled(title, theme.title_style()),
-        Span::raw(" "),
-    ];
+    let mut spans = vec![Span::styled(title, theme.title_style()), Span::raw(" ")];
 
     for (i, (key, value)) in metadata.iter().enumerate() {
         if i > 0 {
@@ -93,7 +93,10 @@ pub fn draw_help_line<'a>(theme: &'a Theme, shortcuts: Vec<(&'a str, &'a str)>) 
             theme.get_style("accent").add_modifier(Modifier::BOLD),
         ));
         spans.push(Span::raw(": "));
-        spans.push(Span::styled(description.to_string(), theme.inactive_style()));
+        spans.push(Span::styled(
+            description.to_string(),
+            theme.inactive_style(),
+        ));
     }
 
     Line::from(spans)

@@ -5,7 +5,7 @@
 
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 
-use std::{io, time::Duration};
+use std::{io, path::PathBuf, time::Duration};
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -20,8 +20,8 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use kubectui::{
     app::{
-        AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState, ResourceRef,
-        load_config, save_config,
+        AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState,
+        ResourceRef, load_config, save_config,
     },
     coordinator::{LogStreamStatus, UpdateCoordinator, UpdateMessage},
     events::apply_action,
@@ -39,14 +39,20 @@ use kubectui::{
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
+    ui::profiling::init_from_env();
 
-    // Simple --theme flag: kubectui --theme nord
+    // Simple CLI flags:
+    //   --theme <name>
+    //   --profile-render
+    //   --profile-output <dir>
     let args: Vec<String> = std::env::args().collect();
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("KubecTUI — keyboard-driven terminal UI for Kubernetes\n");
         println!("USAGE: kubectui [OPTIONS]\n");
         println!("OPTIONS:");
         println!("  --theme <name>  Set color theme (dark, nord, dracula, catppuccin, light)");
+        println!("  --profile-render  Enable render profiling (frame timings + folded stacks)");
+        println!("  --profile-output <dir>  Profile output directory (default: target/profiles)");
         println!("  --help, -h      Show this help message");
         return Ok(());
     }
@@ -62,10 +68,22 @@ async fn main() -> Result<()> {
         };
         kubectui::ui::theme::set_active_theme(idx);
     }
+    if args.iter().any(|a| a == "--profile-render") {
+        ui::profiling::set_enabled(true);
+    }
+    if let Some(pos) = args.iter().position(|a| a == "--profile-output")
+        && let Some(dir) = args.get(pos + 1)
+    {
+        ui::profiling::set_output_dir(PathBuf::from(dir));
+    }
 
     let mut terminal = setup_terminal().context("failed to initialize terminal")?;
     let run_result = run_app(&mut terminal).await;
     let restore_result = restore_terminal(&mut terminal);
+
+    if let Err(err) = ui::profiling::write_report_if_enabled() {
+        eprintln!("failed to write profiling report: {err:#}");
+    }
 
     if let Err(err) = restore_result {
         eprintln!("failed to restore terminal state: {err:#}");
@@ -77,47 +95,92 @@ async fn main() -> Result<()> {
 /// Applies coordinator update messages to app state.
 fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
     match msg {
-        UpdateMessage::LogUpdate { pod_name, line, .. } => {
+        UpdateMessage::LogUpdate {
+            pod_name,
+            namespace,
+            container_name,
+            line,
+        } => {
             if let Some(detail) = &mut app.detail_view
                 && let Some(viewer) = &mut detail.logs_viewer
-                    && viewer.pod_name == pod_name {
-                        viewer.push_line(line);
-                        if viewer.follow_mode {
-                            viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
-                        }
-                    }
+                && viewer.pod_name == pod_name
+                && viewer.pod_namespace == namespace
+                && viewer.container_name == container_name
+            {
+                viewer.push_line(line);
+                if viewer.follow_mode {
+                    viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
+                }
+            }
         }
-        UpdateMessage::ProbeUpdate { pod_name, namespace, probes } => {
+        UpdateMessage::ProbeUpdate {
+            pod_name,
+            namespace,
+            probes,
+        } => {
             if let Some(detail) = &mut app.detail_view
                 && let Some(panel) = &mut detail.probe_panel
-                    && panel.pod_name == pod_name && panel.namespace == namespace {
-                        panel.update_probes(probes);
-                    }
+                && panel.pod_name == pod_name
+                && panel.namespace == namespace
+            {
+                panel.update_probes(probes);
+            }
         }
-        UpdateMessage::LogStreamStatus { pod_name, status, .. } => {
+        UpdateMessage::LogStreamStatus {
+            pod_name,
+            namespace,
+            container_name,
+            status,
+        } => {
             if let Some(detail) = &mut app.detail_view
                 && let Some(viewer) = &mut detail.logs_viewer
-                    && viewer.pod_name == pod_name {
-                        match status {
-                            LogStreamStatus::Error(err) => {
-                                viewer.error = Some(err);
-                                viewer.loading = false;
-                            }
-                            LogStreamStatus::Ended | LogStreamStatus::Cancelled => {
-                                viewer.follow_mode = false;
-                            }
-                            LogStreamStatus::Started => {}
-                        }
+                && viewer.pod_name == pod_name
+                && viewer.pod_namespace == namespace
+                && viewer.container_name == container_name
+            {
+                match status {
+                    LogStreamStatus::Error(err) => {
+                        viewer.error = Some(err);
+                        viewer.loading = false;
                     }
+                    LogStreamStatus::Ended | LogStreamStatus::Cancelled => {
+                        viewer.follow_mode = false;
+                    }
+                    LogStreamStatus::Started => {}
+                }
+            }
         }
-        UpdateMessage::ProbeError { pod_name, namespace, error } => {
+        UpdateMessage::ProbeError {
+            pod_name,
+            namespace,
+            error,
+        } => {
             if let Some(detail) = &mut app.detail_view
                 && let Some(panel) = &mut detail.probe_panel
-                    && panel.pod_name == pod_name && panel.namespace == namespace {
-                        panel.error = Some(error);
-                    }
+                && panel.pod_name == pod_name
+                && panel.namespace == namespace
+            {
+                panel.error = Some(error);
+            }
         }
     }
+}
+
+#[derive(Debug)]
+enum LogsViewerAsyncResult {
+    Containers {
+        request_id: u64,
+        pod_name: String,
+        namespace: String,
+        result: Result<Vec<String>, String>,
+    },
+    Tail {
+        request_id: u64,
+        pod_name: String,
+        namespace: String,
+        container_name: String,
+        result: Result<Vec<String>, String>,
+    },
 }
 
 /// Runs KubecTUI's event loop.
@@ -142,9 +205,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (update_tx, mut update_rx) = tokio::sync::mpsc::unbounded_channel::<UpdateMessage>();
     let coordinator = UpdateCoordinator::new(client.clone(), update_tx);
 
-    // Channel for async detail view fetches — keeps the UI responsive while YAML/events load
+    // Channel for async detail view fetches — carries the requested resource to prevent stale writes.
     let (detail_tx, mut detail_rx) =
-        tokio::sync::mpsc::unbounded_channel::<Result<DetailViewState, (ResourceRef, String)>>();
+        tokio::sync::mpsc::unbounded_channel::<(ResourceRef, Result<DetailViewState, String>)>();
+    let (logs_viewer_tx, mut logs_viewer_rx) =
+        tokio::sync::mpsc::unbounded_channel::<LogsViewerAsyncResult>();
+    let mut logs_viewer_request_seq: u64 = 0;
 
     // Channel for background data refreshes — namespace switches, manual refresh, auto-refresh
     // all go through here so the UI stays responsive during API calls.
@@ -164,7 +230,11 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Auto-refresh: periodically re-fetch cluster data
-    let refresh_secs = if app.refresh_interval_secs == 0 { 86400 } else { app.refresh_interval_secs };
+    let refresh_secs = if app.refresh_interval_secs == 0 {
+        86400
+    } else {
+        app.refresh_interval_secs
+    };
     let mut auto_refresh = tokio::time::interval(Duration::from_secs(refresh_secs));
     auto_refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     // Skip the first immediate tick — we already fetched at startup
@@ -213,17 +283,147 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
             // Detail view fetch completed in background task
             result = detail_rx.recv() => {
-                if let Some(result) = result {
+                if let Some((requested_resource, result)) = result {
+                    // Ignore stale async completions if the user navigated to a different resource.
+                    let still_waiting_for_this = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.as_ref())
+                        .is_some_and(|resource| resource == &requested_resource);
+                    if !still_waiting_for_this {
+                        continue;
+                    }
                     needs_redraw = true;
                     match result {
                         Ok(state) => app.detail_view = Some(state),
-                        Err((resource, err)) => {
+                        Err(err) => {
                             app.detail_view = Some(DetailViewState {
-                                resource: Some(resource),
+                                resource: Some(requested_resource),
                                 loading: false,
                                 error: Some(err),
                                 ..DetailViewState::default()
                             });
+                        }
+                    }
+                }
+            }
+
+            // Logs viewer async responses (container discovery + tail snapshot)
+            result = logs_viewer_rx.recv() => {
+                if let Some(result) = result {
+                    match result {
+                        LogsViewerAsyncResult::Containers { request_id, pod_name, namespace, result } => {
+                            let mut tail_request: Option<(u64, String, String, String)> = None;
+                            if let Some(detail) = &mut app.detail_view
+                                && let Some(viewer) = &mut detail.logs_viewer
+                                && viewer.pod_name == pod_name
+                                && viewer.pod_namespace == namespace
+                                && viewer.pending_container_request_id == Some(request_id)
+                            {
+                                needs_redraw = true;
+                                viewer.pending_container_request_id = None;
+                                match result {
+                                    Ok(containers) => {
+                                        viewer.containers = containers.clone();
+                                        viewer.container_cursor = 0;
+                                        viewer.lines.clear();
+                                        viewer.scroll_offset = 0;
+                                        viewer.error = None;
+
+                                        match containers.len() {
+                                            0 => {
+                                                viewer.container_name.clear();
+                                                viewer.picking_container = false;
+                                                viewer.pending_logs_request_id = None;
+                                                viewer.loading = false;
+                                                viewer.error = Some(
+                                                    "No containers found for this pod.".to_string(),
+                                                );
+                                            }
+                                            1 => {
+                                                let container_name = containers[0].clone();
+                                                logs_viewer_request_seq =
+                                                    logs_viewer_request_seq.wrapping_add(1);
+                                                let tail_request_id = logs_viewer_request_seq;
+                                                viewer.container_name = container_name.clone();
+                                                viewer.picking_container = false;
+                                                viewer.loading = true;
+                                                viewer.pending_logs_request_id =
+                                                    Some(tail_request_id);
+                                                tail_request = Some((
+                                                    tail_request_id,
+                                                    pod_name.clone(),
+                                                    namespace.clone(),
+                                                    container_name,
+                                                ));
+                                            }
+                                            _ => {
+                                                viewer.container_name.clear();
+                                                viewer.picking_container = true;
+                                                viewer.pending_logs_request_id = None;
+                                                viewer.loading = false;
+                                            }
+                                        }
+                                    }
+                                    Err(err) => {
+                                        viewer.picking_container = false;
+                                        viewer.pending_logs_request_id = None;
+                                        viewer.loading = false;
+                                        viewer.error =
+                                            Some(format!("Failed to load containers: {err}"));
+                                    }
+                                }
+                            }
+
+                            if let Some((tail_request_id, pod_name, pod_ns, container_name)) =
+                                tail_request
+                            {
+                                let client_clone = client.clone();
+                                let tx = logs_viewer_tx.clone();
+                                tokio::spawn(async move {
+                                    let logs_client = LogsClient::new(client_clone.get_client());
+                                    let pod_ref = PodRef::new(pod_name.clone(), pod_ns.clone());
+                                    let result = logs_client
+                                        .tail_logs(&pod_ref, Some(500), Some(container_name.as_str()))
+                                        .await
+                                        .map_err(|err| err.to_string());
+                                    let _ = tx.send(LogsViewerAsyncResult::Tail {
+                                        request_id: tail_request_id,
+                                        pod_name,
+                                        namespace: pod_ns,
+                                        container_name,
+                                        result,
+                                    });
+                                });
+                            }
+                        }
+                        LogsViewerAsyncResult::Tail {
+                            request_id,
+                            pod_name,
+                            namespace,
+                            container_name,
+                            result,
+                        } => {
+                            if let Some(detail) = &mut app.detail_view
+                                && let Some(viewer) = &mut detail.logs_viewer
+                                && viewer.pod_name == pod_name
+                                && viewer.pod_namespace == namespace
+                                && viewer.container_name == container_name
+                                && viewer.pending_logs_request_id == Some(request_id)
+                            {
+                                needs_redraw = true;
+                                viewer.pending_logs_request_id = None;
+                                viewer.loading = false;
+                                match result {
+                                    Ok(lines) => {
+                                        viewer.lines = lines;
+                                        viewer.error = None;
+                                    }
+                                    Err(err) => {
+                                        viewer.error = Some(err);
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -301,12 +501,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     && !app.is_namespace_picker_open()
                     && !app.is_context_picker_open()
                     && !app.command_palette.is_open()
+                    && app.detail_view.is_none()
                 {
-                    if app.detail_view.is_some() {
-                        selected_resource(&app, &cached_snapshot)
-                            .map(AppAction::OpenDetail)
-                            .unwrap_or(AppAction::None)
-                    } else if app.focus == kubectui::app::Focus::Content
+                    if app.focus == kubectui::app::Focus::Content
                         && app.view() == AppView::Extensions
                         && !app.extension_in_instances
                     {
@@ -444,142 +641,169 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         let client_clone = client.clone();
                         let snapshot_clone = cached_snapshot.clone();
                         let tx = detail_tx.clone();
+                        let requested_resource = resource.clone();
                         tokio::spawn(async move {
-                            match fetch_detail_view(&client_clone, &snapshot_clone, resource.clone()).await {
-                                Ok(state) => { let _ = tx.send(Ok(state)); }
-                                Err(err) => { let _ = tx.send(Err((resource, err.to_string()))); }
-                            }
+                            let result = fetch_detail_view(
+                                &client_clone,
+                                &snapshot_clone,
+                                requested_resource.clone(),
+                            )
+                            .await
+                            .map_err(|err| err.to_string());
+                            let _ = tx.send((requested_resource, result));
                         });
                     }
                     AppAction::CloseDetail => {
                         if let Some(detail) = &app.detail_view
                             && let Some(viewer) = &detail.logs_viewer
-                                && viewer.follow_mode && !viewer.pod_name.is_empty() {
+                                && viewer.follow_mode
+                                && !viewer.pod_name.is_empty()
+                                && !viewer.container_name.is_empty()
+                        {
                                     let _ = coordinator
                                         .stop_log_streaming(
                                             &viewer.pod_name,
                                             &viewer.pod_namespace,
-                                            "default",
+                                            &viewer.container_name,
                                         )
                                         .await;
                                 }
                         app.detail_view = None;
                     }
                     AppAction::LogsViewerOpen => {
+                        let mut container_request: Option<(u64, String, String)> = None;
                         if let Some(detail) = &mut app.detail_view {
-                            let (pod_name, pod_ns) = detail
+                            let pod_ref = detail
                                 .resource
                                 .as_ref()
                                 .and_then(|r| match r {
                                     ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
                                     _ => None,
-                                })
-                                .unwrap_or_default();
-
-                            // Fetch container list for this pod
-                            let containers: Vec<String> = {
-                                let pods_api: Api<Pod> = Api::namespaced(client.get_client(), &pod_ns);
-                                pods_api.get(&pod_name).await.ok()
-                                    .and_then(|pod| pod.spec)
-                                    .map(|spec| spec.containers.iter().map(|c| c.name.clone()).collect())
-                                    .unwrap_or_default()
+                                });
+                            let Some((pod_name, pod_ns)) = pod_ref else {
+                                app.set_error("Logs viewer is only available for Pod resources.".to_string());
+                                continue;
                             };
 
-                            let picking = containers.len() > 1;
-                            let first_container = containers.first().cloned().unwrap_or_default();
+                            logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
+                            let request_id = logs_viewer_request_seq;
 
                             detail.logs_viewer = Some(LogsViewerState {
                                 pod_name: pod_name.clone(),
                                 pod_namespace: pod_ns.clone(),
-                                container_name: if picking { String::new() } else { first_container.clone() },
-                                containers: containers.clone(),
-                                picking_container: picking,
+                                loading: true,
+                                pending_container_request_id: Some(request_id),
+                                pending_logs_request_id: None,
                                 container_cursor: 0,
-                                loading: !picking,
+                                container_name: String::new(),
+                                containers: Vec::new(),
+                                picking_container: false,
                                 ..Default::default()
                             });
+                            container_request = Some((request_id, pod_name, pod_ns));
+                        }
 
-                            // If single container, fetch logs immediately
-                            if !picking && !pod_name.is_empty() {
-                                let logs_client = LogsClient::new(client.get_client());
-                                let pod_ref = PodRef::new(pod_name, pod_ns);
-                                let cname = if first_container.is_empty() { None } else { Some(first_container.as_str()) };
-                                match logs_client.tail_logs(&pod_ref, Some(500), cname).await {
-                                    Ok(lines) => {
-                                        if let Some(detail) = &mut app.detail_view
-                                            && let Some(viewer) = &mut detail.logs_viewer {
-                                                viewer.lines = lines;
-                                                viewer.loading = false;
-                                            }
-                                    }
-                                    Err(err) => {
-                                        if let Some(detail) = &mut app.detail_view
-                                            && let Some(viewer) = &mut detail.logs_viewer {
-                                                viewer.loading = false;
-                                                viewer.error = Some(err.to_string());
-                                            }
-                                    }
-                                }
-                            }
+                        if let Some((request_id, pod_name, pod_ns)) = container_request {
+                            let client_clone = client.clone();
+                            let tx = logs_viewer_tx.clone();
+                            tokio::spawn(async move {
+                                let pods_api: Api<Pod> =
+                                    Api::namespaced(client_clone.get_client(), &pod_ns);
+                                let result = pods_api
+                                    .get(&pod_name)
+                                    .await
+                                    .map_err(|err| err.to_string())
+                                    .map(|pod| {
+                                        pod.spec
+                                            .map(|spec| {
+                                                spec.containers
+                                                    .into_iter()
+                                                    .map(|container| container.name)
+                                                    .collect::<Vec<_>>()
+                                            })
+                                            .unwrap_or_default()
+                                    });
+                                let _ = tx.send(LogsViewerAsyncResult::Containers {
+                                    request_id,
+                                    pod_name,
+                                    namespace: pod_ns,
+                                    result,
+                                });
+                            });
                         }
                     }
                     AppAction::LogsViewerSelectContainer(container) => {
-                        // User picked a container from the picker — fetch its logs
-                        let (pod_name, pod_ns) = app.detail_view.as_ref()
-                            .and_then(|d| d.logs_viewer.as_ref())
-                            .map(|v| (v.pod_name.clone(), v.pod_namespace.clone()))
-                            .unwrap_or_default();
-
+                        let mut logs_request: Option<(u64, String, String, String)> = None;
                         if let Some(detail) = &mut app.detail_view
                             && let Some(viewer) = &mut detail.logs_viewer {
+                                logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
+                                let request_id = logs_viewer_request_seq;
                                 viewer.picking_container = false;
                                 viewer.container_name = container.clone();
                                 viewer.loading = true;
                                 viewer.lines.clear();
+                                viewer.scroll_offset = 0;
                                 viewer.error = None;
+                                viewer.pending_logs_request_id = Some(request_id);
+                                logs_request = Some((
+                                    request_id,
+                                    viewer.pod_name.clone(),
+                                    viewer.pod_namespace.clone(),
+                                    container,
+                                ));
                             }
 
-                        if !pod_name.is_empty() {
-                            let logs_client = LogsClient::new(client.get_client());
-                            let pod_ref = PodRef::new(pod_name, pod_ns);
-                            match logs_client.tail_logs(&pod_ref, Some(500), Some(container.as_str())).await {
-                                Ok(lines) => {
-                                    if let Some(detail) = &mut app.detail_view
-                                        && let Some(viewer) = &mut detail.logs_viewer {
-                                            viewer.lines = lines;
-                                            viewer.loading = false;
-                                        }
-                                }
-                                Err(err) => {
-                                    if let Some(detail) = &mut app.detail_view
-                                        && let Some(viewer) = &mut detail.logs_viewer {
-                                            viewer.loading = false;
-                                            viewer.error = Some(err.to_string());
-                                        }
-                                }
-                            }
+                        if let Some((request_id, pod_name, pod_ns, container_name)) = logs_request {
+                            let client_clone = client.clone();
+                            let tx = logs_viewer_tx.clone();
+                            tokio::spawn(async move {
+                                let logs_client = LogsClient::new(client_clone.get_client());
+                                let pod_ref = PodRef::new(pod_name.clone(), pod_ns.clone());
+                                let result = logs_client
+                                    .tail_logs(&pod_ref, Some(500), Some(container_name.as_str()))
+                                    .await
+                                    .map_err(|err| err.to_string());
+                                let _ = tx.send(LogsViewerAsyncResult::Tail {
+                                    request_id,
+                                    pod_name,
+                                    namespace: pod_ns,
+                                    container_name,
+                                    result,
+                                });
+                            });
                         }
                     }
                     AppAction::LogsViewerToggleFollow => {
                         let follow_info = app.detail_view.as_ref().and_then(|d| {
                             d.logs_viewer.as_ref().map(|v| {
-                                (v.pod_name.clone(), v.pod_namespace.clone(), v.container_name.clone(), v.follow_mode)
+                                (
+                                    v.pod_name.clone(),
+                                    v.pod_namespace.clone(),
+                                    v.container_name.clone(),
+                                    v.follow_mode,
+                                    v.picking_container,
+                                )
                             })
                         });
-                        apply_action(AppAction::LogsViewerToggleFollow, &mut app);
-                        if let Some((pod_name, pod_ns, container_name, was_following)) = follow_info
-                            && !pod_name.is_empty() {
-                                let cname = if container_name.is_empty() { "default".to_string() } else { container_name };
+                        if let Some((pod_name, pod_ns, container_name, was_following, picking_container)) = follow_info {
+                            if !was_following && (pod_name.is_empty() || container_name.is_empty() || picking_container) {
+                                if let Some(detail) = &mut app.detail_view
+                                    && let Some(viewer) = &mut detail.logs_viewer {
+                                        viewer.error = Some("Select a container before enabling follow mode.".to_string());
+                                    }
+                            } else {
+                                apply_action(AppAction::LogsViewerToggleFollow, &mut app);
                                 if !was_following {
                                     let _ = coordinator
-                                        .start_log_streaming(pod_name, pod_ns, cname, true)
+                                        .start_log_streaming(pod_name, pod_ns, container_name, true)
                                         .await;
-                                } else {
+                                } else if !pod_name.is_empty() && !container_name.is_empty() {
                                     let _ = coordinator
-                                        .stop_log_streaming(&pod_name, &pod_ns, &cname)
+                                        .stop_log_streaming(&pod_name, &pod_ns, &container_name)
                                         .await;
                                 }
                             }
+                        }
                     }
                     AppAction::ScaleDialogSubmit => {
                         let scale_info = app.detail_view.as_ref().and_then(|d| {
@@ -935,68 +1159,138 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
     let q = app.search_query();
     match app.view() {
         AppView::Dashboard => None,
-        AppView::Nodes => filtered_get(&snapshot.nodes, idx, q, |n, q| contains_ci(&n.name, q) || contains_ci(&n.role, q))
-            .map(|n| ResourceRef::Node(n.name.clone())),
-        AppView::Pods => filtered_get(&snapshot.pods, idx, q, |p, q| contains_ci(&p.name, q) || contains_ci(&p.namespace, q) || contains_ci(&p.status, q))
-            .map(|p| ResourceRef::Pod(p.name.clone(), p.namespace.clone())),
-        AppView::Services => filtered_get(&snapshot.services, idx, q, |s, q| contains_ci(&s.name, q) || contains_ci(&s.namespace, q) || contains_ci(&s.type_, q))
-            .map(|s| ResourceRef::Service(s.name.clone(), s.namespace.clone())),
-        AppView::Deployments => filtered_get(&snapshot.deployments, idx, q, |d, q| contains_ci(&d.name, q) || contains_ci(&d.namespace, q))
-            .map(|d| ResourceRef::Deployment(d.name.clone(), d.namespace.clone())),
-        AppView::StatefulSets => filtered_get(&snapshot.statefulsets, idx, q, |ss, q| contains_ci(&ss.name, q) || contains_ci(&ss.namespace, q))
-            .map(|ss| ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone())),
-        AppView::ResourceQuotas => filtered_get(&snapshot.resource_quotas, idx, q, |rq, q| contains_ci(&rq.name, q) || contains_ci(&rq.namespace, q))
-            .map(|rq| ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone())),
-        AppView::LimitRanges => filtered_get(&snapshot.limit_ranges, idx, q, |lr, q| contains_ci(&lr.name, q) || contains_ci(&lr.namespace, q))
-            .map(|lr| ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone())),
-        AppView::PodDisruptionBudgets => filtered_get(&snapshot.pod_disruption_budgets, idx, q, |pdb, q| contains_ci(&pdb.name, q) || contains_ci(&pdb.namespace, q))
-            .map(|pdb| ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone())),
-        AppView::DaemonSets => filtered_get(&snapshot.daemonsets, idx, q, |ds, q| contains_ci(&ds.name, q) || contains_ci(&ds.namespace, q))
-            .map(|ds| ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone())),
-        AppView::ReplicaSets => filtered_get(&snapshot.replicasets, idx, q, |rs, q| contains_ci(&rs.name, q) || contains_ci(&rs.namespace, q))
-            .map(|rs| ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone())),
-        AppView::ReplicationControllers => filtered_get(&snapshot.replication_controllers, idx, q, |rc, q| contains_ci(&rc.name, q) || contains_ci(&rc.namespace, q))
-            .map(|rc| ResourceRef::ReplicationController(rc.name.clone(), rc.namespace.clone())),
-        AppView::Jobs => filtered_get(&snapshot.jobs, idx, q, |j, q| contains_ci(&j.name, q) || contains_ci(&j.namespace, q) || contains_ci(&j.status, q))
-            .map(|j| ResourceRef::Job(j.name.clone(), j.namespace.clone())),
-        AppView::CronJobs => filtered_get(&snapshot.cronjobs, idx, q, |cj, q| contains_ci(&cj.name, q) || contains_ci(&cj.namespace, q) || contains_ci(&cj.schedule, q))
-            .map(|cj| ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone())),
-        AppView::Endpoints => filtered_get(&snapshot.endpoints, idx, q, |e, q| contains_ci(&e.name, q) || contains_ci(&e.namespace, q))
-            .map(|e| ResourceRef::Endpoint(e.name.clone(), e.namespace.clone())),
-        AppView::Ingresses => filtered_get(&snapshot.ingresses, idx, q, |i, q| contains_ci(&i.name, q) || contains_ci(&i.namespace, q))
-            .map(|i| ResourceRef::Ingress(i.name.clone(), i.namespace.clone())),
-        AppView::IngressClasses => filtered_get(&snapshot.ingress_classes, idx, q, |ic, q| contains_ci(&ic.name, q))
-            .map(|ic| ResourceRef::IngressClass(ic.name.clone())),
-        AppView::NetworkPolicies => filtered_get(&snapshot.network_policies, idx, q, |np, q| contains_ci(&np.name, q) || contains_ci(&np.namespace, q))
-            .map(|np| ResourceRef::NetworkPolicy(np.name.clone(), np.namespace.clone())),
-        AppView::ConfigMaps => filtered_get(&snapshot.config_maps, idx, q, |cm, q| contains_ci(&cm.name, q) || contains_ci(&cm.namespace, q))
-            .map(|cm| ResourceRef::ConfigMap(cm.name.clone(), cm.namespace.clone())),
-        AppView::Secrets => filtered_get(&snapshot.secrets, idx, q, |s, q| contains_ci(&s.name, q) || contains_ci(&s.namespace, q) || contains_ci(&s.type_, q))
-            .map(|s| ResourceRef::Secret(s.name.clone(), s.namespace.clone())),
-        AppView::HPAs => filtered_get(&snapshot.hpas, idx, q, |h, q| contains_ci(&h.name, q) || contains_ci(&h.namespace, q))
-            .map(|h| ResourceRef::Hpa(h.name.clone(), h.namespace.clone())),
-        AppView::PriorityClasses => filtered_get(&snapshot.priority_classes, idx, q, |pc, q| contains_ci(&pc.name, q))
-            .map(|pc| ResourceRef::PriorityClass(pc.name.clone())),
-        AppView::PersistentVolumeClaims => filtered_get(&snapshot.pvcs, idx, q, |pvc, q| contains_ci(&pvc.name, q) || contains_ci(&pvc.namespace, q))
-            .map(|pvc| ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone())),
-        AppView::PersistentVolumes => filtered_get(&snapshot.pvs, idx, q, |pv, q| contains_ci(&pv.name, q))
-            .map(|pv| ResourceRef::Pv(pv.name.clone())),
-        AppView::StorageClasses => filtered_get(&snapshot.storage_classes, idx, q, |sc, q| contains_ci(&sc.name, q))
-            .map(|sc| ResourceRef::StorageClass(sc.name.clone())),
-        AppView::Namespaces => filtered_get(&snapshot.namespace_list, idx, q, |ns, q| contains_ci(&ns.name, q) || contains_ci(&ns.status, q))
-            .map(|ns| ResourceRef::Namespace(ns.name.clone())),
-        AppView::Events => filtered_get(&snapshot.events, idx, q, |ev, q| contains_ci(&ev.name, q) || contains_ci(&ev.namespace, q) || contains_ci(&ev.reason, q))
-            .map(|ev| ResourceRef::Event(ev.name.clone(), ev.namespace.clone())),
-        AppView::ServiceAccounts => filtered_get(&snapshot.service_accounts, idx, q, |sa, q| contains_ci(&sa.name, q) || contains_ci(&sa.namespace, q))
-            .map(|sa| ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone())),
-        AppView::Roles => filtered_get(&snapshot.roles, idx, q, |r, q| contains_ci(&r.name, q) || contains_ci(&r.namespace, q))
-            .map(|r| ResourceRef::Role(r.name.clone(), r.namespace.clone())),
-        AppView::RoleBindings => filtered_get(&snapshot.role_bindings, idx, q, |rb, q| contains_ci(&rb.name, q) || contains_ci(&rb.namespace, q))
-            .map(|rb| ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone())),
-        AppView::ClusterRoles => filtered_get(&snapshot.cluster_roles, idx, q, |cr, q| contains_ci(&cr.name, q))
-            .map(|cr| ResourceRef::ClusterRole(cr.name.clone())),
-        AppView::ClusterRoleBindings => filtered_get(&snapshot.cluster_role_bindings, idx, q, |crb, q| contains_ci(&crb.name, q))
-            .map(|crb| ResourceRef::ClusterRoleBinding(crb.name.clone())),
+        AppView::Nodes => filtered_get(&snapshot.nodes, idx, q, |n, q| {
+            contains_ci(&n.name, q) || contains_ci(&n.role, q)
+        })
+        .map(|n| ResourceRef::Node(n.name.clone())),
+        AppView::Pods => filtered_get(&snapshot.pods, idx, q, |p, q| {
+            contains_ci(&p.name, q) || contains_ci(&p.namespace, q) || contains_ci(&p.status, q)
+        })
+        .map(|p| ResourceRef::Pod(p.name.clone(), p.namespace.clone())),
+        AppView::Services => filtered_get(&snapshot.services, idx, q, |s, q| {
+            contains_ci(&s.name, q) || contains_ci(&s.namespace, q) || contains_ci(&s.type_, q)
+        })
+        .map(|s| ResourceRef::Service(s.name.clone(), s.namespace.clone())),
+        AppView::Deployments => filtered_get(&snapshot.deployments, idx, q, |d, q| {
+            contains_ci(&d.name, q) || contains_ci(&d.namespace, q)
+        })
+        .map(|d| ResourceRef::Deployment(d.name.clone(), d.namespace.clone())),
+        AppView::StatefulSets => filtered_get(&snapshot.statefulsets, idx, q, |ss, q| {
+            contains_ci(&ss.name, q) || contains_ci(&ss.namespace, q)
+        })
+        .map(|ss| ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone())),
+        AppView::ResourceQuotas => filtered_get(&snapshot.resource_quotas, idx, q, |rq, q| {
+            contains_ci(&rq.name, q) || contains_ci(&rq.namespace, q)
+        })
+        .map(|rq| ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone())),
+        AppView::LimitRanges => filtered_get(&snapshot.limit_ranges, idx, q, |lr, q| {
+            contains_ci(&lr.name, q) || contains_ci(&lr.namespace, q)
+        })
+        .map(|lr| ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone())),
+        AppView::PodDisruptionBudgets => {
+            filtered_get(&snapshot.pod_disruption_budgets, idx, q, |pdb, q| {
+                contains_ci(&pdb.name, q) || contains_ci(&pdb.namespace, q)
+            })
+            .map(|pdb| ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone()))
+        }
+        AppView::DaemonSets => filtered_get(&snapshot.daemonsets, idx, q, |ds, q| {
+            contains_ci(&ds.name, q) || contains_ci(&ds.namespace, q)
+        })
+        .map(|ds| ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone())),
+        AppView::ReplicaSets => filtered_get(&snapshot.replicasets, idx, q, |rs, q| {
+            contains_ci(&rs.name, q) || contains_ci(&rs.namespace, q)
+        })
+        .map(|rs| ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone())),
+        AppView::ReplicationControllers => {
+            filtered_get(&snapshot.replication_controllers, idx, q, |rc, q| {
+                contains_ci(&rc.name, q) || contains_ci(&rc.namespace, q)
+            })
+            .map(|rc| ResourceRef::ReplicationController(rc.name.clone(), rc.namespace.clone()))
+        }
+        AppView::Jobs => filtered_get(&snapshot.jobs, idx, q, |j, q| {
+            contains_ci(&j.name, q) || contains_ci(&j.namespace, q) || contains_ci(&j.status, q)
+        })
+        .map(|j| ResourceRef::Job(j.name.clone(), j.namespace.clone())),
+        AppView::CronJobs => filtered_get(&snapshot.cronjobs, idx, q, |cj, q| {
+            contains_ci(&cj.name, q)
+                || contains_ci(&cj.namespace, q)
+                || contains_ci(&cj.schedule, q)
+        })
+        .map(|cj| ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone())),
+        AppView::Endpoints => filtered_get(&snapshot.endpoints, idx, q, |e, q| {
+            contains_ci(&e.name, q) || contains_ci(&e.namespace, q)
+        })
+        .map(|e| ResourceRef::Endpoint(e.name.clone(), e.namespace.clone())),
+        AppView::Ingresses => filtered_get(&snapshot.ingresses, idx, q, |i, q| {
+            contains_ci(&i.name, q) || contains_ci(&i.namespace, q)
+        })
+        .map(|i| ResourceRef::Ingress(i.name.clone(), i.namespace.clone())),
+        AppView::IngressClasses => filtered_get(&snapshot.ingress_classes, idx, q, |ic, q| {
+            contains_ci(&ic.name, q)
+        })
+        .map(|ic| ResourceRef::IngressClass(ic.name.clone())),
+        AppView::NetworkPolicies => filtered_get(&snapshot.network_policies, idx, q, |np, q| {
+            contains_ci(&np.name, q) || contains_ci(&np.namespace, q)
+        })
+        .map(|np| ResourceRef::NetworkPolicy(np.name.clone(), np.namespace.clone())),
+        AppView::ConfigMaps => filtered_get(&snapshot.config_maps, idx, q, |cm, q| {
+            contains_ci(&cm.name, q) || contains_ci(&cm.namespace, q)
+        })
+        .map(|cm| ResourceRef::ConfigMap(cm.name.clone(), cm.namespace.clone())),
+        AppView::Secrets => filtered_get(&snapshot.secrets, idx, q, |s, q| {
+            contains_ci(&s.name, q) || contains_ci(&s.namespace, q) || contains_ci(&s.type_, q)
+        })
+        .map(|s| ResourceRef::Secret(s.name.clone(), s.namespace.clone())),
+        AppView::HPAs => filtered_get(&snapshot.hpas, idx, q, |h, q| {
+            contains_ci(&h.name, q) || contains_ci(&h.namespace, q)
+        })
+        .map(|h| ResourceRef::Hpa(h.name.clone(), h.namespace.clone())),
+        AppView::PriorityClasses => filtered_get(&snapshot.priority_classes, idx, q, |pc, q| {
+            contains_ci(&pc.name, q)
+        })
+        .map(|pc| ResourceRef::PriorityClass(pc.name.clone())),
+        AppView::PersistentVolumeClaims => filtered_get(&snapshot.pvcs, idx, q, |pvc, q| {
+            contains_ci(&pvc.name, q) || contains_ci(&pvc.namespace, q)
+        })
+        .map(|pvc| ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone())),
+        AppView::PersistentVolumes => {
+            filtered_get(&snapshot.pvs, idx, q, |pv, q| contains_ci(&pv.name, q))
+                .map(|pv| ResourceRef::Pv(pv.name.clone()))
+        }
+        AppView::StorageClasses => filtered_get(&snapshot.storage_classes, idx, q, |sc, q| {
+            contains_ci(&sc.name, q)
+        })
+        .map(|sc| ResourceRef::StorageClass(sc.name.clone())),
+        AppView::Namespaces => filtered_get(&snapshot.namespace_list, idx, q, |ns, q| {
+            contains_ci(&ns.name, q) || contains_ci(&ns.status, q)
+        })
+        .map(|ns| ResourceRef::Namespace(ns.name.clone())),
+        AppView::Events => filtered_get(&snapshot.events, idx, q, |ev, q| {
+            contains_ci(&ev.name, q) || contains_ci(&ev.namespace, q) || contains_ci(&ev.reason, q)
+        })
+        .map(|ev| ResourceRef::Event(ev.name.clone(), ev.namespace.clone())),
+        AppView::ServiceAccounts => filtered_get(&snapshot.service_accounts, idx, q, |sa, q| {
+            contains_ci(&sa.name, q) || contains_ci(&sa.namespace, q)
+        })
+        .map(|sa| ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone())),
+        AppView::Roles => filtered_get(&snapshot.roles, idx, q, |r, q| {
+            contains_ci(&r.name, q) || contains_ci(&r.namespace, q)
+        })
+        .map(|r| ResourceRef::Role(r.name.clone(), r.namespace.clone())),
+        AppView::RoleBindings => filtered_get(&snapshot.role_bindings, idx, q, |rb, q| {
+            contains_ci(&rb.name, q) || contains_ci(&rb.namespace, q)
+        })
+        .map(|rb| ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone())),
+        AppView::ClusterRoles => filtered_get(&snapshot.cluster_roles, idx, q, |cr, q| {
+            contains_ci(&cr.name, q)
+        })
+        .map(|cr| ResourceRef::ClusterRole(cr.name.clone())),
+        AppView::ClusterRoleBindings => {
+            filtered_get(&snapshot.cluster_role_bindings, idx, q, |crb, q| {
+                contains_ci(&crb.name, q)
+            })
+            .map(|crb| ResourceRef::ClusterRoleBinding(crb.name.clone()))
+        }
         AppView::HelmCharts => None, // Helm repos are local config, no detail view
         AppView::PortForwarding => None, // Port forwards are managed via the dialog
         AppView::Extensions => {
@@ -1006,7 +1300,10 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 return None;
             }
             let crd = app.extension_selected_crd.as_ref().and_then(|crd_name| {
-                snapshot.custom_resource_definitions.iter().find(|c| &c.name == crd_name)
+                snapshot
+                    .custom_resource_definitions
+                    .iter()
+                    .find(|c| &c.name == crd_name)
             })?;
             let inst = app.extension_instances.get(
                 app.extension_instance_cursor
@@ -1021,8 +1318,10 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 plural: crd.plural.clone(),
             })
         }
-        AppView::HelmReleases => filtered_get(&snapshot.helm_releases, idx, q, |r, q| contains_ci(&r.name, q) || contains_ci(&r.namespace, q) || contains_ci(&r.chart, q))
-            .map(|r| ResourceRef::HelmRelease(r.name.clone(), r.namespace.clone())),
+        AppView::HelmReleases => filtered_get(&snapshot.helm_releases, idx, q, |r, q| {
+            contains_ci(&r.name, q) || contains_ci(&r.namespace, q) || contains_ci(&r.chart, q)
+        })
+        .map(|r| ResourceRef::HelmRelease(r.name.clone(), r.namespace.clone())),
     }
 }
 
@@ -1047,25 +1346,25 @@ async fn fetch_detail_view(
     let namespace = resource.namespace().map(str::to_owned);
 
     let yaml = match &resource {
-        ResourceRef::CustomResource { group, version, kind, plural, name, namespace } => {
-            client
-                .fetch_custom_resource_yaml(group, version, kind, plural, name, namespace.as_deref())
-                .await
-                .ok()
-        }
+        ResourceRef::CustomResource {
+            group,
+            version,
+            kind,
+            plural,
+            name,
+            namespace,
+        } => client
+            .fetch_custom_resource_yaml(group, version, kind, plural, name, namespace.as_deref())
+            .await
+            .ok(),
         ResourceRef::HelmRelease(name, ns) => {
             // Helm releases are stored as Secrets — fetch the latest revision secret
-            client
-                .fetch_helm_release_yaml(name, ns)
-                .await
-                .ok()
+            client.fetch_helm_release_yaml(name, ns).await.ok()
         }
-        _ => {
-            client
-                .fetch_resource_yaml(&kind, &name, namespace.as_deref())
-                .await
-                .ok()
-        }
+        _ => client
+            .fetch_resource_yaml(&kind, &name, namespace.as_deref())
+            .await
+            .ok(),
     };
 
     let events = match &resource {
@@ -1083,7 +1382,10 @@ async fn fetch_detail_view(
         | ResourceRef::Pvc(name, ns)
         | ResourceRef::HelmRelease(name, ns) => {
             let kind = resource.kind();
-            client.fetch_resource_events(kind, name, ns).await.unwrap_or_default()
+            client
+                .fetch_resource_events(kind, name, ns)
+                .await
+                .unwrap_or_default()
         }
         _ => Vec::new(),
     };
@@ -1322,7 +1624,13 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 .cronjobs
                 .iter()
                 .find(|cj| &cj.name == name && &cj.namespace == ns)
-                .map(|cj| if cj.suspend { "Suspended".to_string() } else { "Active".to_string() });
+                .map(|cj| {
+                    if cj.suspend {
+                        "Suspended".to_string()
+                    } else {
+                        "Active".to_string()
+                    }
+                });
             DetailMetadata {
                 name: name.clone(),
                 namespace: Some(ns.clone()),
@@ -1542,14 +1850,18 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 ..DetailMetadata::default()
             }
         }
-        ResourceRef::CustomResource { name, namespace, kind, group, .. } => {
-            DetailMetadata {
-                name: name.clone(),
-                namespace: namespace.clone(),
-                status: Some(format!("{kind}.{group}")),
-                ..DetailMetadata::default()
-            }
-        }
+        ResourceRef::CustomResource {
+            name,
+            namespace,
+            kind,
+            group,
+            ..
+        } => DetailMetadata {
+            name: name.clone(),
+            namespace: namespace.clone(),
+            status: Some(format!("{kind}.{group}")),
+            ..DetailMetadata::default()
+        },
     }
 }
 
@@ -2039,7 +2351,12 @@ fn sections_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 ]
             })
             .unwrap_or_default(),
-        ResourceRef::CustomResource { kind, group, version, .. } => {
+        ResourceRef::CustomResource {
+            kind,
+            group,
+            version,
+            ..
+        } => {
             vec![
                 "CUSTOM RESOURCE".to_string(),
                 format!("kind: {kind}"),
@@ -2082,23 +2399,24 @@ async fn pick_context_at_startup(
             .context("failed to render startup context picker")?;
 
         if event::poll(Duration::from_millis(16)).context("failed to poll events")?
-            && let Event::Key(key) = event::read().context("failed to read event")? {
-                match app.handle_key_event(key) {
-                    AppAction::SelectContext(ctx) => {
-                        app.close_context_picker();
-                        return K8sClient::connect_with_context(&ctx)
-                            .await
-                            .with_context(|| format!("failed to connect to context '{ctx}'"));
-                    }
-                    AppAction::CloseContextPicker | AppAction::Quit => {
-                        app.close_context_picker();
-                        return K8sClient::connect()
-                            .await
-                            .context("unable to initialize Kubernetes client");
-                    }
-                    _ => {}
+            && let Event::Key(key) = event::read().context("failed to read event")?
+        {
+            match app.handle_key_event(key) {
+                AppAction::SelectContext(ctx) => {
+                    app.close_context_picker();
+                    return K8sClient::connect_with_context(&ctx)
+                        .await
+                        .with_context(|| format!("failed to connect to context '{ctx}'"));
                 }
+                AppAction::CloseContextPicker | AppAction::Quit => {
+                    app.close_context_picker();
+                    return K8sClient::connect()
+                        .await
+                        .context("unable to initialize Kubernetes client");
+                }
+                _ => {}
             }
+        }
     }
 }
 

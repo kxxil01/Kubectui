@@ -92,7 +92,10 @@ pub fn render_helm_releases(
         format!(" Helm Releases ({}) ", releases.len())
     } else {
         let all = cluster.helm_releases.len();
-        format!(" Helm Releases ({} of {all}) [/{search_query}]", releases.len())
+        format!(
+            " Helm Releases ({} of {all}) [/{search_query}]",
+            releases.len()
+        )
     };
     let block = active_block(&title);
 
@@ -129,7 +132,6 @@ pub fn render_helm_releases(
     let mut state = TableState::default().with_selected(Some(clamped));
     frame.render_stateful_widget(table, area, &mut state);
 }
-
 
 /// Renders the Helm repositories table (local config from ~/.config/helm/repositories.yaml).
 pub fn render_helm_repos(
@@ -177,7 +179,10 @@ pub fn render_helm_repos(
         format!(" Helm Repositories ({}) ", repos.len())
     } else {
         let all = cluster.helm_repositories.len();
-        format!(" Helm Repositories ({} of {all}) [/{search_query}]", repos.len())
+        format!(
+            " Helm Repositories ({} of {all}) [/{search_query}]",
+            repos.len()
+        )
     };
     let block = active_block(&title);
 

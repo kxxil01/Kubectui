@@ -134,24 +134,26 @@ impl K8sClient {
         match kind.to_lowercase().as_str() {
             "deployment" => {
                 let api: Api<Deployment> = Api::namespaced(client, namespace);
-                api.patch(name, &pp, &patch)
-                    .await
-                    .with_context(|| format!("failed to restart deployment '{name}' in '{namespace}'"))?;
+                api.patch(name, &pp, &patch).await.with_context(|| {
+                    format!("failed to restart deployment '{name}' in '{namespace}'")
+                })?;
             }
             "statefulset" => {
                 let api: Api<StatefulSet> = Api::namespaced(client, namespace);
-                api.patch(name, &pp, &patch)
-                    .await
-                    .with_context(|| format!("failed to restart statefulset '{name}' in '{namespace}'"))?;
+                api.patch(name, &pp, &patch).await.with_context(|| {
+                    format!("failed to restart statefulset '{name}' in '{namespace}'")
+                })?;
             }
             "daemonset" => {
                 let api: Api<DaemonSet> = Api::namespaced(client, namespace);
-                api.patch(name, &pp, &patch)
-                    .await
-                    .with_context(|| format!("failed to restart daemonset '{name}' in '{namespace}'"))?;
+                api.patch(name, &pp, &patch).await.with_context(|| {
+                    format!("failed to restart daemonset '{name}' in '{namespace}'")
+                })?;
             }
             other => {
-                return Err(anyhow::anyhow!("rollout restart not supported for kind '{other}'"));
+                return Err(anyhow::anyhow!(
+                    "rollout restart not supported for kind '{other}'"
+                ));
             }
         }
         Ok(())

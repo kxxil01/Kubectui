@@ -27,8 +27,16 @@ pub fn render_ingresses(
         .iter()
         .enumerate()
         .map(|(i, ing)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
-            let hosts = if ing.hosts.is_empty() { "*".to_string() } else { ing.hosts.join(",") };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
+            let hosts = if ing.hosts.is_empty() {
+                "*".to_string()
+            } else {
+                ing.hosts.join(",")
+            };
             let address = ing.address.as_deref().unwrap_or("<pending>");
             let class = ing.class.as_deref().unwrap_or("<none>");
             Row::new(vec![
@@ -67,7 +75,10 @@ pub fn render_ingresses(
             } else {
                 vec![
                     Span::styled(" Ingresses ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.ingresses.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.ingresses.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))
@@ -97,7 +108,11 @@ pub fn render_ingress_classes(
         .iter()
         .enumerate()
         .map(|(i, ic)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             let default_label = if ic.is_default { "✓" } else { "" };
             Row::new(vec![
                 Cell::from(ic.name.clone()),
@@ -114,7 +129,11 @@ pub fn render_ingress_classes(
 
     let table = Table::new(
         rows,
-        [Constraint::Percentage(35), Constraint::Percentage(55), Constraint::Percentage(10)],
+        [
+            Constraint::Percentage(35),
+            Constraint::Percentage(55),
+            Constraint::Percentage(10),
+        ],
     )
     .header(header)
     .block(
@@ -127,7 +146,10 @@ pub fn render_ingress_classes(
             } else {
                 vec![
                     Span::styled(" IngressClasses ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.ingress_classes.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.ingress_classes.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))

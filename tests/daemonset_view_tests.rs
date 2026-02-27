@@ -65,7 +65,8 @@ fn test_daemonset_view_namespace_filtering() {
 /// Tests that daemonset list displays correct count columns.
 #[test]
 fn test_daemonset_view_count_columns() {
-    let items = [DaemonSetInfo {
+    let items = [
+        DaemonSetInfo {
             name: "fully-ready".to_string(),
             namespace: "default".to_string(),
             desired_count: 10,
@@ -88,7 +89,8 @@ fn test_daemonset_view_count_columns() {
             ready_count: 0,
             unavailable_count: 5,
             ..DaemonSetInfo::default()
-        }];
+        },
+    ];
 
     // Verify count values are correct
     assert_eq!(items[0].desired_count, 10);
@@ -107,7 +109,8 @@ fn test_daemonset_view_count_columns() {
 /// Tests sorting daemonsets by status (unavailable first).
 #[test]
 fn test_daemonset_sorting_by_status() {
-    let mut items = [DaemonSetInfo {
+    let mut items = [
+        DaemonSetInfo {
             name: "healthy".to_string(),
             namespace: "default".to_string(),
             desired_count: 5,
@@ -130,7 +133,8 @@ fn test_daemonset_sorting_by_status() {
             ready_count: 3,
             unavailable_count: 2,
             ..DaemonSetInfo::default()
-        }];
+        },
+    ];
 
     // Sort by unavailable count (descending)
     items.sort_by(|a, b| {

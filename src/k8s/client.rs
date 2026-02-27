@@ -9,9 +9,8 @@ use k8s_openapi::api::{
     autoscaling::v2::HorizontalPodAutoscaler,
     batch::v1::{CronJob, Job},
     core::v1::{
-        ConfigMap, Endpoints, LimitRange, Namespace, Node, PersistentVolume,
-        PersistentVolumeClaim, Pod, PodSpec, ReplicationController, ResourceQuota, Secret,
-        Service, ServiceAccount,
+        ConfigMap, Endpoints, LimitRange, Namespace, Node, PersistentVolume, PersistentVolumeClaim,
+        Pod, PodSpec, ReplicationController, ResourceQuota, Secret, Service, ServiceAccount,
     },
     networking::v1::{Ingress, IngressClass, NetworkPolicy},
     policy::v1::PodDisruptionBudget,
@@ -533,10 +532,7 @@ impl K8sClient {
     }
 
     /// Fetches replica sets from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_replicasets(
-        &self,
-        namespace: Option<&str>,
-    ) -> Result<Vec<ReplicaSetInfo>> {
+    pub async fn fetch_replicasets(&self, namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>> {
         let api: Api<ReplicaSet> = match namespace {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
@@ -559,7 +555,10 @@ impl K8sClient {
                 let created_at = rs.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
                 ReplicaSetInfo {
                     name: rs.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: rs.metadata.namespace.unwrap_or_else(|| "default".to_string()),
+                    namespace: rs
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
                     desired: spec.and_then(|s| s.replicas).unwrap_or(0),
                     ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
                     available: status.and_then(|s| s.available_replicas).unwrap_or(0),
@@ -603,7 +602,10 @@ impl K8sClient {
                 let created_at = rc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
                 ReplicationControllerInfo {
                     name: rc.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: rc.metadata.namespace.unwrap_or_else(|| "default".to_string()),
+                    namespace: rc
+                        .metadata
+                        .namespace
+                        .unwrap_or_else(|| "default".to_string()),
                     desired: spec.and_then(|s| s.replicas).unwrap_or(0),
                     ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
                     available: status.and_then(|s| s.available_replicas).unwrap_or(0),
@@ -1125,35 +1127,50 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api.list(&ListParams::default()).await.context("failed fetching endpoints")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching endpoints")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|ep| {
-            let created_at = ep.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let mut addresses = Vec::new();
-            let mut ports = Vec::new();
-            if let Some(subsets) = ep.subsets {
-                for subset in &subsets {
-                    if let Some(addrs) = &subset.addresses {
-                        for addr in addrs { addresses.push(addr.ip.clone()); }
-                    }
-                    if let Some(ps) = &subset.ports {
-                        for p in ps {
-                            ports.push(format!("{}/{}", p.port, p.protocol.as_deref().unwrap_or("TCP")));
+        Ok(list
+            .into_iter()
+            .map(|ep| {
+                let created_at = ep
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let mut addresses = Vec::new();
+                let mut ports = Vec::new();
+                if let Some(subsets) = ep.subsets {
+                    for subset in &subsets {
+                        if let Some(addrs) = &subset.addresses {
+                            for addr in addrs {
+                                addresses.push(addr.ip.clone());
+                            }
+                        }
+                        if let Some(ps) = &subset.ports {
+                            for p in ps {
+                                ports.push(format!(
+                                    "{}/{}",
+                                    p.port,
+                                    p.protocol.as_deref().unwrap_or("TCP")
+                                ));
+                            }
                         }
                     }
                 }
-            }
-            EndpointInfo {
-                name: ep.metadata.name.unwrap_or_default(),
-                namespace: ep.metadata.namespace.unwrap_or_default(),
-                addresses,
-                ports,
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+                EndpointInfo {
+                    name: ep.metadata.name.unwrap_or_default(),
+                    namespace: ep.metadata.namespace.unwrap_or_default(),
+                    addresses,
+                    ports,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches Ingresses.
@@ -1162,89 +1179,149 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api.list(&ListParams::default()).await.context("failed fetching ingresses")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching ingresses")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|ing| {
-            let created_at = ing.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let class = ing.spec.as_ref().and_then(|s| s.ingress_class_name.clone());
-            let hosts: Vec<String> = ing.spec.as_ref()
-                .and_then(|s| s.rules.as_ref())
-                .map(|rules| rules.iter().filter_map(|r| r.host.clone()).collect())
-                .unwrap_or_default();
-            let address = ing.status.as_ref()
-                .and_then(|s| s.load_balancer.as_ref())
-                .and_then(|lb| lb.ingress.as_ref())
-                .and_then(|ingresses| ingresses.first())
-                .and_then(|i| i.ip.clone().or_else(|| i.hostname.clone()));
-            IngressInfo {
-                name: ing.metadata.name.unwrap_or_default(),
-                namespace: ing.metadata.namespace.unwrap_or_default(),
-                class,
-                hosts,
-                address,
-                ports: vec!["80".to_string(), "443".to_string()],
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|ing| {
+                let created_at = ing
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let class = ing.spec.as_ref().and_then(|s| s.ingress_class_name.clone());
+                let hosts: Vec<String> = ing
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.rules.as_ref())
+                    .map(|rules| rules.iter().filter_map(|r| r.host.clone()).collect())
+                    .unwrap_or_default();
+                let address = ing
+                    .status
+                    .as_ref()
+                    .and_then(|s| s.load_balancer.as_ref())
+                    .and_then(|lb| lb.ingress.as_ref())
+                    .and_then(|ingresses| ingresses.first())
+                    .and_then(|i| i.ip.clone().or_else(|| i.hostname.clone()));
+                IngressInfo {
+                    name: ing.metadata.name.unwrap_or_default(),
+                    namespace: ing.metadata.namespace.unwrap_or_default(),
+                    class,
+                    hosts,
+                    address,
+                    ports: vec!["80".to_string(), "443".to_string()],
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches IngressClasses.
     pub async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
         let api: Api<IngressClass> = Api::all(self.client.clone());
-        let list = api.list(&ListParams::default()).await.context("failed fetching ingress classes")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching ingress classes")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|ic| {
-            let created_at = ic.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let is_default = ic.metadata.annotations.as_ref()
-                .and_then(|a| a.get("ingressclass.kubernetes.io/is-default-class"))
-                .map(|v| v == "true")
-                .unwrap_or(false);
-            IngressClassInfo {
-                name: ic.metadata.name.unwrap_or_default(),
-                controller: ic.spec.as_ref().map(|s| s.controller.clone().unwrap_or_default()).unwrap_or_default(),
-                is_default,
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|ic| {
+                let created_at = ic
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let is_default = ic
+                    .metadata
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.get("ingressclass.kubernetes.io/is-default-class"))
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+                IngressClassInfo {
+                    name: ic.metadata.name.unwrap_or_default(),
+                    controller: ic
+                        .spec
+                        .as_ref()
+                        .map(|s| s.controller.clone().unwrap_or_default())
+                        .unwrap_or_default(),
+                    is_default,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches NetworkPolicies.
-    pub async fn fetch_network_policies(&self, namespace: Option<&str>) -> Result<Vec<NetworkPolicyInfo>> {
+    pub async fn fetch_network_policies(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<NetworkPolicyInfo>> {
         let api: Api<NetworkPolicy> = match namespace {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api.list(&ListParams::default()).await.context("failed fetching network policies")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching network policies")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|np| {
-            let created_at = np.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let pod_selector = np.spec.as_ref()
-                .map(|s| {
-                    s.pod_selector.match_labels.as_ref()
-                        .map(|ml| ml.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(","))
-                        .unwrap_or_else(|| "<all>".to_string())
-                })
-                .unwrap_or_default();
-            let ingress_rules = np.spec.as_ref().and_then(|s| s.ingress.as_ref()).map(|r| r.len()).unwrap_or(0);
-            let egress_rules = np.spec.as_ref().and_then(|s| s.egress.as_ref()).map(|r| r.len()).unwrap_or(0);
-            NetworkPolicyInfo {
-                name: np.metadata.name.unwrap_or_default(),
-                namespace: np.metadata.namespace.unwrap_or_default(),
-                pod_selector,
-                ingress_rules,
-                egress_rules,
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|np| {
+                let created_at = np
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let pod_selector = np
+                    .spec
+                    .as_ref()
+                    .map(|s| {
+                        s.pod_selector
+                            .match_labels
+                            .as_ref()
+                            .map(|ml| {
+                                ml.iter()
+                                    .map(|(k, v)| format!("{k}={v}"))
+                                    .collect::<Vec<_>>()
+                                    .join(",")
+                            })
+                            .unwrap_or_else(|| "<all>".to_string())
+                    })
+                    .unwrap_or_default();
+                let ingress_rules = np
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.ingress.as_ref())
+                    .map(|r| r.len())
+                    .unwrap_or(0);
+                let egress_rules = np
+                    .spec
+                    .as_ref()
+                    .and_then(|s| s.egress.as_ref())
+                    .map(|r| r.len())
+                    .unwrap_or(0);
+                NetworkPolicyInfo {
+                    name: np.metadata.name.unwrap_or_default(),
+                    namespace: np.metadata.namespace.unwrap_or_default(),
+                    pod_selector,
+                    ingress_rules,
+                    egress_rules,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches ConfigMaps.
@@ -1253,22 +1330,31 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api.list(&ListParams::default()).await.context("failed fetching configmaps")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching configmaps")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|cm| {
-            let created_at = cm.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let data_count = cm.data.as_ref().map(|d| d.len()).unwrap_or(0)
-                + cm.binary_data.as_ref().map(|d| d.len()).unwrap_or(0);
-            ConfigMapInfo {
-                name: cm.metadata.name.unwrap_or_default(),
-                namespace: cm.metadata.namespace.unwrap_or_default(),
-                data_count,
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|cm| {
+                let created_at = cm
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let data_count = cm.data.as_ref().map(|d| d.len()).unwrap_or(0)
+                    + cm.binary_data.as_ref().map(|d| d.len()).unwrap_or(0);
+                ConfigMapInfo {
+                    name: cm.metadata.name.unwrap_or_default(),
+                    namespace: cm.metadata.namespace.unwrap_or_default(),
+                    data_count,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches Secrets.
@@ -1277,22 +1363,31 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api.list(&ListParams::default()).await.context("failed fetching secrets")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching secrets")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|s| {
-            let created_at = s.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let data_count = s.data.as_ref().map(|d| d.len()).unwrap_or(0);
-            SecretInfo {
-                name: s.metadata.name.unwrap_or_default(),
-                namespace: s.metadata.namespace.unwrap_or_default(),
-                type_: s.type_.unwrap_or_else(|| "Opaque".to_string()),
-                data_count,
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|s| {
+                let created_at = s
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let data_count = s.data.as_ref().map(|d| d.len()).unwrap_or(0);
+                SecretInfo {
+                    name: s.metadata.name.unwrap_or_default(),
+                    namespace: s.metadata.namespace.unwrap_or_default(),
+                    type_: s.type_.unwrap_or_else(|| "Opaque".to_string()),
+                    data_count,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches HPAs.
@@ -1301,27 +1396,38 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api.list(&ListParams::default()).await.context("failed fetching HPAs")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching HPAs")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|hpa| {
-            let created_at = hpa.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let spec = hpa.spec.as_ref();
-            let status = hpa.status.as_ref();
-            let reference = spec.map(|s| format!("{}/{}", s.scale_target_ref.kind, s.scale_target_ref.name)).unwrap_or_default();
-            HpaInfo {
-                name: hpa.metadata.name.unwrap_or_default(),
-                namespace: hpa.metadata.namespace.unwrap_or_default(),
-                reference,
-                min_replicas: spec.and_then(|s| s.min_replicas),
-                max_replicas: spec.map(|s| s.max_replicas).unwrap_or(0),
-                current_replicas: status.and_then(|s| s.current_replicas).unwrap_or(0),
-                desired_replicas: status.map(|s| s.desired_replicas).unwrap_or(0),
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|hpa| {
+                let created_at = hpa
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let spec = hpa.spec.as_ref();
+                let status = hpa.status.as_ref();
+                let reference = spec
+                    .map(|s| format!("{}/{}", s.scale_target_ref.kind, s.scale_target_ref.name))
+                    .unwrap_or_default();
+                HpaInfo {
+                    name: hpa.metadata.name.unwrap_or_default(),
+                    namespace: hpa.metadata.namespace.unwrap_or_default(),
+                    reference,
+                    min_replicas: spec.and_then(|s| s.min_replicas),
+                    max_replicas: spec.map(|s| s.max_replicas).unwrap_or(0),
+                    current_replicas: status.and_then(|s| s.current_replicas).unwrap_or(0),
+                    desired_replicas: status.map(|s| s.desired_replicas).unwrap_or(0),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches PersistentVolumeClaims.
@@ -1330,109 +1436,169 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api.list(&ListParams::default()).await.context("failed fetching PVCs")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching PVCs")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|pvc| {
-            let created_at = pvc.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let spec = pvc.spec.as_ref();
-            let status = pvc.status.as_ref();
-            let access_modes = spec.and_then(|s| s.access_modes.as_ref())
-                .map(|modes| modes.to_vec())
-                .unwrap_or_default();
-            let capacity = status.and_then(|s| s.capacity.as_ref())
-                .and_then(|c| c.get("storage"))
-                .map(|q| q.0.clone());
-            PvcInfo {
-                name: pvc.metadata.name.unwrap_or_default(),
-                namespace: pvc.metadata.namespace.unwrap_or_default(),
-                status: status.and_then(|s| s.phase.clone()).unwrap_or_else(|| "Unknown".to_string()),
-                volume: spec.and_then(|s| s.volume_name.clone()),
-                capacity,
-                access_modes,
-                storage_class: spec.and_then(|s| s.storage_class_name.clone()),
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|pvc| {
+                let created_at = pvc
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let spec = pvc.spec.as_ref();
+                let status = pvc.status.as_ref();
+                let access_modes = spec
+                    .and_then(|s| s.access_modes.as_ref())
+                    .map(|modes| modes.to_vec())
+                    .unwrap_or_default();
+                let capacity = status
+                    .and_then(|s| s.capacity.as_ref())
+                    .and_then(|c| c.get("storage"))
+                    .map(|q| q.0.clone());
+                PvcInfo {
+                    name: pvc.metadata.name.unwrap_or_default(),
+                    namespace: pvc.metadata.namespace.unwrap_or_default(),
+                    status: status
+                        .and_then(|s| s.phase.clone())
+                        .unwrap_or_else(|| "Unknown".to_string()),
+                    volume: spec.and_then(|s| s.volume_name.clone()),
+                    capacity,
+                    access_modes,
+                    storage_class: spec.and_then(|s| s.storage_class_name.clone()),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches PersistentVolumes.
     pub async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> {
         let api: Api<PersistentVolume> = Api::all(self.client.clone());
-        let list = api.list(&ListParams::default()).await.context("failed fetching PVs")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching PVs")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|pv| {
-            let created_at = pv.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let spec = pv.spec.as_ref();
-            let access_modes = spec.and_then(|s| s.access_modes.as_ref())
-                .map(|modes| modes.to_vec())
-                .unwrap_or_default();
-            let capacity = spec.and_then(|s| s.capacity.as_ref())
-                .and_then(|c| c.get("storage"))
-                .map(|q| q.0.clone());
-            let claim = spec.and_then(|s| s.claim_ref.as_ref())
-                .map(|cr| format!("{}/{}", cr.namespace.as_deref().unwrap_or(""), cr.name.as_deref().unwrap_or("")));
-            PvInfo {
-                name: pv.metadata.name.unwrap_or_default(),
-                capacity,
-                access_modes,
-                reclaim_policy: spec.and_then(|s| s.persistent_volume_reclaim_policy.clone()).unwrap_or_else(|| "Retain".to_string()),
-                status: pv.status.as_ref().and_then(|s| s.phase.clone()).unwrap_or_else(|| "Unknown".to_string()),
-                claim,
-                storage_class: spec.and_then(|s| s.storage_class_name.clone()),
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|pv| {
+                let created_at = pv
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let spec = pv.spec.as_ref();
+                let access_modes = spec
+                    .and_then(|s| s.access_modes.as_ref())
+                    .map(|modes| modes.to_vec())
+                    .unwrap_or_default();
+                let capacity = spec
+                    .and_then(|s| s.capacity.as_ref())
+                    .and_then(|c| c.get("storage"))
+                    .map(|q| q.0.clone());
+                let claim = spec.and_then(|s| s.claim_ref.as_ref()).map(|cr| {
+                    format!(
+                        "{}/{}",
+                        cr.namespace.as_deref().unwrap_or(""),
+                        cr.name.as_deref().unwrap_or("")
+                    )
+                });
+                PvInfo {
+                    name: pv.metadata.name.unwrap_or_default(),
+                    capacity,
+                    access_modes,
+                    reclaim_policy: spec
+                        .and_then(|s| s.persistent_volume_reclaim_policy.clone())
+                        .unwrap_or_else(|| "Retain".to_string()),
+                    status: pv
+                        .status
+                        .as_ref()
+                        .and_then(|s| s.phase.clone())
+                        .unwrap_or_else(|| "Unknown".to_string()),
+                    claim,
+                    storage_class: spec.and_then(|s| s.storage_class_name.clone()),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches StorageClasses.
     pub async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> {
         use k8s_openapi::api::storage::v1::StorageClass;
         let api: Api<StorageClass> = Api::all(self.client.clone());
-        let list = api.list(&ListParams::default()).await.context("failed fetching storage classes")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching storage classes")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|sc| {
-            let created_at = sc.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let is_default = sc.metadata.annotations.as_ref()
-                .and_then(|a| a.get("storageclass.kubernetes.io/is-default-class"))
-                .map(|v| v == "true")
-                .unwrap_or(false);
-            StorageClassInfo {
-                name: sc.metadata.name.unwrap_or_default(),
-                provisioner: sc.provisioner,
-                reclaim_policy: sc.reclaim_policy,
-                volume_binding_mode: sc.volume_binding_mode,
-                allow_volume_expansion: sc.allow_volume_expansion.unwrap_or(false),
-                is_default,
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|sc| {
+                let created_at = sc
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let is_default = sc
+                    .metadata
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.get("storageclass.kubernetes.io/is-default-class"))
+                    .map(|v| v == "true")
+                    .unwrap_or(false);
+                StorageClassInfo {
+                    name: sc.metadata.name.unwrap_or_default(),
+                    provisioner: sc.provisioner,
+                    reclaim_policy: sc.reclaim_policy,
+                    volume_binding_mode: sc.volume_binding_mode,
+                    allow_volume_expansion: sc.allow_volume_expansion.unwrap_or(false),
+                    is_default,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches Namespaces as NamespaceInfo.
     pub async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
         let api: Api<Namespace> = Api::all(self.client.clone());
-        let list = api.list(&ListParams::default()).await.context("failed fetching namespaces")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching namespaces")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|ns| {
-            let created_at = ns.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            NamespaceInfo {
-                name: ns.metadata.name.unwrap_or_default(),
-                status: ns.status.as_ref().and_then(|s| s.phase.clone()).unwrap_or_else(|| "Active".to_string()),
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|ns| {
+                let created_at = ns
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                NamespaceInfo {
+                    name: ns.metadata.name.unwrap_or_default(),
+                    status: ns
+                        .status
+                        .as_ref()
+                        .and_then(|s| s.phase.clone())
+                        .unwrap_or_else(|| "Active".to_string()),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches cluster-wide Events.
@@ -1442,30 +1608,43 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api.list(&ListParams::default()).await.context("failed fetching events")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching events")?;
         let now = Utc::now();
-        let mut events: Vec<K8sEventInfo> = list.into_iter().map(|ev| {
-            let created_at = ev.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let last_seen = ev.last_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            let involved = format!("{}/{}",
-                ev.involved_object.kind.as_deref().unwrap_or(""),
-                ev.involved_object.name.as_deref().unwrap_or(""));
-            K8sEventInfo {
-                name: ev.metadata.name.unwrap_or_default(),
-                namespace: ev.metadata.namespace.unwrap_or_default(),
-                reason: ev.reason.unwrap_or_default(),
-                message: ev.message.unwrap_or_default(),
-                type_: ev.type_.unwrap_or_else(|| "Normal".to_string()),
-                count: ev.count.unwrap_or(1),
-                involved_object: involved,
-                last_seen,
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-            }
-        }).collect();
+        let mut events: Vec<K8sEventInfo> = list
+            .into_iter()
+            .map(|ev| {
+                let created_at = ev
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let last_seen = ev
+                    .last_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                let involved = format!(
+                    "{}/{}",
+                    ev.involved_object.kind.as_deref().unwrap_or(""),
+                    ev.involved_object.name.as_deref().unwrap_or("")
+                );
+                K8sEventInfo {
+                    name: ev.metadata.name.unwrap_or_default(),
+                    namespace: ev.metadata.namespace.unwrap_or_default(),
+                    reason: ev.reason.unwrap_or_default(),
+                    message: ev.message.unwrap_or_default(),
+                    type_: ev.type_.unwrap_or_else(|| "Normal".to_string()),
+                    count: ev.count.unwrap_or(1),
+                    involved_object: involved,
+                    last_seen,
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                }
+            })
+            .collect();
         // Sort by last_seen descending
         events.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
         Ok(events)
@@ -1474,21 +1653,30 @@ impl K8sClient {
     /// Fetches PriorityClasses.
     pub async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
         let api: Api<PriorityClass> = Api::all(self.client.clone());
-        let list = api.list(&ListParams::default()).await.context("failed fetching priority classes")?;
+        let list = api
+            .list(&ListParams::default())
+            .await
+            .context("failed fetching priority classes")?;
         let now = Utc::now();
-        Ok(list.into_iter().map(|pc| {
-            let created_at = pc.metadata.creation_timestamp.as_ref()
-                .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                .map(|dt| dt.with_timezone(&Utc));
-            PriorityClassInfo {
-                name: pc.metadata.name.unwrap_or_default(),
-                value: pc.value,
-                global_default: pc.global_default.unwrap_or(false),
-                description: pc.description.unwrap_or_default(),
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                created_at,
-            }
-        }).collect())
+        Ok(list
+            .into_iter()
+            .map(|pc| {
+                let created_at = pc
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
+                    .map(|dt| dt.with_timezone(&Utc));
+                PriorityClassInfo {
+                    name: pc.metadata.name.unwrap_or_default(),
+                    value: pc.value,
+                    global_default: pc.global_default.unwrap_or(false),
+                    description: pc.description.unwrap_or_default(),
+                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    created_at,
+                }
+            })
+            .collect())
     }
 
     /// Fetches CustomResourceDefinitions cluster-wide and includes instance counts.
@@ -1757,7 +1945,8 @@ impl K8sClient {
         name: &str,
         namespace: Option<&str>,
     ) -> Result<()> {
-        yaml::delete_custom_resource(&self.client, group, version, kind, plural, name, namespace).await
+        yaml::delete_custom_resource(&self.client, group, version, kind, plural, name, namespace)
+            .await
     }
 
     /// Fetches the Helm release secret as YAML.
@@ -1774,22 +1963,19 @@ impl K8sClient {
 
         let secrets_api: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
         let lp = ListParams::default().labels(&format!("owner=helm,name={release_name}"));
-        let list = secrets_api
-            .list(&lp)
-            .await
-            .with_context(|| format!("failed fetching Helm release secrets for '{release_name}'"))?;
+        let list = secrets_api.list(&lp).await.with_context(|| {
+            format!("failed fetching Helm release secrets for '{release_name}'")
+        })?;
 
         // Find the latest revision (highest version label)
-        let latest = list
-            .into_iter()
-            .max_by_key(|s| {
-                s.metadata
-                    .labels
-                    .as_ref()
-                    .and_then(|l| l.get("version"))
-                    .and_then(|v| v.parse::<i32>().ok())
-                    .unwrap_or(0)
-            });
+        let latest = list.into_iter().max_by_key(|s| {
+            s.metadata
+                .labels
+                .as_ref()
+                .and_then(|l| l.get("version"))
+                .and_then(|v| v.parse::<i32>().ok())
+                .unwrap_or(0)
+        });
 
         match latest {
             Some(secret) => {
@@ -1811,7 +1997,12 @@ impl K8sClient {
     }
 
     /// Fetches events for any namespaced resource kind. Degrades gracefully on RBAC denial.
-    pub async fn fetch_resource_events(&self, kind: &str, name: &str, namespace: &str) -> Result<Vec<EventInfo>> {
+    pub async fn fetch_resource_events(
+        &self,
+        kind: &str,
+        name: &str,
+        namespace: &str,
+    ) -> Result<Vec<EventInfo>> {
         events::fetch_resource_events(&self.client, kind, name, namespace)
             .await
             .with_context(|| format!("failed preparing events for {kind} '{namespace}/{name}'"))
@@ -2208,7 +2399,10 @@ impl K8sClient {
                     return None;
                 }
                 let release_name = labels.get("name")?.clone();
-                let status = labels.get("status").cloned().unwrap_or_else(|| "unknown".to_string());
+                let status = labels
+                    .get("status")
+                    .cloned()
+                    .unwrap_or_else(|| "unknown".to_string());
                 let revision: i32 = labels
                     .get("version")
                     .and_then(|v| v.parse().ok())

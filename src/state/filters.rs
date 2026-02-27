@@ -5,6 +5,7 @@ use crate::k8s::dtos::{
     PodDisruptionBudgetInfo, ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo,
     ServiceInfo, StatefulSetInfo,
 };
+use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeploymentHealth {
@@ -36,6 +37,40 @@ pub enum NodeSortBy {
     Capacity,
 }
 
+#[inline]
+fn contains_ci(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+#[inline]
+fn cmp_ci(left: &str, right: &str) -> Ordering {
+    let mut l = left.bytes();
+    let mut r = right.bytes();
+    loop {
+        match (l.next(), r.next()) {
+            (Some(lb), Some(rb)) => {
+                let lc = lb.to_ascii_lowercase();
+                let rc = rb.to_ascii_lowercase();
+                if lc != rc {
+                    return lc.cmp(&rc);
+                }
+            }
+            (None, Some(_)) => return Ordering::Less,
+            (Some(_), None) => return Ordering::Greater,
+            (None, None) => return Ordering::Equal,
+        }
+    }
+}
+
 #[must_use]
 pub fn filter_nodes(
     nodes: &[NodeInfo],
@@ -43,11 +78,11 @@ pub fn filter_nodes(
     status: Option<NodeStatusFilter>,
     role: Option<NodeRoleFilter>,
 ) -> Vec<NodeInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
 
     nodes
         .iter()
-        .filter(|node| query.is_empty() || node.name.to_ascii_lowercase().contains(query.as_str()))
+        .filter(|node| query.is_empty() || contains_ci(&node.name, query))
         .filter(|node| match status {
             Some(NodeStatusFilter::Ready) => node.ready,
             Some(NodeStatusFilter::NotReady) => !node.ready,
@@ -64,15 +99,9 @@ pub fn filter_nodes(
 
 pub fn sort_nodes(nodes: &mut [NodeInfo], by: NodeSortBy) {
     match by {
-        NodeSortBy::Name => nodes.sort_by_cached_key(|n| n.name.to_ascii_lowercase()),
+        NodeSortBy::Name => nodes.sort_by(|a, b| cmp_ci(&a.name, &b.name)),
         NodeSortBy::Status => {
-            nodes.sort_by(|a, b| {
-                b.ready.cmp(&a.ready).then_with(|| {
-                    a.name
-                        .to_ascii_lowercase()
-                        .cmp(&b.name.to_ascii_lowercase())
-                })
-            });
+            nodes.sort_by(|a, b| b.ready.cmp(&a.ready).then_with(|| cmp_ci(&a.name, &b.name)));
         }
         NodeSortBy::Capacity => {
             nodes.sort_by(|a, b| {
@@ -93,21 +122,17 @@ pub fn filter_services(
     ns: Option<&str>,
     type_: Option<&str>,
 ) -> Vec<ServiceInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
     let ns = ns.map(str::trim).filter(|s| !s.is_empty());
-    let type_ = type_
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_ascii_lowercase);
+    let type_ = type_.map(str::trim).filter(|s| !s.is_empty());
 
     items
         .iter()
         .filter(|item| {
-            let name_matches = query.is_empty() || item.name.to_ascii_lowercase().contains(&query);
+            let name_matches = query.is_empty() || contains_ci(&item.name, query);
             let ns_matches = ns.is_none_or(|target_ns| item.namespace == target_ns);
-            let type_matches = type_
-                .as_deref()
-                .is_none_or(|target_type| item.type_.to_ascii_lowercase() == target_type);
+            let type_matches =
+                type_.is_none_or(|target_type| item.type_.eq_ignore_ascii_case(target_type));
             name_matches && ns_matches && type_matches
         })
         .cloned()
@@ -120,13 +145,13 @@ pub fn filter_deployments(
     ns: Option<&str>,
     health: Option<DeploymentHealth>,
 ) -> Vec<DeploymentInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
     let ns = ns.map(str::trim).filter(|s| !s.is_empty());
 
     items
         .iter()
         .filter(|item| {
-            let name_matches = query.is_empty() || item.name.to_ascii_lowercase().contains(&query);
+            let name_matches = query.is_empty() || contains_ci(&item.name, query);
             let ns_matches = ns.is_none_or(|target_ns| item.namespace == target_ns);
             let health_matches =
                 health.is_none_or(|expected| deployment_health_from_ready(&item.ready) == expected);
@@ -137,7 +162,7 @@ pub fn filter_deployments(
 }
 
 pub fn filter_jobs(items: &[JobInfo], query: &str, ns: Option<&str>) -> Vec<JobInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
     let ns = ns.map(str::trim).filter(|s| !s.is_empty());
 
     items
@@ -145,8 +170,8 @@ pub fn filter_jobs(items: &[JobInfo], query: &str, ns: Option<&str>) -> Vec<JobI
         .filter(|job| {
             let ns_match = ns.is_none_or(|target| job.namespace == target);
             let query_match = query.is_empty()
-                || job.name.to_ascii_lowercase().contains(&query)
-                || job.status.to_ascii_lowercase().contains(&query);
+                || contains_ci(&job.name, query)
+                || contains_ci(&job.status, query);
             ns_match && query_match
         })
         .cloned()
@@ -154,7 +179,7 @@ pub fn filter_jobs(items: &[JobInfo], query: &str, ns: Option<&str>) -> Vec<JobI
 }
 
 pub fn filter_cronjobs(items: &[CronJobInfo], query: &str, ns: Option<&str>) -> Vec<CronJobInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
     let ns = ns.map(str::trim).filter(|s| !s.is_empty());
 
     items
@@ -162,8 +187,8 @@ pub fn filter_cronjobs(items: &[CronJobInfo], query: &str, ns: Option<&str>) -> 
         .filter(|cj| {
             let ns_match = ns.is_none_or(|target| cj.namespace == target);
             let query_match = query.is_empty()
-                || cj.name.to_ascii_lowercase().contains(&query)
-                || cj.schedule.to_ascii_lowercase().contains(&query);
+                || contains_ci(&cj.name, query)
+                || contains_ci(&cj.schedule, query);
             ns_match && query_match
         })
         .cloned()
@@ -175,7 +200,7 @@ pub fn filter_statefulsets(
     query: &str,
     ns: Option<&str>,
 ) -> Vec<StatefulSetInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
     let ns = ns.map(str::trim).filter(|s| !s.is_empty());
 
     items
@@ -183,13 +208,8 @@ pub fn filter_statefulsets(
         .filter(|ss| {
             let ns_match = ns.is_none_or(|target| ss.namespace == target);
             let query_match = query.is_empty()
-                || ss.name.to_ascii_lowercase().contains(&query)
-                || ss
-                    .image
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase()
-                    .contains(&query);
+                || contains_ci(&ss.name, query)
+                || contains_ci(ss.image.as_deref().unwrap_or_default(), query);
             ns_match && query_match
         })
         .cloned()
@@ -201,7 +221,7 @@ pub fn filter_daemonsets(
     query: &str,
     ns: Option<&str>,
 ) -> Vec<DaemonSetInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
     let ns = ns.map(str::trim).filter(|s| !s.is_empty());
 
     items
@@ -209,18 +229,13 @@ pub fn filter_daemonsets(
         .filter(|ds| {
             let ns_match = ns.is_none_or(|target| ds.namespace == target);
             let query_match = query.is_empty()
-                || ds.name.to_ascii_lowercase().contains(&query)
-                || ds.selector.to_ascii_lowercase().contains(&query)
+                || contains_ci(&ds.name, query)
+                || contains_ci(&ds.selector, query)
+                || contains_ci(ds.image.as_deref().unwrap_or_default(), query)
                 || ds
-                    .image
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase()
-                    .contains(&query)
-                || ds.labels.iter().any(|(k, v)| {
-                    k.to_ascii_lowercase().contains(&query)
-                        || v.to_ascii_lowercase().contains(&query)
-                });
+                    .labels
+                    .iter()
+                    .any(|(k, v)| contains_ci(k, query) || contains_ci(v, query));
             ns_match && query_match
         })
         .cloned()
@@ -232,7 +247,7 @@ pub fn filter_resource_quotas(
     query: &str,
     ns: Option<&str>,
 ) -> Vec<ResourceQuotaInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
     let ns = ns.map(str::trim).filter(|s| !s.is_empty());
 
     items
@@ -240,11 +255,8 @@ pub fn filter_resource_quotas(
         .filter(|rq| {
             let ns_match = ns.is_none_or(|target| rq.namespace == target);
             let query_match = query.is_empty()
-                || rq.name.to_ascii_lowercase().contains(&query)
-                || rq
-                    .hard
-                    .keys()
-                    .any(|k| k.to_ascii_lowercase().contains(&query));
+                || contains_ci(&rq.name, query)
+                || rq.hard.keys().any(|k| contains_ci(k, query));
             ns_match && query_match
         })
         .cloned()
@@ -256,7 +268,7 @@ pub fn filter_limit_ranges(
     query: &str,
     ns: Option<&str>,
 ) -> Vec<LimitRangeInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
     let ns = ns.map(str::trim).filter(|s| !s.is_empty());
 
     items
@@ -264,11 +276,8 @@ pub fn filter_limit_ranges(
         .filter(|lr| {
             let ns_match = ns.is_none_or(|target| lr.namespace == target);
             let query_match = query.is_empty()
-                || lr.name.to_ascii_lowercase().contains(&query)
-                || lr
-                    .limits
-                    .iter()
-                    .any(|spec| spec.type_.to_ascii_lowercase().contains(&query));
+                || contains_ci(&lr.name, query)
+                || lr.limits.iter().any(|spec| contains_ci(&spec.type_, query));
             ns_match && query_match
         })
         .cloned()
@@ -280,7 +289,7 @@ pub fn filter_pod_disruption_budgets(
     query: &str,
     ns: Option<&str>,
 ) -> Vec<PodDisruptionBudgetInfo> {
-    let query = query.trim().to_ascii_lowercase();
+    let query = query.trim();
     let ns = ns.map(str::trim).filter(|s| !s.is_empty());
 
     items
@@ -288,19 +297,9 @@ pub fn filter_pod_disruption_budgets(
         .filter(|pdb| {
             let ns_match = ns.is_none_or(|target| pdb.namespace == target);
             let query_match = query.is_empty()
-                || pdb.name.to_ascii_lowercase().contains(&query)
-                || pdb
-                    .min_available
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase()
-                    .contains(&query)
-                || pdb
-                    .max_unavailable
-                    .as_deref()
-                    .unwrap_or_default()
-                    .to_ascii_lowercase()
-                    .contains(&query);
+                || contains_ci(&pdb.name, query)
+                || contains_ci(pdb.min_available.as_deref().unwrap_or_default(), query)
+                || contains_ci(pdb.max_unavailable.as_deref().unwrap_or_default(), query);
             ns_match && query_match
         })
         .cloned()
@@ -373,15 +372,11 @@ pub fn filter_replicasets(
     query: &str,
     namespace: Option<&str>,
 ) -> Vec<ReplicaSetInfo> {
-    let q = query.trim().to_ascii_lowercase();
+    let q = query.trim();
     items
         .iter()
         .filter(|rs| namespace.is_none_or(|ns| rs.namespace == ns))
-        .filter(|rs| {
-            q.is_empty()
-                || rs.name.to_ascii_lowercase().contains(&q)
-                || rs.namespace.to_ascii_lowercase().contains(&q)
-        })
+        .filter(|rs| q.is_empty() || contains_ci(&rs.name, q) || contains_ci(&rs.namespace, q))
         .cloned()
         .collect()
 }
@@ -392,15 +387,11 @@ pub fn filter_replication_controllers(
     query: &str,
     namespace: Option<&str>,
 ) -> Vec<ReplicationControllerInfo> {
-    let q = query.trim().to_ascii_lowercase();
+    let q = query.trim();
     items
         .iter()
         .filter(|rc| namespace.is_none_or(|ns| rc.namespace == ns))
-        .filter(|rc| {
-            q.is_empty()
-                || rc.name.to_ascii_lowercase().contains(&q)
-                || rc.namespace.to_ascii_lowercase().contains(&q)
-        })
+        .filter(|rc| q.is_empty() || contains_ci(&rc.name, q) || contains_ci(&rc.namespace, q))
         .cloned()
         .collect()
 }

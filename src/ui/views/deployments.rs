@@ -1,5 +1,10 @@
 //! Deployments list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -20,9 +25,28 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int,
+        format_small_int, table_viewport_rows, table_window,
     },
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DeploymentDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct DeploymentDerivedCell {
+    age: String,
+    image: String,
+    health: DeploymentHealth,
+}
+
+type DeploymentDerivedCacheValue = Arc<Vec<DeploymentDerivedCell>>;
+static DEPLOYMENT_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(DeploymentDerivedCacheKey, DeploymentDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
 
 /// Renders the Deployments table with stateful selection and scrollbar.
 pub fn render_deployments(
@@ -66,6 +90,7 @@ pub fn render_deployments(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -81,14 +106,28 @@ pub fn render_deployments(
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
+    let derived = cached_deployment_derived(snapshot, query, indices.as_ref());
 
-    let mut rows: Vec<Row> = Vec::with_capacity(total);
-    for (idx, &deploy_idx) in indices.iter().enumerate() {
+    let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
+    for (local_idx, &deploy_idx) in indices[window.start..window.end].iter().enumerate() {
+        let idx = window.start + local_idx;
         let deploy = &snapshot.deployments[deploy_idx];
-        let health = deployment_health_from_ready(&deploy.ready);
+        let (age_text, image_text, health) = if let Some(cell) = derived.get(idx) {
+            (
+                Cow::Borrowed(cell.age.as_str()),
+                Cow::Borrowed(cell.image.as_str()),
+                cell.health,
+            )
+        } else {
+            (
+                Cow::Owned(format_age(deploy.age)),
+                Cow::Owned(format_image(deploy.image.as_deref())),
+                deployment_health_from_ready(&deploy.ready),
+            )
+        };
         let ready_style = health_style(health, &theme);
 
-        let row_style = if idx % 2 == 0 {
+        let row_style = if idx.is_multiple_of(2) {
             Style::default().bg(theme.bg)
         } else {
             theme.row_alt_style()
@@ -107,17 +146,14 @@ pub fn render_deployments(
                     format_small_int(i64::from(deploy.available)),
                     dim_style,
                 )),
-                Cell::from(Span::styled(format_age(deploy.age), theme.inactive_style())),
-                Cell::from(Span::styled(
-                    format_image(deploy.image.as_deref()),
-                    muted_style,
-                )),
+                Cell::from(Span::styled(age_text, theme.inactive_style())),
+                Cell::from(Span::styled(image_text, muted_style)),
             ])
             .style(row_style),
         );
     }
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = format!(" 🚀 Deployments ({total}) ");
     let block = if query.is_empty() {
@@ -170,6 +206,45 @@ fn health_style(health: DeploymentHealth, theme: &crate::ui::theme::Theme) -> St
         DeploymentHealth::Degraded => theme.badge_warning_style(),
         DeploymentHealth::Failed => theme.badge_error_style(),
     }
+}
+
+fn cached_deployment_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> DeploymentDerivedCacheValue {
+    let key = DeploymentDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.deployments),
+    };
+
+    if let Ok(cache) = DEPLOYMENT_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&deploy_idx| {
+                let deploy = &snapshot.deployments[deploy_idx];
+                DeploymentDerivedCell {
+                    age: format_age(deploy.age),
+                    image: format_image(deploy.image.as_deref()),
+                    health: deployment_health_from_ready(&deploy.ready),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = DEPLOYMENT_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
 }
 
 fn format_image(image: Option<&str>) -> String {

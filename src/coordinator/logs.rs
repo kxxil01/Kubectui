@@ -10,6 +10,12 @@ use super::{LogStreamStatus, UpdateMessage};
 use crate::k8s::client::K8sClient;
 use crate::k8s::logs::PodRef;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreamOutcome {
+    Ended,
+    Cancelled,
+}
+
 /// Stream logs for a pod container.
 pub async fn stream_logs(
     client: Arc<K8sClient>,
@@ -21,6 +27,7 @@ pub async fn stream_logs(
 ) {
     let _ = update_tx.send(UpdateMessage::LogStreamStatus {
         pod_name: pod_ref.name.clone(),
+        namespace: pod_ref.namespace.clone(),
         container_name: container_name.clone(),
         status: LogStreamStatus::Started,
     });
@@ -36,16 +43,26 @@ pub async fn stream_logs(
     .await;
 
     match result {
-        Ok(_) => {
+        Ok(StreamOutcome::Ended) => {
             let _ = update_tx.send(UpdateMessage::LogStreamStatus {
                 pod_name: pod_ref.name.clone(),
+                namespace: pod_ref.namespace.clone(),
                 container_name: container_name.clone(),
                 status: LogStreamStatus::Ended,
+            });
+        }
+        Ok(StreamOutcome::Cancelled) => {
+            let _ = update_tx.send(UpdateMessage::LogStreamStatus {
+                pod_name: pod_ref.name.clone(),
+                namespace: pod_ref.namespace.clone(),
+                container_name: container_name.clone(),
+                status: LogStreamStatus::Cancelled,
             });
         }
         Err(e) => {
             let _ = update_tx.send(UpdateMessage::LogStreamStatus {
                 pod_name: pod_ref.name.clone(),
+                namespace: pod_ref.namespace.clone(),
                 container_name: container_name.clone(),
                 status: LogStreamStatus::Error(e.to_string()),
             });
@@ -60,7 +77,7 @@ async fn stream_logs_internal(
     follow: bool,
     update_tx: &mpsc::UnboundedSender<UpdateMessage>,
     cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<StreamOutcome> {
     let pods_api: Api<Pod> = Api::namespaced(client.get_client(), &pod_ref.namespace);
 
     let params = LogParams {
@@ -84,25 +101,21 @@ async fn stream_logs_internal(
                             if !line.is_empty() {
                                 let msg = UpdateMessage::LogUpdate {
                                     pod_name: pod_ref.name.clone(),
+                                    namespace: pod_ref.namespace.clone(),
                                     container_name: container_name.to_string(),
                                     line,
                                 };
                                 if update_tx.send(msg).is_err() {
-                                    return Ok(());
+                                    return Ok(StreamOutcome::Ended);
                                 }
                             }
                         }
                         Some(Err(e)) => return Err(anyhow::anyhow!("{e}")),
-                        None => return Ok(()), // stream ended
+                        None => return Ok(StreamOutcome::Ended), // stream ended
                     }
                 }
                 _ = &mut *cancel_rx => {
-                    let _ = update_tx.send(UpdateMessage::LogStreamStatus {
-                        pod_name: pod_ref.name.clone(),
-                        container_name: container_name.to_string(),
-                        status: LogStreamStatus::Cancelled,
-                    });
-                    return Ok(());
+                    return Ok(StreamOutcome::Cancelled);
                 }
             }
         }
@@ -110,15 +123,19 @@ async fn stream_logs_internal(
         // Fetch all logs at once (non-follow mode)
         let raw = pods_api.logs(&pod_ref.name, &params).await?;
         for line in raw.lines() {
-            if update_tx.send(UpdateMessage::LogUpdate {
-                pod_name: pod_ref.name.clone(),
-                container_name: container_name.to_string(),
-                line: line.to_string(),
-            }).is_err() {
-                return Ok(());
+            if update_tx
+                .send(UpdateMessage::LogUpdate {
+                    pod_name: pod_ref.name.clone(),
+                    namespace: pod_ref.namespace.clone(),
+                    container_name: container_name.to_string(),
+                    line: line.to_string(),
+                })
+                .is_err()
+            {
+                return Ok(StreamOutcome::Ended);
             }
         }
-        Ok(())
+        Ok(StreamOutcome::Ended)
     }
 }
 
@@ -139,14 +156,22 @@ mod tests {
 
         let msg = UpdateMessage::LogStreamStatus {
             pod_name: "test-pod".to_string(),
+            namespace: "default".to_string(),
             container_name: "test-container".to_string(),
             status: LogStreamStatus::Started,
         };
 
         tx.send(msg).unwrap();
 
-        if let Some(UpdateMessage::LogStreamStatus { pod_name, container_name, status }) = rx.recv().await {
+        if let Some(UpdateMessage::LogStreamStatus {
+            pod_name,
+            namespace,
+            container_name,
+            status,
+        }) = rx.recv().await
+        {
             assert_eq!(pod_name, "test-pod");
+            assert_eq!(namespace, "default");
             assert_eq!(container_name, "test-container");
             assert_eq!(status, LogStreamStatus::Started);
         } else {
@@ -160,14 +185,22 @@ mod tests {
 
         let msg = UpdateMessage::LogUpdate {
             pod_name: "test-pod".to_string(),
+            namespace: "default".to_string(),
             container_name: "test-container".to_string(),
             line: "test log line".to_string(),
         };
 
         tx.send(msg).unwrap();
 
-        if let Some(UpdateMessage::LogUpdate { pod_name, container_name, line }) = rx.recv().await {
+        if let Some(UpdateMessage::LogUpdate {
+            pod_name,
+            namespace,
+            container_name,
+            line,
+        }) = rx.recv().await
+        {
             assert_eq!(pod_name, "test-pod");
+            assert_eq!(namespace, "default");
             assert_eq!(container_name, "test-container");
             assert_eq!(line, "test log line");
         } else {

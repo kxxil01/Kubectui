@@ -1,5 +1,10 @@
 //! ReplicaSets list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -17,9 +22,27 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int,
+        format_small_int, table_viewport_rows, table_window,
     },
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplicaSetDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ReplicaSetDerivedCell {
+    image: String,
+    age: String,
+}
+
+type ReplicaSetDerivedCacheValue = Arc<Vec<ReplicaSetDerivedCell>>;
+static REPLICASET_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(ReplicaSetDerivedCacheKey, ReplicaSetDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
 
 pub fn render_replicasets(
     frame: &mut Frame,
@@ -68,6 +91,7 @@ pub fn render_replicasets(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -83,12 +107,25 @@ pub fn render_replicasets(
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
+    let derived = cached_replicaset_derived(cluster, query, indices.as_ref());
 
-    let mut rows: Vec<Row> = Vec::with_capacity(total);
-    for (idx, &rs_idx) in indices.iter().enumerate() {
+    let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
+    for (local_idx, &rs_idx) in indices[window.start..window.end].iter().enumerate() {
+        let idx = window.start + local_idx;
         let rs = &cluster.replicasets[rs_idx];
         let ready_style = readiness_style(rs.ready, rs.desired, &theme);
-        let row_style = if idx % 2 == 0 {
+        let (image, age) = if let Some(cell) = derived.get(idx) {
+            (
+                Cow::Borrowed(cell.image.as_str()),
+                Cow::Borrowed(cell.age.as_str()),
+            )
+        } else {
+            (
+                Cow::Owned(format_image(rs.image.as_deref())),
+                Cow::Owned(format_age(rs.age)),
+            )
+        };
+        let row_style = if idx.is_multiple_of(2) {
             Style::default().bg(theme.bg)
         } else {
             theme.row_alt_style()
@@ -110,14 +147,14 @@ pub fn render_replicasets(
                     format_small_int(i64::from(rs.available)),
                     dim_style,
                 )),
-                Cell::from(Span::styled(format_image(rs.image.as_deref()), muted_style)),
-                Cell::from(Span::styled(format_age(rs.age), theme.inactive_style())),
+                Cell::from(Span::styled(image, muted_style)),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style),
         );
     }
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = format!(" Replica Sets ({total}) ");
     let block = if query.is_empty() {
@@ -162,6 +199,44 @@ pub fn render_replicasets(
         }),
         &mut scrollbar_state,
     );
+}
+
+fn cached_replicaset_derived(
+    cluster: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> ReplicaSetDerivedCacheValue {
+    let key = ReplicaSetDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: cluster.snapshot_version,
+        data_fingerprint: data_fingerprint(&cluster.replicasets),
+    };
+
+    if let Ok(cache) = REPLICASET_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&rs_idx| {
+                let rs = &cluster.replicasets[rs_idx];
+                ReplicaSetDerivedCell {
+                    image: format_image(rs.image.as_deref()),
+                    age: format_age(rs.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = REPLICASET_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
 }
 
 fn readiness_style(ready: i32, desired: i32, theme: &crate::ui::theme::Theme) -> Style {

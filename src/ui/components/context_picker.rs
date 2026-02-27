@@ -1,5 +1,6 @@
 //! Context (kubeconfig) picker modal component.
 
+use crate::ui::contains_ci;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -107,10 +108,9 @@ impl ContextPicker {
         if self.search_query.is_empty() {
             return self.contexts.clone();
         }
-        let q = self.search_query.to_ascii_lowercase();
         self.contexts
             .iter()
-            .filter(|ctx| ctx.to_ascii_lowercase().contains(&q))
+            .filter(|ctx| contains_ci(ctx, &self.search_query))
             .cloned()
             .collect()
     }
@@ -163,10 +163,7 @@ impl ContextPicker {
             Span::styled(" ⎈ ", theme.title_style()),
             Span::styled("Switch Cluster Context", theme.title_style()),
             if let Some(ref cur) = self.current_context {
-                Span::styled(
-                    format!("  ·  current: {cur}"),
-                    theme.inactive_style(),
-                )
+                Span::styled(format!("  ·  current: {cur}"), theme.inactive_style())
             } else {
                 Span::raw("")
             },
@@ -282,7 +279,11 @@ mod tests {
     #[test]
     fn context_picker_navigation_wraps() {
         let mut picker = ContextPicker::new(
-            vec!["ctx-a".to_string(), "ctx-b".to_string(), "ctx-c".to_string()],
+            vec![
+                "ctx-a".to_string(),
+                "ctx-b".to_string(),
+                "ctx-c".to_string(),
+            ],
             Some("ctx-a".to_string()),
         );
         picker.open();
@@ -313,7 +314,11 @@ mod tests {
     #[test]
     fn context_picker_filter_by_search() {
         let mut picker = ContextPicker::new(
-            vec!["prod-us".to_string(), "staging-eu".to_string(), "prod-eu".to_string()],
+            vec![
+                "prod-us".to_string(),
+                "staging-eu".to_string(),
+                "prod-eu".to_string(),
+            ],
             None,
         );
         picker.open();

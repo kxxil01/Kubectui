@@ -1,6 +1,6 @@
 //! Application state machine and keyboard input handling.
 
-use std::{collections::HashSet, fs, path::Path};
+use std::{collections::HashSet, fs, path::Path, sync::LazyLock};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
@@ -11,11 +11,9 @@ use crate::{
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodMetricsInfo},
     },
     ui::components::{
-        CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction,
-        NamespacePicker, NamespacePickerAction,
-        port_forward_dialog::PortForwardDialog,
-        probe_panel::ProbePanelState as ProbePanelComponentState,
-        scale_dialog::ScaleDialogState,
+        CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction, NamespacePicker,
+        NamespacePickerAction, port_forward_dialog::PortForwardDialog,
+        probe_panel::ProbePanelState as ProbePanelComponentState, scale_dialog::ScaleDialogState,
     },
 };
 
@@ -58,10 +56,32 @@ impl NavGroup {
             NavGroup::CustomResources => "󰏗",
         }
     }
+
+    /// Returns a preformatted sidebar label including collapse state marker.
+    pub const fn sidebar_text(self, collapsed: bool) -> &'static str {
+        match (self, collapsed) {
+            (NavGroup::Overview, false) => " ▼ 󰋗 Overview",
+            (NavGroup::Overview, true) => " ▶ 󰋗 Overview",
+            (NavGroup::Workloads, false) => " ▼ 󰆧 Workloads",
+            (NavGroup::Workloads, true) => " ▶ 󰆧 Workloads",
+            (NavGroup::Network, false) => " ▼ 󰛳 Network",
+            (NavGroup::Network, true) => " ▶ 󰛳 Network",
+            (NavGroup::Config, false) => " ▼ � Config",
+            (NavGroup::Config, true) => " ▶ � Config",
+            (NavGroup::Storage, false) => " ▼ 󰋊 Storage",
+            (NavGroup::Storage, true) => " ▶ 󰋊 Storage",
+            (NavGroup::Helm, false) => " ▼ 󰱥 Helm",
+            (NavGroup::Helm, true) => " ▶ 󰱥 Helm",
+            (NavGroup::AccessControl, false) => " ▼ 󰒃 Access Control",
+            (NavGroup::AccessControl, true) => " ▶ 󰒃 Access Control",
+            (NavGroup::CustomResources, false) => " ▼ 󰏗 Custom Resources",
+            (NavGroup::CustomResources, true) => " ▶ 󰏗 Custom Resources",
+        }
+    }
 }
 
 /// Top-level views displayed by KubecTUI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AppView {
     // Overview
     Dashboard,
@@ -239,6 +259,90 @@ impl AppView {
             AppView::ClusterRoleBindings => "󰌋",
             AppView::RoleBindings => "󰌋",
             AppView::Extensions => "󰏗",
+        }
+    }
+
+    /// Returns the preformatted sidebar row text for this view.
+    pub const fn sidebar_text(self) -> &'static str {
+        match self {
+            AppView::Dashboard => "  󰋗 Dashboard",
+            AppView::Nodes => "  󰒋 Nodes",
+            AppView::Pods => "  󰠳 Pods",
+            AppView::Deployments => "  󰆧 Deployments",
+            AppView::StatefulSets => "  󰆼 Stateful Sets",
+            AppView::DaemonSets => "  󰒓 Daemon Sets",
+            AppView::ReplicaSets => "  󰆧 Replica Sets",
+            AppView::ReplicationControllers => "  󰆧 Replication Controllers",
+            AppView::Jobs => "  󰃰 Jobs",
+            AppView::CronJobs => "  󰔠 Cron Jobs",
+            AppView::Services => "  󰛳 Services",
+            AppView::Endpoints => "  � Endpoints",
+            AppView::Ingresses => "  󰱓 Ingresses",
+            AppView::IngressClasses => "  󰱓 Ingress Classes",
+            AppView::NetworkPolicies => "  󰒃 Network Policies",
+            AppView::PortForwarding => "  󰛳 Port Forwarding",
+            AppView::ConfigMaps => "  󰒓 Config Maps",
+            AppView::Secrets => "  󰌋 Secrets",
+            AppView::ResourceQuotas => "  󰏗 Resource Quotas",
+            AppView::LimitRanges => "  󰳗 Limit Ranges",
+            AppView::HPAs => "  󰦕 Horiz. Pod Autoscalers",
+            AppView::PodDisruptionBudgets => "  󰦕 Pod Disruption Budgets",
+            AppView::PriorityClasses => "  󰔠 Priority Classes",
+            AppView::PersistentVolumeClaims => "  󰋊 Persistent Vol. Claims",
+            AppView::PersistentVolumes => "  󰋊 Persistent Volumes",
+            AppView::StorageClasses => "  󰋊 Storage Classes",
+            AppView::Namespaces => "  󰏗 Namespaces",
+            AppView::Events => "  󰃰 Events",
+            AppView::HelmCharts => "  󰱥 Repositories",
+            AppView::HelmReleases => "  󰱥 Releases",
+            AppView::ServiceAccounts => "  󰀄 Service Accounts",
+            AppView::ClusterRoles => "  󰒃 Cluster Roles",
+            AppView::Roles => "  󰒃 Roles",
+            AppView::ClusterRoleBindings => "  󰌋 Cluster Role Bindings",
+            AppView::RoleBindings => "  󰌋 Role Bindings",
+            AppView::Extensions => "  󰏗 Definitions",
+        }
+    }
+
+    /// Returns a stable key for render profiling spans.
+    pub const fn profiling_key(self) -> &'static str {
+        match self {
+            AppView::Dashboard => "view.dashboard",
+            AppView::Nodes => "view.nodes",
+            AppView::Pods => "view.pods",
+            AppView::Deployments => "view.deployments",
+            AppView::StatefulSets => "view.statefulsets",
+            AppView::DaemonSets => "view.daemonsets",
+            AppView::ReplicaSets => "view.replicasets",
+            AppView::ReplicationControllers => "view.replication_controllers",
+            AppView::Jobs => "view.jobs",
+            AppView::CronJobs => "view.cronjobs",
+            AppView::Services => "view.services",
+            AppView::Endpoints => "view.endpoints",
+            AppView::Ingresses => "view.ingresses",
+            AppView::IngressClasses => "view.ingress_classes",
+            AppView::NetworkPolicies => "view.network_policies",
+            AppView::PortForwarding => "view.port_forwarding",
+            AppView::ConfigMaps => "view.config_maps",
+            AppView::Secrets => "view.secrets",
+            AppView::ResourceQuotas => "view.resource_quotas",
+            AppView::LimitRanges => "view.limit_ranges",
+            AppView::HPAs => "view.hpas",
+            AppView::PodDisruptionBudgets => "view.pod_disruption_budgets",
+            AppView::PriorityClasses => "view.priority_classes",
+            AppView::PersistentVolumeClaims => "view.pvcs",
+            AppView::PersistentVolumes => "view.pvs",
+            AppView::StorageClasses => "view.storage_classes",
+            AppView::Namespaces => "view.namespaces",
+            AppView::Events => "view.events",
+            AppView::HelmCharts => "view.helm_charts",
+            AppView::HelmReleases => "view.helm_releases",
+            AppView::ServiceAccounts => "view.service_accounts",
+            AppView::ClusterRoles => "view.cluster_roles",
+            AppView::Roles => "view.roles",
+            AppView::ClusterRoleBindings => "view.cluster_role_bindings",
+            AppView::RoleBindings => "view.role_bindings",
+            AppView::Extensions => "view.extensions",
         }
     }
 
@@ -519,6 +623,10 @@ pub struct LogsViewerState {
     pub picking_container: bool,
     /// Cursor index in the container picker list.
     pub container_cursor: usize,
+    /// Monotonic request id for in-flight container list fetch.
+    pub pending_container_request_id: Option<u64>,
+    /// Monotonic request id for in-flight tail logs fetch.
+    pub pending_logs_request_id: Option<u64>,
     pub loading: bool,
     pub error: Option<String>,
 }
@@ -562,13 +670,11 @@ impl Default for PortForwardDialogState {
 }
 
 /// In-detail scale dialog state used by keyboard routing tests.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct ScaleDialogInputState {
     pub replica_input: String,
     pub target_replicas: i32,
 }
-
 
 /// In-detail probe panel state used by keyboard routing tests.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -607,16 +713,19 @@ pub enum SidebarItem {
     View(AppView),
 }
 
-/// Ordered list of all sidebar rows given the current collapsed state.
-pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> Vec<SidebarItem> {
-    const GROUPS: &[(NavGroup, &[AppView])] = &[
-        (NavGroup::Overview, &[
+const SIDEBAR_GROUPS: &[(NavGroup, &[AppView])] = &[
+    (
+        NavGroup::Overview,
+        &[
             AppView::Dashboard,
             AppView::Nodes,
             AppView::Namespaces,
             AppView::Events,
-        ]),
-        (NavGroup::Workloads, &[
+        ],
+    ),
+    (
+        NavGroup::Workloads,
+        &[
             AppView::Pods,
             AppView::Deployments,
             AppView::StatefulSets,
@@ -625,16 +734,22 @@ pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> Vec<SidebarItem> {
             AppView::ReplicationControllers,
             AppView::Jobs,
             AppView::CronJobs,
-        ]),
-        (NavGroup::Network, &[
+        ],
+    ),
+    (
+        NavGroup::Network,
+        &[
             AppView::Services,
             AppView::Endpoints,
             AppView::Ingresses,
             AppView::IngressClasses,
             AppView::NetworkPolicies,
             AppView::PortForwarding,
-        ]),
-        (NavGroup::Config, &[
+        ],
+    ),
+    (
+        NavGroup::Config,
+        &[
             AppView::ConfigMaps,
             AppView::Secrets,
             AppView::ResourceQuotas,
@@ -642,37 +757,73 @@ pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> Vec<SidebarItem> {
             AppView::HPAs,
             AppView::PodDisruptionBudgets,
             AppView::PriorityClasses,
-        ]),
-        (NavGroup::Storage, &[
+        ],
+    ),
+    (
+        NavGroup::Storage,
+        &[
             AppView::PersistentVolumeClaims,
             AppView::PersistentVolumes,
             AppView::StorageClasses,
-        ]),
-        (NavGroup::Helm, &[
-            AppView::HelmCharts,
-            AppView::HelmReleases,
-        ]),
-        (NavGroup::AccessControl, &[
+        ],
+    ),
+    (
+        NavGroup::Helm,
+        &[AppView::HelmCharts, AppView::HelmReleases],
+    ),
+    (
+        NavGroup::AccessControl,
+        &[
             AppView::ServiceAccounts,
             AppView::ClusterRoles,
             AppView::Roles,
             AppView::ClusterRoleBindings,
             AppView::RoleBindings,
-        ]),
-        (NavGroup::CustomResources, &[
-            AppView::Extensions,
-        ]),
-    ];
-    let mut rows = Vec::new();
-    for (group, views) in GROUPS {
-        rows.push(SidebarItem::Group(*group));
-        if !collapsed.contains(group) {
-            for v in *views {
-                rows.push(SidebarItem::View(*v));
+        ],
+    ),
+    (NavGroup::CustomResources, &[AppView::Extensions]),
+];
+
+const fn nav_group_bit(group: NavGroup) -> u16 {
+    match group {
+        NavGroup::Overview => 1 << 0,
+        NavGroup::Workloads => 1 << 1,
+        NavGroup::Network => 1 << 2,
+        NavGroup::Config => 1 << 3,
+        NavGroup::Storage => 1 << 4,
+        NavGroup::Helm => 1 << 5,
+        NavGroup::AccessControl => 1 << 6,
+        NavGroup::CustomResources => 1 << 7,
+    }
+}
+
+fn collapsed_mask(collapsed: &HashSet<NavGroup>) -> u16 {
+    collapsed
+        .iter()
+        .fold(0u16, |mask, group| mask | nav_group_bit(*group))
+}
+
+static SIDEBAR_ROWS_CACHE: LazyLock<Vec<Box<[SidebarItem]>>> = LazyLock::new(|| {
+    let mut cache = Vec::with_capacity(1usize << 8);
+    for mask in 0u16..(1u16 << 8) {
+        let mut rows = Vec::with_capacity(44);
+        for (group, views) in SIDEBAR_GROUPS {
+            rows.push(SidebarItem::Group(*group));
+            if mask & nav_group_bit(*group) == 0 {
+                for view in *views {
+                    rows.push(SidebarItem::View(*view));
+                }
             }
         }
+        cache.push(rows.into_boxed_slice());
     }
-    rows
+    cache
+});
+
+/// Ordered sidebar rows for the current collapsed state.
+pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> &'static [SidebarItem] {
+    let mask = collapsed_mask(collapsed) as usize;
+    &SIDEBAR_ROWS_CACHE[mask]
 }
 
 /// Actions emitted by input handling.
@@ -706,7 +857,12 @@ pub enum AppAction {
     LogsViewerPickerDown,
     PortForwardOpen,
     PortForwardClose,
-    PortForwardCreate((crate::k8s::portforward::PortForwardTarget, crate::k8s::portforward::PortForwardConfig)),
+    PortForwardCreate(
+        (
+            crate::k8s::portforward::PortForwardTarget,
+            crate::k8s::portforward::PortForwardConfig,
+        ),
+    ),
     ScaleDialogOpen,
     ScaleDialogClose,
     ScaleDialogUpdateInput(char),
@@ -1002,7 +1158,9 @@ impl AppState {
     /// Only called when [`Focus::Sidebar`] is active and `j`/`↓` is pressed.
     pub fn sidebar_cursor_down(&mut self) {
         let rows = sidebar_rows(&self.collapsed_groups);
-        if rows.is_empty() { return; }
+        if rows.is_empty() {
+            return;
+        }
         self.sidebar_cursor = (self.sidebar_cursor + 1) % rows.len();
     }
 
@@ -1010,7 +1168,9 @@ impl AppState {
     /// Only called when [`Focus::Sidebar`] is active and `k`/`↑` is pressed.
     pub fn sidebar_cursor_up(&mut self) {
         let rows = sidebar_rows(&self.collapsed_groups);
-        if rows.is_empty() { return; }
+        if rows.is_empty() {
+            return;
+        }
         self.sidebar_cursor = if self.sidebar_cursor == 0 {
             rows.len() - 1
         } else {
@@ -1236,22 +1396,36 @@ impl AppState {
                     KeyCode::Esc => AppAction::EscapePressed,
                     KeyCode::Char('k') | KeyCode::Up => {
                         // If picking container, move cursor up; else scroll logs
-                        let picking = self.detail_view.as_ref()
+                        let picking = self
+                            .detail_view
+                            .as_ref()
                             .and_then(|d| d.logs_viewer.as_ref())
                             .map(|v| v.picking_container)
                             .unwrap_or(false);
-                        if picking { AppAction::LogsViewerPickerUp } else { AppAction::LogsViewerScrollUp }
+                        if picking {
+                            AppAction::LogsViewerPickerUp
+                        } else {
+                            AppAction::LogsViewerScrollUp
+                        }
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
-                        let picking = self.detail_view.as_ref()
+                        let picking = self
+                            .detail_view
+                            .as_ref()
                             .and_then(|d| d.logs_viewer.as_ref())
                             .map(|v| v.picking_container)
                             .unwrap_or(false);
-                        if picking { AppAction::LogsViewerPickerDown } else { AppAction::LogsViewerScrollDown }
+                        if picking {
+                            AppAction::LogsViewerPickerDown
+                        } else {
+                            AppAction::LogsViewerScrollDown
+                        }
                     }
                     KeyCode::Enter => {
                         // Confirm container selection
-                        let selection = self.detail_view.as_ref()
+                        let selection = self
+                            .detail_view
+                            .as_ref()
                             .and_then(|d| d.logs_viewer.as_ref())
                             .filter(|v| v.picking_container)
                             .and_then(|v| v.containers.get(v.container_cursor))
@@ -1274,14 +1448,15 @@ impl AppState {
                     _ => {
                         // Delegate all key handling to the PortForwardDialog component
                         if let Some(detail) = &mut self.detail_view
-                            && let Some(dialog) = &mut detail.port_forward_dialog {
-                                let pf_action = dialog.handle_key(key);
-                                return match pf_action {
+                            && let Some(dialog) = &mut detail.port_forward_dialog
+                        {
+                            let pf_action = dialog.handle_key(key);
+                            return match pf_action {
                                     crate::ui::components::port_forward_dialog::PortForwardAction::Close => AppAction::PortForwardClose,
                                     crate::ui::components::port_forward_dialog::PortForwardAction::Create(args) => AppAction::PortForwardCreate(args),
                                     _ => AppAction::None,
                                 };
-                            }
+                        }
                         AppAction::None
                     }
                 };
@@ -1291,8 +1466,12 @@ impl AppState {
                     KeyCode::Esc => AppAction::EscapePressed,
                     KeyCode::Enter => AppAction::ScaleDialogSubmit,
                     KeyCode::Backspace => AppAction::ScaleDialogBackspace,
-                    KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up => AppAction::ScaleDialogIncrement,
-                    KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::Down => AppAction::ScaleDialogDecrement,
+                    KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up => {
+                        AppAction::ScaleDialogIncrement
+                    }
+                    KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::Down => {
+                        AppAction::ScaleDialogDecrement
+                    }
                     KeyCode::Char(c) if c.is_ascii_digit() => AppAction::ScaleDialogUpdateInput(c),
                     _ => AppAction::None,
                 };
@@ -1300,9 +1479,7 @@ impl AppState {
             ActiveComponent::ProbePanel => {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char(' ') => {
-                        AppAction::ProbeToggleExpand
-                    }
+                    KeyCode::Char(' ') => AppAction::ProbeToggleExpand,
                     KeyCode::Char('j') | KeyCode::Down => AppAction::ProbeSelectNext,
                     KeyCode::Char('k') | KeyCode::Up => AppAction::ProbeSelectPrev,
                     _ => AppAction::None,
@@ -1329,7 +1506,13 @@ impl AppState {
                 self.confirm_quit = true;
                 AppAction::None
             }
-            KeyCode::Esc if self.detail_view.as_ref().map(|d| d.confirm_delete).unwrap_or(false) => {
+            KeyCode::Esc
+                if self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| d.confirm_delete)
+                    .unwrap_or(false) =>
+            {
                 if let Some(detail) = &mut self.detail_view {
                     detail.confirm_delete = false;
                 }
@@ -1347,7 +1530,11 @@ impl AppState {
             // YAML scroll in detail view (j/k/g/G/PgUp/PgDn)
             KeyCode::Char('j') | KeyCode::Down
                 if self.detail_view.is_some()
-                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
+                        .unwrap_or(false) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.yaml_scroll = detail.yaml_scroll.saturating_add(1);
@@ -1356,7 +1543,11 @@ impl AppState {
             }
             KeyCode::Char('k') | KeyCode::Up
                 if self.detail_view.is_some()
-                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
+                        .unwrap_or(false) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.yaml_scroll = detail.yaml_scroll.saturating_sub(1);
@@ -1365,7 +1556,11 @@ impl AppState {
             }
             KeyCode::Char('g')
                 if self.detail_view.is_some()
-                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
+                        .unwrap_or(false) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.yaml_scroll = 0;
@@ -1374,7 +1569,11 @@ impl AppState {
             }
             KeyCode::Char('G')
                 if self.detail_view.is_some()
-                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
+                        .unwrap_or(false) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     let total = detail.yaml.as_ref().map(|y| y.lines().count()).unwrap_or(0);
@@ -1384,7 +1583,11 @@ impl AppState {
             }
             KeyCode::PageDown
                 if self.detail_view.is_some()
-                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
+                        .unwrap_or(false) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.yaml_scroll = detail.yaml_scroll.saturating_add(10);
@@ -1393,7 +1596,11 @@ impl AppState {
             }
             KeyCode::PageUp
                 if self.detail_view.is_some()
-                    && self.detail_view.as_ref().map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none()).unwrap_or(false) =>
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
+                        .unwrap_or(false) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.yaml_scroll = detail.yaml_scroll.saturating_sub(10);
@@ -1408,52 +1615,91 @@ impl AppState {
             KeyCode::Char('p') if self.detail_view.is_some() => AppAction::ProbePanelOpen,
             KeyCode::Char('R') if self.detail_view.is_some() => {
                 // Only for restartable workload kinds
-                let restartable = self.detail_view.as_ref().and_then(|d| d.resource.as_ref()).map(|r| {
-                    matches!(r,
-                        ResourceRef::Deployment(_, _)
-                        | ResourceRef::StatefulSet(_, _)
-                        | ResourceRef::DaemonSet(_, _)
-                    )
-                }).unwrap_or(false);
-                if restartable { AppAction::RolloutRestart } else { AppAction::None }
+                let restartable = self
+                    .detail_view
+                    .as_ref()
+                    .and_then(|d| d.resource.as_ref())
+                    .map(|r| {
+                        matches!(
+                            r,
+                            ResourceRef::Deployment(_, _)
+                                | ResourceRef::StatefulSet(_, _)
+                                | ResourceRef::DaemonSet(_, _)
+                        )
+                    })
+                    .unwrap_or(false);
+                if restartable {
+                    AppAction::RolloutRestart
+                } else {
+                    AppAction::None
+                }
             }
             KeyCode::Char('e') if self.detail_view.is_some() => {
                 // Only allow editing when YAML is loaded and no sub-panel is open
-                let can_edit = self.detail_view.as_ref().map(|d| {
-                    d.yaml.is_some()
-                        && d.logs_viewer.is_none()
-                        && d.port_forward_dialog.is_none()
-                        && d.scale_dialog.is_none()
-                        && d.probe_panel.is_none()
-                        && !d.loading
-                }).unwrap_or(false);
-                if can_edit { AppAction::EditYaml } else { AppAction::None }
+                let can_edit = self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| {
+                        d.yaml.is_some()
+                            && d.logs_viewer.is_none()
+                            && d.port_forward_dialog.is_none()
+                            && d.scale_dialog.is_none()
+                            && d.probe_panel.is_none()
+                            && !d.loading
+                    })
+                    .unwrap_or(false);
+                if can_edit {
+                    AppAction::EditYaml
+                } else {
+                    AppAction::None
+                }
             }
             KeyCode::Char('d') if self.detail_view.is_some() => {
                 // Toggle delete confirmation prompt
-                let can_delete = self.detail_view.as_ref().map(|d| {
-                    d.resource.is_some()
-                        && d.logs_viewer.is_none()
-                        && d.port_forward_dialog.is_none()
-                        && d.scale_dialog.is_none()
-                        && d.probe_panel.is_none()
-                        && !d.loading
-                        && !d.confirm_delete
-                }).unwrap_or(false);
-                if can_delete
-                    && let Some(detail) = &mut self.detail_view {
-                        detail.confirm_delete = true;
-                    }
+                let can_delete = self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| {
+                        d.resource.is_some()
+                            && d.logs_viewer.is_none()
+                            && d.port_forward_dialog.is_none()
+                            && d.scale_dialog.is_none()
+                            && d.probe_panel.is_none()
+                            && !d.loading
+                            && !d.confirm_delete
+                    })
+                    .unwrap_or(false);
+                if can_delete && let Some(detail) = &mut self.detail_view {
+                    detail.confirm_delete = true;
+                }
                 AppAction::None
             }
-            KeyCode::Char('D') if self.detail_view.as_ref().map(|d| d.confirm_delete).unwrap_or(false) => {
+            KeyCode::Char('D')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| d.confirm_delete)
+                    .unwrap_or(false) =>
+            {
                 // Confirm delete
                 AppAction::DeleteResource
             }
-            KeyCode::Char('y') if self.detail_view.as_ref().map(|d| d.confirm_delete).unwrap_or(false) => {
+            KeyCode::Char('y')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| d.confirm_delete)
+                    .unwrap_or(false) =>
+            {
                 AppAction::DeleteResource
             }
-            KeyCode::Enter if self.detail_view.as_ref().map(|d| d.confirm_delete).unwrap_or(false) => {
+            KeyCode::Enter
+                if self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| d.confirm_delete)
+                    .unwrap_or(false) =>
+            {
                 AppAction::DeleteResource
             }
             KeyCode::Tab => {
@@ -1467,10 +1713,12 @@ impl AppState {
             KeyCode::Char('j') | KeyCode::Down if self.detail_view.is_none() => {
                 match self.focus {
                     Focus::Sidebar => self.sidebar_cursor_down(),
-                    Focus::Content if self.view == AppView::Extensions && self.extension_in_instances => {
+                    Focus::Content
+                        if self.view == AppView::Extensions && self.extension_in_instances =>
+                    {
                         if !self.extension_instances.is_empty() {
-                            self.extension_instance_cursor =
-                                (self.extension_instance_cursor + 1) % self.extension_instances.len();
+                            self.extension_instance_cursor = (self.extension_instance_cursor + 1)
+                                % self.extension_instances.len();
                         }
                     }
                     Focus::Content => self.select_next(),
@@ -1480,9 +1728,12 @@ impl AppState {
             KeyCode::Char('k') | KeyCode::Up if self.detail_view.is_none() => {
                 match self.focus {
                     Focus::Sidebar => self.sidebar_cursor_up(),
-                    Focus::Content if self.view == AppView::Extensions && self.extension_in_instances => {
+                    Focus::Content
+                        if self.view == AppView::Extensions && self.extension_in_instances =>
+                    {
                         if !self.extension_instances.is_empty() {
-                            self.extension_instance_cursor = if self.extension_instance_cursor == 0 {
+                            self.extension_instance_cursor = if self.extension_instance_cursor == 0
+                            {
                                 self.extension_instances.len() - 1
                             } else {
                                 self.extension_instance_cursor - 1
@@ -1572,7 +1823,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
     let theme_name = crate::ui::theme::active_theme().name;
     let cfg = AppConfig {
         namespace: app.current_namespace.clone(),
-        theme: Some(theme_name),
+        theme: Some(theme_name.to_string()),
         refresh_interval_secs: app.refresh_interval_secs,
     };
 

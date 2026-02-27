@@ -52,16 +52,15 @@ pub enum LogLevel {
 
 impl LogLevel {
     pub fn from_line(content: &str) -> Self {
-        let upper = content.to_uppercase();
-        if upper.contains("ERROR") || upper.contains("ERR") {
+        if contains_ci(content, "ERROR") || contains_ci(content, "ERR") {
             LogLevel::Error
-        } else if upper.contains("WARN") {
+        } else if contains_ci(content, "WARN") {
             LogLevel::Warn
-        } else if upper.contains("INFO") {
+        } else if contains_ci(content, "INFO") {
             LogLevel::Info
-        } else if upper.contains("DEBUG") {
+        } else if contains_ci(content, "DEBUG") {
             LogLevel::Debug
-        } else if upper.contains("TRACE") {
+        } else if contains_ci(content, "TRACE") {
             LogLevel::Trace
         } else {
             LogLevel::Unknown

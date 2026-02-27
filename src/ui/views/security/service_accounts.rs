@@ -1,3 +1,8 @@
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -16,9 +21,32 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int,
+        format_small_int, table_viewport_rows, table_window,
     },
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServiceAccountDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ServiceAccountDerivedCell {
+    age: String,
+    automount_label: &'static str,
+}
+
+type ServiceAccountDerivedCacheValue = Arc<Vec<ServiceAccountDerivedCell>>;
+static SERVICE_ACCOUNT_DERIVED_CACHE: LazyLock<
+    Mutex<
+        Option<(
+            ServiceAccountDerivedCacheKey,
+            ServiceAccountDerivedCacheValue,
+        )>,
+    >,
+> = LazyLock::new(|| Mutex::new(None));
 
 pub fn render_service_accounts(
     frame: &mut Frame,
@@ -76,6 +104,7 @@ pub fn render_service_accounts(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -88,12 +117,26 @@ pub fn render_service_accounts(
     .height(1)
     .style(theme.header_style());
 
-    let rows: Vec<Row> = indices
+    let derived = cached_service_account_derived(cluster, query, indices.as_ref());
+
+    let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
-        .map(|(idx, &sa_idx)| {
+        .map(|(local_idx, &sa_idx)| {
+            let idx = window.start + local_idx;
             let sa = &cluster.service_accounts[sa_idx];
-            let row_style = if idx % 2 == 0 {
+            let (age_text, automount_text) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.age.as_str()),
+                    Cow::Borrowed(cell.automount_label),
+                )
+            } else {
+                (
+                    Cow::Owned(format_age(sa.age)),
+                    Cow::Borrowed(automount_label(sa.automount_service_account_token)),
+                )
+            };
+            let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
@@ -120,21 +163,14 @@ pub fn render_service_accounts(
                     format_small_int(sa.image_pull_secrets_count as i64),
                     Style::default().fg(theme.fg_dim),
                 )),
-                Cell::from(Span::styled(
-                    match sa.automount_service_account_token {
-                        Some(true) => "true",
-                        Some(false) => "false",
-                        None => "—",
-                    },
-                    automount_style,
-                )),
-                Cell::from(Span::styled(format_age(sa.age), theme.inactive_style())),
+                Cell::from(Span::styled(automount_text, automount_style)),
+                Cell::from(Span::styled(age_text, theme.inactive_style())),
             ])
             .style(row_style)
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
     let title = format!(" 🔑 ServiceAccounts ({total}) ");
     let block = if query.is_empty() {
         active_block(&title)
@@ -178,6 +214,52 @@ pub fn render_service_accounts(
         }),
         &mut scrollbar_state,
     );
+}
+
+fn cached_service_account_derived(
+    cluster: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> ServiceAccountDerivedCacheValue {
+    let key = ServiceAccountDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: cluster.snapshot_version,
+        data_fingerprint: data_fingerprint(&cluster.service_accounts),
+    };
+
+    if let Ok(cache) = SERVICE_ACCOUNT_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&sa_idx| {
+                let sa = &cluster.service_accounts[sa_idx];
+                ServiceAccountDerivedCell {
+                    age: format_age(sa.age),
+                    automount_label: automount_label(sa.automount_service_account_token),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = SERVICE_ACCOUNT_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
+
+fn automount_label(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "true",
+        Some(false) => "false",
+        None => "—",
+    }
 }
 
 fn format_age(age: Option<std::time::Duration>) -> String {

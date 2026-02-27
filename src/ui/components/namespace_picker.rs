@@ -1,5 +1,6 @@
 //! Namespace picker modal component.
 
+use crate::ui::contains_ci;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -110,10 +111,9 @@ impl NamespacePicker {
             return self.namespaces.clone();
         }
 
-        let q = self.search_query.to_ascii_lowercase();
         self.namespaces
             .iter()
-            .filter(|ns| ns.to_ascii_lowercase().contains(&q))
+            .filter(|ns| contains_ci(ns, &self.search_query))
             .cloned()
             .collect()
     }

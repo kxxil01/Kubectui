@@ -27,9 +27,21 @@ pub fn render_endpoints(
         .iter()
         .enumerate()
         .map(|(i, ep)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
-            let addrs = if ep.addresses.is_empty() { "<none>".to_string() } else { ep.addresses.join(",") };
-            let ports = if ep.ports.is_empty() { "<none>".to_string() } else { ep.ports.join(",") };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
+            let addrs = if ep.addresses.is_empty() {
+                "<none>".to_string()
+            } else {
+                ep.addresses.join(",")
+            };
+            let ports = if ep.ports.is_empty() {
+                "<none>".to_string()
+            } else {
+                ep.ports.join(",")
+            };
             Row::new(vec![
                 Cell::from(ep.name.clone()),
                 Cell::from(ep.namespace.clone()),
@@ -64,7 +76,10 @@ pub fn render_endpoints(
             } else {
                 vec![
                     Span::styled(" Endpoints ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.endpoints.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.endpoints.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))

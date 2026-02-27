@@ -27,7 +27,11 @@ pub fn render_namespaces(
         .iter()
         .enumerate()
         .map(|(i, ns)| {
-            let style = if i == selected { theme.selection_style() } else { Style::default() };
+            let style = if i == selected {
+                theme.selection_style()
+            } else {
+                Style::default()
+            };
             let status_style = if ns.status == "Active" {
                 theme.badge_success_style()
             } else {
@@ -60,7 +64,10 @@ pub fn render_namespaces(
             } else {
                 vec![
                     Span::styled(" Namespaces ", theme.title_style()),
-                    Span::styled(format!("({} of {}) ", items.len(), cluster.namespace_list.len()), theme.muted_style()),
+                    Span::styled(
+                        format!("({} of {}) ", items.len(), cluster.namespace_list.len()),
+                        theme.muted_style(),
+                    ),
                     Span::styled(format!("[/{search}]"), theme.muted_style()),
                 ]
             }))

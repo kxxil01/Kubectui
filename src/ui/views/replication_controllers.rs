@@ -1,5 +1,10 @@
 //! ReplicationControllers list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -17,9 +22,32 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int,
+        format_small_int, table_viewport_rows, table_window,
     },
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReplicationControllerDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ReplicationControllerDerivedCell {
+    image: String,
+    age: String,
+}
+
+type ReplicationControllerDerivedCacheValue = Arc<Vec<ReplicationControllerDerivedCell>>;
+static REPLICATION_CONTROLLER_DERIVED_CACHE: LazyLock<
+    Mutex<
+        Option<(
+            ReplicationControllerDerivedCacheKey,
+            ReplicationControllerDerivedCacheValue,
+        )>,
+    >,
+> = LazyLock::new(|| Mutex::new(None));
 
 pub fn render_replication_controllers(
     frame: &mut Frame,
@@ -68,6 +96,7 @@ pub fn render_replication_controllers(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -83,12 +112,25 @@ pub fn render_replication_controllers(
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
+    let derived = cached_replication_controller_derived(cluster, query, indices.as_ref());
 
-    let mut rows: Vec<Row> = Vec::with_capacity(total);
-    for (idx, &rc_idx) in indices.iter().enumerate() {
+    let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
+    for (local_idx, &rc_idx) in indices[window.start..window.end].iter().enumerate() {
+        let idx = window.start + local_idx;
         let rc = &cluster.replication_controllers[rc_idx];
         let ready_style = readiness_style(rc.ready, rc.desired, &theme);
-        let row_style = if idx % 2 == 0 {
+        let (image, age) = if let Some(cell) = derived.get(idx) {
+            (
+                Cow::Borrowed(cell.image.as_str()),
+                Cow::Borrowed(cell.age.as_str()),
+            )
+        } else {
+            (
+                Cow::Owned(format_image(rc.image.as_deref())),
+                Cow::Owned(format_age(rc.age)),
+            )
+        };
+        let row_style = if idx.is_multiple_of(2) {
             Style::default().bg(theme.bg)
         } else {
             theme.row_alt_style()
@@ -110,14 +152,14 @@ pub fn render_replication_controllers(
                     format_small_int(i64::from(rc.available)),
                     dim_style,
                 )),
-                Cell::from(Span::styled(format_image(rc.image.as_deref()), muted_style)),
-                Cell::from(Span::styled(format_age(rc.age), theme.inactive_style())),
+                Cell::from(Span::styled(image, muted_style)),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style),
         );
     }
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = format!(" Replication Controllers ({total}) ");
     let block = if query.is_empty() {
@@ -164,6 +206,44 @@ pub fn render_replication_controllers(
         }),
         &mut scrollbar_state,
     );
+}
+
+fn cached_replication_controller_derived(
+    cluster: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> ReplicationControllerDerivedCacheValue {
+    let key = ReplicationControllerDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: cluster.snapshot_version,
+        data_fingerprint: data_fingerprint(&cluster.replication_controllers),
+    };
+
+    if let Ok(cache) = REPLICATION_CONTROLLER_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&rc_idx| {
+                let rc = &cluster.replication_controllers[rc_idx];
+                ReplicationControllerDerivedCell {
+                    image: format_image(rc.image.as_deref()),
+                    age: format_age(rc.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = REPLICATION_CONTROLLER_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
 }
 
 fn readiness_style(ready: i32, desired: i32, theme: &crate::ui::theme::Theme) -> Style {
