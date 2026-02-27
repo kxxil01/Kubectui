@@ -1,5 +1,10 @@
 //! DaemonSets list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -17,9 +22,27 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int,
+        format_small_int, table_viewport_rows, table_window,
     },
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DaemonSetDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct DaemonSetDerivedCell {
+    image: String,
+    age: String,
+}
+
+type DaemonSetDerivedCacheValue = Arc<Vec<DaemonSetDerivedCell>>;
+static DAEMONSET_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(DaemonSetDerivedCacheKey, DaemonSetDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
 
 /// Renders the DaemonSets table with stateful selection and scrollbar.
 pub fn render_daemonsets(
@@ -77,6 +100,7 @@ pub fn render_daemonsets(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -89,14 +113,27 @@ pub fn render_daemonsets(
     ])
     .height(1)
     .style(theme.header_style());
-    let rows: Vec<Row> = indices
+    let derived = cached_daemonset_derived(cluster, query, indices.as_ref());
+    let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
-        .map(|(idx, &ds_idx)| {
+        .map(|(local_idx, &ds_idx)| {
+            let idx = window.start + local_idx;
             let ds = &cluster.daemonsets[ds_idx];
+            let (image, age) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.image.as_str()),
+                    Cow::Borrowed(cell.age.as_str()),
+                )
+            } else {
+                (
+                    Cow::Owned(format_image(ds.image.as_deref())),
+                    Cow::Owned(format_age(ds.age)),
+                )
+            };
             let ready_style = readiness_style(ds.ready_count, ds.desired_count, &theme);
             let unavail_style = unavailable_style(ds.unavailable_count, &theme);
-            let row_style = if idx % 2 == 0 {
+            let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
@@ -123,17 +160,14 @@ pub fn render_daemonsets(
                     format_small_int(i64::from(ds.unavailable_count)),
                     unavail_style,
                 )),
-                Cell::from(Span::styled(
-                    format_image(ds.image.as_deref()),
-                    Style::default().fg(theme.muted),
-                )),
-                Cell::from(Span::styled(format_age(ds.age), theme.inactive_style())),
+                Cell::from(Span::styled(image, Style::default().fg(theme.muted))),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = format!(" 👾 DaemonSets ({total}) ");
     let block = if query.is_empty() {
@@ -178,6 +212,44 @@ pub fn render_daemonsets(
         }),
         &mut scrollbar_state,
     );
+}
+
+fn cached_daemonset_derived(
+    cluster: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> DaemonSetDerivedCacheValue {
+    let key = DaemonSetDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: cluster.snapshot_version,
+        data_fingerprint: data_fingerprint(&cluster.daemonsets),
+    };
+
+    if let Ok(cache) = DAEMONSET_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&ds_idx| {
+                let ds = &cluster.daemonsets[ds_idx];
+                DaemonSetDerivedCell {
+                    image: format_image(ds.image.as_deref()),
+                    age: format_age(ds.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = DAEMONSET_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
 }
 
 fn readiness_style(ready: i32, desired: i32, theme: &crate::ui::theme::Theme) -> Style {

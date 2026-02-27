@@ -1,5 +1,10 @@
 //! StatefulSets list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -17,8 +22,28 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
+        table_viewport_rows, table_window,
     },
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StatefulSetDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct StatefulSetDerivedCell {
+    ready: String,
+    image: String,
+    age: String,
+}
+
+type StatefulSetDerivedCacheValue = Arc<Vec<StatefulSetDerivedCell>>;
+static STATEFULSET_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(StatefulSetDerivedCacheKey, StatefulSetDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
 
 /// Renders the StatefulSets table with stateful selection and scrollbar.
 pub fn render_statefulsets(
@@ -70,6 +95,7 @@ pub fn render_statefulsets(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -81,13 +107,28 @@ pub fn render_statefulsets(
     ])
     .height(1)
     .style(theme.header_style());
-    let rows: Vec<Row> = indices
+    let derived = cached_statefulset_derived(cluster, query, indices.as_ref());
+    let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
-        .map(|(idx, &ss_idx)| {
+        .map(|(local_idx, &ss_idx)| {
+            let idx = window.start + local_idx;
             let ss = &cluster.statefulsets[ss_idx];
+            let (ready, image, age) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.ready.as_str()),
+                    Cow::Borrowed(cell.image.as_str()),
+                    Cow::Borrowed(cell.age.as_str()),
+                )
+            } else {
+                (
+                    Cow::Owned(format!("{}/{}", ss.ready_replicas, ss.desired_replicas)),
+                    Cow::Owned(format_image(ss.image.as_deref())),
+                    Cow::Owned(format_age(ss.age)),
+                )
+            };
             let ready_style = readiness_style(ss.ready_replicas, ss.desired_replicas, &theme);
-            let row_style = if idx % 2 == 0 {
+            let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
@@ -102,25 +143,19 @@ pub fn render_statefulsets(
                     ss.namespace.clone(),
                     Style::default().fg(theme.fg_dim),
                 )),
-                Cell::from(Span::styled(
-                    format!("{}/{}", ss.ready_replicas, ss.desired_replicas),
-                    ready_style,
-                )),
+                Cell::from(Span::styled(ready, ready_style)),
                 Cell::from(Span::styled(
                     ss.service_name.clone(),
                     Style::default().fg(theme.info),
                 )),
-                Cell::from(Span::styled(
-                    format_image(ss.image.as_deref()),
-                    Style::default().fg(theme.muted),
-                )),
-                Cell::from(Span::styled(format_age(ss.age), theme.inactive_style())),
+                Cell::from(Span::styled(image, Style::default().fg(theme.muted))),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = format!(" 🗄  StatefulSets ({total}) ");
     let block = if query.is_empty() {
@@ -164,6 +199,45 @@ pub fn render_statefulsets(
         }),
         &mut scrollbar_state,
     );
+}
+
+fn cached_statefulset_derived(
+    cluster: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> StatefulSetDerivedCacheValue {
+    let key = StatefulSetDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: cluster.snapshot_version,
+        data_fingerprint: data_fingerprint(&cluster.statefulsets),
+    };
+
+    if let Ok(cache) = STATEFULSET_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&ss_idx| {
+                let ss = &cluster.statefulsets[ss_idx];
+                StatefulSetDerivedCell {
+                    ready: format!("{}/{}", ss.ready_replicas, ss.desired_replicas),
+                    image: format_image(ss.image.as_deref()),
+                    age: format_age(ss.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = STATEFULSET_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
 }
 
 fn readiness_style(ready: i32, desired: i32, theme: &crate::ui::theme::Theme) -> Style {

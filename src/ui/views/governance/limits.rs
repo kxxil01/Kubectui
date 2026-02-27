@@ -17,7 +17,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int,
+        format_small_int, table_viewport_rows, table_window,
     },
 };
 
@@ -70,6 +70,7 @@ pub fn render_limit_ranges(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -81,12 +82,13 @@ pub fn render_limit_ranges(
     .height(1)
     .style(theme.header_style());
 
-    let rows: Vec<Row> = indices
+    let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
-        .map(|(idx, &lr_idx)| {
+        .map(|(local_idx, &lr_idx)| {
+            let idx = window.start + local_idx;
             let lr = &cluster.limit_ranges[lr_idx];
-            let row_style = if idx % 2 == 0 {
+            let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
@@ -114,7 +116,7 @@ pub fn render_limit_ranges(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
     let title = format!(" ⚖️  LimitRanges ({total}) ");
     let block = if query.is_empty() {
         active_block(&title)

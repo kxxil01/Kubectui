@@ -1,5 +1,10 @@
 //! CronJobs list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use chrono::{DateTime, Local, Utc};
 use ratatui::{
     layout::{Constraint, Margin, Rect},
@@ -18,9 +23,28 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int,
+        format_small_int, table_viewport_rows, table_window,
     },
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CronJobDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct CronJobDerivedCell {
+    last_run: String,
+    next_run: String,
+    age: String,
+}
+
+type CronJobDerivedCacheValue = Arc<Vec<CronJobDerivedCell>>;
+static CRONJOB_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(CronJobDerivedCacheKey, CronJobDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
 
 pub fn render_cronjobs(
     frame: &mut Frame,
@@ -66,6 +90,7 @@ pub fn render_cronjobs(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -83,16 +108,31 @@ pub fn render_cronjobs(
     let dim_style = Style::default().fg(theme.fg_dim);
     let accent_style = Style::default().fg(theme.accent2);
     let info_style = Style::default().fg(theme.info);
+    let derived = cached_cronjob_derived(cluster, query, indices.as_ref());
 
-    let mut rows: Vec<Row> = Vec::with_capacity(total);
-    for (idx, &cj_idx) in indices.iter().enumerate() {
+    let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
+    for (local_idx, &cj_idx) in indices[window.start..window.end].iter().enumerate() {
+        let idx = window.start + local_idx;
         let cj = &cluster.cronjobs[cj_idx];
+        let (last_run, next_run, age) = if let Some(cell) = derived.get(idx) {
+            (
+                Cow::Borrowed(cell.last_run.as_str()),
+                Cow::Borrowed(cell.next_run.as_str()),
+                Cow::Borrowed(cell.age.as_str()),
+            )
+        } else {
+            (
+                Cow::Owned(format_time(cj.last_schedule_time)),
+                Cow::Owned(format_time(cj.next_schedule_time)),
+                Cow::Owned(format_age(cj.age)),
+            )
+        };
         let suspend_style = if cj.suspend {
             theme.badge_warning_style()
         } else {
             theme.badge_success_style()
         };
-        let row_style = if idx % 2 == 0 {
+        let row_style = if idx.is_multiple_of(2) {
             Style::default().bg(theme.bg)
         } else {
             theme.row_alt_style()
@@ -103,8 +143,8 @@ pub fn render_cronjobs(
                 Cell::from(Span::styled(format!("  {}", cj.name), name_style)),
                 Cell::from(Span::styled(cj.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(cj.schedule.as_str(), accent_style)),
-                Cell::from(Span::styled(format_time(cj.last_schedule_time), dim_style)),
-                Cell::from(Span::styled(format_time(cj.next_schedule_time), info_style)),
+                Cell::from(Span::styled(last_run, dim_style)),
+                Cell::from(Span::styled(next_run, info_style)),
                 Cell::from(Span::styled(
                     format_small_int(i64::from(cj.active_jobs)),
                     if cj.active_jobs > 0 {
@@ -114,13 +154,13 @@ pub fn render_cronjobs(
                     },
                 )),
                 Cell::from(Span::styled(suspend_label(cj.suspend), suspend_style)),
-                Cell::from(Span::styled(format_age(cj.age), theme.inactive_style())),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style),
         );
     }
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = format!(" 🕐 CronJobs ({total}) ");
     let block = if query.is_empty() {
@@ -166,6 +206,45 @@ pub fn render_cronjobs(
         }),
         &mut scrollbar_state,
     );
+}
+
+fn cached_cronjob_derived(
+    cluster: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> CronJobDerivedCacheValue {
+    let key = CronJobDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: cluster.snapshot_version,
+        data_fingerprint: data_fingerprint(&cluster.cronjobs),
+    };
+
+    if let Ok(cache) = CRONJOB_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&cj_idx| {
+                let cj = &cluster.cronjobs[cj_idx];
+                CronJobDerivedCell {
+                    last_run: format_time(cj.last_schedule_time),
+                    next_run: format_time(cj.next_schedule_time),
+                    age: format_age(cj.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = CRONJOB_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
 }
 
 fn suspend_label(suspend: bool) -> &'static str {

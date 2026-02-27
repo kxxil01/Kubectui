@@ -17,7 +17,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int,
+        format_small_int, table_viewport_rows, table_window,
     },
 };
 
@@ -72,6 +72,7 @@ pub fn render_pdbs(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -84,13 +85,14 @@ pub fn render_pdbs(
     .height(1)
     .style(theme.header_style());
 
-    let rows: Vec<Row> = indices
+    let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
-        .map(|(idx, &pdb_idx)| {
+        .map(|(local_idx, &pdb_idx)| {
+            let idx = window.start + local_idx;
             let pdb = &cluster.pod_disruption_budgets[pdb_idx];
             let disrupt_style = disruption_style(pdb.disruptions_allowed, &theme);
-            let row_style = if idx % 2 == 0 {
+            let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
@@ -125,7 +127,7 @@ pub fn render_pdbs(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
     let title = format!(" 🛡️  PodDisruptionBudgets ({total}) ");
     let block = if query.is_empty() {
         active_block(&title)

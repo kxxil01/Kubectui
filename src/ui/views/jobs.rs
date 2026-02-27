@@ -1,5 +1,10 @@
 //! Jobs list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -17,9 +22,26 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int,
+        format_small_int, table_viewport_rows, table_window,
     },
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct JobDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct JobDerivedCell {
+    duration: String,
+    age: String,
+}
+
+type JobDerivedCacheValue = Arc<Vec<JobDerivedCell>>;
+static JOB_DERIVED_CACHE: LazyLock<Mutex<Option<(JobDerivedCacheKey, JobDerivedCacheValue)>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 pub fn render_jobs(
     frame: &mut Frame,
@@ -65,6 +87,7 @@ pub fn render_jobs(
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -79,18 +102,31 @@ pub fn render_jobs(
     .height(1)
     .style(theme.header_style());
 
-    let rows: Vec<Row> = indices
+    let derived = cached_job_derived(cluster, query, indices.as_ref());
+    let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
-        .map(|(idx, &job_idx)| {
+        .map(|(local_idx, &job_idx)| {
+            let idx = window.start + local_idx;
             let job = &cluster.jobs[job_idx];
+            let (duration, age) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.duration.as_str()),
+                    Cow::Borrowed(cell.age.as_str()),
+                )
+            } else {
+                (
+                    Cow::Owned(job.duration.clone().unwrap_or_else(|| "-".to_string())),
+                    Cow::Owned(format_age(job.age)),
+                )
+            };
             let st = status_style(&job.status, &theme);
             let failed_style = if job.failed_pods > 0 {
                 theme.badge_error_style()
             } else {
                 theme.inactive_style()
             };
-            let row_style = if idx % 2 == 0 {
+            let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
@@ -110,10 +146,7 @@ pub fn render_jobs(
                     job.completions.clone(),
                     Style::default().fg(theme.fg_dim),
                 )),
-                Cell::from(Span::styled(
-                    job.duration.clone().unwrap_or_else(|| "-".to_string()),
-                    Style::default().fg(theme.fg_dim),
-                )),
+                Cell::from(Span::styled(duration, Style::default().fg(theme.fg_dim))),
                 Cell::from(Span::styled(
                     format_small_int(i64::from(job.active_pods)),
                     Style::default().fg(theme.info),
@@ -122,13 +155,13 @@ pub fn render_jobs(
                     format_small_int(i64::from(job.failed_pods)),
                     failed_style,
                 )),
-                Cell::from(Span::styled(format_age(job.age), theme.inactive_style())),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(selected));
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = format!(" ⚙  Jobs ({total}) ");
     let block = if query.is_empty() {
@@ -174,6 +207,44 @@ pub fn render_jobs(
         }),
         &mut scrollbar_state,
     );
+}
+
+fn cached_job_derived(
+    cluster: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> JobDerivedCacheValue {
+    let key = JobDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: cluster.snapshot_version,
+        data_fingerprint: data_fingerprint(&cluster.jobs),
+    };
+
+    if let Ok(cache) = JOB_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&job_idx| {
+                let job = &cluster.jobs[job_idx];
+                JobDerivedCell {
+                    duration: job.duration.clone().unwrap_or_else(|| "-".to_string()),
+                    age: format_age(job.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = JOB_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
 }
 
 fn status_style(status: &str, theme: &crate::ui::theme::Theme) -> Style {
