@@ -6,7 +6,7 @@ use std::{
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
-    text::Span,
+    text::{Line, Span},
     widgets::{
         Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         Table, TableState,
@@ -118,6 +118,8 @@ pub fn render_service_accounts(
     .style(theme.header_style());
 
     let derived = cached_service_account_derived(cluster, query, indices.as_ref());
+    let name_style = Style::default().fg(theme.fg);
+    let dim_style = Style::default().fg(theme.fg_dim);
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
@@ -147,21 +149,18 @@ pub fn render_service_accounts(
                 None => theme.inactive_style(),
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", sa.name),
-                    Style::default().fg(theme.fg),
-                )),
-                Cell::from(Span::styled(
-                    sa.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
+                Cell::from(Line::from(vec![
+                    Span::styled("  ", name_style),
+                    Span::styled(sa.name.as_str(), name_style),
+                ])),
+                Cell::from(Span::styled(sa.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(
                     format_small_int(sa.secrets_count as i64),
-                    Style::default().fg(theme.fg_dim),
+                    dim_style,
                 )),
                 Cell::from(Span::styled(
                     format_small_int(sa.image_pull_secrets_count as i64),
-                    Style::default().fg(theme.fg_dim),
+                    dim_style,
                 )),
                 Cell::from(Span::styled(automount_text, automount_style)),
                 Cell::from(Span::styled(age_text, theme.inactive_style())),

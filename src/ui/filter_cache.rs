@@ -5,11 +5,10 @@ use std::{
 
 use crate::app::AppView;
 
-const MAX_CACHE_ENTRIES: usize = 256;
+const MAX_CACHE_ENTRIES_PER_VIEW: usize = 96;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FilterCacheKey {
-    view: AppView,
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
@@ -61,7 +60,7 @@ impl FilterCache {
     }
 
     fn evict_if_needed(&mut self) {
-        while self.order.len() > MAX_CACHE_ENTRIES {
+        while self.order.len() > MAX_CACHE_ENTRIES_PER_VIEW {
             if let Some(oldest) = self.order.pop_front() {
                 self.map.remove(&oldest);
             }
@@ -77,8 +76,11 @@ impl FilterCache {
     }
 }
 
-static FILTER_CACHE: LazyLock<Mutex<FilterCache>> =
-    LazyLock::new(|| Mutex::new(FilterCache::default()));
+static FILTER_CACHE_SHARDS: LazyLock<Vec<Mutex<FilterCache>>> = LazyLock::new(|| {
+    (0..AppView::tabs().len())
+        .map(|_| Mutex::new(FilterCache::default()))
+        .collect()
+});
 
 pub(crate) fn cached_filter_indices<F>(
     view: AppView,
@@ -92,20 +94,20 @@ where
 {
     let query = query.trim();
     let key = FilterCacheKey {
-        view,
         query: query.to_string(),
         snapshot_version,
         data_fingerprint,
     };
+    let shard = &FILTER_CACHE_SHARDS[view.index()];
 
-    if let Ok(mut cache) = FILTER_CACHE.lock()
+    if let Ok(mut cache) = shard.lock()
         && let Some(hit) = cache.get(&key)
     {
         return hit;
     }
 
     let built = Arc::new(build(query));
-    if let Ok(mut cache) = FILTER_CACHE.lock() {
+    if let Ok(mut cache) = shard.lock() {
         cache.insert(key, built.clone());
     }
     built
@@ -118,8 +120,13 @@ pub(crate) fn data_fingerprint<T>(items: &[T]) -> u64 {
 }
 
 pub(crate) fn filter_cache_stats() -> FilterCacheStats {
-    FILTER_CACHE
-        .lock()
-        .map(|cache| cache.stats())
-        .unwrap_or_default()
+    FILTER_CACHE_SHARDS
+        .iter()
+        .filter_map(|shard| shard.lock().ok().map(|cache| cache.stats()))
+        .fold(FilterCacheStats::default(), |mut acc, stat| {
+            acc.hits = acc.hits.saturating_add(stat.hits);
+            acc.misses = acc.misses.saturating_add(stat.misses);
+            acc.entries = acc.entries.saturating_add(stat.entries);
+            acc
+        })
 }

@@ -20,6 +20,20 @@ use crate::{
         format_small_int, table_viewport_rows, table_window,
     },
 };
+use std::sync::{Arc, LazyLock, Mutex};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RoleBindingSubjectsCacheKey {
+    theme_index: u8,
+    snapshot_version: u64,
+    namespace: String,
+    name: String,
+}
+
+type RoleBindingSubjectsCacheValue = Arc<Vec<Line<'static>>>;
+static ROLE_BINDING_SUBJECTS_CACHE: LazyLock<
+    Mutex<Option<(RoleBindingSubjectsCacheKey, RoleBindingSubjectsCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
 
 pub fn render_role_bindings(
     frame: &mut Frame,
@@ -104,27 +118,26 @@ pub fn render_role_bindings(
         .map(|(local_idx, &rb_idx)| {
             let idx = window.start + local_idx;
             let rb = &cluster.role_bindings[rb_idx];
+            let name_style = Style::default().fg(theme.fg);
+            let dim_style = Style::default().fg(theme.fg_dim);
             let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", rb.name),
-                    Style::default().fg(theme.fg),
-                )),
-                Cell::from(Span::styled(
-                    rb.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
+                Cell::from(Line::from(vec![
+                    Span::styled("  ", name_style),
+                    Span::styled(rb.name.as_str(), name_style),
+                ])),
+                Cell::from(Span::styled(rb.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(
                     format!("{}/{}", rb.role_ref_kind, rb.role_ref_name),
                     Style::default().fg(theme.accent2),
                 )),
                 Cell::from(Span::styled(
                     format_small_int(rb.subjects.len() as i64),
-                    Style::default().fg(theme.fg_dim),
+                    dim_style,
                 )),
                 Cell::from(Span::styled(format_age(rb.age), theme.inactive_style())),
             ])
@@ -174,11 +187,47 @@ pub fn render_role_bindings(
     );
 
     let sel_item = &cluster.role_bindings[indices[selected]];
-    let detail = render_subjects(&sel_item.subjects, &theme);
+    let detail = cached_subject_lines(
+        crate::ui::theme::active_theme_index(),
+        cluster.snapshot_version,
+        &sel_item.namespace,
+        &sel_item.name,
+        &sel_item.subjects,
+        &theme,
+    );
     frame.render_widget(
-        Paragraph::new(detail).block(active_block("Selected Binding Subjects")),
+        Paragraph::new((*detail).clone()).block(active_block("Selected Binding Subjects")),
         chunks[1],
     );
+}
+
+fn cached_subject_lines(
+    theme_index: u8,
+    snapshot_version: u64,
+    namespace: &str,
+    name: &str,
+    subjects: &[RoleBindingSubject],
+    theme: &crate::ui::theme::Theme,
+) -> RoleBindingSubjectsCacheValue {
+    let key = RoleBindingSubjectsCacheKey {
+        theme_index,
+        snapshot_version,
+        namespace: namespace.to_string(),
+        name: name.to_string(),
+    };
+
+    if let Ok(cache) = ROLE_BINDING_SUBJECTS_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(render_subjects(subjects, theme));
+    if let Ok(mut cache) = ROLE_BINDING_SUBJECTS_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+    built
 }
 
 fn render_subjects(

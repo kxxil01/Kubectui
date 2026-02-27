@@ -20,6 +20,19 @@ use crate::{
         format_small_int, table_viewport_rows, table_window,
     },
 };
+use std::sync::{Arc, LazyLock, Mutex};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClusterRoleRulesCacheKey {
+    theme_index: u8,
+    snapshot_version: u64,
+    name: String,
+}
+
+type ClusterRoleRulesCacheValue = Arc<Vec<Line<'static>>>;
+static CLUSTER_ROLE_RULES_CACHE: LazyLock<
+    Mutex<Option<(ClusterRoleRulesCacheKey, ClusterRoleRulesCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
 
 pub fn render_cluster_roles(
     frame: &mut Frame,
@@ -94,16 +107,17 @@ pub fn render_cluster_roles(
         .map(|(local_idx, &role_idx)| {
             let idx = window.start + local_idx;
             let role = &cluster.cluster_roles[role_idx];
+            let name_style = Style::default().fg(theme.fg);
             let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", role.name),
-                    Style::default().fg(theme.fg),
-                )),
+                Cell::from(Line::from(vec![
+                    Span::styled("  ", name_style),
+                    Span::styled(role.name.as_str(), name_style),
+                ])),
                 Cell::from(Span::styled(
                     format_small_int(role.rules.len() as i64),
                     Style::default().fg(theme.accent2),
@@ -154,11 +168,44 @@ pub fn render_cluster_roles(
     );
 
     let sel_item = &cluster.cluster_roles[indices[selected]];
-    let detail = render_rule_tree(&sel_item.rules, &theme);
+    let detail = cached_rule_lines(
+        crate::ui::theme::active_theme_index(),
+        cluster.snapshot_version,
+        &sel_item.name,
+        &sel_item.rules,
+        &theme,
+    );
     frame.render_widget(
-        Paragraph::new(detail).block(active_block("Selected ClusterRole Rules")),
+        Paragraph::new((*detail).clone()).block(active_block("Selected ClusterRole Rules")),
         chunks[1],
     );
+}
+
+fn cached_rule_lines(
+    theme_index: u8,
+    snapshot_version: u64,
+    name: &str,
+    rules: &[RbacRule],
+    theme: &crate::ui::theme::Theme,
+) -> ClusterRoleRulesCacheValue {
+    let key = ClusterRoleRulesCacheKey {
+        theme_index,
+        snapshot_version,
+        name: name.to_string(),
+    };
+
+    if let Ok(cache) = CLUSTER_ROLE_RULES_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(render_rule_tree(rules, theme));
+    if let Ok(mut cache) = CLUSTER_ROLE_RULES_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+    built
 }
 
 fn render_rule_tree(rules: &[RbacRule], theme: &crate::ui::theme::Theme) -> Vec<Line<'static>> {

@@ -385,7 +385,7 @@ impl AppView {
         }
     }
 
-    fn index(self) -> usize {
+    pub(crate) fn index(self) -> usize {
         Self::ORDER
             .iter()
             .position(|view| *view == self)

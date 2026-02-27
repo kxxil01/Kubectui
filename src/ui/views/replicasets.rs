@@ -8,7 +8,7 @@ use std::{
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
-    text::Span,
+    text::{Line, Span},
     widgets::{
         Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         Table, TableState,
@@ -133,7 +133,10 @@ pub fn render_replicasets(
 
         rows.push(
             Row::new(vec![
-                Cell::from(Span::styled(format!("  {}", rs.name), name_style)),
+                Cell::from(Line::from(vec![
+                    Span::styled("  ", name_style),
+                    Span::styled(rs.name.as_str(), name_style),
+                ])),
                 Cell::from(Span::styled(rs.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(
                     format_small_int(i64::from(rs.desired)),

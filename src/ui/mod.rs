@@ -9,7 +9,7 @@ pub mod views;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     prelude::Frame,
-    text::Span,
+    text::{Line, Span},
     widgets::{
         Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         Table, TableState,
@@ -686,7 +686,10 @@ fn render_pods_widget(
 
         rows.push(
             Row::new(vec![
-                Cell::from(Span::styled(format!("  {}", pod.name), name_style)),
+                Cell::from(Line::from(vec![
+                    Span::styled("  ", name_style),
+                    Span::styled(pod.name.as_str(), name_style),
+                ])),
                 Cell::from(Span::styled(pod.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(status, status_style)),
                 Cell::from(Span::styled(
