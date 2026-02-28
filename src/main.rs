@@ -1701,6 +1701,7 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
         | AppView::FluxCDAll
         | AppView::FluxCDArtifacts
         | AppView::FluxCDHelmReleases
+        | AppView::FluxCDHelmRepositories
         | AppView::FluxCDImages
         | AppView::FluxCDKustomizations
         | AppView::FluxCDReceivers

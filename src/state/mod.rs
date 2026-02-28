@@ -511,6 +511,19 @@ impl GlobalState {
         }
     }
 
+    fn filter_namespace<T, F>(items: Vec<T>, namespace: Option<&str>, namespace_of: F) -> Vec<T>
+    where
+        F: Fn(&T) -> &str,
+    {
+        match namespace {
+            Some(ns) => items
+                .into_iter()
+                .filter(|item| namespace_of(item) == ns)
+                .collect(),
+            None => items,
+        }
+    }
+
     /// Refreshes core resources in parallel, updating status and timestamps.
     ///
     /// Production hardening behavior:
@@ -834,11 +847,15 @@ impl GlobalState {
             "priorityclasses",
             &mut errors,
         );
-        let helm_releases = Self::keep_prev_vec_on_error(
-            helm_releases_res,
-            &self.snapshot.helm_releases,
-            "helmreleases",
-            &mut errors,
+        let helm_releases = Self::filter_namespace(
+            Self::keep_prev_vec_on_error(
+                helm_releases_res,
+                &self.snapshot.helm_releases,
+                "helmreleases",
+                &mut errors,
+            ),
+            namespace,
+            |release| release.namespace.as_str(),
         );
         let flux_resources = Self::keep_prev_vec_on_error(
             flux_resources_res,
@@ -975,6 +992,8 @@ mod tests {
         cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
         custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
         flux_resources: Vec<FluxResourceInfo>,
+        helm_releases: Vec<HelmReleaseInfo>,
+        helm_releases_ignore_namespace: bool,
         cluster_info: Option<ClusterInfo>,
         nodes_err: Option<String>,
         pods_err: Option<String>,
@@ -1119,6 +1138,23 @@ mod tests {
                     instances: 1,
                 }],
                 flux_resources: vec![],
+                helm_releases: vec![
+                    HelmReleaseInfo {
+                        name: "api".to_string(),
+                        namespace: "default".to_string(),
+                        status: "deployed".to_string(),
+                        chart: "api".to_string(),
+                        ..HelmReleaseInfo::default()
+                    },
+                    HelmReleaseInfo {
+                        name: "api".to_string(),
+                        namespace: "demo".to_string(),
+                        status: "deployed".to_string(),
+                        chart: "api".to_string(),
+                        ..HelmReleaseInfo::default()
+                    },
+                ],
+                helm_releases_ignore_namespace: false,
                 cluster_info: Some(ClusterInfo {
                     server: "https://kind.local".to_string(),
                     node_count: 1,
@@ -1449,9 +1485,16 @@ mod tests {
         }
         async fn fetch_helm_releases(
             &self,
-            _namespace: Option<&str>,
+            namespace: Option<&str>,
         ) -> Result<Vec<HelmReleaseInfo>> {
-            Ok(vec![])
+            if self.helm_releases_ignore_namespace {
+                return Ok(self.helm_releases.clone());
+            }
+            Ok(Self::filter_namespace(
+                &self.helm_releases,
+                namespace,
+                |release| &release.namespace,
+            ))
         }
         async fn fetch_flux_resources(
             &self,
@@ -1533,7 +1576,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn refresh_filters_namespaced_resources_for_selected_namespace() {
+    async fn refresh_scopes_helm_and_flux_to_selected_namespace() {
         let mut state = GlobalState::default();
         let source = MockDataSource {
             flux_resources: vec![
@@ -1607,9 +1650,28 @@ mod tests {
             snapshot.flux_resources[0].namespace.as_deref(),
             Some("demo")
         );
+        assert_eq!(snapshot.helm_releases.len(), 1);
+        assert_eq!(snapshot.helm_releases[0].namespace, "demo");
         // Cluster-scoped resources remain unaffected by namespace scope.
         assert_eq!(snapshot.nodes.len(), 1);
         assert_eq!(snapshot.cluster_roles.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn refresh_enforces_helm_namespace_scope_when_source_returns_all_releases() {
+        let mut state = GlobalState::default();
+        let mut source = MockDataSource::success();
+        source.helm_releases_ignore_namespace = true;
+
+        state
+            .refresh(&source, Some("demo"))
+            .await
+            .expect("refresh should succeed");
+        let snapshot = state.snapshot();
+
+        assert_eq!(snapshot.phase, DataPhase::Ready);
+        assert_eq!(snapshot.helm_releases.len(), 1);
+        assert!(snapshot.helm_releases.iter().all(|r| r.namespace == "demo"));
     }
 
     #[tokio::test]
@@ -1803,6 +1865,8 @@ mod tests {
             cluster_role_bindings: vec![],
             custom_resource_definitions: vec![],
             flux_resources: vec![],
+            helm_releases: vec![],
+            helm_releases_ignore_namespace: false,
             cluster_info: None,
             nodes_err: Some("nodes down".to_string()),
             pods_err: Some("pods down".to_string()),

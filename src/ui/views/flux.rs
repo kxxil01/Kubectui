@@ -37,6 +37,7 @@ enum FluxMode {
     All,
     Artifacts,
     HelmReleases,
+    HelmRepositories,
     Images,
     Kustomizations,
     Receivers,
@@ -51,6 +52,7 @@ impl FluxMode {
             AppView::FluxCDAll => Some(Self::All),
             AppView::FluxCDArtifacts => Some(Self::Artifacts),
             AppView::FluxCDHelmReleases => Some(Self::HelmReleases),
+            AppView::FluxCDHelmRepositories => Some(Self::HelmRepositories),
             AppView::FluxCDImages => Some(Self::Images),
             AppView::FluxCDKustomizations => Some(Self::Kustomizations),
             AppView::FluxCDReceivers => Some(Self::Receivers),
@@ -66,6 +68,7 @@ impl FluxMode {
             Self::All => "All",
             Self::Artifacts => "Artifacts",
             Self::HelmReleases => "HelmReleases",
+            Self::HelmRepositories => "HelmRepositories",
             Self::Images => "Images",
             Self::Kustomizations => "Kustomizations",
             Self::Receivers => "Receivers",
@@ -80,6 +83,7 @@ impl FluxMode {
             Self::All => "  Loading FluxCD resources...",
             Self::Artifacts => "  Loading FluxCD artifacts...",
             Self::HelmReleases => "  Loading FluxCD helmreleases...",
+            Self::HelmRepositories => "  Loading FluxCD helmrepositories...",
             Self::Images => "  Loading FluxCD image resources...",
             Self::Kustomizations => "  Loading FluxCD kustomizations...",
             Self::Receivers => "  Loading FluxCD receivers...",
@@ -94,6 +98,7 @@ impl FluxMode {
             Self::All => "  No FluxCD resources found",
             Self::Artifacts => "  No FluxCD artifacts found",
             Self::HelmReleases => "  No FluxCD helmreleases found",
+            Self::HelmRepositories => "  No FluxCD helmrepositories found",
             Self::Images => "  No FluxCD image resources found",
             Self::Kustomizations => "  No FluxCD kustomizations found",
             Self::Receivers => "  No FluxCD receivers found",
@@ -119,6 +124,7 @@ struct FluxFormattedRow {
     age: String,
     message: String,
     artifact: String,
+    source_url: String,
 }
 
 #[derive(Debug, Default)]
@@ -232,6 +238,7 @@ fn cached_formatted_rows(
                 age: format_age_from_created(resource.created_at, now_unix),
                 message: truncate_message(resource.message.as_deref().unwrap_or("-"), 56),
                 artifact: truncate_message(resource.artifact.as_deref().unwrap_or("-"), 56),
+                source_url: truncate_message(resource.source_url.as_deref().unwrap_or("-"), 56),
             })
             .collect::<Vec<_>>(),
     );
@@ -292,10 +299,10 @@ pub fn render_flux_resources(
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
     let formatted_rows = cached_formatted_rows(view, cluster, Utc::now().timestamp());
-    let detail_col_name = if mode == FluxMode::Artifacts {
-        "Artifact"
-    } else {
-        "Message"
+    let detail_col_name = match mode {
+        FluxMode::Artifacts => "Artifact",
+        FluxMode::HelmRepositories => "URL",
+        _ => "Message",
     };
 
     let header = Row::new([
@@ -315,10 +322,10 @@ pub fn render_flux_resources(
         .map(|(local_idx, &resource_idx)| {
             let idx = window.start + local_idx;
             let resource = &formatted_rows[resource_idx];
-            let detail = if mode == FluxMode::Artifacts {
-                resource.artifact.as_str()
-            } else {
-                resource.message.as_str()
+            let detail = match mode {
+                FluxMode::Artifacts => resource.artifact.as_str(),
+                FluxMode::HelmRepositories => resource.source_url.as_str(),
+                _ => resource.message.as_str(),
             };
             let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
@@ -407,6 +414,9 @@ fn resource_matches_mode(mode: FluxMode, resource: &FluxResourceInfo) -> bool {
         FluxMode::HelmReleases => {
             resource.group == "helm.toolkit.fluxcd.io" && resource.kind == "HelmRelease"
         }
+        FluxMode::HelmRepositories => {
+            resource.group == "source.toolkit.fluxcd.io" && resource.kind == "HelmRepository"
+        }
         FluxMode::Images => resource.group == "image.toolkit.fluxcd.io",
         FluxMode::Kustomizations => {
             resource.group == "kustomize.toolkit.fluxcd.io" && resource.kind == "Kustomization"
@@ -428,6 +438,7 @@ fn resource_matches_query(resource: &FluxResourceInfo, query: &str) -> bool {
         || contains_ci(&resource.status, query)
         || contains_ci(resource.message.as_deref().unwrap_or_default(), query)
         || contains_ci(resource.artifact.as_deref().unwrap_or_default(), query)
+        || contains_ci(resource.source_url.as_deref().unwrap_or_default(), query)
 }
 
 fn status_style(status: &str, theme: &crate::ui::theme::Theme) -> Style {
@@ -476,6 +487,7 @@ fn format_age_from_created(created_at: Option<DateTime<Utc>>, now_unix: i64) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::k8s::dtos::FluxResourceInfo;
     use crate::ui::theme::Theme;
 
     #[test]
@@ -484,5 +496,108 @@ mod tests {
         assert_eq!(status_style("Ready", &theme).fg, Some(theme.success));
         assert_eq!(status_style("NotReady", &theme).fg, Some(theme.error));
         assert_eq!(status_style("Suspended", &theme).fg, Some(theme.warning));
+    }
+
+    #[test]
+    fn from_view_maps_helm_repositories() {
+        assert_eq!(
+            FluxMode::from_view(AppView::FluxCDHelmRepositories),
+            Some(FluxMode::HelmRepositories)
+        );
+    }
+
+    #[test]
+    fn helm_repositories_mode_matches_only_helm_repository_kind() {
+        let mut repo = FluxResourceInfo::default();
+        repo.group = "source.toolkit.fluxcd.io".to_string();
+        repo.kind = "HelmRepository".to_string();
+        assert!(resource_matches_mode(FluxMode::HelmRepositories, &repo));
+
+        let mut release = FluxResourceInfo::default();
+        release.group = "helm.toolkit.fluxcd.io".to_string();
+        release.kind = "HelmRelease".to_string();
+        assert!(!resource_matches_mode(FluxMode::HelmRepositories, &release));
+    }
+
+    #[test]
+    fn resource_query_matches_source_url() {
+        let resource = FluxResourceInfo {
+            source_url: Some("https://charts.example.com".to_string()),
+            ..FluxResourceInfo::default()
+        };
+        assert!(resource_matches_query(&resource, "charts.example.com"));
+    }
+
+    #[test]
+    fn flux_helm_view_filters_by_kind() {
+        let snapshot = ClusterSnapshot {
+            snapshot_version: 1,
+            flux_resources: vec![
+                FluxResourceInfo {
+                    name: "hr-default".to_string(),
+                    namespace: Some("default".to_string()),
+                    group: "helm.toolkit.fluxcd.io".to_string(),
+                    kind: "HelmRelease".to_string(),
+                    ..FluxResourceInfo::default()
+                },
+                FluxResourceInfo {
+                    name: "hr-demo".to_string(),
+                    namespace: Some("demo".to_string()),
+                    group: "helm.toolkit.fluxcd.io".to_string(),
+                    kind: "HelmRelease".to_string(),
+                    ..FluxResourceInfo::default()
+                },
+                FluxResourceInfo {
+                    name: "ks-demo".to_string(),
+                    namespace: Some("demo".to_string()),
+                    group: "kustomize.toolkit.fluxcd.io".to_string(),
+                    kind: "Kustomization".to_string(),
+                    ..FluxResourceInfo::default()
+                },
+            ],
+            ..ClusterSnapshot::default()
+        };
+
+        let filtered = filtered_flux_indices_for_view(AppView::FluxCDHelmReleases, &snapshot, "");
+        assert_eq!(filtered.len(), 2);
+        assert!(
+            filtered
+                .iter()
+                .all(|idx| snapshot.flux_resources[*idx].kind == "HelmRelease")
+        );
+    }
+
+    #[test]
+    fn flux_kustomizations_view_filters_by_kind() {
+        let snapshot = ClusterSnapshot {
+            snapshot_version: 1,
+            flux_resources: vec![
+                FluxResourceInfo {
+                    name: "ks-default".to_string(),
+                    namespace: Some("default".to_string()),
+                    group: "kustomize.toolkit.fluxcd.io".to_string(),
+                    kind: "Kustomization".to_string(),
+                    ..FluxResourceInfo::default()
+                },
+                FluxResourceInfo {
+                    name: "ks-demo".to_string(),
+                    namespace: Some("demo".to_string()),
+                    group: "kustomize.toolkit.fluxcd.io".to_string(),
+                    kind: "Kustomization".to_string(),
+                    ..FluxResourceInfo::default()
+                },
+                FluxResourceInfo {
+                    name: "hr-default".to_string(),
+                    namespace: Some("default".to_string()),
+                    group: "helm.toolkit.fluxcd.io".to_string(),
+                    kind: "HelmRelease".to_string(),
+                    ..FluxResourceInfo::default()
+                },
+            ],
+            ..ClusterSnapshot::default()
+        };
+
+        let filtered = filtered_flux_indices_for_view(AppView::FluxCDKustomizations, &snapshot, "");
+        assert_eq!(filtered.len(), 2);
     }
 }

@@ -665,6 +665,7 @@ pub struct FluxResourceInfo {
     pub group: String,
     pub version: String,
     pub plural: String,
+    pub source_url: Option<String>,
     pub status: String,
     pub message: Option<String>,
     pub artifact: Option<String>,

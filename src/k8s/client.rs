@@ -2548,6 +2548,17 @@ fn flux_artifact_details(data: &serde_json::Value) -> Option<String> {
         .map(ToString::to_string)
 }
 
+fn flux_source_url(data: &serde_json::Value) -> Option<String> {
+    data.pointer("/spec/url")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            data.pointer("/spec/endpoint")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+        })
+}
+
 impl K8sClient {
     /// Fetches Helm releases by reading Helm-managed Secrets (owner=helm, type=helm.sh/release.v1).
     /// Decodes the release metadata from the secret's labels without requiring the Helm CLI.
@@ -2769,6 +2780,7 @@ impl K8sClient {
                 .unwrap_or(false);
             let (ready, message) = flux_ready_details(&item.data);
             let artifact = flux_artifact_details(&item.data);
+            let source_url = flux_source_url(&item.data);
             let status = if suspended {
                 "Suspended".to_string()
             } else {
@@ -2788,6 +2800,7 @@ impl K8sClient {
                 group: spec.group.to_string(),
                 version: version.to_string(),
                 plural: spec.plural.to_string(),
+                source_url,
                 status,
                 message,
                 artifact,

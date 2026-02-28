@@ -326,6 +326,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             | AppView::FluxCDAll
             | AppView::FluxCDArtifacts
             | AppView::FluxCDHelmReleases
+            | AppView::FluxCDHelmRepositories
             | AppView::FluxCDImages
             | AppView::FluxCDKustomizations
             | AppView::FluxCDReceivers

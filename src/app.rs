@@ -131,6 +131,7 @@ pub enum AppView {
     FluxCDAll,
     FluxCDArtifacts,
     FluxCDHelmReleases,
+    FluxCDHelmRepositories,
     FluxCDImages,
     FluxCDKustomizations,
     FluxCDReceivers,
@@ -146,7 +147,7 @@ pub enum AppView {
 }
 
 impl AppView {
-    const ORDER: [AppView; 45] = [
+    const ORDER: [AppView; 46] = [
         // Overview
         AppView::Dashboard,
         AppView::Nodes,
@@ -189,6 +190,7 @@ impl AppView {
         AppView::FluxCDAll,
         AppView::FluxCDArtifacts,
         AppView::FluxCDHelmReleases,
+        AppView::FluxCDHelmRepositories,
         AppView::FluxCDImages,
         AppView::FluxCDKustomizations,
         AppView::FluxCDReceivers,
@@ -241,6 +243,7 @@ impl AppView {
             AppView::FluxCDAll => "All",
             AppView::FluxCDArtifacts => "Artifacts",
             AppView::FluxCDHelmReleases => "HelmReleases",
+            AppView::FluxCDHelmRepositories => "HelmRepositories",
             AppView::FluxCDImages => "Images",
             AppView::FluxCDKustomizations => "Kustomizations",
             AppView::FluxCDReceivers => "Receivers",
@@ -292,6 +295,7 @@ impl AppView {
             AppView::FluxCDAll => "󰠳",
             AppView::FluxCDArtifacts => "󰏗",
             AppView::FluxCDHelmReleases => "󰱥",
+            AppView::FluxCDHelmRepositories => "󰱥",
             AppView::FluxCDImages => "󰄾",
             AppView::FluxCDKustomizations => "󰆧",
             AppView::FluxCDReceivers => "󰜗",
@@ -343,6 +347,7 @@ impl AppView {
             AppView::FluxCDAll => "  󰠳 All",
             AppView::FluxCDArtifacts => "  󰏗 Artifacts",
             AppView::FluxCDHelmReleases => "  󰱥 HelmReleases",
+            AppView::FluxCDHelmRepositories => "  󰱥 HelmRepositories",
             AppView::FluxCDImages => "  󰄾 Images",
             AppView::FluxCDKustomizations => "  󰆧 Kustomizations",
             AppView::FluxCDReceivers => "  󰜗 Receivers",
@@ -394,6 +399,7 @@ impl AppView {
             AppView::FluxCDAll => "view.fluxcd.all",
             AppView::FluxCDArtifacts => "view.fluxcd.artifacts",
             AppView::FluxCDHelmReleases => "view.fluxcd.helm_releases",
+            AppView::FluxCDHelmRepositories => "view.fluxcd.helm_repositories",
             AppView::FluxCDImages => "view.fluxcd.images",
             AppView::FluxCDKustomizations => "view.fluxcd.kustomizations",
             AppView::FluxCDReceivers => "view.fluxcd.receivers",
@@ -442,6 +448,7 @@ impl AppView {
             | AppView::FluxCDAll
             | AppView::FluxCDArtifacts
             | AppView::FluxCDHelmReleases
+            | AppView::FluxCDHelmRepositories
             | AppView::FluxCDImages
             | AppView::FluxCDKustomizations
             | AppView::FluxCDReceivers
@@ -463,6 +470,7 @@ impl AppView {
                 | AppView::FluxCDAll
                 | AppView::FluxCDArtifacts
                 | AppView::FluxCDHelmReleases
+                | AppView::FluxCDHelmRepositories
                 | AppView::FluxCDImages
                 | AppView::FluxCDKustomizations
                 | AppView::FluxCDReceivers
@@ -496,7 +504,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 45] {
+    pub const fn tabs() -> &'static [AppView; 46] {
         &Self::ORDER
     }
 }
@@ -1009,6 +1017,7 @@ const SIDEBAR_GROUPS: &[(NavGroup, &[AppView])] = &[
             AppView::FluxCDAll,
             AppView::FluxCDArtifacts,
             AppView::FluxCDHelmReleases,
+            AppView::FluxCDHelmRepositories,
             AppView::FluxCDImages,
             AppView::FluxCDKustomizations,
             AppView::FluxCDReceivers,
@@ -2191,6 +2200,7 @@ mod tests {
             AppView::FluxCDAll,
             AppView::FluxCDArtifacts,
             AppView::FluxCDHelmReleases,
+            AppView::FluxCDHelmRepositories,
             AppView::FluxCDImages,
             AppView::FluxCDKustomizations,
             AppView::FluxCDReceivers,

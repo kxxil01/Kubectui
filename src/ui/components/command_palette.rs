@@ -123,6 +123,15 @@ const COMMANDS: &[Command] = &[
         aliases: &["flux helmreleases", "flux hr", "helmreleases"],
     },
     Command {
+        view: AppView::FluxCDHelmRepositories,
+        aliases: &[
+            "flux helmrepositories",
+            "flux helmrepository",
+            "helmrepositories",
+            "helmrepository",
+        ],
+    },
+    Command {
         view: AppView::FluxCDImages,
         aliases: &["flux images", "images"],
     },
