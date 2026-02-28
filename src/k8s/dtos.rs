@@ -667,6 +667,7 @@ pub struct FluxResourceInfo {
     pub plural: String,
     pub status: String,
     pub message: Option<String>,
+    pub artifact: Option<String>,
     pub suspended: bool,
     pub created_at: Option<DateTime<Utc>>,
     pub age: Option<Duration>,

@@ -861,7 +861,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 };
                 if app.detail_view.is_none() && backoff_secs == 0 {
                     auto_refresh_count = auto_refresh_count.wrapping_add(1);
-                    let include_flux = app.view() == AppView::Flux
+                    let include_flux = app.view().is_fluxcd()
                         || auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY);
                     request_refresh(
                         &refresh_tx,
@@ -1696,21 +1696,29 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
             contains_ci(&r.name, q) || contains_ci(&r.namespace, q) || contains_ci(&r.chart, q)
         })
         .map(|r| ResourceRef::HelmRelease(r.name.clone(), r.namespace.clone())),
-        AppView::Flux => filtered_get(&snapshot.flux_resources, idx, q, |r, q| {
-            contains_ci(&r.name, q)
-                || contains_ci(r.namespace.as_deref().unwrap_or_default(), q)
-                || contains_ci(&r.kind, q)
-                || contains_ci(&r.status, q)
-                || contains_ci(r.message.as_deref().unwrap_or_default(), q)
-        })
-        .map(|r| ResourceRef::CustomResource {
-            name: r.name.clone(),
-            namespace: r.namespace.clone(),
-            group: r.group.clone(),
-            version: r.version.clone(),
-            kind: r.kind.clone(),
-            plural: r.plural.clone(),
-        }),
+        AppView::FluxCDAlertProviders
+        | AppView::FluxCDAlerts
+        | AppView::FluxCDAll
+        | AppView::FluxCDArtifacts
+        | AppView::FluxCDHelmReleases
+        | AppView::FluxCDImages
+        | AppView::FluxCDKustomizations
+        | AppView::FluxCDReceivers
+        | AppView::FluxCDSources => {
+            let filtered =
+                kubectui::ui::views::flux::filtered_flux_indices_for_view(app.view(), snapshot, q);
+            filtered
+                .get(idx)
+                .and_then(|resource_idx| snapshot.flux_resources.get(*resource_idx))
+                .map(|r| ResourceRef::CustomResource {
+                    name: r.name.clone(),
+                    namespace: r.namespace.clone(),
+                    group: r.group.clone(),
+                    version: r.version.clone(),
+                    kind: r.kind.clone(),
+                    plural: r.plural.clone(),
+                })
+        }
     }
 }
 

@@ -2429,6 +2429,55 @@ const FLUX_RESOURCE_KIND_SPECS: &[FluxResourceKindSpec] = &[
         versions: &["v1", "v1beta2", "v1beta1"],
         namespaced: true,
     },
+    FluxResourceKindSpec {
+        kind: "HelmChart",
+        group: "source.toolkit.fluxcd.io",
+        plural: "helmcharts",
+        versions: &["v1", "v1beta2", "v1beta1"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "AlertProvider",
+        group: "notification.toolkit.fluxcd.io",
+        plural: "alertproviders",
+        versions: &["v1beta3", "v1beta2", "v1beta1"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "Alert",
+        group: "notification.toolkit.fluxcd.io",
+        plural: "alerts",
+        versions: &["v1beta3", "v1beta2", "v1beta1"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "Receiver",
+        group: "notification.toolkit.fluxcd.io",
+        plural: "receivers",
+        versions: &["v1", "v1beta3", "v1beta2", "v1beta1"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "ImageRepository",
+        group: "image.toolkit.fluxcd.io",
+        plural: "imagerepositories",
+        versions: &["v1beta2", "v1beta1"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "ImagePolicy",
+        group: "image.toolkit.fluxcd.io",
+        plural: "imagepolicies",
+        versions: &["v1beta2", "v1beta1"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "ImageUpdateAutomation",
+        group: "image.toolkit.fluxcd.io",
+        plural: "imageupdateautomations",
+        versions: &["v1beta2", "v1beta1"],
+        namespaced: true,
+    },
 ];
 
 fn is_missing_api_error(err: &kube::Error) -> bool {
@@ -2477,6 +2526,26 @@ fn flux_ready_details(data: &serde_json::Value) -> (Option<bool>, Option<String>
         });
 
     (ready, message)
+}
+
+fn flux_artifact_details(data: &serde_json::Value) -> Option<String> {
+    let revision = data
+        .pointer("/status/artifact/revision")
+        .and_then(|value| value.as_str());
+    let digest = data
+        .pointer("/status/artifact/digest")
+        .and_then(|value| value.as_str());
+
+    if let Some(revision) = revision {
+        if let Some(digest) = digest {
+            return Some(format!("{revision} ({digest})"));
+        }
+        return Some(revision.to_string());
+    }
+
+    data.pointer("/status/artifact/url")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
 }
 
 impl K8sClient {
@@ -2699,6 +2768,7 @@ impl K8sClient {
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
             let (ready, message) = flux_ready_details(&item.data);
+            let artifact = flux_artifact_details(&item.data);
             let status = if suspended {
                 "Suspended".to_string()
             } else {
@@ -2720,6 +2790,7 @@ impl K8sClient {
                 plural: spec.plural.to_string(),
                 status,
                 message,
+                artifact,
                 suspended,
                 created_at,
                 age: created_at.and_then(|ts| (now - ts).to_std().ok()),

@@ -99,8 +99,44 @@ const COMMANDS: &[Command] = &[
         aliases: &["portforwarding", "portforward", "pf", "tunnel", "tunnels"],
     },
     Command {
-        view: AppView::Flux,
-        aliases: &["flux", "kustomization", "kustomizations", "gitops"],
+        view: AppView::FluxCDAll,
+        aliases: &["flux", "fluxcd", "gitops", "flux all", "flux get all"],
+    },
+    Command {
+        view: AppView::FluxCDAlertProviders,
+        aliases: &[
+            "flux alert-providers",
+            "flux alertproviders",
+            "alert-providers",
+        ],
+    },
+    Command {
+        view: AppView::FluxCDAlerts,
+        aliases: &["flux alerts", "alerts"],
+    },
+    Command {
+        view: AppView::FluxCDArtifacts,
+        aliases: &["flux artifacts", "artifacts"],
+    },
+    Command {
+        view: AppView::FluxCDHelmReleases,
+        aliases: &["flux helmreleases", "flux hr", "helmreleases"],
+    },
+    Command {
+        view: AppView::FluxCDImages,
+        aliases: &["flux images", "images"],
+    },
+    Command {
+        view: AppView::FluxCDKustomizations,
+        aliases: &["flux kustomizations", "kustomizations", "ks"],
+    },
+    Command {
+        view: AppView::FluxCDReceivers,
+        aliases: &["flux receivers", "receivers"],
+    },
+    Command {
+        view: AppView::FluxCDSources,
+        aliases: &["flux sources", "sources"],
     },
     Command {
         view: AppView::Extensions,

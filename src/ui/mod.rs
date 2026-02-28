@@ -321,12 +321,21 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
             ),
-            AppView::Flux => views::flux::render_flux_resources(
+            AppView::FluxCDAlertProviders
+            | AppView::FluxCDAlerts
+            | AppView::FluxCDAll
+            | AppView::FluxCDArtifacts
+            | AppView::FluxCDHelmReleases
+            | AppView::FluxCDImages
+            | AppView::FluxCDKustomizations
+            | AppView::FluxCDReceivers
+            | AppView::FluxCDSources => views::flux::render_flux_resources(
                 frame,
                 content,
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.view(),
             ),
             AppView::Endpoints => views::endpoints::render_endpoints(
                 frame,
@@ -1394,20 +1403,21 @@ mod tests {
         draw(&app, &ClusterSnapshot::default());
     }
 
-    /// Verifies Flux view renders without panic.
+    /// Verifies FluxCD "all" view renders without panic.
     #[test]
-    fn render_flux_view_smoke() {
+    fn render_fluxcd_all_view_smoke() {
         let mut snapshot = ClusterSnapshot::default();
         snapshot.flux_resources.push(FluxResourceInfo {
             name: "apps".to_string(),
             namespace: Some("flux-system".to_string()),
             kind: "Kustomization".to_string(),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
             status: "Ready".to_string(),
             message: Some("Applied revision main@sha1:abc123".to_string()),
             ..FluxResourceInfo::default()
         });
 
-        let app = app_with_view(AppView::Flux);
+        let app = app_with_view(AppView::FluxCDAll);
         draw(&app, &snapshot);
     }
 

@@ -26,6 +26,7 @@ pub enum NavGroup {
     Config,
     Storage,
     Helm,
+    FluxCD,
     AccessControl,
     CustomResources,
 }
@@ -39,6 +40,7 @@ impl NavGroup {
             NavGroup::Config => "Config",
             NavGroup::Storage => "Storage",
             NavGroup::Helm => "Helm",
+            NavGroup::FluxCD => "FluxCD",
             NavGroup::AccessControl => "Access Control",
             NavGroup::CustomResources => "Custom Resources",
         }
@@ -52,6 +54,7 @@ impl NavGroup {
             NavGroup::Config => "�",
             NavGroup::Storage => "󰋊",
             NavGroup::Helm => "󰱥",
+            NavGroup::FluxCD => "󰠳",
             NavGroup::AccessControl => "󰒃",
             NavGroup::CustomResources => "󰏗",
         }
@@ -72,6 +75,8 @@ impl NavGroup {
             (NavGroup::Storage, true) => " ▶ 󰋊 Storage",
             (NavGroup::Helm, false) => " ▼ 󰱥 Helm",
             (NavGroup::Helm, true) => " ▶ 󰱥 Helm",
+            (NavGroup::FluxCD, false) => " ▼ 󰠳 FluxCD",
+            (NavGroup::FluxCD, true) => " ▶ 󰠳 FluxCD",
             (NavGroup::AccessControl, false) => " ▼ 󰒃 Access Control",
             (NavGroup::AccessControl, true) => " ▶ 󰒃 Access Control",
             (NavGroup::CustomResources, false) => " ▼ 󰏗 Custom Resources",
@@ -120,7 +125,16 @@ pub enum AppView {
     // Helm
     HelmCharts,
     HelmReleases,
-    Flux,
+    // FluxCD
+    FluxCDAlertProviders,
+    FluxCDAlerts,
+    FluxCDAll,
+    FluxCDArtifacts,
+    FluxCDHelmReleases,
+    FluxCDImages,
+    FluxCDKustomizations,
+    FluxCDReceivers,
+    FluxCDSources,
     // Access Control
     ServiceAccounts,
     ClusterRoles,
@@ -132,7 +146,7 @@ pub enum AppView {
 }
 
 impl AppView {
-    const ORDER: [AppView; 37] = [
+    const ORDER: [AppView; 45] = [
         // Overview
         AppView::Dashboard,
         AppView::Nodes,
@@ -169,7 +183,16 @@ impl AppView {
         // Helm
         AppView::HelmCharts,
         AppView::HelmReleases,
-        AppView::Flux,
+        // FluxCD
+        AppView::FluxCDAlertProviders,
+        AppView::FluxCDAlerts,
+        AppView::FluxCDAll,
+        AppView::FluxCDArtifacts,
+        AppView::FluxCDHelmReleases,
+        AppView::FluxCDImages,
+        AppView::FluxCDKustomizations,
+        AppView::FluxCDReceivers,
+        AppView::FluxCDSources,
         // Access Control
         AppView::ServiceAccounts,
         AppView::ClusterRoles,
@@ -213,7 +236,15 @@ impl AppView {
             AppView::Events => "Events",
             AppView::HelmCharts => "Repositories",
             AppView::HelmReleases => "Releases",
-            AppView::Flux => "Flux",
+            AppView::FluxCDAlertProviders => "Alert Providers",
+            AppView::FluxCDAlerts => "Alerts",
+            AppView::FluxCDAll => "All",
+            AppView::FluxCDArtifacts => "Artifacts",
+            AppView::FluxCDHelmReleases => "HelmReleases",
+            AppView::FluxCDImages => "Images",
+            AppView::FluxCDKustomizations => "Kustomizations",
+            AppView::FluxCDReceivers => "Receivers",
+            AppView::FluxCDSources => "Sources",
             AppView::ServiceAccounts => "Service Accounts",
             AppView::ClusterRoles => "Cluster Roles",
             AppView::Roles => "Roles",
@@ -256,7 +287,15 @@ impl AppView {
             AppView::Events => "󰃰",
             AppView::HelmCharts => "󰱥",
             AppView::HelmReleases => "󰱥",
-            AppView::Flux => "󰠳",
+            AppView::FluxCDAlertProviders => "󰖂",
+            AppView::FluxCDAlerts => "󰀬",
+            AppView::FluxCDAll => "󰠳",
+            AppView::FluxCDArtifacts => "󰏗",
+            AppView::FluxCDHelmReleases => "󰱥",
+            AppView::FluxCDImages => "󰄾",
+            AppView::FluxCDKustomizations => "󰆧",
+            AppView::FluxCDReceivers => "󰜗",
+            AppView::FluxCDSources => "󰑐",
             AppView::ServiceAccounts => "󰀄",
             AppView::ClusterRoles => "󰒃",
             AppView::Roles => "󰒃",
@@ -299,7 +338,15 @@ impl AppView {
             AppView::Events => "  󰃰 Events",
             AppView::HelmCharts => "  󰱥 Repositories",
             AppView::HelmReleases => "  󰱥 Releases",
-            AppView::Flux => "  󰠳 Flux",
+            AppView::FluxCDAlertProviders => "  󰖂 Alert Providers",
+            AppView::FluxCDAlerts => "  󰀬 Alerts",
+            AppView::FluxCDAll => "  󰠳 All",
+            AppView::FluxCDArtifacts => "  󰏗 Artifacts",
+            AppView::FluxCDHelmReleases => "  󰱥 HelmReleases",
+            AppView::FluxCDImages => "  󰄾 Images",
+            AppView::FluxCDKustomizations => "  󰆧 Kustomizations",
+            AppView::FluxCDReceivers => "  󰜗 Receivers",
+            AppView::FluxCDSources => "  󰑐 Sources",
             AppView::ServiceAccounts => "  󰀄 Service Accounts",
             AppView::ClusterRoles => "  󰒃 Cluster Roles",
             AppView::Roles => "  󰒃 Roles",
@@ -342,7 +389,15 @@ impl AppView {
             AppView::Events => "view.events",
             AppView::HelmCharts => "view.helm_charts",
             AppView::HelmReleases => "view.helm_releases",
-            AppView::Flux => "view.flux",
+            AppView::FluxCDAlertProviders => "view.fluxcd.alert_providers",
+            AppView::FluxCDAlerts => "view.fluxcd.alerts",
+            AppView::FluxCDAll => "view.fluxcd.all",
+            AppView::FluxCDArtifacts => "view.fluxcd.artifacts",
+            AppView::FluxCDHelmReleases => "view.fluxcd.helm_releases",
+            AppView::FluxCDImages => "view.fluxcd.images",
+            AppView::FluxCDKustomizations => "view.fluxcd.kustomizations",
+            AppView::FluxCDReceivers => "view.fluxcd.receivers",
+            AppView::FluxCDSources => "view.fluxcd.sources",
             AppView::ServiceAccounts => "view.service_accounts",
             AppView::ClusterRoles => "view.cluster_roles",
             AppView::Roles => "view.roles",
@@ -381,7 +436,16 @@ impl AppView {
             | AppView::PersistentVolumes
             | AppView::StorageClasses => NavGroup::Storage,
             AppView::Namespaces | AppView::Events => NavGroup::Overview,
-            AppView::HelmCharts | AppView::HelmReleases | AppView::Flux => NavGroup::Helm,
+            AppView::HelmCharts | AppView::HelmReleases => NavGroup::Helm,
+            AppView::FluxCDAlertProviders
+            | AppView::FluxCDAlerts
+            | AppView::FluxCDAll
+            | AppView::FluxCDArtifacts
+            | AppView::FluxCDHelmReleases
+            | AppView::FluxCDImages
+            | AppView::FluxCDKustomizations
+            | AppView::FluxCDReceivers
+            | AppView::FluxCDSources => NavGroup::FluxCD,
             AppView::ServiceAccounts
             | AppView::ClusterRoles
             | AppView::Roles
@@ -389,6 +453,21 @@ impl AppView {
             | AppView::RoleBindings => NavGroup::AccessControl,
             AppView::Extensions => NavGroup::CustomResources,
         }
+    }
+
+    pub const fn is_fluxcd(self) -> bool {
+        matches!(
+            self,
+            AppView::FluxCDAlertProviders
+                | AppView::FluxCDAlerts
+                | AppView::FluxCDAll
+                | AppView::FluxCDArtifacts
+                | AppView::FluxCDHelmReleases
+                | AppView::FluxCDImages
+                | AppView::FluxCDKustomizations
+                | AppView::FluxCDReceivers
+                | AppView::FluxCDSources
+        )
     }
 
     pub(crate) fn index(self) -> usize {
@@ -417,7 +496,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 37] {
+    pub const fn tabs() -> &'static [AppView; 45] {
         &Self::ORDER
     }
 }
@@ -920,7 +999,21 @@ const SIDEBAR_GROUPS: &[(NavGroup, &[AppView])] = &[
     ),
     (
         NavGroup::Helm,
-        &[AppView::HelmCharts, AppView::HelmReleases, AppView::Flux],
+        &[AppView::HelmCharts, AppView::HelmReleases],
+    ),
+    (
+        NavGroup::FluxCD,
+        &[
+            AppView::FluxCDAlertProviders,
+            AppView::FluxCDAlerts,
+            AppView::FluxCDAll,
+            AppView::FluxCDArtifacts,
+            AppView::FluxCDHelmReleases,
+            AppView::FluxCDImages,
+            AppView::FluxCDKustomizations,
+            AppView::FluxCDReceivers,
+            AppView::FluxCDSources,
+        ],
     ),
     (
         NavGroup::AccessControl,
@@ -943,8 +1036,9 @@ const fn nav_group_bit(group: NavGroup) -> u16 {
         NavGroup::Config => 1 << 3,
         NavGroup::Storage => 1 << 4,
         NavGroup::Helm => 1 << 5,
-        NavGroup::AccessControl => 1 << 6,
-        NavGroup::CustomResources => 1 << 7,
+        NavGroup::FluxCD => 1 << 6,
+        NavGroup::AccessControl => 1 << 7,
+        NavGroup::CustomResources => 1 << 8,
     }
 }
 
@@ -955,9 +1049,9 @@ fn collapsed_mask(collapsed: &HashSet<NavGroup>) -> u16 {
 }
 
 static SIDEBAR_ROWS_CACHE: LazyLock<Vec<Box<[SidebarItem]>>> = LazyLock::new(|| {
-    let mut cache = Vec::with_capacity(1usize << 8);
-    for mask in 0u16..(1u16 << 8) {
-        let mut rows = Vec::with_capacity(44);
+    let mut cache = Vec::with_capacity(1usize << 9);
+    for mask in 0u16..(1u16 << 9) {
+        let mut rows = Vec::with_capacity(56);
         for (group, views) in SIDEBAR_GROUPS {
             rows.push(SidebarItem::Group(*group));
             if mask & nav_group_bit(*group) == 0 {
@@ -2091,7 +2185,16 @@ mod tests {
             // Helm
             AppView::HelmCharts,
             AppView::HelmReleases,
-            AppView::Flux,
+            // FluxCD
+            AppView::FluxCDAlertProviders,
+            AppView::FluxCDAlerts,
+            AppView::FluxCDAll,
+            AppView::FluxCDArtifacts,
+            AppView::FluxCDHelmReleases,
+            AppView::FluxCDImages,
+            AppView::FluxCDKustomizations,
+            AppView::FluxCDReceivers,
+            AppView::FluxCDSources,
             // Access Control
             AppView::ServiceAccounts,
             AppView::ClusterRoles,

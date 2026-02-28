@@ -128,8 +128,9 @@ fn nav_group_bit(group: NavGroup) -> u16 {
         NavGroup::Config => 1 << 3,
         NavGroup::Storage => 1 << 4,
         NavGroup::Helm => 1 << 5,
-        NavGroup::AccessControl => 1 << 6,
-        NavGroup::CustomResources => 1 << 7,
+        NavGroup::FluxCD => 1 << 6,
+        NavGroup::AccessControl => 1 << 7,
+        NavGroup::CustomResources => 1 << 8,
     }
 }
 

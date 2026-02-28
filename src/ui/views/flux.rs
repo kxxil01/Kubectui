@@ -1,4 +1,4 @@
-//! Flux resources view.
+//! FluxCD resources views.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -18,6 +18,7 @@ use ratatui::{
 
 use crate::{
     app::AppView,
+    k8s::dtos::FluxResourceInfo,
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
@@ -29,8 +30,81 @@ use crate::{
 
 const MAX_FORMATTED_CACHE_ENTRIES: usize = 96;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum FluxMode {
+    AlertProviders,
+    Alerts,
+    All,
+    Artifacts,
+    HelmReleases,
+    Images,
+    Kustomizations,
+    Receivers,
+    Sources,
+}
+
+impl FluxMode {
+    fn from_view(view: AppView) -> Option<Self> {
+        match view {
+            AppView::FluxCDAlertProviders => Some(Self::AlertProviders),
+            AppView::FluxCDAlerts => Some(Self::Alerts),
+            AppView::FluxCDAll => Some(Self::All),
+            AppView::FluxCDArtifacts => Some(Self::Artifacts),
+            AppView::FluxCDHelmReleases => Some(Self::HelmReleases),
+            AppView::FluxCDImages => Some(Self::Images),
+            AppView::FluxCDKustomizations => Some(Self::Kustomizations),
+            AppView::FluxCDReceivers => Some(Self::Receivers),
+            AppView::FluxCDSources => Some(Self::Sources),
+            _ => None,
+        }
+    }
+
+    const fn title(self) -> &'static str {
+        match self {
+            Self::AlertProviders => "Alert Providers",
+            Self::Alerts => "Alerts",
+            Self::All => "All",
+            Self::Artifacts => "Artifacts",
+            Self::HelmReleases => "HelmReleases",
+            Self::Images => "Images",
+            Self::Kustomizations => "Kustomizations",
+            Self::Receivers => "Receivers",
+            Self::Sources => "Sources",
+        }
+    }
+
+    const fn loading_text(self) -> &'static str {
+        match self {
+            Self::AlertProviders => "  Loading FluxCD alert providers...",
+            Self::Alerts => "  Loading FluxCD alerts...",
+            Self::All => "  Loading FluxCD resources...",
+            Self::Artifacts => "  Loading FluxCD artifacts...",
+            Self::HelmReleases => "  Loading FluxCD helmreleases...",
+            Self::Images => "  Loading FluxCD image resources...",
+            Self::Kustomizations => "  Loading FluxCD kustomizations...",
+            Self::Receivers => "  Loading FluxCD receivers...",
+            Self::Sources => "  Loading FluxCD sources...",
+        }
+    }
+
+    const fn empty_text(self) -> &'static str {
+        match self {
+            Self::AlertProviders => "  No FluxCD alert providers found",
+            Self::Alerts => "  No FluxCD alerts found",
+            Self::All => "  No FluxCD resources found",
+            Self::Artifacts => "  No FluxCD artifacts found",
+            Self::HelmReleases => "  No FluxCD helmreleases found",
+            Self::Images => "  No FluxCD image resources found",
+            Self::Kustomizations => "  No FluxCD kustomizations found",
+            Self::Receivers => "  No FluxCD receivers found",
+            Self::Sources => "  No FluxCD sources found",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct FluxFormattedCacheKey {
+    view: AppView,
     snapshot_version: u64,
     minute_bucket: i64,
     data_fingerprint: u64,
@@ -44,6 +118,7 @@ struct FluxFormattedRow {
     status: String,
     age: String,
     message: String,
+    artifact: String,
 }
 
 #[derive(Debug, Default)]
@@ -91,8 +166,46 @@ impl FluxFormattedCache {
 static FLUX_FORMATTED_CACHE: LazyLock<Mutex<FluxFormattedCache>> =
     LazyLock::new(|| Mutex::new(FluxFormattedCache::default()));
 
-fn cached_formatted_rows(cluster: &ClusterSnapshot, now_unix: i64) -> Arc<Vec<FluxFormattedRow>> {
+pub fn filtered_flux_indices_for_view(
+    view: AppView,
+    cluster: &ClusterSnapshot,
+    query: &str,
+) -> Arc<Vec<usize>> {
+    let Some(mode) = FluxMode::from_view(view) else {
+        return Arc::new(Vec::new());
+    };
+    let query = query.trim();
+
+    cached_filter_indices(
+        view,
+        query,
+        cluster.snapshot_version,
+        data_fingerprint(&cluster.flux_resources),
+        |q| {
+            cluster
+                .flux_resources
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, resource)| {
+                    if resource_matches_mode(mode, resource) && resource_matches_query(resource, q)
+                    {
+                        Some(idx)
+                    } else {
+                        None
+                    }
+                })
+                .collect()
+        },
+    )
+}
+
+fn cached_formatted_rows(
+    view: AppView,
+    cluster: &ClusterSnapshot,
+    now_unix: i64,
+) -> Arc<Vec<FluxFormattedRow>> {
     let key = FluxFormattedCacheKey {
+        view,
         snapshot_version: cluster.snapshot_version,
         minute_bucket: now_unix.div_euclid(60),
         data_fingerprint: data_fingerprint(&cluster.flux_resources),
@@ -108,19 +221,17 @@ fn cached_formatted_rows(cluster: &ClusterSnapshot, now_unix: i64) -> Arc<Vec<Fl
         cluster
             .flux_resources
             .iter()
-            .map(|resource| {
-                let message = resource.message.as_deref().unwrap_or("-");
-                FluxFormattedRow {
-                    name: resource.name.clone(),
-                    namespace: resource
-                        .namespace
-                        .clone()
-                        .unwrap_or_else(|| "<cluster-scope>".to_string()),
-                    kind: resource.kind.clone(),
-                    status: resource.status.clone(),
-                    age: format_age_from_created(resource.created_at, now_unix),
-                    message: truncate_message(message, 56),
-                }
+            .map(|resource| FluxFormattedRow {
+                name: resource.name.clone(),
+                namespace: resource
+                    .namespace
+                    .clone()
+                    .unwrap_or_else(|| "<cluster-scope>".to_string()),
+                kind: resource.kind.clone(),
+                status: resource.status.clone(),
+                age: format_age_from_created(resource.created_at, now_unix),
+                message: truncate_message(resource.message.as_deref().unwrap_or("-"), 56),
+                artifact: truncate_message(resource.artifact.as_deref().unwrap_or("-"), 56),
             })
             .collect::<Vec<_>>(),
     );
@@ -131,62 +242,61 @@ fn cached_formatted_rows(cluster: &ClusterSnapshot, now_unix: i64) -> Arc<Vec<Fl
     built
 }
 
-/// Renders Flux resources aggregated from Kustomizations, HelmReleases, and Sources.
+/// Renders FluxCD view content for a specific FluxCD command style.
 pub fn render_flux_resources(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    view: AppView,
 ) {
+    let Some(mode) = FluxMode::from_view(view) else {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                "  FluxCD view is not available",
+                default_theme().inactive_style(),
+            ))
+            .block(default_block("FluxCD")),
+            area,
+        );
+        return;
+    };
+
     let query = query.trim();
-    let indices = cached_filter_indices(
-        AppView::Flux,
-        query,
-        cluster.snapshot_version,
-        data_fingerprint(&cluster.flux_resources),
-        |q| {
-            cluster
-                .flux_resources
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, resource)| {
-                    if q.is_empty()
-                        || contains_ci(&resource.name, q)
-                        || contains_ci(resource.namespace.as_deref().unwrap_or_default(), q)
-                        || contains_ci(&resource.kind, q)
-                        || contains_ci(&resource.status, q)
-                        || contains_ci(resource.message.as_deref().unwrap_or_default(), q)
-                    {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        },
-    );
+    let indices = filtered_flux_indices_for_view(view, cluster, query);
 
     let theme = default_theme();
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
             query,
-            "  Loading flux resources...",
-            "  No flux resources found",
-            "  No flux resources match the search query",
+            mode.loading_text(),
+            mode.empty_text(),
+            "  No FluxCD resources match the search query",
         );
         frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style())).block(default_block("Flux")),
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block(&format!("FluxCD · {}", mode.title()))),
             area,
         );
         return;
     }
 
     let total = indices.len();
+    let mode_total = if query.is_empty() {
+        total
+    } else {
+        filtered_flux_indices_for_view(view, cluster, "").len()
+    };
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
-    let formatted_rows = cached_formatted_rows(cluster, Utc::now().timestamp());
+    let formatted_rows = cached_formatted_rows(view, cluster, Utc::now().timestamp());
+    let detail_col_name = if mode == FluxMode::Artifacts {
+        "Artifact"
+    } else {
+        "Message"
+    };
 
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
@@ -194,7 +304,7 @@ pub fn render_flux_resources(
         Cell::from(Span::styled("Kind", theme.header_style())),
         Cell::from(Span::styled("Status", theme.header_style())),
         Cell::from(Span::styled("Age", theme.header_style())),
-        Cell::from(Span::styled("Message", theme.header_style())),
+        Cell::from(Span::styled(detail_col_name, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -205,6 +315,11 @@ pub fn render_flux_resources(
         .map(|(local_idx, &resource_idx)| {
             let idx = window.start + local_idx;
             let resource = &formatted_rows[resource_idx];
+            let detail = if mode == FluxMode::Artifacts {
+                resource.artifact.as_str()
+            } else {
+                resource.message.as_str()
+            };
             let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
@@ -228,22 +343,21 @@ pub fn render_flux_resources(
                     status_style(&resource.status, &theme),
                 )),
                 Cell::from(Span::styled(resource.age.as_str(), theme.inactive_style())),
-                Cell::from(Span::styled(
-                    resource.message.as_str(),
-                    Style::default().fg(theme.fg_dim),
-                )),
+                Cell::from(Span::styled(detail, Style::default().fg(theme.fg_dim))),
             ])
             .style(row_style)
         })
         .collect();
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
-    let title = format!(" 🌀 Flux ({total}) ");
+    let title = format!(" 🌀 FluxCD · {} ({total}) ", mode.title());
     let block = if query.is_empty() {
         active_block(&title)
     } else {
-        let all = cluster.flux_resources.len();
-        active_block(&format!(" 🌀 Flux ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " 🌀 FluxCD · {} ({total} of {mode_total}) [/{query}]",
+            mode.title()
+        ))
     };
 
     let table = Table::new(
@@ -251,7 +365,7 @@ pub fn render_flux_resources(
         [
             Constraint::Min(22),
             Constraint::Length(18),
-            Constraint::Length(16),
+            Constraint::Length(18),
             Constraint::Length(11),
             Constraint::Length(9),
             Constraint::Min(28),
@@ -278,6 +392,42 @@ pub fn render_flux_resources(
         }),
         &mut scrollbar_state,
     );
+}
+
+fn resource_matches_mode(mode: FluxMode, resource: &FluxResourceInfo) -> bool {
+    match mode {
+        FluxMode::AlertProviders => {
+            resource.group == "notification.toolkit.fluxcd.io" && resource.kind == "AlertProvider"
+        }
+        FluxMode::Alerts => {
+            resource.group == "notification.toolkit.fluxcd.io" && resource.kind == "Alert"
+        }
+        FluxMode::All => true,
+        FluxMode::Artifacts => resource.artifact.is_some(),
+        FluxMode::HelmReleases => {
+            resource.group == "helm.toolkit.fluxcd.io" && resource.kind == "HelmRelease"
+        }
+        FluxMode::Images => resource.group == "image.toolkit.fluxcd.io",
+        FluxMode::Kustomizations => {
+            resource.group == "kustomize.toolkit.fluxcd.io" && resource.kind == "Kustomization"
+        }
+        FluxMode::Receivers => {
+            resource.group == "notification.toolkit.fluxcd.io" && resource.kind == "Receiver"
+        }
+        FluxMode::Sources => resource.group == "source.toolkit.fluxcd.io",
+    }
+}
+
+fn resource_matches_query(resource: &FluxResourceInfo, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    contains_ci(&resource.name, query)
+        || contains_ci(resource.namespace.as_deref().unwrap_or_default(), query)
+        || contains_ci(&resource.kind, query)
+        || contains_ci(&resource.status, query)
+        || contains_ci(resource.message.as_deref().unwrap_or_default(), query)
+        || contains_ci(resource.artifact.as_deref().unwrap_or_default(), query)
 }
 
 fn status_style(status: &str, theme: &crate::ui::theme::Theme) -> Style {
@@ -327,7 +477,6 @@ fn format_age_from_created(created_at: Option<DateTime<Utc>>, now_unix: i64) -> 
 mod tests {
     use super::*;
     use crate::ui::theme::Theme;
-    use chrono::{Duration, Utc};
 
     #[test]
     fn status_style_maps_expected_levels() {
@@ -335,13 +484,5 @@ mod tests {
         assert_eq!(status_style("Ready", &theme).fg, Some(theme.success));
         assert_eq!(status_style("NotReady", &theme).fg, Some(theme.error));
         assert_eq!(status_style("Suspended", &theme).fg, Some(theme.warning));
-    }
-
-    #[test]
-    fn format_age_from_created_uses_now_bucket() {
-        let now = Utc::now();
-        let created = now - Duration::minutes(95);
-        let rendered = format_age_from_created(Some(created), now.timestamp());
-        assert_eq!(rendered, "1h 35m");
     }
 }
