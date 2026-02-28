@@ -183,6 +183,146 @@ enum LogsViewerAsyncResult {
     },
 }
 
+#[derive(Debug)]
+struct RefreshAsyncResult {
+    request_id: u64,
+    context_generation: u64,
+    requested_namespace: Option<String>,
+    result: Result<GlobalState, String>,
+}
+
+#[derive(Debug, Clone)]
+struct QueuedRefresh {
+    request_id: u64,
+    namespace: Option<String>,
+    context_generation: u64,
+}
+
+#[derive(Debug, Default)]
+struct RefreshRuntimeState {
+    request_seq: u64,
+    in_flight_id: Option<u64>,
+    queued_refresh: Option<QueuedRefresh>,
+    context_generation: u64,
+}
+
+#[derive(Debug)]
+struct DeleteAsyncResult {
+    request_id: u64,
+    context_generation: u64,
+    resource: ResourceRef,
+    result: Result<(), String>,
+}
+
+fn spawn_refresh_task(
+    refresh_tx: tokio::sync::mpsc::UnboundedSender<RefreshAsyncResult>,
+    mut global_state: GlobalState,
+    client: K8sClient,
+    namespace: Option<String>,
+    request_id: u64,
+    context_generation: u64,
+) {
+    let requested_namespace = namespace.clone();
+    tokio::spawn(async move {
+        let result = global_state
+            .refresh(&client, namespace.as_deref())
+            .await
+            .map(|_| global_state)
+            .map_err(|err| err.to_string());
+        let _ = refresh_tx.send(RefreshAsyncResult {
+            request_id,
+            context_generation,
+            requested_namespace,
+            result,
+        });
+    });
+}
+
+fn request_refresh(
+    refresh_tx: &tokio::sync::mpsc::UnboundedSender<RefreshAsyncResult>,
+    global_state: &GlobalState,
+    client: &K8sClient,
+    namespace: Option<String>,
+    refresh_state: &mut RefreshRuntimeState,
+) {
+    refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
+    let request_id = refresh_state.request_seq;
+
+    if refresh_state.in_flight_id.is_none() {
+        refresh_state.in_flight_id = Some(request_id);
+        spawn_refresh_task(
+            refresh_tx.clone(),
+            global_state.clone(),
+            client.clone(),
+            namespace,
+            request_id,
+            refresh_state.context_generation,
+        );
+    } else {
+        refresh_state.queued_refresh = Some(QueuedRefresh {
+            request_id,
+            namespace,
+            context_generation: refresh_state.context_generation,
+        });
+    }
+}
+
+fn spawn_delete_task(
+    delete_tx: tokio::sync::mpsc::UnboundedSender<DeleteAsyncResult>,
+    client: K8sClient,
+    resource: ResourceRef,
+    request_id: u64,
+    context_generation: u64,
+) {
+    tokio::spawn(async move {
+        let outcome = tokio::time::timeout(Duration::from_secs(20), async {
+            match &resource {
+                ResourceRef::CustomResource {
+                    name,
+                    namespace,
+                    group,
+                    version,
+                    kind,
+                    plural,
+                } => {
+                    client
+                        .delete_custom_resource(
+                            group,
+                            version,
+                            kind,
+                            plural,
+                            name,
+                            namespace.as_deref(),
+                        )
+                        .await
+                }
+                _ => {
+                    let kind = resource.kind().to_ascii_lowercase();
+                    let name = resource.name().to_string();
+                    let namespace = resource.namespace().map(str::to_owned);
+                    client
+                        .delete_resource(&kind, &name, namespace.as_deref())
+                        .await
+                }
+            }
+        })
+        .await;
+
+        let result = match outcome {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(err)) => Err(err.to_string()),
+            Err(_) => Err("Delete request timed out after 20s".to_string()),
+        };
+
+        let _ = delete_tx.send(DeleteAsyncResult {
+            request_id,
+            context_generation,
+            resource,
+            result,
+        });
+    });
+}
+
 /// Runs KubecTUI's event loop.
 async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let mut app = load_config();
@@ -190,15 +330,35 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let mut client = pick_context_at_startup(terminal, &mut app).await?;
 
     let mut global_state = GlobalState::default();
-
-    if let Err(err) = global_state
-        .refresh(&client, namespace_scope(app.get_namespace()))
-        .await
-    {
-        app.set_error(format!("Initial data refresh failed: {err:#}"));
+    let mut startup_namespace_scope = namespace_scope(app.get_namespace()).map(str::to_string);
+    // Validate persisted namespace against current cluster namespaces to avoid
+    // starting in a stale namespace with empty resource lists.
+    if app.get_namespace() != "all" {
+        let selected_namespace = app.get_namespace().to_string();
+        let namespaces_result =
+            tokio::time::timeout(Duration::from_secs(3), client.fetch_namespaces()).await;
+        match namespaces_result {
+            Ok(Ok(namespaces)) => {
+                if !namespaces.iter().any(|ns| ns == &selected_namespace) {
+                    app.set_namespace("all".to_string());
+                    startup_namespace_scope = None;
+                    save_config(&app);
+                    app.set_error(format!(
+                        "Namespace '{selected_namespace}' not found. Switched to 'all'."
+                    ));
+                }
+                app.set_available_namespaces(namespaces);
+            }
+            // If we can't validate namespace quickly, load cluster-wide first to prevent blank startup.
+            _ => {
+                app.set_namespace("all".to_string());
+                startup_namespace_scope = None;
+                app.set_error(format!(
+                    "Namespace '{selected_namespace}' could not be validated quickly. Loaded 'all' namespaces."
+                ));
+            }
+        }
     }
-    app.set_available_namespaces(global_state.namespaces().to_vec());
-    sync_extensions_instances(&client, &mut app, &global_state.snapshot()).await;
 
     let port_forwarder = PortForwarderService::new(std::sync::Arc::new(client.clone()));
 
@@ -211,13 +371,24 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (logs_viewer_tx, mut logs_viewer_rx) =
         tokio::sync::mpsc::unbounded_channel::<LogsViewerAsyncResult>();
     let mut logs_viewer_request_seq: u64 = 0;
+    let (delete_tx, mut delete_rx) = tokio::sync::mpsc::unbounded_channel::<DeleteAsyncResult>();
+    let mut delete_request_seq: u64 = 0;
+    let mut delete_in_flight_id: Option<u64> = None;
 
     // Channel for background data refreshes — namespace switches, manual refresh, auto-refresh
     // all go through here so the UI stays responsive during API calls.
-    let (refresh_tx, mut refresh_rx) =
-        tokio::sync::mpsc::unbounded_channel::<Result<GlobalState, String>>();
-    // Whether a background refresh is currently in flight.
-    let mut refresh_in_flight = false;
+    let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::unbounded_channel::<RefreshAsyncResult>();
+    // Background refresh scheduling state — one in-flight + one coalesced queued request.
+    let mut refresh_state = RefreshRuntimeState::default();
+
+    // Start first refresh in the background so the TUI is responsive immediately.
+    request_refresh(
+        &refresh_tx,
+        &global_state,
+        &client,
+        startup_namespace_scope,
+        &mut refresh_state,
+    );
 
     // Cached snapshot — only re-clone when state is marked dirty
     let mut cached_snapshot = global_state.snapshot();
@@ -431,21 +602,117 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
             // Background refresh completed (namespace switch, manual refresh, auto-refresh)
             result = refresh_rx.recv() => {
-                refresh_in_flight = false;
                 if let Some(result) = result {
+                    // Ignore stale refreshes from previous context generations or superseded requests.
+                    if result.context_generation != refresh_state.context_generation
+                        || refresh_state.in_flight_id != Some(result.request_id)
+                    {
+                        continue;
+                    }
+
+                    refresh_state.in_flight_id = None;
                     needs_redraw = true;
-                    match result {
-                        Ok(new_state) => {
-                            global_state = new_state;
-                            consecutive_refresh_failures = 0;
+                    let active_namespace_scope = namespace_scope(app.get_namespace()).map(str::to_string);
+                    let namespace_matches = result.requested_namespace == active_namespace_scope;
+
+                    if namespace_matches {
+                        match result.result {
+                            Ok(new_state) => {
+                                global_state = new_state;
+                                consecutive_refresh_failures = 0;
+                                let previously_selected_namespace = app.get_namespace().to_string();
+                                let namespace_still_exists = previously_selected_namespace == "all"
+                                    || global_state
+                                        .namespaces()
+                                        .iter()
+                                        .any(|ns| ns == &previously_selected_namespace);
+                                if !namespace_still_exists {
+                                    app.set_namespace("all".to_string());
+                                    save_config(&app);
+                                    app.set_error(format!(
+                                        "Namespace '{previously_selected_namespace}' not found. Switched to 'all'."
+                                    ));
+                                    request_refresh(
+                                        &refresh_tx,
+                                        &global_state,
+                                        &client,
+                                        None,
+                                        &mut refresh_state,
+                                    );
+                                } else {
+                                    app.clear_error();
+                                }
+                                app.set_available_namespaces(global_state.namespaces().to_vec());
+                                snapshot_dirty = true;
+                                sync_extensions_instances(&client, &mut app, &global_state.snapshot()).await;
+                            }
+                            Err(err) => {
+                                consecutive_refresh_failures += 1;
+                                app.set_error(format!("Refresh failed: {err}"));
+                            }
+                        }
+                    } else {
+                        // Namespace changed while this refresh was running. Skip applying stale data.
+                    }
+
+                    if let Some(queued) = refresh_state.queued_refresh.take()
+                        && queued.context_generation == refresh_state.context_generation
+                    {
+                        refresh_state.in_flight_id = Some(queued.request_id);
+                        spawn_refresh_task(
+                            refresh_tx.clone(),
+                            global_state.clone(),
+                            client.clone(),
+                            queued.namespace,
+                            queued.request_id,
+                            queued.context_generation,
+                        );
+                    }
+                }
+            }
+
+            // Background delete completion — deletion itself runs off the UI loop.
+            result = delete_rx.recv() => {
+                if let Some(result) = result {
+                    // Ignore stale results (e.g. context changed while request was in flight).
+                    if result.context_generation != refresh_state.context_generation
+                        || delete_in_flight_id != Some(result.request_id)
+                    {
+                        continue;
+                    }
+
+                    delete_in_flight_id = None;
+                    needs_redraw = true;
+
+                    match result.result {
+                        Ok(()) => {
+                            if app
+                                .detail_view
+                                .as_ref()
+                                .and_then(|detail| detail.resource.as_ref())
+                                .is_some_and(|resource| resource == &result.resource)
+                            {
+                                app.detail_view = None;
+                            }
+
                             app.clear_error();
-                            app.set_available_namespaces(global_state.namespaces().to_vec());
-                            snapshot_dirty = true;
-                            sync_extensions_instances(&client, &mut app, &global_state.snapshot()).await;
+                            request_refresh(
+                                &refresh_tx,
+                                &global_state,
+                                &client,
+                                namespace_scope(app.get_namespace()).map(str::to_string),
+                                &mut refresh_state,
+                            );
+                            auto_refresh.reset();
                         }
                         Err(err) => {
-                            consecutive_refresh_failures += 1;
-                            app.set_error(format!("Refresh failed: {err}"));
+                            app.set_error(format!("Delete failed: {err}"));
+                            if let Some(detail) = &mut app.detail_view
+                                && detail.resource.as_ref().is_some_and(|r| r == &result.resource)
+                            {
+                                detail.confirm_delete = false;
+                                detail.loading = false;
+                            }
                         }
                     }
                 }
@@ -473,18 +740,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     2 => 60,
                     _ => 120,
                 };
-                if app.detail_view.is_none() && backoff_secs == 0 && !refresh_in_flight {
-                    refresh_in_flight = true;
-                    let mut gs = global_state.clone();
-                    let c = client.clone();
-                    let ns = namespace_scope(app.get_namespace()).map(str::to_string);
-                    let tx = refresh_tx.clone();
-                    tokio::spawn(async move {
-                        match gs.refresh(&c, ns.as_deref()).await {
-                            Ok(()) => { let _ = tx.send(Ok(gs)); }
-                            Err(e) => { let _ = tx.send(Err(e.to_string())); }
-                        }
-                    });
+                if app.detail_view.is_none() && backoff_secs == 0 {
+                    request_refresh(
+                        &refresh_tx,
+                        &global_state,
+                        &client,
+                        namespace_scope(app.get_namespace()).map(str::to_string),
+                        &mut refresh_state,
+                    );
                 } else if backoff_secs > 0 {
                     // Decrement backoff counter each tick
                     consecutive_refresh_failures = consecutive_refresh_failures.saturating_sub(1);
@@ -539,19 +802,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                     AppAction::Quit => break,
                     AppAction::RefreshData => {
-                        if !refresh_in_flight {
-                            refresh_in_flight = true;
-                            let mut gs = global_state.clone();
-                            let c = client.clone();
-                            let ns = namespace_scope(app.get_namespace()).map(str::to_string);
-                            let tx = refresh_tx.clone();
-                            tokio::spawn(async move {
-                                match gs.refresh(&c, ns.as_deref()).await {
-                                    Ok(()) => { let _ = tx.send(Ok(gs)); }
-                                    Err(e) => { let _ = tx.send(Err(e.to_string())); }
-                                }
-                            });
-                        }
+                        request_refresh(
+                            &refresh_tx,
+                            &global_state,
+                            &client,
+                            namespace_scope(app.get_namespace()).map(str::to_string),
+                            &mut refresh_state,
+                        );
                         // Reset auto-refresh timer after manual refresh
                         auto_refresh.reset();
                     }
@@ -594,21 +851,23 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         match K8sClient::connect_with_context(&ctx).await {
                             Ok(new_client) => {
                                 client = new_client;
-                                global_state = GlobalState::default();
-                                // Non-blocking refresh after context switch
-                                if !refresh_in_flight {
-                                    refresh_in_flight = true;
-                                    let mut gs = global_state.clone();
-                                    let c = client.clone();
-                                    let ns = namespace_scope(app.get_namespace()).map(str::to_string);
-                                    let tx = refresh_tx.clone();
-                                    tokio::spawn(async move {
-                                        match gs.refresh(&c, ns.as_deref()).await {
-                                            Ok(()) => { let _ = tx.send(Ok(gs)); }
-                                            Err(e) => { let _ = tx.send(Err(e.to_string())); }
-                                        }
-                                    });
-                                }
+                                global_state.begin_loading_transition(true);
+                                // Invalidate stale async results from the previous client/context.
+                                refresh_state.context_generation =
+                                    refresh_state.context_generation.wrapping_add(1);
+                                refresh_state.in_flight_id = None;
+                                refresh_state.queued_refresh = None;
+                                delete_in_flight_id = None;
+                                snapshot_dirty = true;
+                                app.detail_view = None;
+
+                                request_refresh(
+                                    &refresh_tx,
+                                    &global_state,
+                                    &client,
+                                    namespace_scope(app.get_namespace()).map(str::to_string),
+                                    &mut refresh_state,
+                                );
                             }
                             Err(err) => {
                                 app.set_error(format!("Failed to connect to context '{ctx}': {err:#}"));
@@ -619,21 +878,25 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.set_namespace(namespace);
                         app.close_namespace_picker();
                         save_config(&app);
+                        // Invalidate stale async results from previous namespace selections.
+                        refresh_state.context_generation =
+                            refresh_state.context_generation.wrapping_add(1);
+                        refresh_state.in_flight_id = None;
+                        refresh_state.queued_refresh = None;
+                        delete_in_flight_id = None;
+                        // Drop old namespace data immediately to prevent inconsistent mixed views.
+                        global_state.begin_loading_transition(false);
+                        snapshot_dirty = true;
+                        app.detail_view = None;
 
-                        // Non-blocking refresh — UI stays responsive
-                        if !refresh_in_flight {
-                            refresh_in_flight = true;
-                            let mut gs = global_state.clone();
-                            let c = client.clone();
-                            let ns = namespace_scope(app.get_namespace()).map(str::to_string);
-                            let tx = refresh_tx.clone();
-                            tokio::spawn(async move {
-                                match gs.refresh(&c, ns.as_deref()).await {
-                                    Ok(()) => { let _ = tx.send(Ok(gs)); }
-                                    Err(e) => { let _ = tx.send(Err(e.to_string())); }
-                                }
-                            });
-                        }
+                        // Queue newest namespace refresh; if one is in flight it gets coalesced.
+                        request_refresh(
+                            &refresh_tx,
+                            &global_state,
+                            &client,
+                            namespace_scope(app.get_namespace()).map(str::to_string),
+                            &mut refresh_state,
+                        );
                     }
                     AppAction::OpenDetail(resource) => {
                         // Show loading state immediately — fetch happens in a background task
@@ -854,46 +1117,28 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     }
                     AppAction::DeleteResource => {
-                        let delete_info = app.detail_view.as_ref().and_then(|d| {
-                            d.resource.clone()
-                        });
-                        if let Some(resource) = delete_info {
-                            let result = match &resource {
-                                ResourceRef::CustomResource { name, namespace, group, version, kind, plural } => {
-                                    client.delete_custom_resource(
-                                        group, version, kind, plural, name, namespace.as_deref(),
-                                    ).await
-                                }
-                                _ => {
-                                    client.delete_resource(
-                                        &resource.kind().to_ascii_lowercase(),
-                                        resource.name(),
-                                        resource.namespace(),
-                                    ).await
-                                }
-                            };
-                            match result {
-                                Ok(()) => {
-                                    app.clear_error();
-                                    app.detail_view = None;
-                                    // Refresh data to reflect the deletion
-                                    if let Err(err) = global_state
-                                        .refresh(&client, namespace_scope(app.get_namespace()))
-                                        .await
-                                    {
-                                        app.set_error(format!("Refresh failed: {err:#}"));
-                                    } else {
-                                        app.set_available_namespaces(global_state.namespaces().to_vec());
-                                        snapshot_dirty = true;
-                                    }
-                                }
-                                Err(err) => {
-                                    app.set_error(format!("Delete failed: {err:#}"));
-                                    if let Some(detail) = &mut app.detail_view {
-                                        detail.confirm_delete = false;
-                                    }
-                                }
+                        let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
+                        if let Some(resource) = delete_resource {
+                            if delete_in_flight_id.is_some() {
+                                app.set_error("Delete already in progress".to_string());
+                                continue;
                             }
+
+                            if let Some(detail) = &mut app.detail_view {
+                                detail.confirm_delete = false;
+                                detail.loading = true;
+                            }
+
+                            delete_request_seq = delete_request_seq.wrapping_add(1);
+                            let request_id = delete_request_seq;
+                            delete_in_flight_id = Some(request_id);
+                            spawn_delete_task(
+                                delete_tx.clone(),
+                                client.clone(),
+                                resource,
+                                request_id,
+                                refresh_state.context_generation,
+                            );
                         }
                     }
                     AppAction::EditYaml => {

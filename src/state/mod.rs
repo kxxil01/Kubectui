@@ -51,7 +51,7 @@ impl fmt::Display for DataPhase {
 /// Snapshot used by rendering layer.
 #[derive(Debug, Clone, Default)]
 pub struct ClusterSnapshot {
-    /// Monotonic snapshot revision incremented after each successful refresh.
+    /// Monotonic snapshot revision incremented whenever snapshot data is replaced.
     pub snapshot_version: u64,
     pub nodes: Vec<NodeInfo>,
     pub pods: Vec<PodInfo>,
@@ -394,6 +394,24 @@ impl GlobalState {
         &self.namespaces
     }
 
+    /// Resets rendered resource data for a scope transition (namespace/context)
+    /// while keeping snapshot revisions monotonic so render caches cannot
+    /// accidentally reuse stale entries after rapid switches.
+    pub fn begin_loading_transition(&mut self, clear_namespaces: bool) {
+        let next_snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
+        let cluster_url = self.snapshot.cluster_url.clone();
+        self.snapshot = ClusterSnapshot {
+            snapshot_version: next_snapshot_version,
+            phase: DataPhase::Idle,
+            cluster_url,
+            ..ClusterSnapshot::default()
+        };
+        if clear_namespaces {
+            self.namespaces.clear();
+        }
+        self.publish_snapshot();
+    }
+
     /// Per-resource fetch timeout in seconds.
     const FETCH_TIMEOUT_SECS: u64 = 10;
 
@@ -407,6 +425,36 @@ impl GlobalState {
                 "timed out fetching {label} ({}s)",
                 Self::FETCH_TIMEOUT_SECS
             )),
+        }
+    }
+
+    fn keep_prev_vec_on_error<T: Clone>(
+        result: Result<Vec<T>>,
+        previous: &[T],
+        label: &str,
+        errors: &mut Vec<String>,
+    ) -> Vec<T> {
+        match result {
+            Ok(items) => items,
+            Err(err) => {
+                errors.push(format!("{label}: {err}"));
+                previous.to_vec()
+            }
+        }
+    }
+
+    fn keep_prev_opt_on_error<T: Clone>(
+        result: Result<T>,
+        previous: Option<T>,
+        label: &str,
+        errors: &mut Vec<String>,
+    ) -> Option<T> {
+        match result {
+            Ok(value) => Some(value),
+            Err(err) => {
+                errors.push(format!("{label}: {err}"));
+                previous
+            }
         }
     }
 
@@ -531,213 +579,182 @@ impl GlobalState {
 
         let mut errors = Vec::new();
 
-        self.namespaces = match namespaces_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("namespaces: {e}"));
-                Vec::new()
-            }
-        };
+        self.namespaces = Self::keep_prev_vec_on_error(
+            namespaces_res,
+            &self.namespaces,
+            "namespaces",
+            &mut errors,
+        );
 
-        let nodes = match nodes_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("nodes: {e}"));
-                Vec::new()
-            }
-        };
-        let pods = match pods_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("pods: {e}"));
-                Vec::new()
-            }
-        };
-        let services = match services_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("services: {e}"));
-                Vec::new()
-            }
-        };
-        let deployments = match deployments_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("deployments: {e}"));
-                Vec::new()
-            }
-        };
-        let statefulsets = match statefulsets_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("statefulsets: {e}"));
-                Vec::new()
-            }
-        };
-        let daemonsets = match daemonsets_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("daemonsets: {e}"));
-                Vec::new()
-            }
-        };
-        let replicasets = match replicasets_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("replicasets: {e}"));
-                Vec::new()
-            }
-        };
-        let replication_controllers = match replication_controllers_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("replicationcontrollers: {e}"));
-                Vec::new()
-            }
-        };
-        let jobs = match jobs_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("jobs: {e}"));
-                Vec::new()
-            }
-        };
-        let cronjobs = match cronjobs_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("cronjobs: {e}"));
-                Vec::new()
-            }
-        };
-        let resource_quotas = match resource_quotas_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("resourcequotas: {e}"));
-                Vec::new()
-            }
-        };
-        let limit_ranges = match limit_ranges_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("limitranges: {e}"));
-                Vec::new()
-            }
-        };
-        let pod_disruption_budgets = match pod_disruption_budgets_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("pdbs: {e}"));
-                Vec::new()
-            }
-        };
-        let service_accounts = match service_accounts_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("serviceaccounts: {e}"));
-                Vec::new()
-            }
-        };
-        let roles = match roles_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("roles: {e}"));
-                Vec::new()
-            }
-        };
-        let role_bindings = match role_bindings_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("rolebindings: {e}"));
-                Vec::new()
-            }
-        };
-        let cluster_roles = match cluster_roles_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("clusterroles: {e}"));
-                Vec::new()
-            }
-        };
-        let cluster_role_bindings = match cluster_role_bindings_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("clusterrolebindings: {e}"));
-                Vec::new()
-            }
-        };
-        let custom_resource_definitions = match custom_resource_definitions_res {
-            Ok(v) => v,
-            Err(e) => {
-                errors.push(format!("crds: {e}"));
-                Vec::new()
-            }
-        };
-        let cluster_info = match cluster_info_res {
-            Ok(v) => Some(v),
-            Err(e) => {
-                errors.push(format!("cluster info: {e}"));
-                None
-            }
-        };
+        let nodes =
+            Self::keep_prev_vec_on_error(nodes_res, &self.snapshot.nodes, "nodes", &mut errors);
+        let pods = Self::keep_prev_vec_on_error(pods_res, &self.snapshot.pods, "pods", &mut errors);
+        let services = Self::keep_prev_vec_on_error(
+            services_res,
+            &self.snapshot.services,
+            "services",
+            &mut errors,
+        );
+        let deployments = Self::keep_prev_vec_on_error(
+            deployments_res,
+            &self.snapshot.deployments,
+            "deployments",
+            &mut errors,
+        );
+        let statefulsets = Self::keep_prev_vec_on_error(
+            statefulsets_res,
+            &self.snapshot.statefulsets,
+            "statefulsets",
+            &mut errors,
+        );
+        let daemonsets = Self::keep_prev_vec_on_error(
+            daemonsets_res,
+            &self.snapshot.daemonsets,
+            "daemonsets",
+            &mut errors,
+        );
+        let replicasets = Self::keep_prev_vec_on_error(
+            replicasets_res,
+            &self.snapshot.replicasets,
+            "replicasets",
+            &mut errors,
+        );
+        let replication_controllers = Self::keep_prev_vec_on_error(
+            replication_controllers_res,
+            &self.snapshot.replication_controllers,
+            "replicationcontrollers",
+            &mut errors,
+        );
+        let jobs = Self::keep_prev_vec_on_error(jobs_res, &self.snapshot.jobs, "jobs", &mut errors);
+        let cronjobs = Self::keep_prev_vec_on_error(
+            cronjobs_res,
+            &self.snapshot.cronjobs,
+            "cronjobs",
+            &mut errors,
+        );
+        let resource_quotas = Self::keep_prev_vec_on_error(
+            resource_quotas_res,
+            &self.snapshot.resource_quotas,
+            "resourcequotas",
+            &mut errors,
+        );
+        let limit_ranges = Self::keep_prev_vec_on_error(
+            limit_ranges_res,
+            &self.snapshot.limit_ranges,
+            "limitranges",
+            &mut errors,
+        );
+        let pod_disruption_budgets = Self::keep_prev_vec_on_error(
+            pod_disruption_budgets_res,
+            &self.snapshot.pod_disruption_budgets,
+            "pdbs",
+            &mut errors,
+        );
+        let service_accounts = Self::keep_prev_vec_on_error(
+            service_accounts_res,
+            &self.snapshot.service_accounts,
+            "serviceaccounts",
+            &mut errors,
+        );
+        let roles =
+            Self::keep_prev_vec_on_error(roles_res, &self.snapshot.roles, "roles", &mut errors);
+        let role_bindings = Self::keep_prev_vec_on_error(
+            role_bindings_res,
+            &self.snapshot.role_bindings,
+            "rolebindings",
+            &mut errors,
+        );
+        let cluster_roles = Self::keep_prev_vec_on_error(
+            cluster_roles_res,
+            &self.snapshot.cluster_roles,
+            "clusterroles",
+            &mut errors,
+        );
+        let cluster_role_bindings = Self::keep_prev_vec_on_error(
+            cluster_role_bindings_res,
+            &self.snapshot.cluster_role_bindings,
+            "clusterrolebindings",
+            &mut errors,
+        );
+        let custom_resource_definitions = Self::keep_prev_vec_on_error(
+            custom_resource_definitions_res,
+            &self.snapshot.custom_resource_definitions,
+            "crds",
+            &mut errors,
+        );
+        let cluster_info = Self::keep_prev_opt_on_error(
+            cluster_info_res,
+            self.snapshot.cluster_info.clone(),
+            "cluster info",
+            &mut errors,
+        );
 
-        let endpoints = endpoints_res.unwrap_or_else(|e| {
-            errors.push(format!("endpoints: {e}"));
-            Vec::new()
-        });
-        let ingresses = ingresses_res.unwrap_or_else(|e| {
-            errors.push(format!("ingresses: {e}"));
-            Vec::new()
-        });
-        let ingress_classes = ingress_classes_res.unwrap_or_else(|e| {
-            errors.push(format!("ingressclasses: {e}"));
-            Vec::new()
-        });
-        let network_policies = network_policies_res.unwrap_or_else(|e| {
-            errors.push(format!("networkpolicies: {e}"));
-            Vec::new()
-        });
-        let config_maps = config_maps_res.unwrap_or_else(|e| {
-            errors.push(format!("configmaps: {e}"));
-            Vec::new()
-        });
-        let secrets = secrets_res.unwrap_or_else(|e| {
-            errors.push(format!("secrets: {e}"));
-            Vec::new()
-        });
-        let hpas = hpas_res.unwrap_or_else(|e| {
-            errors.push(format!("hpas: {e}"));
-            Vec::new()
-        });
-        let pvcs = pvcs_res.unwrap_or_else(|e| {
-            errors.push(format!("pvcs: {e}"));
-            Vec::new()
-        });
-        let pvs = pvs_res.unwrap_or_else(|e| {
-            errors.push(format!("pvs: {e}"));
-            Vec::new()
-        });
-        let storage_classes = storage_classes_res.unwrap_or_else(|e| {
-            errors.push(format!("storageclasses: {e}"));
-            Vec::new()
-        });
-        let namespace_list = namespace_list_res.unwrap_or_else(|e| {
-            errors.push(format!("namespacelist: {e}"));
-            Vec::new()
-        });
-        let events = events_res.unwrap_or_else(|e| {
-            errors.push(format!("events: {e}"));
-            Vec::new()
-        });
-        let priority_classes = priority_classes_res.unwrap_or_else(|e| {
-            errors.push(format!("priorityclasses: {e}"));
-            Vec::new()
-        });
-        let helm_releases = helm_releases_res.unwrap_or_else(|e| {
-            errors.push(format!("helmreleases: {e}"));
-            Vec::new()
-        });
-        // Node metrics are best-effort — silently empty if metrics-server is absent
-        let node_metrics = node_metrics_res.unwrap_or_default();
+        let endpoints = Self::keep_prev_vec_on_error(
+            endpoints_res,
+            &self.snapshot.endpoints,
+            "endpoints",
+            &mut errors,
+        );
+        let ingresses = Self::keep_prev_vec_on_error(
+            ingresses_res,
+            &self.snapshot.ingresses,
+            "ingresses",
+            &mut errors,
+        );
+        let ingress_classes = Self::keep_prev_vec_on_error(
+            ingress_classes_res,
+            &self.snapshot.ingress_classes,
+            "ingressclasses",
+            &mut errors,
+        );
+        let network_policies = Self::keep_prev_vec_on_error(
+            network_policies_res,
+            &self.snapshot.network_policies,
+            "networkpolicies",
+            &mut errors,
+        );
+        let config_maps = Self::keep_prev_vec_on_error(
+            config_maps_res,
+            &self.snapshot.config_maps,
+            "configmaps",
+            &mut errors,
+        );
+        let secrets = Self::keep_prev_vec_on_error(
+            secrets_res,
+            &self.snapshot.secrets,
+            "secrets",
+            &mut errors,
+        );
+        let hpas = Self::keep_prev_vec_on_error(hpas_res, &self.snapshot.hpas, "hpas", &mut errors);
+        let pvcs = Self::keep_prev_vec_on_error(pvcs_res, &self.snapshot.pvcs, "pvcs", &mut errors);
+        let pvs = Self::keep_prev_vec_on_error(pvs_res, &self.snapshot.pvs, "pvs", &mut errors);
+        let storage_classes = Self::keep_prev_vec_on_error(
+            storage_classes_res,
+            &self.snapshot.storage_classes,
+            "storageclasses",
+            &mut errors,
+        );
+        let namespace_list = Self::keep_prev_vec_on_error(
+            namespace_list_res,
+            &self.snapshot.namespace_list,
+            "namespacelist",
+            &mut errors,
+        );
+        let events =
+            Self::keep_prev_vec_on_error(events_res, &self.snapshot.events, "events", &mut errors);
+        let priority_classes = Self::keep_prev_vec_on_error(
+            priority_classes_res,
+            &self.snapshot.priority_classes,
+            "priorityclasses",
+            &mut errors,
+        );
+        let helm_releases = Self::keep_prev_vec_on_error(
+            helm_releases_res,
+            &self.snapshot.helm_releases,
+            "helmreleases",
+            &mut errors,
+        );
+        let node_metrics = node_metrics_res.unwrap_or_else(|_| self.snapshot.node_metrics.clone());
 
         let all_failed = nodes.is_empty()
             && pods.is_empty()
@@ -775,6 +792,12 @@ impl GlobalState {
         let namespaces_count = pods
             .iter()
             .map(|pod| pod.namespace.as_str())
+            .chain(services.iter().map(|service| service.namespace.as_str()))
+            .chain(
+                deployments
+                    .iter()
+                    .map(|deployment| deployment.namespace.as_str()),
+            )
             .collect::<HashSet<_>>()
             .len();
 
@@ -1310,6 +1333,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_namespaces_count_unions_pods_services_and_deployments() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource {
+            pods: vec![PodInfo {
+                name: "pod-a".to_string(),
+                namespace: "ns-a".to_string(),
+                ..PodInfo::default()
+            }],
+            services: vec![ServiceInfo {
+                name: "svc-b".to_string(),
+                namespace: "ns-b".to_string(),
+                ..ServiceInfo::default()
+            }],
+            deployments: vec![DeploymentInfo {
+                name: "deploy-c".to_string(),
+                namespace: "ns-c".to_string(),
+                ..DeploymentInfo::default()
+            }],
+            ..MockDataSource::success()
+        };
+
+        state
+            .refresh(&source, None)
+            .await
+            .expect("refresh should succeed");
+
+        assert_eq!(state.snapshot().namespaces_count, 3);
+    }
+
+    #[tokio::test]
     async fn refresh_partial_failure_degrades_gracefully() {
         let mut state = GlobalState::default();
         let mut source = MockDataSource::success();
@@ -1511,6 +1564,33 @@ mod tests {
             .expect("loading guard should no-op");
 
         assert_eq!(state.snapshot().phase, DataPhase::Loading);
+    }
+
+    #[test]
+    fn begin_loading_transition_keeps_snapshot_version_monotonic() {
+        let mut state = GlobalState::default();
+        state.snapshot.snapshot_version = 7;
+        state.snapshot.pods = vec![PodInfo {
+            name: "pod-a".to_string(),
+            namespace: "default".to_string(),
+            ..PodInfo::default()
+        }];
+        state.namespaces = vec!["all".to_string(), "default".to_string()];
+        state.publish_snapshot();
+
+        state.begin_loading_transition(false);
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.snapshot_version, 8);
+        assert_eq!(snapshot.phase, DataPhase::Idle);
+        assert!(snapshot.pods.is_empty());
+        assert_eq!(
+            state.namespaces,
+            vec!["all".to_string(), "default".to_string()]
+        );
+
+        state.begin_loading_transition(true);
+        assert_eq!(state.snapshot().snapshot_version, 9);
+        assert!(state.namespaces.is_empty());
     }
 
     /// Verifies StatefulSet DTO default values are stable.

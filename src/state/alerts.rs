@@ -1,6 +1,6 @@
 //! Pure dashboard statistics and alert aggregation logic.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use chrono::{Duration, Utc};
 
@@ -21,6 +21,42 @@ pub struct DashboardStats {
     pub namespaces_count: usize,
     pub ready_nodes_percent: u8,
     pub running_pods_percent: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DashboardHealthState {
+    #[default]
+    Healthy,
+    Warning,
+    Critical,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NodeUtilizationSummary {
+    pub name: String,
+    pub cpu_pct: u8,
+    pub mem_pct: u8,
+    pub cpu_used_m: u64,
+    pub cpu_alloc_m: u64,
+    pub mem_used_mib: u64,
+    pub mem_alloc_mib: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DashboardInsights {
+    pub health_state: DashboardHealthState,
+    pub not_ready_nodes: usize,
+    pub pressure_nodes: usize,
+    pub pending_pods: usize,
+    pub failed_pods: usize,
+    pub metrics_reported_nodes: usize,
+    pub utilization_nodes: usize,
+    pub avg_cpu_pct: u8,
+    pub avg_mem_pct: u8,
+    pub high_cpu_nodes: usize,
+    pub high_mem_nodes: usize,
+    pub hot_cpu_nodes: Vec<NodeUtilizationSummary>,
+    pub hot_mem_nodes: Vec<NodeUtilizationSummary>,
 }
 
 /// Computes dashboard metrics from a snapshot without side effects.
@@ -69,6 +105,184 @@ pub fn compute_dashboard_stats(snapshot: &ClusterSnapshot) -> DashboardStats {
         namespaces_count,
         ready_nodes_percent: ratio_percent(ready_nodes, total_nodes),
         running_pods_percent: ratio_percent(running_pods, total_pods),
+    }
+}
+
+/// Computes workload readiness percentage across Deployments, StatefulSets, and DaemonSets.
+pub fn compute_workload_ready_percent(snapshot: &ClusterSnapshot) -> u8 {
+    let (dep_ready, dep_total) = snapshot.deployments.iter().fold((0i64, 0i64), |(r, t), d| {
+        (
+            r + i64::from(d.ready_replicas.max(0).min(d.desired_replicas.max(0))),
+            t + i64::from(d.desired_replicas.max(0)),
+        )
+    });
+    let (ss_ready, ss_total) = snapshot
+        .statefulsets
+        .iter()
+        .fold((0i64, 0i64), |(r, t), s| {
+            (
+                r + i64::from(s.ready_replicas.max(0).min(s.desired_replicas.max(0))),
+                t + i64::from(s.desired_replicas.max(0)),
+            )
+        });
+    let (ds_ready, ds_total) = snapshot.daemonsets.iter().fold((0i64, 0i64), |(r, t), d| {
+        (
+            r + i64::from(d.ready_count.max(0).min(d.desired_count.max(0))),
+            t + i64::from(d.desired_count.max(0)),
+        )
+    });
+
+    let total = dep_total + ss_total + ds_total;
+    if total == 0 {
+        100
+    } else {
+        (((dep_ready + ss_ready + ds_ready) * 100 / total).clamp(0, 100)) as u8
+    }
+}
+
+/// Computes dashboard health/risk insights from node metrics and workload state.
+pub fn compute_dashboard_insights(snapshot: &ClusterSnapshot) -> DashboardInsights {
+    const HOT_NODE_LIMIT: usize = 3;
+    const SATURATION_WARNING_PCT: u8 = 80;
+
+    let not_ready_nodes = snapshot.nodes.iter().filter(|node| !node.ready).count();
+    let pressure_nodes = snapshot
+        .nodes
+        .iter()
+        .filter(|node| {
+            node.memory_pressure
+                || node.disk_pressure
+                || node.pid_pressure
+                || node.network_unavailable
+        })
+        .count();
+    let (pending_pods, failed_pods) =
+        snapshot
+            .pods
+            .iter()
+            .fold((0usize, 0usize), |(pending, failed), pod| {
+                if pod.status.eq_ignore_ascii_case("pending") {
+                    (pending + 1, failed)
+                } else if pod.status.eq_ignore_ascii_case("failed") {
+                    (pending, failed + 1)
+                } else {
+                    (pending, failed)
+                }
+            });
+
+    let metrics_by_node: HashMap<&str, &crate::k8s::dtos::NodeMetricsInfo> = snapshot
+        .node_metrics
+        .iter()
+        .map(|metric| (metric.name.as_str(), metric))
+        .collect();
+
+    let mut utilization = Vec::new();
+    for node in &snapshot.nodes {
+        let Some(metric) = metrics_by_node.get(node.name.as_str()) else {
+            continue;
+        };
+
+        let cpu_alloc_m = node
+            .cpu_allocatable
+            .as_deref()
+            .map(parse_millicores)
+            .unwrap_or(0);
+        let mem_alloc_mib = node
+            .memory_allocatable
+            .as_deref()
+            .map(parse_mib)
+            .unwrap_or(0);
+        if cpu_alloc_m == 0 || mem_alloc_mib == 0 {
+            continue;
+        }
+
+        let cpu_used_m = parse_millicores(&metric.cpu);
+        let mem_used_mib = parse_mib(&metric.memory);
+        utilization.push(NodeUtilizationSummary {
+            name: node.name.clone(),
+            cpu_pct: ratio_percent_u64(cpu_used_m, cpu_alloc_m),
+            mem_pct: ratio_percent_u64(mem_used_mib, mem_alloc_mib),
+            cpu_used_m,
+            cpu_alloc_m,
+            mem_used_mib,
+            mem_alloc_mib,
+        });
+    }
+
+    let utilization_nodes = utilization.len();
+    let avg_cpu_pct = if utilization.is_empty() {
+        0
+    } else {
+        (utilization
+            .iter()
+            .map(|item| u64::from(item.cpu_pct))
+            .sum::<u64>()
+            / utilization.len() as u64)
+            .min(100) as u8
+    };
+    let avg_mem_pct = if utilization.is_empty() {
+        0
+    } else {
+        (utilization
+            .iter()
+            .map(|item| u64::from(item.mem_pct))
+            .sum::<u64>()
+            / utilization.len() as u64)
+            .min(100) as u8
+    };
+
+    let high_cpu_nodes = utilization
+        .iter()
+        .filter(|item| item.cpu_pct >= SATURATION_WARNING_PCT)
+        .count();
+    let high_mem_nodes = utilization
+        .iter()
+        .filter(|item| item.mem_pct >= SATURATION_WARNING_PCT)
+        .count();
+
+    let mut hot_cpu_nodes = utilization.clone();
+    hot_cpu_nodes.sort_unstable_by(|a, b| {
+        b.cpu_pct
+            .cmp(&a.cpu_pct)
+            .then_with(|| b.cpu_used_m.cmp(&a.cpu_used_m))
+    });
+    hot_cpu_nodes.truncate(HOT_NODE_LIMIT);
+
+    let mut hot_mem_nodes = utilization;
+    hot_mem_nodes.sort_unstable_by(|a, b| {
+        b.mem_pct
+            .cmp(&a.mem_pct)
+            .then_with(|| b.mem_used_mib.cmp(&a.mem_used_mib))
+    });
+    hot_mem_nodes.truncate(HOT_NODE_LIMIT);
+
+    let health_state = if not_ready_nodes > 0 || pressure_nodes > 0 || failed_pods > 0 {
+        DashboardHealthState::Critical
+    } else if pending_pods > 0
+        || high_cpu_nodes > 0
+        || high_mem_nodes > 0
+        || avg_cpu_pct >= 70
+        || avg_mem_pct >= 75
+    {
+        DashboardHealthState::Warning
+    } else {
+        DashboardHealthState::Healthy
+    };
+
+    DashboardInsights {
+        health_state,
+        not_ready_nodes,
+        pressure_nodes,
+        pending_pods,
+        failed_pods,
+        metrics_reported_nodes: snapshot.node_metrics.len(),
+        utilization_nodes,
+        avg_cpu_pct,
+        avg_mem_pct,
+        high_cpu_nodes,
+        high_mem_nodes,
+        hot_cpu_nodes,
+        hot_mem_nodes,
     }
 }
 
@@ -171,6 +385,37 @@ fn ratio_percent(numerator: usize, denominator: usize) -> u8 {
 
     let ratio = ((numerator as f64 / denominator as f64) * 100.0).round();
     ratio.clamp(0.0, 100.0) as u8
+}
+
+fn ratio_percent_u64(numerator: u64, denominator: u64) -> u8 {
+    if denominator == 0 {
+        return 0;
+    }
+    ((numerator.saturating_mul(100) / denominator).min(100)) as u8
+}
+
+fn parse_millicores(raw: &str) -> u64 {
+    if let Some(m) = raw.strip_suffix('m') {
+        m.parse().unwrap_or(0)
+    } else {
+        raw.parse::<u64>().unwrap_or(0) * 1000
+    }
+}
+
+fn parse_mib(raw: &str) -> u64 {
+    if let Some(v) = raw.strip_suffix("Ki") {
+        return v.parse::<u64>().unwrap_or(0) / 1024;
+    }
+    if let Some(v) = raw.strip_suffix("Mi") {
+        return v.parse().unwrap_or(0);
+    }
+    if let Some(v) = raw.strip_suffix("Gi") {
+        return v.parse::<u64>().unwrap_or(0) * 1024;
+    }
+    if let Some(v) = raw.strip_suffix("Ti") {
+        return v.parse::<u64>().unwrap_or(0) * 1024 * 1024;
+    }
+    raw.parse::<u64>().unwrap_or(0) / (1024 * 1024)
 }
 
 fn has_reason(reasons: &[String], expected_reason: &str) -> bool {
@@ -416,5 +661,92 @@ mod tests {
 
         let stats = compute_dashboard_stats(&snapshot);
         assert_eq!(stats.namespaces_count, 3);
+    }
+
+    #[test]
+    fn compute_dashboard_insights_marks_critical_for_not_ready_and_failed() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "node-a".to_string(),
+            ready: false,
+            ..NodeInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "pod-a".to_string(),
+            namespace: "default".to_string(),
+            status: "Failed".to_string(),
+            ..PodInfo::default()
+        });
+
+        let insights = compute_dashboard_insights(&snapshot);
+        assert_eq!(insights.health_state, DashboardHealthState::Critical);
+        assert_eq!(insights.not_ready_nodes, 1);
+        assert_eq!(insights.failed_pods, 1);
+    }
+
+    #[test]
+    fn compute_dashboard_insights_node_utilization_and_hot_nodes() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "node-a".to_string(),
+            ready: true,
+            cpu_allocatable: Some("2000m".to_string()),
+            memory_allocatable: Some("2048Mi".to_string()),
+            ..NodeInfo::default()
+        });
+        snapshot.nodes.push(NodeInfo {
+            name: "node-b".to_string(),
+            ready: true,
+            cpu_allocatable: Some("2000m".to_string()),
+            memory_allocatable: Some("2048Mi".to_string()),
+            ..NodeInfo::default()
+        });
+        snapshot
+            .node_metrics
+            .push(crate::k8s::dtos::NodeMetricsInfo {
+                name: "node-a".to_string(),
+                cpu: "500m".to_string(),
+                memory: "1024Mi".to_string(),
+                ..crate::k8s::dtos::NodeMetricsInfo::default()
+            });
+        snapshot
+            .node_metrics
+            .push(crate::k8s::dtos::NodeMetricsInfo {
+                name: "node-b".to_string(),
+                cpu: "1800m".to_string(),
+                memory: "1536Mi".to_string(),
+                ..crate::k8s::dtos::NodeMetricsInfo::default()
+            });
+
+        let insights = compute_dashboard_insights(&snapshot);
+        assert_eq!(insights.utilization_nodes, 2);
+        assert_eq!(insights.avg_cpu_pct, 57);
+        assert_eq!(insights.avg_mem_pct, 62);
+        assert_eq!(insights.hot_cpu_nodes[0].name, "node-b");
+        assert_eq!(insights.hot_mem_nodes[0].name, "node-b");
+    }
+
+    #[test]
+    fn compute_workload_ready_percent_aggregates_workloads() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.deployments.push(crate::k8s::dtos::DeploymentInfo {
+            desired_replicas: 4,
+            ready_replicas: 3,
+            ..crate::k8s::dtos::DeploymentInfo::default()
+        });
+        snapshot
+            .statefulsets
+            .push(crate::k8s::dtos::StatefulSetInfo {
+                desired_replicas: 2,
+                ready_replicas: 1,
+                ..crate::k8s::dtos::StatefulSetInfo::default()
+            });
+        snapshot.daemonsets.push(crate::k8s::dtos::DaemonSetInfo {
+            desired_count: 5,
+            ready_count: 4,
+            ..crate::k8s::dtos::DaemonSetInfo::default()
+        });
+
+        assert_eq!(compute_workload_ready_percent(&snapshot), 72);
     }
 }

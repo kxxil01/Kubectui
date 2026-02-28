@@ -631,7 +631,12 @@ fn render_pods_widget(
     );
 
     if indices.is_empty() {
-        let msg = if cluster.pods.is_empty() {
+        let msg = if matches!(
+            cluster.phase,
+            crate::state::DataPhase::Loading | crate::state::DataPhase::Idle
+        ) {
+            "  Loading pods..."
+        } else if cluster.pods.is_empty() {
             "  No pods available  (try pressing ~ to switch namespace, or select 'all')"
         } else {
             "  No pods match the search query"

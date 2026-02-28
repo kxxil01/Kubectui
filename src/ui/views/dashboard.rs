@@ -1,51 +1,47 @@
-//! Dashboard renderer — rich overview with metrics charts, gauges, and alerts.
+//! Dashboard renderer — rich overview with health, saturation, and alerts.
+
+use std::collections::BTreeMap;
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{BarChart, Block, BorderType, Borders, Gauge, LineGauge, Paragraph, Sparkline, Wrap},
+    widgets::{Block, BorderType, Borders, Gauge, LineGauge, Paragraph, Sparkline, Wrap},
 };
 
 use crate::{
     k8s::dtos::{AlertItem, AlertSeverity},
     state::{
         ClusterSnapshot,
-        alerts::{compute_alerts, compute_dashboard_stats},
+        alerts::{
+            DashboardHealthState, DashboardInsights, DashboardStats, compute_alerts,
+            compute_dashboard_insights, compute_dashboard_stats, compute_workload_ready_percent,
+        },
     },
     ui::{components::default_theme, theme::Theme},
 };
 
 // ── metric parsing helpers ────────────────────────────────────────────────────
 
-/// Maximum number of nodes shown in the bar chart to keep bars readable.
-const MAX_CHART_NODES: usize = 8;
-
-/// Parse a Kubernetes CPU quantity string (e.g. "250m", "2") into millicores.
-fn parse_millicores(s: &str) -> u64 {
-    if let Some(m) = s.strip_suffix('m') {
-        m.parse().unwrap_or(0)
+fn gauge_severity_style(theme: &Theme, percent: u8) -> Style {
+    if percent >= 95 {
+        theme.badge_success_style()
+    } else if percent >= 75 {
+        theme.badge_warning_style()
     } else {
-        s.parse::<u64>().unwrap_or(0) * 1000
+        theme.badge_error_style()
     }
 }
 
-/// Parse a Kubernetes memory quantity string (e.g. "512Mi", "1Gi", "1073741824") into MiB.
-fn parse_mib(s: &str) -> u64 {
-    if let Some(v) = s.strip_suffix("Ki") {
-        return v.parse::<u64>().unwrap_or(0) / 1024;
+fn truncate_label(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        return s.to_string();
     }
-    if let Some(v) = s.strip_suffix("Mi") {
-        return v.parse().unwrap_or(0);
+    if max_chars <= 3 {
+        return ".".repeat(max_chars);
     }
-    if let Some(v) = s.strip_suffix("Gi") {
-        return v.parse::<u64>().unwrap_or(0) * 1024;
-    }
-    if let Some(v) = s.strip_suffix("Ti") {
-        return v.parse::<u64>().unwrap_or(0) * 1024 * 1024;
-    }
-    // raw bytes
-    s.parse::<u64>().unwrap_or(0) / (1024 * 1024)
+    let kept: String = s.chars().take(max_chars - 3).collect();
+    format!("{kept}...")
 }
 
 // ── top-level render ──────────────────────────────────────────────────────────
@@ -55,13 +51,15 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
     let theme = default_theme();
     let stats = compute_dashboard_stats(snapshot);
     let alerts = compute_alerts(snapshot);
+    let insights = compute_dashboard_insights(snapshot);
+    let workload_pct = compute_workload_ready_percent(snapshot);
 
     // Layout:
-    //  row 0 (7)  : cluster info | resource counts
-    //  row 1 (5)  : node-ready gauge | pod-running gauge
-    //  row 2 (9)  : node CPU barchart | node memory barchart
-    //  row 3 (7)  : workload health (deployments/statefulsets/daemonsets LineGauges)
-    //  row 4 (min): pod status sparkline | alerts
+    //  row 0 (7)  : cluster info | health summary
+    //  row 1 (5)  : node-ready | pod-running | workload-ready gauges
+    //  row 2 (9)  : node utilization summary | hottest nodes
+    //  row 3 (7)  : resource counts | pod status distribution
+    //  row 4 (min): alerts
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -79,18 +77,24 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
         .split(rows[0]);
 
     render_cluster_info(frame, top_cols[0], snapshot, &theme);
-    render_resource_counts(frame, top_cols[1], &stats, &theme);
-    render_health_gauges(frame, rows[1], &stats, &theme);
-    render_node_metrics(frame, rows[2], snapshot, &theme);
-    render_workload_health(frame, rows[3], snapshot, &theme);
+    render_cluster_health_summary(frame, top_cols[1], &stats, &insights, &theme);
+    render_health_gauges(frame, rows[1], &stats, workload_pct, &theme);
 
-    let bottom_cols = Layout::default()
+    let node_rows = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-        .split(rows[4]);
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(rows[2]);
+    render_node_utilization_summary(frame, node_rows[0], &insights, &theme);
+    render_hot_nodes(frame, node_rows[1], &insights, &theme);
 
-    render_pod_sparkline(frame, bottom_cols[0], snapshot, &theme);
-    render_alerts(frame, bottom_cols[1], &alerts, &theme);
+    let summary_cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(rows[3]);
+
+    render_resource_counts(frame, summary_cols[0], &stats, &theme);
+    render_pod_sparkline(frame, summary_cols[1], snapshot, &theme);
+    render_alerts(frame, rows[4], &alerts, &theme);
 }
 
 // ── cluster info ──────────────────────────────────────────────────────────────
@@ -156,14 +160,83 @@ fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot
     );
 }
 
-// ── resource counts ───────────────────────────────────────────────────────────
-
-fn render_resource_counts(
+fn render_cluster_health_summary(
     frame: &mut Frame,
     area: Rect,
-    stats: &crate::state::alerts::DashboardStats,
+    stats: &DashboardStats,
+    insights: &DashboardInsights,
     theme: &Theme,
 ) {
+    let (health_label, health_style) = match insights.health_state {
+        DashboardHealthState::Healthy => ("HEALTHY", theme.badge_success_style()),
+        DashboardHealthState::Warning => ("WARNING", theme.badge_warning_style()),
+        DashboardHealthState::Critical => ("CRITICAL", theme.badge_error_style()),
+    };
+
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("  Overall   ", theme.inactive_style()),
+            Span::styled(health_label, health_style),
+        ]),
+        Line::from(vec![
+            Span::styled("  Nodes     ", theme.inactive_style()),
+            Span::styled(
+                format!(
+                    "{}/{} ready  {} not-ready  {} pressure",
+                    stats.ready_nodes,
+                    stats.total_nodes,
+                    insights.not_ready_nodes,
+                    insights.pressure_nodes
+                ),
+                Style::default().fg(theme.fg),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Pods      ", theme.inactive_style()),
+            Span::styled(
+                format!(
+                    "{} running  {} pending  {} failed",
+                    stats.running_pods, insights.pending_pods, insights.failed_pods
+                ),
+                Style::default().fg(theme.fg),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Metrics   ", theme.inactive_style()),
+            Span::styled(
+                format!(
+                    "{} reported  {} usable",
+                    insights.metrics_reported_nodes, insights.utilization_nodes
+                ),
+                Style::default().fg(theme.accent2),
+            ),
+        ]),
+    ];
+
+    let border_style = match insights.health_state {
+        DashboardHealthState::Critical => theme.badge_error_style(),
+        DashboardHealthState::Warning => theme.badge_warning_style(),
+        DashboardHealthState::Healthy => theme.border_style(),
+    };
+
+    let block = Block::default()
+        .title(Span::styled(" 󰓦 Cluster Health ", theme.title_style()))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style)
+        .style(Style::default().bg(theme.bg));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+// ── resource counts ───────────────────────────────────────────────────────────
+
+fn render_resource_counts(frame: &mut Frame, area: Rect, stats: &DashboardStats, theme: &Theme) {
     let node_style = if stats.ready_nodes == stats.total_nodes {
         theme.badge_success_style()
     } else {
@@ -228,167 +301,62 @@ fn render_resource_counts(
 fn render_health_gauges(
     frame: &mut Frame,
     area: Rect,
-    stats: &crate::state::alerts::DashboardStats,
+    stats: &DashboardStats,
+    workload_pct: u8,
     theme: &Theme,
 ) {
     let cols = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-
-    let node_pct = stats.ready_nodes_percent;
-    let pod_pct = stats.running_pods_percent;
-
-    let node_gauge = Gauge::default()
-        .block(
-            Block::default()
-                .title(Span::styled(
-                    format!(" Nodes Ready  {node_pct}% "),
-                    theme.gauge_style(100 - node_pct),
-                ))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(theme.border_style()),
-        )
-        .gauge_style(theme.gauge_style(100 - node_pct))
-        .percent(node_pct as u16)
-        .use_unicode(true);
-
-    let pod_gauge = Gauge::default()
-        .block(
-            Block::default()
-                .title(Span::styled(
-                    format!(" Pods Running  {pod_pct}% "),
-                    theme.gauge_style(100 - pod_pct),
-                ))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(theme.border_style()),
-        )
-        .gauge_style(theme.gauge_style(100 - pod_pct))
-        .percent(pod_pct as u16)
-        .use_unicode(true);
-
-    frame.render_widget(node_gauge, cols[0]);
-    frame.render_widget(pod_gauge, cols[1]);
-}
-
-// ── node metrics bar charts ───────────────────────────────────────────────────
-
-fn render_node_metrics(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, theme: &Theme) {
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(area);
-
-    if snapshot.node_metrics.is_empty() {
-        // metrics-server not available — show a friendly placeholder
-        let msg = Paragraph::new(vec![
-            Line::from(""),
-            Line::from(vec![
-                Span::styled("  ℹ  ", Style::default().fg(theme.info)),
-                Span::styled(
-                    "Node metrics unavailable — install metrics-server to enable CPU/memory charts",
-                    Style::default().fg(theme.fg_dim),
-                ),
-            ]),
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
         ])
-        .block(
-            Block::default()
-                .title(Span::styled(" 󰻠 Node Metrics ", theme.title_style()))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(theme.border_style())
-                .style(Style::default().bg(theme.bg)),
-        )
-        .wrap(Wrap { trim: false });
-        frame.render_widget(msg, area);
-        return;
-    }
+        .split(area);
 
-    // Build bar data — cap to MAX_CHART_NODES so bars stay readable
-    let metrics: Vec<_> = snapshot.node_metrics.iter().take(MAX_CHART_NODES).collect();
-
-    // CPU bar chart (millicores)
-    let cpu_data: Vec<(String, u64)> = metrics
-        .iter()
-        .map(|m| {
-            let short_name = m.name.split('-').next_back().unwrap_or(&m.name).to_string();
-            (short_name, parse_millicores(&m.cpu))
-        })
-        .collect();
-    let cpu_max = cpu_data.iter().map(|(_, v)| *v).max().unwrap_or(1).max(1);
-    let cpu_bar_data: Vec<(&str, u64)> = cpu_data.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-
-    let cpu_chart = BarChart::default()
-        .block(
-            Block::default()
-                .title(Span::styled(" 󰻠 CPU (millicores) ", theme.title_style()))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(theme.border_style())
-                .style(Style::default().bg(theme.bg)),
-        )
-        .data(&cpu_bar_data)
-        .bar_width(5)
-        .bar_gap(1)
-        .max(cpu_max)
-        .bar_style(Style::default().fg(theme.accent))
-        .value_style(
-            Style::default()
-                .fg(theme.bg)
-                .bg(theme.accent)
-                .add_modifier(Modifier::BOLD),
-        )
-        .label_style(Style::default().fg(theme.fg_dim));
-
-    // Memory bar chart (MiB)
-    let mem_data: Vec<(String, u64)> = metrics
-        .iter()
-        .map(|m| {
-            let short_name = m.name.split('-').next_back().unwrap_or(&m.name).to_string();
-            (short_name, parse_mib(&m.memory))
-        })
-        .collect();
-    let mem_max = mem_data.iter().map(|(_, v)| *v).max().unwrap_or(1).max(1);
-    let mem_bar_data: Vec<(&str, u64)> = mem_data.iter().map(|(k, v)| (k.as_str(), *v)).collect();
-
-    let mem_chart = BarChart::default()
-        .block(
-            Block::default()
-                .title(Span::styled(" 󰍛 Memory (MiB) ", theme.title_style()))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(theme.border_style())
-                .style(Style::default().bg(theme.bg)),
-        )
-        .data(&mem_bar_data)
-        .bar_width(5)
-        .bar_gap(1)
-        .max(mem_max)
-        .bar_style(Style::default().fg(theme.accent2))
-        .value_style(
-            Style::default()
-                .fg(theme.bg)
-                .bg(theme.accent2)
-                .add_modifier(Modifier::BOLD),
-        )
-        .label_style(Style::default().fg(theme.fg_dim));
-
-    frame.render_widget(cpu_chart, cols[0]);
-    frame.render_widget(mem_chart, cols[1]);
+    render_percent_gauge(
+        frame,
+        cols[0],
+        "Nodes Ready",
+        stats.ready_nodes_percent,
+        theme,
+    );
+    render_percent_gauge(
+        frame,
+        cols[1],
+        "Pods Running",
+        stats.running_pods_percent,
+        theme,
+    );
+    render_percent_gauge(frame, cols[2], "Workload Ready", workload_pct, theme);
 }
 
-// ── workload health line gauges ───────────────────────────────────────────────
+fn render_percent_gauge(frame: &mut Frame, area: Rect, title: &str, percent: u8, theme: &Theme) {
+    let style = gauge_severity_style(theme, percent);
+    let gauge = Gauge::default()
+        .block(
+            Block::default()
+                .title(Span::styled(format!(" {title}  {percent}% "), style))
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(theme.border_style())
+                .style(Style::default().bg(theme.bg)),
+        )
+        .gauge_style(style)
+        .percent(percent as u16)
+        .use_unicode(true);
 
-fn render_workload_health(
+    frame.render_widget(gauge, area);
+}
+
+fn render_node_utilization_summary(
     frame: &mut Frame,
     area: Rect,
-    snapshot: &ClusterSnapshot,
+    insights: &DashboardInsights,
     theme: &Theme,
 ) {
     let block = Block::default()
-        .title(Span::styled(" 󰑓 Workload Health ", theme.title_style()))
+        .title(Span::styled(" 󰅢 Node Saturation ", theme.title_style()))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(theme.border_style())
@@ -397,32 +365,10 @@ fn render_workload_health(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    // Compute ready ratios
-    let (dep_ready, dep_total) = snapshot.deployments.iter().fold((0i32, 0i32), |(r, t), d| {
-        (
-            r + d.ready_replicas.min(d.desired_replicas),
-            t + d.desired_replicas.max(1),
-        )
-    });
-    let (ss_ready, ss_total) = snapshot
-        .statefulsets
-        .iter()
-        .fold((0i32, 0i32), |(r, t), s| {
-            (
-                r + s.ready_replicas.min(s.desired_replicas),
-                t + s.desired_replicas.max(1),
-            )
-        });
-    let (ds_ready, ds_total) = snapshot.daemonsets.iter().fold((0i32, 0i32), |(r, t), d| {
-        (
-            r + d.ready_count.min(d.desired_count),
-            t + d.desired_count.max(1),
-        )
-    });
-
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
+            Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
             Constraint::Length(1),
@@ -430,9 +376,48 @@ fn render_workload_health(
         ])
         .split(inner);
 
-    render_line_gauge(frame, rows[0], "Deployments ", dep_ready, dep_total, theme);
-    render_line_gauge(frame, rows[1], "StatefulSets", ss_ready, ss_total, theme);
-    render_line_gauge(frame, rows[2], "DaemonSets  ", ds_ready, ds_total, theme);
+    render_line_gauge(
+        frame,
+        rows[0],
+        "Avg CPU Util",
+        i32::from(insights.avg_cpu_pct),
+        100,
+        theme,
+    );
+    render_line_gauge(
+        frame,
+        rows[1],
+        "Avg Mem Util",
+        i32::from(insights.avg_mem_pct),
+        100,
+        theme,
+    );
+
+    let saturation_line = Line::from(vec![
+        Span::styled("  >=80% CPU ", theme.inactive_style()),
+        Span::styled(
+            insights.high_cpu_nodes.to_string(),
+            Style::default().fg(theme.warning),
+        ),
+        Span::styled("   >=80% Mem ", theme.inactive_style()),
+        Span::styled(
+            insights.high_mem_nodes.to_string(),
+            Style::default().fg(theme.warning),
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(saturation_line), rows[2]);
+
+    let coverage_line = Line::from(vec![
+        Span::styled("  Coverage ", theme.inactive_style()),
+        Span::styled(
+            format!(
+                "{} reported / {} usable",
+                insights.metrics_reported_nodes, insights.utilization_nodes
+            ),
+            Style::default().fg(theme.accent2),
+        ),
+    ]);
+    frame.render_widget(Paragraph::new(coverage_line), rows[3]);
 }
 
 fn render_line_gauge(
@@ -473,11 +458,86 @@ fn render_line_gauge(
     frame.render_widget(gauge, area);
 }
 
+fn render_hot_nodes(frame: &mut Frame, area: Rect, insights: &DashboardInsights, theme: &Theme) {
+    let mut lines = Vec::new();
+    if insights.utilization_nodes == 0 {
+        lines.push(Line::from(vec![
+            Span::styled("  ℹ  ", Style::default().fg(theme.info)),
+            Span::styled(
+                "Node utilization unavailable (missing metrics-server or allocatable data)",
+                Style::default().fg(theme.fg_dim),
+            ),
+        ]));
+    } else {
+        lines.push(Line::from(Span::styled(
+            "  CPU hottest nodes",
+            Style::default().fg(theme.accent),
+        )));
+        for (rank, node) in insights.hot_cpu_nodes.iter().enumerate() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   {}. ", rank + 1),
+                    Style::default().fg(theme.inactive_style().fg.unwrap_or(theme.fg_dim)),
+                ),
+                Span::styled(
+                    truncate_label(&node.name, 20),
+                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(
+                        "  {}% ({}/{})",
+                        node.cpu_pct, node.cpu_used_m, node.cpu_alloc_m
+                    ),
+                    Style::default().fg(theme.fg_dim),
+                ),
+            ]));
+        }
+
+        lines.push(Line::from(Span::styled(
+            "  Memory hottest nodes",
+            Style::default().fg(theme.accent2),
+        )));
+        for (rank, node) in insights.hot_mem_nodes.iter().enumerate() {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("   {}. ", rank + 1),
+                    Style::default().fg(theme.inactive_style().fg.unwrap_or(theme.fg_dim)),
+                ),
+                Span::styled(
+                    truncate_label(&node.name, 20),
+                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!(
+                        "  {}% ({}Mi/{}Mi)",
+                        node.mem_pct, node.mem_used_mib, node.mem_alloc_mib
+                    ),
+                    Style::default().fg(theme.fg_dim),
+                ),
+            ]));
+        }
+    }
+
+    let block = Block::default()
+        .title(Span::styled(" 󰅬 Top Node Pressure ", theme.title_style()))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.bg));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
 // ── pod status sparkline ──────────────────────────────────────────────────────
 
 fn render_pod_sparkline(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, theme: &Theme) {
     // Build a per-namespace pod count sparkline (sorted by namespace name)
-    let mut ns_counts: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+    let mut ns_counts: BTreeMap<&str, u64> = BTreeMap::new();
     for pod in &snapshot.pods {
         *ns_counts.entry(pod.namespace.as_str()).or_default() += 1;
     }
