@@ -9,7 +9,10 @@ use ratatui::{
 
 use crate::{
     state::ClusterSnapshot,
-    ui::components::{active_block, default_theme},
+    ui::{
+        components::{active_block, default_theme},
+        loading_or_empty_message,
+    },
 };
 
 use super::super::contains_ci;
@@ -82,11 +85,13 @@ pub fn render_helm_releases(
         })
         .collect();
 
-    let empty_msg = if cluster.helm_releases.is_empty() {
-        "No Helm releases found (Helm v3 stores releases as Kubernetes Secrets)"
-    } else {
-        "No releases match search"
-    };
+    let empty_msg = loading_or_empty_message(
+        cluster,
+        search_query,
+        "Loading Helm releases...",
+        "No Helm releases found (Helm v3 stores releases as Kubernetes Secrets)",
+        "No releases match search",
+    );
 
     let title = if search_query.is_empty() {
         format!(" Helm Releases ({}) ", releases.len())
@@ -169,11 +174,13 @@ pub fn render_helm_repos(
         })
         .collect();
 
-    let empty_msg = if cluster.helm_repositories.is_empty() {
-        "No Helm repositories configured (helm repo add <name> <url>)"
-    } else {
-        "No repositories match search"
-    };
+    let empty_msg = loading_or_empty_message(
+        cluster,
+        search_query,
+        "Loading Helm repositories...",
+        "No Helm repositories configured (helm repo add <name> <url>)",
+        "No repositories match search",
+    );
 
     let title = if search_query.is_empty() {
         format!(" Helm Repositories ({}) ", repos.len())

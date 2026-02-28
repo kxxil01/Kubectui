@@ -4,10 +4,16 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Row, Table},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
 
-use crate::{state::ClusterSnapshot, ui::components::default_theme};
+use crate::{
+    state::ClusterSnapshot,
+    ui::{
+        components::{default_block, default_theme},
+        loading_or_empty_message,
+    },
+};
 
 pub fn render_pvcs(
     frame: &mut Frame,
@@ -22,6 +28,21 @@ pub fn render_pvcs(
         .iter()
         .filter(|p| search.is_empty() || p.name.contains(search) || p.namespace.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading persistent volume claims...",
+            "  No persistent volume claims found",
+            "  No persistent volume claims match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("PersistentVolumeClaims")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()
@@ -113,6 +134,21 @@ pub fn render_pvs(
         .iter()
         .filter(|p| search.is_empty() || p.name.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading persistent volumes...",
+            "  No persistent volumes found",
+            "  No persistent volumes match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("PersistentVolumes")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()
@@ -208,6 +244,21 @@ pub fn render_storage_classes(
         .iter()
         .filter(|sc| search.is_empty() || sc.name.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading storage classes...",
+            "  No storage classes found",
+            "  No storage classes match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("StorageClasses")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()

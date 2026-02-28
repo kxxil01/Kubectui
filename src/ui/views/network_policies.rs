@@ -4,12 +4,15 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Row, Table},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
 
 use crate::{
     state::ClusterSnapshot,
-    ui::{components::default_theme, format_small_int},
+    ui::{
+        components::{default_block, default_theme},
+        format_small_int, loading_or_empty_message,
+    },
 };
 
 pub fn render_network_policies(
@@ -25,6 +28,21 @@ pub fn render_network_policies(
         .iter()
         .filter(|np| search.is_empty() || np.name.contains(search) || np.namespace.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading network policies...",
+            "  No network policies found",
+            "  No network policies match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("NetworkPolicies")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()

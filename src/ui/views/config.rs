@@ -4,12 +4,15 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Row, Table},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
 
 use crate::{
     state::ClusterSnapshot,
-    ui::{components::default_theme, format_small_int},
+    ui::{
+        components::{default_block, default_theme},
+        format_small_int, loading_or_empty_message,
+    },
 };
 
 pub fn render_config_maps(
@@ -25,6 +28,21 @@ pub fn render_config_maps(
         .iter()
         .filter(|cm| search.is_empty() || cm.name.contains(search) || cm.namespace.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading configmaps...",
+            "  No configmaps found",
+            "  No configmaps match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("ConfigMaps")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()
@@ -95,6 +113,21 @@ pub fn render_secrets(
         .iter()
         .filter(|s| search.is_empty() || s.name.contains(search) || s.namespace.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading secrets...",
+            "  No secrets found",
+            "  No secrets match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("Secrets")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()

@@ -22,7 +22,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        table_viewport_rows, table_window,
+        loading_or_empty_message, table_viewport_rows, table_window,
     },
 };
 
@@ -82,12 +82,16 @@ pub fn render_statefulsets(
     );
 
     if indices.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            query,
+            "  Loading statefulsets...",
+            "  No statefulsets found",
+            "  No statefulsets match the search query",
+        );
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                "  No statefulsets found",
-                theme.inactive_style(),
-            ))
-            .block(default_block("StatefulSets")),
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("StatefulSets")),
             area,
         );
         return;

@@ -22,7 +22,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, table_viewport_rows, table_window,
+        format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
     },
 };
 
@@ -83,12 +83,16 @@ pub fn render_replication_controllers(
     );
 
     if indices.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            query,
+            "  Loading replication controllers...",
+            "  No replication controllers found",
+            "  No replication controllers match the search query",
+        );
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                "  No replication controllers found",
-                theme.inactive_style(),
-            ))
-            .block(default_block("Replication Controllers")),
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("Replication Controllers")),
             area,
         );
         return;

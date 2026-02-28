@@ -24,7 +24,8 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        table_viewport_rows, table_window,
+        loading_or_empty_message, loading_or_empty_message_no_search, table_viewport_rows,
+        table_window,
     },
 };
 
@@ -57,9 +58,14 @@ pub fn render_nodes(
     let query = query.trim();
 
     if snapshot.nodes.is_empty() {
+        let msg = loading_or_empty_message_no_search(
+            snapshot,
+            "  Loading nodes...",
+            "  No nodes available",
+        );
         let widget = Paragraph::new(Line::from(vec![
             Span::styled("  ", theme.inactive_style()),
-            Span::styled("No nodes available", theme.inactive_style()),
+            Span::styled(msg, theme.inactive_style()),
         ]))
         .block(default_block("Nodes"));
         frame.render_widget(widget, area);
@@ -88,11 +94,15 @@ pub fn render_nodes(
     );
 
     if indices.is_empty() {
-        let widget = Paragraph::new(Line::from(vec![Span::styled(
+        let msg = loading_or_empty_message(
+            snapshot,
+            query,
+            "  Loading nodes...",
+            "  No nodes available",
             "  No nodes match the search query",
-            theme.inactive_style(),
-        )]))
-        .block(default_block("Nodes"));
+        );
+        let widget = Paragraph::new(Line::from(vec![Span::styled(msg, theme.inactive_style())]))
+            .block(default_block("Nodes"));
         frame.render_widget(widget, area);
         return;
     }

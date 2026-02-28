@@ -26,6 +26,10 @@ pub fn render_extensions(
         frame,
         chunks[0],
         &snapshot.custom_resource_definitions,
+        matches!(
+            snapshot.phase,
+            crate::state::DataPhase::Loading | crate::state::DataPhase::Idle
+        ),
         app.selected_idx(),
         app.search_query(),
         !app.extension_in_instances,

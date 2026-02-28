@@ -25,7 +25,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, table_viewport_rows, table_window,
+        format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
     },
 };
 
@@ -77,12 +77,16 @@ pub fn render_deployments(
     );
 
     if indices.is_empty() {
+        let msg = loading_or_empty_message(
+            snapshot,
+            query,
+            "  Loading deployments...",
+            "  No deployments found",
+            "  No deployments match the search query",
+        );
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                "  No deployments found",
-                theme.inactive_style(),
-            ))
-            .block(default_block("Deployments")),
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("Deployments")),
             area,
         );
         return;

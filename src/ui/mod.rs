@@ -22,11 +22,11 @@ use std::{
 };
 
 use crate::{
-    app::{AppState, AppView},
+    app::{AppState, AppView, PodSortColumn, PodSortState, filtered_pod_indices},
     state::ClusterSnapshot,
     ui::components::{active_block, default_block, default_theme},
 };
-use filter_cache::{cached_filter_indices, data_fingerprint};
+use filter_cache::{cached_filter_indices_with_variant, data_fingerprint};
 
 /// Case-insensitive substring match without allocating a new lowercase string.
 #[inline]
@@ -118,6 +118,41 @@ pub(crate) fn table_window(total: usize, selected: usize, viewport_rows: usize) 
         start,
         end,
         selected: selected.saturating_sub(start),
+    }
+}
+
+pub(crate) fn loading_or_empty_message(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    loading: &'static str,
+    empty: &'static str,
+    no_match: &'static str,
+) -> &'static str {
+    if matches!(
+        snapshot.phase,
+        crate::state::DataPhase::Loading | crate::state::DataPhase::Idle
+    ) {
+        return loading;
+    }
+    if query.trim().is_empty() {
+        empty
+    } else {
+        no_match
+    }
+}
+
+pub(crate) fn loading_or_empty_message_no_search(
+    snapshot: &ClusterSnapshot,
+    loading: &'static str,
+    empty: &'static str,
+) -> &'static str {
+    if matches!(
+        snapshot.phase,
+        crate::state::DataPhase::Loading | crate::state::DataPhase::Idle
+    ) {
+        loading
+    } else {
+        empty
     }
 }
 
@@ -253,6 +288,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     cluster,
                     app.selected_idx(),
                     app.search_query(),
+                    app.pod_sort(),
                 );
             }
             AppView::ReplicaSets => views::replicasets::render_replicasets(
@@ -495,8 +531,14 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         format!("[{}] Search: {}", app.get_namespace(), app.search_query())
     } else {
         let theme_name = theme::active_theme().name;
+        let pods_sort_hint = if app.view() == AppView::Pods {
+            let active = app.pod_sort().map_or("default", PodSortState::short_label);
+            format!(" • [1/2/3] pod-sort ({active}) • [0] clear-sort")
+        } else {
+            String::new()
+        };
         format!(
-            "[{}]  [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name} • [r] refresh • [q] quit",
+            "[{}]  [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{pods_sort_hint} • [r] refresh • [q] quit",
             app.get_namespace()
         )
     };
@@ -601,46 +643,27 @@ fn render_pods_widget(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    pod_sort: Option<PodSortState>,
 ) {
     let theme = default_theme();
-    let indices = cached_filter_indices(
+    let cache_variant = pod_sort.map_or(0, PodSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::Pods,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.pods),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.pods.len()).collect();
-            }
-            cluster
-                .pods
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, pod)| {
-                    if contains_ci(&pod.name, q)
-                        || contains_ci(&pod.namespace, q)
-                        || contains_ci(&pod.status, q)
-                    {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        },
+        cache_variant,
+        |q| filtered_pod_indices(&cluster.pods, q, pod_sort),
     );
 
     if indices.is_empty() {
-        let msg = if matches!(
-            cluster.phase,
-            crate::state::DataPhase::Loading | crate::state::DataPhase::Idle
-        ) {
-            "  Loading pods..."
-        } else if cluster.pods.is_empty() {
-            "  No pods available  (try pressing ~ to switch namespace, or select 'all')"
-        } else {
-            "  No pods match the search query"
-        };
+        let msg = loading_or_empty_message(
+            cluster,
+            query,
+            "  Loading pods...",
+            "  No pods available  (try pressing ~ to switch namespace, or select 'all')",
+            "  No pods match the search query",
+        );
         frame.render_widget(
             Paragraph::new(Span::styled(msg, theme.inactive_style())).block(default_block("Pods")),
             area,
@@ -652,13 +675,47 @@ fn render_pods_widget(
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
 
+    let age_header = match pod_sort {
+        Some(PodSortState {
+            column: PodSortColumn::Age,
+            descending: true,
+        }) => "Age▼",
+        Some(PodSortState {
+            column: PodSortColumn::Age,
+            descending: false,
+        }) => "Age▲",
+        _ => "Age",
+    };
+    let status_header = match pod_sort {
+        Some(PodSortState {
+            column: PodSortColumn::Status,
+            descending: true,
+        }) => "Status▼",
+        Some(PodSortState {
+            column: PodSortColumn::Status,
+            descending: false,
+        }) => "Status▲",
+        _ => "Status",
+    };
+    let restarts_header = match pod_sort {
+        Some(PodSortState {
+            column: PodSortColumn::Restarts,
+            descending: true,
+        }) => "Restarts▼",
+        Some(PodSortState {
+            column: PodSortColumn::Restarts,
+            descending: false,
+        }) => "Restarts▲",
+        _ => "Restarts",
+    };
+
     let header = Row::new([
         Cell::from(Span::styled("  Name", theme.header_style())),
         Cell::from(Span::styled("Namespace", theme.header_style())),
-        Cell::from(Span::styled("Status", theme.header_style())),
+        Cell::from(Span::styled(status_header, theme.header_style())),
         Cell::from(Span::styled("Node", theme.header_style())),
-        Cell::from(Span::styled("Restarts", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(restarts_header, theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -713,12 +770,17 @@ fn render_pods_widget(
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
-    let title = format!(" 🐳 Pods ({total}) ");
+    let sort_suffix = pod_sort
+        .map(|state| format!(" • sort: {}", state.short_label()))
+        .unwrap_or_default();
+    let title = format!(" 🐳 Pods ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = cluster.pods.len();
-        active_block(&format!(" 🐳 Pods ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " 🐳 Pods ({total} of {all}) [/{query}]{sort_suffix}"
+        ))
     };
 
     let table = Table::new(
@@ -790,7 +852,7 @@ mod tests {
             PodDisruptionBudgetInfo, PodInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
             ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
         },
-        state::ClusterSnapshot,
+        state::{ClusterSnapshot, DataPhase},
     };
 
     use super::*;
@@ -854,6 +916,52 @@ mod tests {
             height: 2,
         };
         assert_eq!(table_viewport_rows(area), 1);
+    }
+
+    #[test]
+    fn loading_or_empty_message_respects_snapshot_phase_and_query() {
+        let loading_snapshot = ClusterSnapshot {
+            phase: DataPhase::Loading,
+            ..ClusterSnapshot::default()
+        };
+        assert_eq!(
+            loading_or_empty_message(&loading_snapshot, "", "loading", "empty", "no-match",),
+            "loading"
+        );
+
+        let loaded_snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            ..ClusterSnapshot::default()
+        };
+        assert_eq!(
+            loading_or_empty_message(&loaded_snapshot, "", "loading", "empty", "no-match"),
+            "empty"
+        );
+        assert_eq!(
+            loading_or_empty_message(&loaded_snapshot, "prod", "loading", "empty", "no-match"),
+            "no-match"
+        );
+    }
+
+    #[test]
+    fn loading_or_empty_message_no_search_respects_snapshot_phase() {
+        let loading_snapshot = ClusterSnapshot {
+            phase: DataPhase::Loading,
+            ..ClusterSnapshot::default()
+        };
+        assert_eq!(
+            loading_or_empty_message_no_search(&loading_snapshot, "loading", "empty"),
+            "loading"
+        );
+
+        let loaded_snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            ..ClusterSnapshot::default()
+        };
+        assert_eq!(
+            loading_or_empty_message_no_search(&loaded_snapshot, "loading", "empty"),
+            "empty"
+        );
     }
 
     /// Verifies dashboard renders without panic for empty snapshot.

@@ -4,10 +4,16 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Row, Table},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
 
-use crate::{state::ClusterSnapshot, ui::components::default_theme};
+use crate::{
+    state::ClusterSnapshot,
+    ui::{
+        components::{default_block, default_theme},
+        loading_or_empty_message,
+    },
+};
 
 pub fn render_ingresses(
     frame: &mut Frame,
@@ -22,6 +28,21 @@ pub fn render_ingresses(
         .iter()
         .filter(|i| search.is_empty() || i.name.contains(search) || i.namespace.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading ingresses...",
+            "  No ingresses found",
+            "  No ingresses match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("Ingresses")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()
@@ -103,6 +124,21 @@ pub fn render_ingress_classes(
         .iter()
         .filter(|ic| search.is_empty() || ic.name.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading ingress classes...",
+            "  No ingress classes found",
+            "  No ingress classes match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("IngressClasses")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()

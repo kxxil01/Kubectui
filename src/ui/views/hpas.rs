@@ -4,12 +4,15 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Row, Table},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
 
 use crate::{
     state::ClusterSnapshot,
-    ui::{components::default_theme, format_small_int},
+    ui::{
+        components::{default_block, default_theme},
+        format_small_int, loading_or_empty_message,
+    },
 };
 
 pub fn render_hpas(
@@ -25,6 +28,21 @@ pub fn render_hpas(
         .iter()
         .filter(|h| search.is_empty() || h.name.contains(search) || h.namespace.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading horizontal pod autoscalers...",
+            "  No horizontal pod autoscalers found",
+            "  No horizontal pod autoscalers match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("HorizontalPodAutoscalers")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()

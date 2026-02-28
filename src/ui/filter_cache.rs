@@ -12,6 +12,7 @@ struct FilterCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -92,11 +93,26 @@ pub(crate) fn cached_filter_indices<F>(
 where
     F: FnOnce(&str) -> Vec<usize>,
 {
+    cached_filter_indices_with_variant(view, query, snapshot_version, data_fingerprint, 0, build)
+}
+
+pub(crate) fn cached_filter_indices_with_variant<F>(
+    view: AppView,
+    query: &str,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+    variant: u64,
+    build: F,
+) -> Arc<Vec<usize>>
+where
+    F: FnOnce(&str) -> Vec<usize>,
+{
     let query = query.trim();
     let key = FilterCacheKey {
         query: query.to_string(),
         snapshot_version,
         data_fingerprint,
+        variant,
     };
     let shard = &FILTER_CACHE_SHARDS[view.index()];
 

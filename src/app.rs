@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::{
     k8s::{
         client::EventInfo,
-        dtos::{CustomResourceInfo, NodeMetricsInfo, PodMetricsInfo},
+        dtos::{CustomResourceInfo, NodeMetricsInfo, PodInfo, PodMetricsInfo},
     },
     ui::components::{
         CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction, NamespacePicker,
@@ -414,6 +414,151 @@ impl AppView {
     pub const fn tabs() -> &'static [AppView; 36] {
         &Self::ORDER
     }
+}
+
+/// Sortable columns for Pods view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PodSortColumn {
+    Age,
+    Status,
+    Restarts,
+}
+
+impl PodSortColumn {
+    const fn default_descending(self) -> bool {
+        match self {
+            PodSortColumn::Age | PodSortColumn::Restarts => true,
+            PodSortColumn::Status => false,
+        }
+    }
+}
+
+/// Active Pods sort configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PodSortState {
+    pub column: PodSortColumn,
+    pub descending: bool,
+}
+
+impl PodSortState {
+    pub const fn new(column: PodSortColumn, descending: bool) -> Self {
+        Self { column, descending }
+    }
+
+    pub const fn cache_variant(self) -> u64 {
+        let column = match self.column {
+            PodSortColumn::Age => 1_u64,
+            PodSortColumn::Status => 2_u64,
+            PodSortColumn::Restarts => 3_u64,
+        };
+        let direction = if self.descending { 1_u64 } else { 0_u64 };
+        (column << 1) | direction
+    }
+
+    pub const fn short_label(self) -> &'static str {
+        match (self.column, self.descending) {
+            (PodSortColumn::Age, true) => "age desc",
+            (PodSortColumn::Age, false) => "age asc",
+            (PodSortColumn::Status, true) => "status desc",
+            (PodSortColumn::Status, false) => "status asc",
+            (PodSortColumn::Restarts, true) => "restarts desc",
+            (PodSortColumn::Restarts, false) => "restarts asc",
+        }
+    }
+}
+
+#[inline]
+fn contains_ci_ascii(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
+#[inline]
+fn cmp_ci_ascii(left: &str, right: &str) -> std::cmp::Ordering {
+    let mut l = left.bytes();
+    let mut r = right.bytes();
+    loop {
+        match (l.next(), r.next()) {
+            (Some(lb), Some(rb)) => {
+                let lc = lb.to_ascii_lowercase();
+                let rc = rb.to_ascii_lowercase();
+                if lc != rc {
+                    return lc.cmp(&rc);
+                }
+            }
+            (None, Some(_)) => return std::cmp::Ordering::Less,
+            (Some(_), None) => return std::cmp::Ordering::Greater,
+            (None, None) => return std::cmp::Ordering::Equal,
+        }
+    }
+}
+
+/// Builds filtered pod indices and applies optional sort.
+///
+/// This function is the canonical pods list ordering path used by both rendering
+/// and selected-row resource resolution, so table selection and Enter-open stay aligned.
+pub fn filtered_pod_indices(
+    pods: &[PodInfo],
+    query: &str,
+    sort: Option<PodSortState>,
+) -> Vec<usize> {
+    let query = query.trim();
+    let mut out: Vec<usize> = if query.is_empty() {
+        (0..pods.len()).collect()
+    } else {
+        pods.iter()
+            .enumerate()
+            .filter_map(|(idx, pod)| {
+                if contains_ci_ascii(&pod.name, query)
+                    || contains_ci_ascii(&pod.namespace, query)
+                    || contains_ci_ascii(&pod.status, query)
+                {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+
+    if let Some(sort) = sort {
+        out.sort_by(|left_idx, right_idx| {
+            let left = &pods[*left_idx];
+            let right = &pods[*right_idx];
+            let base_order = match sort.column {
+                PodSortColumn::Age => left.created_at.cmp(&right.created_at),
+                PodSortColumn::Status => cmp_ci_ascii(&left.status, &right.status),
+                PodSortColumn::Restarts => left.restarts.cmp(&right.restarts),
+            };
+            let ordered = if sort.descending {
+                base_order.reverse()
+            } else {
+                base_order
+            };
+            if ordered != std::cmp::Ordering::Equal {
+                return ordered;
+            }
+            let ns = cmp_ci_ascii(&left.namespace, &right.namespace);
+            if ns != std::cmp::Ordering::Equal {
+                return ns;
+            }
+            let name = cmp_ci_ascii(&left.name, &right.name);
+            if name != std::cmp::Ordering::Equal {
+                return name;
+            }
+            left_idx.cmp(right_idx)
+        });
+    }
+
+    out
 }
 
 /// Logical pointer to a resource selected in the current view.
@@ -958,6 +1103,8 @@ pub struct AppState {
     pub extension_instance_cursor: usize,
     /// Auto-refresh interval in seconds (0 = disabled).
     pub refresh_interval_secs: u64,
+    /// Optional sort mode for Pods view.
+    pub pod_sort: Option<PodSortState>,
     /// Active port-forward tunnels displayed in the PortForwarding view.
     pub tunnel_registry: crate::state::port_forward::TunnelRegistry,
 }
@@ -986,6 +1133,7 @@ impl Default for AppState {
             extension_in_instances: false,
             extension_instance_cursor: 0,
             refresh_interval_secs: 30,
+            pod_sort: None,
             tunnel_registry: crate::state::port_forward::TunnelRegistry::new(),
         }
     }
@@ -1019,6 +1167,11 @@ impl AppState {
     /// Returns the active search query.
     pub fn search_query(&self) -> &str {
         &self.search_query
+    }
+
+    /// Returns the currently active Pods sort mode, if any.
+    pub fn pod_sort(&self) -> Option<PodSortState> {
+        self.pod_sort
     }
 
     /// Returns whether the app is currently in search input mode.
@@ -1152,6 +1305,21 @@ impl AppState {
     /// Called when [`Focus::Content`] is active and `k`/`↑` is pressed.
     fn select_previous(&mut self) {
         self.selected_idx = self.selected_idx.saturating_sub(1);
+    }
+
+    fn set_or_toggle_pod_sort(&mut self, column: PodSortColumn) {
+        self.selected_idx = 0;
+        self.pod_sort = match self.pod_sort {
+            Some(current) if current.column == column => {
+                Some(PodSortState::new(column, !current.descending))
+            }
+            _ => Some(PodSortState::new(column, column.default_descending())),
+        };
+    }
+
+    fn clear_pod_sort(&mut self) {
+        self.selected_idx = 0;
+        self.pod_sort = None;
     }
 
     /// Moves the sidebar cursor down one row, wrapping from the last row back to the first.
@@ -1351,6 +1519,10 @@ impl AppState {
     /// | `j` / `↓` | no detail, `focus == Content` | Move content selection down |
     /// | `k` / `↑` | no detail, `focus == Sidebar` | Move sidebar cursor up |
     /// | `k` / `↑` | no detail, `focus == Content` | Move content selection up |
+    /// | `1` | Pods view, no detail | Sort pods by Age (toggle asc/desc on repeat) |
+    /// | `2` | Pods view, no detail | Sort pods by Status (toggle asc/desc on repeat) |
+    /// | `3` | Pods view, no detail | Sort pods by Restarts (toggle asc/desc on repeat) |
+    /// | `0` | Pods view, no detail | Clear pods sort and return to default order |
     /// | `/` | — | Enter search mode |
     /// | `~` | — | Open namespace picker |
     /// | `c` | no detail | Open context picker |
@@ -1752,6 +1924,22 @@ impl AppState {
                 self.select_previous();
                 AppAction::None
             }
+            KeyCode::Char('1') if self.detail_view.is_none() && self.view == AppView::Pods => {
+                self.set_or_toggle_pod_sort(PodSortColumn::Age);
+                AppAction::None
+            }
+            KeyCode::Char('2') if self.detail_view.is_none() && self.view == AppView::Pods => {
+                self.set_or_toggle_pod_sort(PodSortColumn::Status);
+                AppAction::None
+            }
+            KeyCode::Char('3') if self.detail_view.is_none() && self.view == AppView::Pods => {
+                self.set_or_toggle_pod_sort(PodSortColumn::Restarts);
+                AppAction::None
+            }
+            KeyCode::Char('0') if self.detail_view.is_none() && self.view == AppView::Pods => {
+                self.clear_pod_sort();
+                AppAction::None
+            }
             KeyCode::Char('/') => {
                 self.is_search_mode = true;
                 AppAction::None
@@ -1981,6 +2169,86 @@ mod tests {
         let mut app = AppState::default();
         let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('~')));
         assert_eq!(action, AppAction::OpenNamespacePicker);
+    }
+
+    #[test]
+    fn pods_sort_keybindings_toggle_and_clear() {
+        let mut app = AppState::default();
+        app.view = AppView::Pods;
+        app.focus = Focus::Content;
+
+        assert_eq!(app.pod_sort(), None);
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('1')));
+        assert_eq!(
+            app.pod_sort(),
+            Some(PodSortState::new(PodSortColumn::Age, true))
+        );
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('1')));
+        assert_eq!(
+            app.pod_sort(),
+            Some(PodSortState::new(PodSortColumn::Age, false))
+        );
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('3')));
+        assert_eq!(
+            app.pod_sort(),
+            Some(PodSortState::new(PodSortColumn::Restarts, true))
+        );
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('0')));
+        assert_eq!(app.pod_sort(), None);
+    }
+
+    #[test]
+    fn pods_sort_keybindings_are_scoped_to_pods_view() {
+        let mut app = AppState::default();
+        app.view = AppView::Services;
+        app.focus = Focus::Content;
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('1')));
+        assert_eq!(app.pod_sort(), None);
+    }
+
+    #[test]
+    fn filtered_pod_indices_apply_restarts_sort_with_stable_tie_breakers() {
+        let mut pods = vec![
+            PodInfo {
+                name: "zeta".to_string(),
+                namespace: "prod".to_string(),
+                status: "Running".to_string(),
+                restarts: 2,
+                ..PodInfo::default()
+            },
+            PodInfo {
+                name: "alpha".to_string(),
+                namespace: "dev".to_string(),
+                status: "Pending".to_string(),
+                restarts: 2,
+                ..PodInfo::default()
+            },
+            PodInfo {
+                name: "beta".to_string(),
+                namespace: "prod".to_string(),
+                status: "Running".to_string(),
+                restarts: 5,
+                ..PodInfo::default()
+            },
+        ];
+        // Ensure deterministic age field ordering is not involved in this test.
+        for pod in &mut pods {
+            pod.created_at = None;
+        }
+
+        let sorted = filtered_pod_indices(
+            &pods,
+            "",
+            Some(PodSortState::new(PodSortColumn::Restarts, true)),
+        );
+
+        // Highest restarts first, then namespace/name tie-breakers for equal restart count.
+        assert_eq!(sorted, vec![2, 1, 0]);
     }
 
     /// Verifies namespace persistence round-trip via config helpers.

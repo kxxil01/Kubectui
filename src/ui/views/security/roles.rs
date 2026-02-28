@@ -17,7 +17,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, table_viewport_rows, table_window,
+        format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
     },
 };
 use std::sync::{Arc, LazyLock, Mutex};
@@ -78,9 +78,15 @@ pub fn render_roles(
     let theme = default_theme();
 
     if indices.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            query,
+            "  Loading roles...",
+            "  No roles found",
+            "  No roles match the search query",
+        );
         frame.render_widget(
-            Paragraph::new(Span::styled("  No roles found", theme.inactive_style()))
-                .block(default_block("Roles")),
+            Paragraph::new(Span::styled(msg, theme.inactive_style())).block(default_block("Roles")),
             area,
         );
         return;

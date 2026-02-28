@@ -13,6 +13,7 @@ pub fn render_crd_picker(
     frame: &mut Frame,
     area: Rect,
     crds: &[CustomResourceDefinitionInfo],
+    is_loading: bool,
     selected_idx: usize,
     query: &str,
     is_focused: bool,
@@ -32,8 +33,15 @@ pub fn render_crd_picker(
         .collect();
 
     if filtered.is_empty() {
+        let empty_msg = if is_loading {
+            "Loading CRDs..."
+        } else if query_trimmed.is_empty() {
+            "No CRDs found"
+        } else {
+            "No CRDs match search"
+        };
         frame.render_widget(
-            Paragraph::new("No CRDs found").block(crate::ui::components::default_block("CRDs")),
+            Paragraph::new(empty_msg).block(crate::ui::components::default_block("CRDs")),
             area,
         );
         return;

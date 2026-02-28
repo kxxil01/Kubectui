@@ -4,10 +4,16 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Row, Table},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
 };
 
-use crate::{state::ClusterSnapshot, ui::components::default_theme};
+use crate::{
+    state::ClusterSnapshot,
+    ui::{
+        components::{default_block, default_theme},
+        loading_or_empty_message,
+    },
+};
 
 pub fn render_namespaces(
     frame: &mut Frame,
@@ -22,6 +28,21 @@ pub fn render_namespaces(
         .iter()
         .filter(|ns| search.is_empty() || ns.name.contains(search))
         .collect();
+    if items.is_empty() {
+        let msg = loading_or_empty_message(
+            cluster,
+            search,
+            "  Loading namespaces...",
+            "  No namespaces found",
+            "  No namespaces match the search query",
+        );
+        frame.render_widget(
+            Paragraph::new(Span::styled(msg, theme.inactive_style()))
+                .block(default_block("Namespaces")),
+            area,
+        );
+        return;
+    }
 
     let rows: Vec<Row> = items
         .iter()

@@ -21,7 +21,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use kubectui::{
     app::{
         AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState,
-        ResourceRef, load_config, save_config,
+        ResourceRef, filtered_pod_indices, load_config, save_config,
     },
     coordinator::{LogStreamStatus, UpdateCoordinator, UpdateMessage},
     events::apply_action,
@@ -214,6 +214,12 @@ struct DeleteAsyncResult {
     result: Result<(), String>,
 }
 
+#[derive(Debug, Clone)]
+struct DeferredRefreshTrigger {
+    context_generation: u64,
+    namespace: Option<String>,
+}
+
 fn spawn_refresh_task(
     refresh_tx: tokio::sync::mpsc::UnboundedSender<RefreshAsyncResult>,
     mut global_state: GlobalState,
@@ -374,6 +380,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (delete_tx, mut delete_rx) = tokio::sync::mpsc::unbounded_channel::<DeleteAsyncResult>();
     let mut delete_request_seq: u64 = 0;
     let mut delete_in_flight_id: Option<u64> = None;
+    let (deferred_refresh_tx, mut deferred_refresh_rx) =
+        tokio::sync::mpsc::unbounded_channel::<DeferredRefreshTrigger>();
 
     // Channel for background data refreshes — namespace switches, manual refresh, auto-refresh
     // all go through here so the UI stays responsive during API calls.
@@ -686,6 +694,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
                     match result.result {
                         Ok(()) => {
+                            let active_namespace_scope =
+                                namespace_scope(app.get_namespace()).map(str::to_string);
                             if app
                                 .detail_view
                                 .as_ref()
@@ -700,9 +710,22 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 &refresh_tx,
                                 &global_state,
                                 &client,
-                                namespace_scope(app.get_namespace()).map(str::to_string),
+                                active_namespace_scope.clone(),
                                 &mut refresh_state,
                             );
+                            // Controllers may recreate resources shortly after delete.
+                            // Queue follow-up refreshes so age/status/restarts converge quickly.
+                            for delay_secs in [2_u64, 5_u64] {
+                                let tx = deferred_refresh_tx.clone();
+                                let trigger = DeferredRefreshTrigger {
+                                    context_generation: refresh_state.context_generation,
+                                    namespace: active_namespace_scope.clone(),
+                                };
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                                    let _ = tx.send(trigger);
+                                });
+                            }
                             auto_refresh.reset();
                         }
                         Err(err) => {
@@ -715,6 +738,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             }
                         }
                     }
+                }
+            }
+
+            trigger = deferred_refresh_rx.recv() => {
+                if let Some(trigger) = trigger {
+                    if trigger.context_generation != refresh_state.context_generation {
+                        continue;
+                    }
+                    request_refresh(
+                        &refresh_tx,
+                        &global_state,
+                        &client,
+                        trigger.namespace,
+                        &mut refresh_state,
+                    );
                 }
             }
 
@@ -1408,10 +1446,13 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
             contains_ci(&n.name, q) || contains_ci(&n.role, q)
         })
         .map(|n| ResourceRef::Node(n.name.clone())),
-        AppView::Pods => filtered_get(&snapshot.pods, idx, q, |p, q| {
-            contains_ci(&p.name, q) || contains_ci(&p.namespace, q) || contains_ci(&p.status, q)
-        })
-        .map(|p| ResourceRef::Pod(p.name.clone(), p.namespace.clone())),
+        AppView::Pods => {
+            let indices = filtered_pod_indices(&snapshot.pods, q, app.pod_sort());
+            indices.get(idx).map(|pod_idx| {
+                let pod = &snapshot.pods[*pod_idx];
+                ResourceRef::Pod(pod.name.clone(), pod.namespace.clone())
+            })
+        }
         AppView::Services => filtered_get(&snapshot.services, idx, q, |s, q| {
             contains_ci(&s.name, q) || contains_ci(&s.namespace, q) || contains_ci(&s.type_, q)
         })
