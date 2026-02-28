@@ -321,6 +321,13 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
             ),
+            AppView::Flux => views::flux::render_flux_resources(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
             AppView::Endpoints => views::endpoints::render_endpoints(
                 frame,
                 content,
@@ -848,9 +855,9 @@ mod tests {
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
         k8s::dtos::{
             ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo, CustomResourceDefinitionInfo,
-            CustomResourceInfo, DaemonSetInfo, DeploymentInfo, JobInfo, LimitRangeInfo, NodeInfo,
-            PodDisruptionBudgetInfo, PodInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
-            ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
+            CustomResourceInfo, DaemonSetInfo, DeploymentInfo, FluxResourceInfo, JobInfo,
+            LimitRangeInfo, NodeInfo, PodDisruptionBudgetInfo, PodInfo, ResourceQuotaInfo,
+            RoleBindingInfo, RoleInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
         },
         state::{ClusterSnapshot, DataPhase},
     };
@@ -1385,6 +1392,23 @@ mod tests {
     fn render_helm_repos_empty_smoke() {
         let app = app_with_view(AppView::HelmCharts);
         draw(&app, &ClusterSnapshot::default());
+    }
+
+    /// Verifies Flux view renders without panic.
+    #[test]
+    fn render_flux_view_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.flux_resources.push(FluxResourceInfo {
+            name: "apps".to_string(),
+            namespace: Some("flux-system".to_string()),
+            kind: "Kustomization".to_string(),
+            status: "Ready".to_string(),
+            message: Some("Applied revision main@sha1:abc123".to_string()),
+            ..FluxResourceInfo::default()
+        });
+
+        let app = app_with_view(AppView::Flux);
+        draw(&app, &snapshot);
     }
 
     /// Verifies detail overlay renders for a CustomResource without panic.

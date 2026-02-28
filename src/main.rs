@@ -31,7 +31,7 @@ use kubectui::{
         portforward::PortForwarderService,
         probes::extract_probes_from_pod,
     },
-    state::{ClusterSnapshot, GlobalState},
+    state::{ClusterSnapshot, GlobalState, RefreshOptions},
     ui,
 };
 
@@ -195,6 +195,7 @@ struct RefreshAsyncResult {
 struct QueuedRefresh {
     request_id: u64,
     namespace: Option<String>,
+    include_flux: bool,
     context_generation: u64,
 }
 
@@ -202,6 +203,7 @@ struct QueuedRefresh {
 struct RefreshRuntimeState {
     request_seq: u64,
     in_flight_id: Option<u64>,
+    in_flight_task: Option<tokio::task::JoinHandle<()>>,
     queued_refresh: Option<QueuedRefresh>,
     context_generation: u64,
 }
@@ -220,18 +222,77 @@ struct DeferredRefreshTrigger {
     namespace: Option<String>,
 }
 
+const STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS: u64 = 3;
+const STARTUP_NAMESPACE_FETCH_ATTEMPTS: usize = 2;
+const STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS: u64 = 150;
+const FLUX_AUTO_REFRESH_EVERY: u64 = 3;
+
+fn is_transient_transport_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        let text = cause.to_string();
+        text.contains("SendRequest")
+            || text.contains("Connection refused")
+            || text.contains("connection reset")
+            || text.contains("connection closed")
+            || text.contains("broken pipe")
+            || text.contains("timed out sending request")
+    })
+}
+
+async fn fetch_namespaces_with_startup_retry(client: &K8sClient) -> Result<Vec<String>> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match tokio::time::timeout(
+            Duration::from_secs(STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS),
+            client.fetch_namespaces(),
+        )
+        .await
+        {
+            Ok(Ok(namespaces)) => return Ok(namespaces),
+            Ok(Err(err))
+                if attempt < STARTUP_NAMESPACE_FETCH_ATTEMPTS
+                    && is_transient_transport_error(&err) =>
+            {
+                tokio::time::sleep(Duration::from_millis(
+                    STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS,
+                ))
+                .await;
+            }
+            Ok(Err(err)) => return Err(err),
+            Err(_) if attempt < STARTUP_NAMESPACE_FETCH_ATTEMPTS => {
+                tokio::time::sleep(Duration::from_millis(
+                    STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS,
+                ))
+                .await;
+            }
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "timed out fetching namespaces ({}s)",
+                    STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS
+                ));
+            }
+        }
+    }
+}
+
 fn spawn_refresh_task(
     refresh_tx: tokio::sync::mpsc::UnboundedSender<RefreshAsyncResult>,
     mut global_state: GlobalState,
     client: K8sClient,
     namespace: Option<String>,
+    include_flux: bool,
     request_id: u64,
     context_generation: u64,
-) {
+) -> tokio::task::JoinHandle<()> {
     let requested_namespace = namespace.clone();
     tokio::spawn(async move {
         let result = global_state
-            .refresh(&client, namespace.as_deref())
+            .refresh_with_options(
+                &client,
+                namespace.as_deref(),
+                RefreshOptions { include_flux },
+            )
             .await
             .map(|_| global_state)
             .map_err(|err| err.to_string());
@@ -241,7 +302,14 @@ fn spawn_refresh_task(
             requested_namespace,
             result,
         });
-    });
+    })
+}
+
+fn abort_in_flight_refresh(refresh_state: &mut RefreshRuntimeState) {
+    if let Some(task) = refresh_state.in_flight_task.take() {
+        task.abort();
+    }
+    refresh_state.in_flight_id = None;
 }
 
 fn request_refresh(
@@ -249,6 +317,7 @@ fn request_refresh(
     global_state: &GlobalState,
     client: &K8sClient,
     namespace: Option<String>,
+    include_flux: bool,
     refresh_state: &mut RefreshRuntimeState,
 ) {
     refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
@@ -256,18 +325,25 @@ fn request_refresh(
 
     if refresh_state.in_flight_id.is_none() {
         refresh_state.in_flight_id = Some(request_id);
-        spawn_refresh_task(
+        refresh_state.in_flight_task = Some(spawn_refresh_task(
             refresh_tx.clone(),
             global_state.clone(),
             client.clone(),
             namespace,
+            include_flux,
             request_id,
             refresh_state.context_generation,
-        );
+        ));
     } else {
+        let merged_include_flux = refresh_state
+            .queued_refresh
+            .as_ref()
+            .is_some_and(|queued| queued.include_flux)
+            || include_flux;
         refresh_state.queued_refresh = Some(QueuedRefresh {
             request_id,
             namespace,
+            include_flux: merged_include_flux,
             context_generation: refresh_state.context_generation,
         });
     }
@@ -341,10 +417,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     // starting in a stale namespace with empty resource lists.
     if app.get_namespace() != "all" {
         let selected_namespace = app.get_namespace().to_string();
-        let namespaces_result =
-            tokio::time::timeout(Duration::from_secs(3), client.fetch_namespaces()).await;
-        match namespaces_result {
-            Ok(Ok(namespaces)) => {
+        match fetch_namespaces_with_startup_retry(&client).await {
+            Ok(namespaces) => {
                 if !namespaces.iter().any(|ns| ns == &selected_namespace) {
                     app.set_namespace("all".to_string());
                     startup_namespace_scope = None;
@@ -356,11 +430,11 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 app.set_available_namespaces(namespaces);
             }
             // If we can't validate namespace quickly, load cluster-wide first to prevent blank startup.
-            _ => {
+            Err(err) => {
                 app.set_namespace("all".to_string());
                 startup_namespace_scope = None;
                 app.set_error(format!(
-                    "Namespace '{selected_namespace}' could not be validated quickly. Loaded 'all' namespaces."
+                    "Namespace '{selected_namespace}' could not be validated quickly ({err}). Loaded 'all' namespaces."
                 ));
             }
         }
@@ -395,6 +469,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         &global_state,
         &client,
         startup_namespace_scope,
+        true,
         &mut refresh_state,
     );
 
@@ -421,6 +496,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
     // Track consecutive refresh failures for backoff
     let mut consecutive_refresh_failures: u32 = 0;
+    let mut auto_refresh_count: u64 = 0;
 
     let mut event_stream = EventStream::new();
 
@@ -619,6 +695,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
 
                     refresh_state.in_flight_id = None;
+                    refresh_state.in_flight_task = None;
                     needs_redraw = true;
                     let active_namespace_scope = namespace_scope(app.get_namespace()).map(str::to_string);
                     let namespace_matches = result.requested_namespace == active_namespace_scope;
@@ -645,6 +722,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         &global_state,
                                         &client,
                                         None,
+                                        true,
                                         &mut refresh_state,
                                     );
                                 } else {
@@ -667,14 +745,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         && queued.context_generation == refresh_state.context_generation
                     {
                         refresh_state.in_flight_id = Some(queued.request_id);
-                        spawn_refresh_task(
+                        refresh_state.in_flight_task = Some(spawn_refresh_task(
                             refresh_tx.clone(),
                             global_state.clone(),
                             client.clone(),
                             queued.namespace,
+                            queued.include_flux,
                             queued.request_id,
                             queued.context_generation,
-                        );
+                        ));
                     }
                 }
             }
@@ -711,6 +790,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 &global_state,
                                 &client,
                                 active_namespace_scope.clone(),
+                                true,
                                 &mut refresh_state,
                             );
                             // Controllers may recreate resources shortly after delete.
@@ -751,6 +831,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &global_state,
                         &client,
                         trigger.namespace,
+                        true,
                         &mut refresh_state,
                     );
                 }
@@ -779,11 +860,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     _ => 120,
                 };
                 if app.detail_view.is_none() && backoff_secs == 0 {
+                    auto_refresh_count = auto_refresh_count.wrapping_add(1);
+                    let include_flux = app.view() == AppView::Flux
+                        || auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY);
                     request_refresh(
                         &refresh_tx,
                         &global_state,
                         &client,
                         namespace_scope(app.get_namespace()).map(str::to_string),
+                        include_flux,
                         &mut refresh_state,
                     );
                 } else if backoff_secs > 0 {
@@ -845,6 +930,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             &global_state,
                             &client,
                             namespace_scope(app.get_namespace()).map(str::to_string),
+                            true,
                             &mut refresh_state,
                         );
                         // Reset auto-refresh timer after manual refresh
@@ -893,7 +979,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 // Invalidate stale async results from the previous client/context.
                                 refresh_state.context_generation =
                                     refresh_state.context_generation.wrapping_add(1);
-                                refresh_state.in_flight_id = None;
+                                abort_in_flight_refresh(&mut refresh_state);
                                 refresh_state.queued_refresh = None;
                                 delete_in_flight_id = None;
                                 snapshot_dirty = true;
@@ -904,6 +990,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     &global_state,
                                     &client,
                                     namespace_scope(app.get_namespace()).map(str::to_string),
+                                    true,
                                     &mut refresh_state,
                                 );
                             }
@@ -919,7 +1006,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         // Invalidate stale async results from previous namespace selections.
                         refresh_state.context_generation =
                             refresh_state.context_generation.wrapping_add(1);
-                        refresh_state.in_flight_id = None;
+                        abort_in_flight_refresh(&mut refresh_state);
                         refresh_state.queued_refresh = None;
                         delete_in_flight_id = None;
                         // Drop old namespace data immediately to prevent inconsistent mixed views.
@@ -933,6 +1020,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             &global_state,
                             &client,
                             namespace_scope(app.get_namespace()).map(str::to_string),
+                            true,
                             &mut refresh_state,
                         );
                     }
@@ -1608,6 +1696,21 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
             contains_ci(&r.name, q) || contains_ci(&r.namespace, q) || contains_ci(&r.chart, q)
         })
         .map(|r| ResourceRef::HelmRelease(r.name.clone(), r.namespace.clone())),
+        AppView::Flux => filtered_get(&snapshot.flux_resources, idx, q, |r, q| {
+            contains_ci(&r.name, q)
+                || contains_ci(r.namespace.as_deref().unwrap_or_default(), q)
+                || contains_ci(&r.kind, q)
+                || contains_ci(&r.status, q)
+                || contains_ci(r.message.as_deref().unwrap_or_default(), q)
+        })
+        .map(|r| ResourceRef::CustomResource {
+            name: r.name.clone(),
+            namespace: r.namespace.clone(),
+            group: r.group.clone(),
+            version: r.version.clone(),
+            kind: r.kind.clone(),
+            plural: r.plural.clone(),
+        }),
     }
 }
 

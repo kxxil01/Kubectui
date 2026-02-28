@@ -10,12 +10,12 @@ use async_trait::async_trait;
 use kubectui::{
     k8s::dtos::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
-        CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo, HelmReleaseInfo,
-        HpaInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo,
-        NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo,
-        PodInfo, PriorityClassInfo, PvInfo, PvcInfo, ReplicaSetInfo, ReplicationControllerInfo,
-        ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo, ServiceAccountInfo, ServiceInfo,
-        StatefulSetInfo, StorageClassInfo,
+        CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo,
+        FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
+        K8sEventInfo, LimitRangeInfo, NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo,
+        PodDisruptionBudgetInfo, PodInfo, PriorityClassInfo, PvInfo, PvcInfo, ReplicaSetInfo,
+        ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo,
+        ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
     },
     state::ClusterDataSource,
 };
@@ -84,6 +84,7 @@ pub struct MockDataSource {
     pub cluster_roles: Vec<ClusterRoleInfo>,
     pub cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
     pub custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
+    pub flux_resources: Vec<FluxResourceInfo>,
     pub fail: bool,
     pub calls: Arc<AtomicUsize>,
 }
@@ -136,6 +137,7 @@ impl Default for MockDataSource {
             cluster_roles: vec![],
             cluster_role_bindings: vec![],
             custom_resource_definitions: vec![],
+            flux_resources: vec![],
             fail: false,
             calls: Arc::new(AtomicUsize::new(0)),
         }
@@ -318,6 +320,22 @@ impl ClusterDataSource for MockDataSource {
             return Err(anyhow!("mock crds error"));
         }
         Ok(self.custom_resource_definitions.clone())
+    }
+
+    async fn fetch_flux_resources(&self, namespace: Option<&str>) -> Result<Vec<FluxResourceInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock fluxresources error"));
+        }
+        match namespace {
+            Some(ns) => Ok(self
+                .flux_resources
+                .iter()
+                .filter(|resource| resource.namespace.as_deref() == Some(ns))
+                .cloned()
+                .collect()),
+            None => Ok(self.flux_resources.clone()),
+        }
     }
 
     async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {

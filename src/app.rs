@@ -120,6 +120,7 @@ pub enum AppView {
     // Helm
     HelmCharts,
     HelmReleases,
+    Flux,
     // Access Control
     ServiceAccounts,
     ClusterRoles,
@@ -131,7 +132,7 @@ pub enum AppView {
 }
 
 impl AppView {
-    const ORDER: [AppView; 36] = [
+    const ORDER: [AppView; 37] = [
         // Overview
         AppView::Dashboard,
         AppView::Nodes,
@@ -168,6 +169,7 @@ impl AppView {
         // Helm
         AppView::HelmCharts,
         AppView::HelmReleases,
+        AppView::Flux,
         // Access Control
         AppView::ServiceAccounts,
         AppView::ClusterRoles,
@@ -211,6 +213,7 @@ impl AppView {
             AppView::Events => "Events",
             AppView::HelmCharts => "Repositories",
             AppView::HelmReleases => "Releases",
+            AppView::Flux => "Flux",
             AppView::ServiceAccounts => "Service Accounts",
             AppView::ClusterRoles => "Cluster Roles",
             AppView::Roles => "Roles",
@@ -253,6 +256,7 @@ impl AppView {
             AppView::Events => "󰃰",
             AppView::HelmCharts => "󰱥",
             AppView::HelmReleases => "󰱥",
+            AppView::Flux => "󰠳",
             AppView::ServiceAccounts => "󰀄",
             AppView::ClusterRoles => "󰒃",
             AppView::Roles => "󰒃",
@@ -295,6 +299,7 @@ impl AppView {
             AppView::Events => "  󰃰 Events",
             AppView::HelmCharts => "  󰱥 Repositories",
             AppView::HelmReleases => "  󰱥 Releases",
+            AppView::Flux => "  󰠳 Flux",
             AppView::ServiceAccounts => "  󰀄 Service Accounts",
             AppView::ClusterRoles => "  󰒃 Cluster Roles",
             AppView::Roles => "  󰒃 Roles",
@@ -337,6 +342,7 @@ impl AppView {
             AppView::Events => "view.events",
             AppView::HelmCharts => "view.helm_charts",
             AppView::HelmReleases => "view.helm_releases",
+            AppView::Flux => "view.flux",
             AppView::ServiceAccounts => "view.service_accounts",
             AppView::ClusterRoles => "view.cluster_roles",
             AppView::Roles => "view.roles",
@@ -375,7 +381,7 @@ impl AppView {
             | AppView::PersistentVolumes
             | AppView::StorageClasses => NavGroup::Storage,
             AppView::Namespaces | AppView::Events => NavGroup::Overview,
-            AppView::HelmCharts | AppView::HelmReleases => NavGroup::Helm,
+            AppView::HelmCharts | AppView::HelmReleases | AppView::Flux => NavGroup::Helm,
             AppView::ServiceAccounts
             | AppView::ClusterRoles
             | AppView::Roles
@@ -411,7 +417,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 36] {
+    pub const fn tabs() -> &'static [AppView; 37] {
         &Self::ORDER
     }
 }
@@ -914,7 +920,7 @@ const SIDEBAR_GROUPS: &[(NavGroup, &[AppView])] = &[
     ),
     (
         NavGroup::Helm,
-        &[AppView::HelmCharts, AppView::HelmReleases],
+        &[AppView::HelmCharts, AppView::HelmReleases, AppView::Flux],
     ),
     (
         NavGroup::AccessControl,
@@ -2085,6 +2091,7 @@ mod tests {
             // Helm
             AppView::HelmCharts,
             AppView::HelmReleases,
+            AppView::Flux,
             // Access Control
             AppView::ServiceAccounts,
             AppView::ClusterRoles,
@@ -2343,7 +2350,7 @@ mod tests {
     fn rapid_tab_switching_is_stable() {
         let mut app = AppState::default();
 
-        for _ in 0..(36 * 3) {
+        for _ in 0..(AppView::tabs().len() * 3) {
             app.handle_key_event(KeyEvent::from(KeyCode::Tab));
         }
 

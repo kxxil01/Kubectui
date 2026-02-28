@@ -1,9 +1,10 @@
 //! Kubernetes API client wrapper used by KubecTUI.
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, sync::Arc};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
+use futures::{StreamExt, stream};
 use k8s_openapi::api::{
     apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet},
     autoscaling::v2::HorizontalPodAutoscaler,
@@ -31,12 +32,12 @@ pub use crate::k8s::{
     dtos::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
         CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo, DeploymentInfo,
-        EndpointInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
-        K8sEventInfo, LimitRangeInfo, LimitSpec, NamespaceInfo, NetworkPolicyInfo, NodeInfo,
-        NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo, PriorityClassInfo,
-        PvInfo, PvcInfo, RbacRule, ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo,
-        RoleBindingInfo, RoleBindingSubject, RoleInfo, SecretInfo, ServiceAccountInfo, ServiceInfo,
-        StatefulSetInfo, StorageClassInfo,
+        EndpointInfo, FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo,
+        JobInfo, K8sEventInfo, LimitRangeInfo, LimitSpec, NamespaceInfo, NetworkPolicyInfo,
+        NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo,
+        PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo, ReplicationControllerInfo,
+        ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject, RoleInfo, SecretInfo,
+        ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
     },
     events::EventInfo,
 };
@@ -47,6 +48,7 @@ pub struct K8sClient {
     client: Client,
     cluster_url: String,
     cluster_context: Option<String>,
+    flux_targets_cache: Arc<tokio::sync::RwLock<Option<Vec<FluxApiTarget>>>>,
 }
 
 impl K8sClient {
@@ -73,6 +75,7 @@ impl K8sClient {
             client,
             cluster_url,
             cluster_context,
+            flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -93,6 +96,7 @@ impl K8sClient {
             client,
             cluster_url,
             cluster_context: Some(context.to_string()),
+            flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
         })
     }
 
@@ -2367,6 +2371,114 @@ fn parse_k8s_quantity(raw: &str) -> Option<f64> {
     raw.parse::<f64>().ok()
 }
 
+#[derive(Debug, Clone, Copy)]
+struct FluxResourceKindSpec {
+    kind: &'static str,
+    group: &'static str,
+    plural: &'static str,
+    versions: &'static [&'static str],
+    namespaced: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct FluxApiTarget {
+    spec: FluxResourceKindSpec,
+    version: &'static str,
+}
+
+const FLUX_RESOURCE_KIND_SPECS: &[FluxResourceKindSpec] = &[
+    FluxResourceKindSpec {
+        kind: "Kustomization",
+        group: "kustomize.toolkit.fluxcd.io",
+        plural: "kustomizations",
+        versions: &["v1", "v1beta2"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "HelmRelease",
+        group: "helm.toolkit.fluxcd.io",
+        plural: "helmreleases",
+        versions: &["v2", "v2beta2", "v2beta1"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "GitRepository",
+        group: "source.toolkit.fluxcd.io",
+        plural: "gitrepositories",
+        versions: &["v1", "v1beta2", "v1beta1"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "HelmRepository",
+        group: "source.toolkit.fluxcd.io",
+        plural: "helmrepositories",
+        versions: &["v1", "v1beta2", "v1beta1"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "OCIRepository",
+        group: "source.toolkit.fluxcd.io",
+        plural: "ocirepositories",
+        versions: &["v1", "v1beta2"],
+        namespaced: true,
+    },
+    FluxResourceKindSpec {
+        kind: "Bucket",
+        group: "source.toolkit.fluxcd.io",
+        plural: "buckets",
+        versions: &["v1", "v1beta2", "v1beta1"],
+        namespaced: true,
+    },
+];
+
+fn is_missing_api_error(err: &kube::Error) -> bool {
+    if let kube::Error::Api(response) = err
+        && response.code == 404
+    {
+        return true;
+    }
+    let text = err.to_string();
+    text.contains("the server could not find the requested resource")
+        || text.contains("could not find the requested resource")
+        || text.contains("NotFound")
+}
+
+fn flux_ready_details(data: &serde_json::Value) -> (Option<bool>, Option<String>) {
+    let Some(conditions) = data
+        .pointer("/status/conditions")
+        .and_then(|value| value.as_array())
+    else {
+        return (None, None);
+    };
+
+    let ready_condition = conditions.iter().find(|item| {
+        item.get("type")
+            .and_then(|value| value.as_str())
+            .is_some_and(|ty| ty.eq_ignore_ascii_case("Ready"))
+    });
+
+    let Some(condition) = ready_condition else {
+        return (None, None);
+    };
+
+    let ready = condition
+        .get("status")
+        .and_then(|value| value.as_str())
+        .map(|status| status.eq_ignore_ascii_case("True"));
+    let message = condition
+        .get("message")
+        .and_then(|value| value.as_str())
+        .map(ToString::to_string)
+        .or_else(|| {
+            condition
+                .get("reason")
+                .and_then(|value| value.as_str())
+                .map(ToString::to_string)
+        });
+
+    (ready, message)
+}
+
 impl K8sClient {
     /// Fetches Helm releases by reading Helm-managed Secrets (owner=helm, type=helm.sh/release.v1).
     /// Decodes the release metadata from the secret's labels without requiring the Helm CLI.
@@ -2448,6 +2560,173 @@ impl K8sClient {
         // Sort by namespace then name
         releases.sort_by(|a, b| a.namespace.cmp(&b.namespace).then(a.name.cmp(&b.name)));
         Ok(releases)
+    }
+
+    /// Fetches common Flux resources for the dedicated Flux view.
+    ///
+    /// Resources are loaded directly from Flux CRDs (if installed). Missing CRDs
+    /// are treated as empty lists so clusters without Flux remain healthy.
+    pub async fn fetch_flux_resources(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<crate::k8s::dtos::FluxResourceInfo>> {
+        const FLUX_FETCH_CONCURRENCY: usize = 3;
+
+        let targets = self.discover_flux_targets().await?;
+        let mut out = Vec::new();
+        let mut needs_rediscovery = false;
+        let mut fetches = stream::iter(targets.into_iter().map(|target| async move {
+            (
+                target,
+                self.fetch_flux_resources_for_version(target.spec, target.version, namespace)
+                    .await,
+            )
+        }))
+        .buffer_unordered(FLUX_FETCH_CONCURRENCY);
+
+        while let Some((target, result)) = fetches.next().await {
+            match result {
+                Ok(mut items) => out.append(&mut items),
+                Err(err) if is_missing_api_error(&err) => {
+                    // Flux CRDs changed while running: invalidate and rediscover next refresh.
+                    needs_rediscovery = true;
+                }
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!(
+                            "failed fetching Flux {} resources ({}/{})",
+                            target.spec.kind, target.spec.group, target.version
+                        )
+                    });
+                }
+            }
+        }
+
+        if needs_rediscovery {
+            self.invalidate_flux_targets_cache().await;
+        }
+
+        out.sort_by(|left, right| {
+            left.namespace
+                .cmp(&right.namespace)
+                .then_with(|| left.kind.cmp(&right.kind))
+                .then_with(|| left.name.cmp(&right.name))
+        });
+        Ok(out)
+    }
+
+    async fn invalidate_flux_targets_cache(&self) {
+        *self.flux_targets_cache.write().await = None;
+    }
+
+    async fn discover_flux_targets(&self) -> Result<Vec<FluxApiTarget>> {
+        if let Some(cached) = self.flux_targets_cache.read().await.as_ref() {
+            return Ok(cached.clone());
+        }
+
+        let mut discovered = Vec::new();
+        for spec in FLUX_RESOURCE_KIND_SPECS {
+            for &version in spec.versions {
+                match self.probe_flux_target(*spec, version).await {
+                    Ok(()) => {
+                        discovered.push(FluxApiTarget {
+                            spec: *spec,
+                            version,
+                        });
+                        break;
+                    }
+                    Err(err) if is_missing_api_error(&err) => continue,
+                    Err(err) => {
+                        return Err(err).with_context(|| {
+                            format!(
+                                "failed discovering Flux {} resources ({}/{})",
+                                spec.kind, spec.group, version
+                            )
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut guard = self.flux_targets_cache.write().await;
+        if let Some(cached) = guard.as_ref() {
+            return Ok(cached.clone());
+        }
+        *guard = Some(discovered.clone());
+        Ok(discovered)
+    }
+
+    async fn probe_flux_target(
+        &self,
+        spec: FluxResourceKindSpec,
+        version: &'static str,
+    ) -> std::result::Result<(), kube::Error> {
+        let gvk = GroupVersionKind::gvk(spec.group, version, spec.kind);
+        let mut ar = ApiResource::from_gvk(&gvk);
+        ar.plural = spec.plural.to_string();
+        let api: Api<DynamicObject> = Api::all_with(self.client.clone(), &ar);
+        let _ = api.list(&ListParams::default().limit(1)).await?;
+        Ok(())
+    }
+
+    async fn fetch_flux_resources_for_version(
+        &self,
+        spec: FluxResourceKindSpec,
+        version: &str,
+        namespace: Option<&str>,
+    ) -> std::result::Result<Vec<crate::k8s::dtos::FluxResourceInfo>, kube::Error> {
+        let gvk = GroupVersionKind::gvk(spec.group, version, spec.kind);
+        let mut ar = ApiResource::from_gvk(&gvk);
+        ar.plural = spec.plural.to_string();
+
+        let api: Api<DynamicObject> = if spec.namespaced {
+            match namespace {
+                Some(ns) => Api::namespaced_with(self.client.clone(), ns, &ar),
+                None => Api::all_with(self.client.clone(), &ar),
+            }
+        } else {
+            Api::all_with(self.client.clone(), &ar)
+        };
+
+        let list = api.list(&ListParams::default()).await?;
+        let now = chrono::Utc::now();
+        let mut resources = Vec::with_capacity(list.items.len());
+        for item in list {
+            let created_at = item.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+            let suspended = item
+                .data
+                .pointer("/spec/suspend")
+                .and_then(|value| value.as_bool())
+                .unwrap_or(false);
+            let (ready, message) = flux_ready_details(&item.data);
+            let status = if suspended {
+                "Suspended".to_string()
+            } else {
+                match ready {
+                    Some(true) => "Ready".to_string(),
+                    Some(false) => "NotReady".to_string(),
+                    None => "Unknown".to_string(),
+                }
+            };
+            resources.push(crate::k8s::dtos::FluxResourceInfo {
+                name: item
+                    .metadata
+                    .name
+                    .unwrap_or_else(|| "<unknown>".to_string()),
+                namespace: item.metadata.namespace,
+                kind: spec.kind.to_string(),
+                group: spec.group.to_string(),
+                version: version.to_string(),
+                plural: spec.plural.to_string(),
+                status,
+                message,
+                suspended,
+                created_at,
+                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+            });
+        }
+
+        Ok(resources)
     }
 }
 
@@ -2585,6 +2864,7 @@ mod tests {
             client,
             cluster_url: "http://127.0.0.1:1".to_string(),
             cluster_context: Some("test".to_string()),
+            flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
         };
 
         let err = k8s

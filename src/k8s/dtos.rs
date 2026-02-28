@@ -656,6 +656,22 @@ pub struct HelmReleaseInfo {
     pub age: Option<Duration>,
 }
 
+/// Flux custom resource info for dedicated GitOps views.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FluxResourceInfo {
+    pub name: String,
+    pub namespace: Option<String>,
+    pub kind: String,
+    pub group: String,
+    pub version: String,
+    pub plural: String,
+    pub status: String,
+    pub message: Option<String>,
+    pub suspended: bool,
+    pub created_at: Option<DateTime<Utc>>,
+    pub age: Option<Duration>,
+}
+
 /// Information about a configured Helm repository (from ~/.config/helm/repositories.yaml).
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct HelmRepoInfo {

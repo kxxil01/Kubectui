@@ -99,6 +99,10 @@ const COMMANDS: &[Command] = &[
         aliases: &["portforwarding", "portforward", "pf", "tunnel", "tunnels"],
     },
     Command {
+        view: AppView::Flux,
+        aliases: &["flux", "kustomization", "kustomizations", "gitops"],
+    },
+    Command {
         view: AppView::Extensions,
         aliases: &["extensions", "ext", "crd", "crds"],
     },
