@@ -7,7 +7,8 @@ pub mod port_forward;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::{collections::HashSet, fmt, time::Duration};
+use std::{collections::HashSet, fmt, sync::LazyLock, time::Duration};
+use tokio::sync::Semaphore;
 
 use crate::k8s::{
     client::K8sClient,
@@ -21,6 +22,10 @@ use crate::k8s::{
         ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
     },
 };
+
+const MAX_CONCURRENT_RESOURCE_FETCHES: usize = 8;
+static RESOURCE_FETCH_SEMAPHORE: LazyLock<Semaphore> =
+    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_RESOURCE_FETCHES));
 
 /// High-level data loading phase for cluster resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -433,8 +438,8 @@ impl GlobalState {
 
     /// Per-resource fetch timeout in seconds.
     const FETCH_TIMEOUT_SECS: u64 = 10;
-    /// Retry once for transient transport errors before surfacing failures.
-    const TRANSIENT_RETRY_ATTEMPTS: usize = 2;
+    /// Retry transient transport failures before surfacing errors.
+    const TRANSIENT_RETRY_ATTEMPTS: usize = 3;
     const TRANSIENT_RETRY_DELAY_MS: u64 = 150;
 
     async fn fetch_with_timeout<T, F, Fut>(label: &'static str, make_fut: F) -> Result<T>
@@ -445,6 +450,10 @@ impl GlobalState {
         let mut attempt = 0;
         loop {
             attempt += 1;
+            let _permit = RESOURCE_FETCH_SEMAPHORE
+                .acquire()
+                .await
+                .map_err(|_| anyhow!("resource fetch coordinator shut down"))?;
             match tokio::time::timeout(Duration::from_secs(Self::FETCH_TIMEOUT_SECS), make_fut())
                 .await
             {
@@ -460,6 +469,11 @@ impl GlobalState {
                     return Err(err);
                 }
                 Err(_) => {
+                    if attempt < Self::TRANSIENT_RETRY_ATTEMPTS {
+                        tokio::time::sleep(Duration::from_millis(Self::TRANSIENT_RETRY_DELAY_MS))
+                            .await;
+                        continue;
+                    }
                     return Err(anyhow!(
                         "timed out fetching {label} ({}s)",
                         Self::FETCH_TIMEOUT_SECS
