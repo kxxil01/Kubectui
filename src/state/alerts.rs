@@ -749,4 +749,44 @@ mod tests {
 
         assert_eq!(compute_workload_ready_percent(&snapshot), 72);
     }
+
+    #[test]
+    fn compute_dashboard_insights_warns_on_high_saturation_without_failures() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "node-a".to_string(),
+            ready: true,
+            cpu_allocatable: Some("1000m".to_string()),
+            memory_allocatable: Some("1024Mi".to_string()),
+            ..NodeInfo::default()
+        });
+        snapshot
+            .node_metrics
+            .push(crate::k8s::dtos::NodeMetricsInfo {
+                name: "node-a".to_string(),
+                cpu: "900m".to_string(),
+                memory: "700Mi".to_string(),
+                ..crate::k8s::dtos::NodeMetricsInfo::default()
+            });
+        snapshot.pods.push(PodInfo {
+            name: "pod-a".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+
+        let insights = compute_dashboard_insights(&snapshot);
+        assert_eq!(insights.health_state, DashboardHealthState::Warning);
+        assert_eq!(insights.high_cpu_nodes, 1);
+        assert_eq!(insights.failed_pods, 0);
+        assert_eq!(insights.not_ready_nodes, 0);
+    }
+
+    #[test]
+    fn compute_workload_ready_percent_defaults_to_full_when_no_workloads() {
+        assert_eq!(
+            compute_workload_ready_percent(&ClusterSnapshot::default()),
+            100
+        );
+    }
 }

@@ -15,7 +15,7 @@ use kubectui::{
     },
     state::{
         ClusterSnapshot,
-        alerts::compute_alerts,
+        alerts::{compute_alerts, compute_dashboard_insights, compute_workload_ready_percent},
         filters::{NodeRoleFilter, NodeStatusFilter, filter_nodes, filter_services},
     },
     ui,
@@ -78,6 +78,56 @@ fn benchmark_compute_alerts_1k_pods_under_50ms() {
     let _ = compute_alerts(&snapshot);
     let elapsed = start.elapsed();
     assert!(elapsed.as_millis() < 50, "{}ms", elapsed.as_millis());
+}
+
+/// Verifies dashboard insights for 1k nodes stay under 40ms.
+#[test]
+#[ignore = "Optional performance run"]
+fn benchmark_compute_dashboard_insights_1k_nodes_under_40ms() {
+    let mut snapshot = ClusterSnapshot::default();
+    for i in 0..1_000 {
+        snapshot.nodes.push(NodeInfo {
+            name: format!("node-{i:04}"),
+            ready: i % 10 != 0,
+            cpu_allocatable: Some("2000m".to_string()),
+            memory_allocatable: Some("4096Mi".to_string()),
+            ..NodeInfo::default()
+        });
+        snapshot
+            .node_metrics
+            .push(kubectui::k8s::dtos::NodeMetricsInfo {
+                name: format!("node-{i:04}"),
+                cpu: format!("{}m", 600 + (i % 1000)),
+                memory: format!("{}Mi", 1024 + (i % 2048)),
+                ..kubectui::k8s::dtos::NodeMetricsInfo::default()
+            });
+    }
+
+    let start = Instant::now();
+    let _ = compute_dashboard_insights(&snapshot);
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_millis() < 40, "{}ms", elapsed.as_millis());
+}
+
+/// Verifies workload readiness computation remains lightweight.
+#[test]
+#[ignore = "Optional performance run"]
+fn benchmark_compute_workload_ready_percent_2k_workloads_under_10ms() {
+    let mut snapshot = ClusterSnapshot::default();
+    for i in 0..2_000 {
+        snapshot.deployments.push(DeploymentInfo {
+            name: format!("deploy-{i:04}"),
+            namespace: "default".to_string(),
+            desired_replicas: 3,
+            ready_replicas: if i % 5 == 0 { 2 } else { 3 },
+            ..DeploymentInfo::default()
+        });
+    }
+
+    let start = Instant::now();
+    let _ = compute_workload_ready_percent(&snapshot);
+    let elapsed = start.elapsed();
+    assert!(elapsed.as_millis() < 10, "{}ms", elapsed.as_millis());
 }
 
 /// Verifies tab switching on AppState is very fast.

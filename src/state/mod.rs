@@ -1056,6 +1056,24 @@ mod tests {
             self.delay_ms = delay_ms;
             self
         }
+
+        fn filter_namespace<T: Clone, F>(
+            items: &[T],
+            namespace: Option<&str>,
+            namespace_of: F,
+        ) -> Vec<T>
+        where
+            F: Fn(&T) -> &str,
+        {
+            match namespace {
+                Some(ns) => items
+                    .iter()
+                    .filter(|item| namespace_of(item) == ns)
+                    .cloned()
+                    .collect(),
+                None => items.to_vec(),
+            }
+        }
     }
 
     #[async_trait]
@@ -1078,39 +1096,49 @@ mod tests {
             Ok(self.namespaces.clone())
         }
 
-        async fn fetch_pods(&self, _namespace: Option<&str>) -> Result<Vec<PodInfo>> {
+        async fn fetch_pods(&self, namespace: Option<&str>) -> Result<Vec<PodInfo>> {
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
             if let Some(err) = &self.pods_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.pods.clone())
+            Ok(Self::filter_namespace(&self.pods, namespace, |pod| {
+                &pod.namespace
+            }))
         }
 
-        async fn fetch_services(&self, _namespace: Option<&str>) -> Result<Vec<ServiceInfo>> {
+        async fn fetch_services(&self, namespace: Option<&str>) -> Result<Vec<ServiceInfo>> {
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
             if let Some(err) = &self.services_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.services.clone())
+            Ok(Self::filter_namespace(
+                &self.services,
+                namespace,
+                |service| &service.namespace,
+            ))
         }
 
-        async fn fetch_deployments(&self, _namespace: Option<&str>) -> Result<Vec<DeploymentInfo>> {
+        async fn fetch_deployments(&self, namespace: Option<&str>) -> Result<Vec<DeploymentInfo>> {
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
             if let Some(err) = &self.deployments_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.deployments.clone())
+            Ok(Self::filter_namespace(
+                &self.deployments,
+                namespace,
+                |deployment| &deployment.namespace,
+            ))
         }
 
         async fn fetch_statefulsets(
             &self,
-            _namespace: Option<&str>,
+            namespace: Option<&str>,
         ) -> Result<Vec<StatefulSetInfo>> {
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
@@ -1118,99 +1146,136 @@ mod tests {
             if let Some(err) = &self.statefulsets_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.statefulsets.clone())
+            Ok(Self::filter_namespace(
+                &self.statefulsets,
+                namespace,
+                |set| &set.namespace,
+            ))
         }
 
-        async fn fetch_daemonsets(&self, _namespace: Option<&str>) -> Result<Vec<DaemonSetInfo>> {
+        async fn fetch_daemonsets(&self, namespace: Option<&str>) -> Result<Vec<DaemonSetInfo>> {
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
             if let Some(err) = &self.daemonsets_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.daemonsets.clone())
+            Ok(Self::filter_namespace(&self.daemonsets, namespace, |set| {
+                &set.namespace
+            }))
         }
 
-        async fn fetch_replicasets(&self, _namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>> {
-            Ok(self.replicasets.clone())
+        async fn fetch_replicasets(&self, namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>> {
+            Ok(Self::filter_namespace(
+                &self.replicasets,
+                namespace,
+                |set| &set.namespace,
+            ))
         }
 
         async fn fetch_replication_controllers(
             &self,
-            _namespace: Option<&str>,
+            namespace: Option<&str>,
         ) -> Result<Vec<ReplicationControllerInfo>> {
-            Ok(self.replication_controllers.clone())
+            Ok(Self::filter_namespace(
+                &self.replication_controllers,
+                namespace,
+                |controller| &controller.namespace,
+            ))
         }
 
-        async fn fetch_jobs(&self, _namespace: Option<&str>) -> Result<Vec<JobInfo>> {
+        async fn fetch_jobs(&self, namespace: Option<&str>) -> Result<Vec<JobInfo>> {
             if let Some(err) = &self.jobs_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.jobs.clone())
+            Ok(Self::filter_namespace(&self.jobs, namespace, |job| {
+                &job.namespace
+            }))
         }
 
-        async fn fetch_cronjobs(&self, _namespace: Option<&str>) -> Result<Vec<CronJobInfo>> {
+        async fn fetch_cronjobs(&self, namespace: Option<&str>) -> Result<Vec<CronJobInfo>> {
             if let Some(err) = &self.cronjobs_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.cronjobs.clone())
+            Ok(Self::filter_namespace(&self.cronjobs, namespace, |job| {
+                &job.namespace
+            }))
         }
 
         async fn fetch_resource_quotas(
             &self,
-            _namespace: Option<&str>,
+            namespace: Option<&str>,
         ) -> Result<Vec<ResourceQuotaInfo>> {
             if let Some(err) = &self.resource_quotas_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.resource_quotas.clone())
+            Ok(Self::filter_namespace(
+                &self.resource_quotas,
+                namespace,
+                |quota| &quota.namespace,
+            ))
         }
 
-        async fn fetch_limit_ranges(
-            &self,
-            _namespace: Option<&str>,
-        ) -> Result<Vec<LimitRangeInfo>> {
+        async fn fetch_limit_ranges(&self, namespace: Option<&str>) -> Result<Vec<LimitRangeInfo>> {
             if let Some(err) = &self.limit_ranges_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.limit_ranges.clone())
+            Ok(Self::filter_namespace(
+                &self.limit_ranges,
+                namespace,
+                |limit| &limit.namespace,
+            ))
         }
 
         async fn fetch_pod_disruption_budgets(
             &self,
-            _namespace: Option<&str>,
+            namespace: Option<&str>,
         ) -> Result<Vec<PodDisruptionBudgetInfo>> {
             if let Some(err) = &self.pod_disruption_budgets_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.pod_disruption_budgets.clone())
+            Ok(Self::filter_namespace(
+                &self.pod_disruption_budgets,
+                namespace,
+                |pdb| &pdb.namespace,
+            ))
         }
 
         async fn fetch_service_accounts(
             &self,
-            _namespace: Option<&str>,
+            namespace: Option<&str>,
         ) -> Result<Vec<ServiceAccountInfo>> {
             if let Some(err) = &self.service_accounts_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.service_accounts.clone())
+            Ok(Self::filter_namespace(
+                &self.service_accounts,
+                namespace,
+                |account| &account.namespace,
+            ))
         }
 
-        async fn fetch_roles(&self, _namespace: Option<&str>) -> Result<Vec<RoleInfo>> {
+        async fn fetch_roles(&self, namespace: Option<&str>) -> Result<Vec<RoleInfo>> {
             if let Some(err) = &self.roles_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.roles.clone())
+            Ok(Self::filter_namespace(&self.roles, namespace, |role| {
+                &role.namespace
+            }))
         }
 
         async fn fetch_role_bindings(
             &self,
-            _namespace: Option<&str>,
+            namespace: Option<&str>,
         ) -> Result<Vec<RoleBindingInfo>> {
             if let Some(err) = &self.role_bindings_err {
                 return Err(anyhow!(err.clone()));
             }
-            Ok(self.role_bindings.clone())
+            Ok(Self::filter_namespace(
+                &self.role_bindings,
+                namespace,
+                |binding| &binding.namespace,
+            ))
         }
 
         async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>> {
@@ -1360,6 +1425,106 @@ mod tests {
             .expect("refresh should succeed");
 
         assert_eq!(state.snapshot().namespaces_count, 3);
+    }
+
+    #[tokio::test]
+    async fn refresh_filters_namespaced_resources_for_selected_namespace() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+
+        state
+            .refresh(&source, Some("demo"))
+            .await
+            .expect("refresh should succeed");
+        let snapshot = state.snapshot();
+
+        assert_eq!(snapshot.phase, DataPhase::Ready);
+        assert_eq!(snapshot.pods.len(), 1);
+        assert!(snapshot.pods.iter().all(|pod| pod.namespace == "demo"));
+        assert!(
+            snapshot
+                .services
+                .iter()
+                .all(|service| service.namespace == "demo")
+        );
+        assert!(
+            snapshot
+                .deployments
+                .iter()
+                .all(|deployment| deployment.namespace == "demo")
+        );
+        assert!(snapshot.jobs.iter().all(|job| job.namespace == "demo"));
+        assert!(
+            snapshot
+                .cronjobs
+                .iter()
+                .all(|cronjob| cronjob.namespace == "demo")
+        );
+        assert!(
+            snapshot
+                .resource_quotas
+                .iter()
+                .all(|quota| quota.namespace == "demo")
+        );
+        assert!(
+            snapshot
+                .service_accounts
+                .iter()
+                .all(|account| account.namespace == "demo")
+        );
+        // Cluster-scoped resources remain unaffected by namespace scope.
+        assert_eq!(snapshot.nodes.len(), 1);
+        assert_eq!(snapshot.cluster_roles.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn namespace_transition_with_partial_failures_does_not_leak_previous_namespace_data() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+
+        state
+            .refresh(&source, Some("default"))
+            .await
+            .expect("default namespace refresh should succeed");
+        assert_eq!(state.snapshot().services.len(), 1);
+
+        state.begin_loading_transition(false);
+        let mut demo_source = MockDataSource::success();
+        demo_source.services_err = Some("forbidden".to_string());
+
+        state
+            .refresh(&demo_source, Some("demo"))
+            .await
+            .expect("partial failure should still return ready");
+        let snapshot = state.snapshot();
+
+        assert_eq!(snapshot.phase, DataPhase::Ready);
+        assert!(snapshot.pods.iter().all(|pod| pod.namespace == "demo"));
+        // Must not retain stale default namespace services after switch.
+        assert!(snapshot.services.is_empty());
+        assert!(
+            snapshot
+                .last_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("services")
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_snapshot_counts_match_dashboard_stats() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+
+        state
+            .refresh(&source, None)
+            .await
+            .expect("refresh should succeed");
+        let snapshot = state.snapshot();
+        let stats = crate::state::alerts::compute_dashboard_stats(&snapshot);
+
+        assert_eq!(snapshot.services_count, stats.services_count);
+        assert_eq!(snapshot.namespaces_count, stats.namespaces_count);
     }
 
     #[tokio::test]
@@ -1591,6 +1756,29 @@ mod tests {
         state.begin_loading_transition(true);
         assert_eq!(state.snapshot().snapshot_version, 9);
         assert!(state.namespaces.is_empty());
+    }
+
+    #[tokio::test]
+    async fn snapshot_version_is_monotonic_across_namespace_transitions() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+
+        state
+            .refresh(&source, Some("default"))
+            .await
+            .expect("initial refresh should succeed");
+        let v1 = state.snapshot().snapshot_version;
+
+        state.begin_loading_transition(false);
+        let v2 = state.snapshot().snapshot_version;
+        assert!(v2 > v1);
+
+        state
+            .refresh(&source, Some("demo"))
+            .await
+            .expect("second refresh should succeed");
+        let v3 = state.snapshot().snapshot_version;
+        assert!(v3 > v2);
     }
 
     /// Verifies StatefulSet DTO default values are stable.
