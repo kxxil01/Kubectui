@@ -42,6 +42,8 @@ pub use crate::k8s::{
     events::EventInfo,
 };
 
+const MAX_EVENTS_LIST_LIMIT: u32 = 1000;
+
 /// Configured Kubernetes client wrapper.
 #[derive(Clone)]
 pub struct K8sClient {
@@ -1612,10 +1614,8 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching events")?;
+        let lp = ListParams::default().limit(MAX_EVENTS_LIST_LIMIT);
+        let list = api.list(&lp).await.context("failed fetching events")?;
         let now = Utc::now();
         let mut events: Vec<K8sEventInfo> = list
             .into_iter()
@@ -1683,7 +1683,10 @@ impl K8sClient {
             .collect())
     }
 
-    /// Fetches CustomResourceDefinitions cluster-wide and includes instance counts.
+    /// Fetches CustomResourceDefinitions cluster-wide.
+    ///
+    /// Instance lists are fetched lazily when entering the Extensions detail pane.
+    /// This keeps global refresh fast on large clusters with many CRDs.
     pub async fn fetch_custom_resource_definitions(
         &self,
     ) -> Result<Vec<CustomResourceDefinitionInfo>> {
@@ -1706,7 +1709,7 @@ impl K8sClient {
                 .map(|v| v.name.clone())
                 .unwrap_or_else(|| "v1".to_string());
 
-            let info = CustomResourceDefinitionInfo {
+            crds.push(CustomResourceDefinitionInfo {
                 name: crd.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
                 group: spec.group.clone(),
                 version,
@@ -1714,14 +1717,7 @@ impl K8sClient {
                 plural: spec.names.plural.clone(),
                 scope: spec.scope,
                 instances: 0,
-            };
-
-            let instances = self
-                .count_custom_resource_instances(&info)
-                .await
-                .unwrap_or(0);
-
-            crds.push(CustomResourceDefinitionInfo { instances, ..info });
+            });
         }
 
         crds.sort_by(|a, b| a.name.cmp(&b.name));
@@ -1840,16 +1836,6 @@ impl K8sClient {
                 NodeMetricsInfo::from_json(name, &obj.data)
             })
             .collect())
-    }
-
-    async fn count_custom_resource_instances(
-        &self,
-        crd: &CustomResourceDefinitionInfo,
-    ) -> Result<usize> {
-        let ar = custom_resource_api_resource(crd);
-        let api: Api<DynamicObject> = Api::all_with(self.client.clone(), &ar);
-        let list = api.list(&ListParams::default()).await?;
-        Ok(list.items.len())
     }
 
     /// Fetches cluster summary information.
