@@ -195,7 +195,7 @@ struct RefreshAsyncResult {
 struct QueuedRefresh {
     request_id: u64,
     namespace: Option<String>,
-    include_flux: bool,
+    options: RefreshOptions,
     context_generation: u64,
 }
 
@@ -226,6 +226,80 @@ const STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS: u64 = 3;
 const STARTUP_NAMESPACE_FETCH_ATTEMPTS: usize = 2;
 const STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS: u64 = 150;
 const FLUX_AUTO_REFRESH_EVERY: u64 = 3;
+
+fn fast_refresh_options(include_flux: bool, include_events: bool) -> RefreshOptions {
+    RefreshOptions {
+        include_flux,
+        include_cluster_info: false,
+        include_secondary_resources: false,
+        include_events,
+    }
+}
+
+fn full_refresh_options(
+    include_flux: bool,
+    include_cluster_info: bool,
+    include_events: bool,
+) -> RefreshOptions {
+    RefreshOptions {
+        include_flux,
+        include_cluster_info,
+        include_secondary_resources: true,
+        include_events,
+    }
+}
+
+fn view_prefers_secondary_refresh(view: AppView) -> bool {
+    !matches!(
+        view,
+        AppView::Dashboard
+            | AppView::Nodes
+            | AppView::Namespaces
+            | AppView::Pods
+            | AppView::Deployments
+            | AppView::StatefulSets
+            | AppView::DaemonSets
+            | AppView::ReplicaSets
+            | AppView::ReplicationControllers
+            | AppView::Jobs
+            | AppView::CronJobs
+            | AppView::Services
+            | AppView::PortForwarding
+            | AppView::HelmCharts
+            | AppView::FluxCDAlertProviders
+            | AppView::FluxCDAlerts
+            | AppView::FluxCDAll
+            | AppView::FluxCDArtifacts
+            | AppView::FluxCDHelmReleases
+            | AppView::FluxCDHelmRepositories
+            | AppView::FluxCDImages
+            | AppView::FluxCDKustomizations
+            | AppView::FluxCDReceivers
+            | AppView::FluxCDSources
+    )
+}
+
+fn view_wants_events(view: AppView) -> bool {
+    matches!(view, AppView::Events)
+}
+
+fn view_wants_cluster_info(view: AppView) -> bool {
+    matches!(view, AppView::Dashboard)
+}
+
+fn refresh_options_for_view(
+    view: AppView,
+    include_flux: bool,
+    force_cluster_info: bool,
+) -> RefreshOptions {
+    let include_events = view_wants_events(view);
+    let include_cluster_info = force_cluster_info || view_wants_cluster_info(view);
+    if view_prefers_secondary_refresh(view) || include_events {
+        full_refresh_options(include_flux, include_cluster_info, include_events)
+    } else {
+        fast_refresh_options(include_flux, include_events)
+    }
+}
 
 fn is_transient_transport_error(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
@@ -281,18 +355,14 @@ fn spawn_refresh_task(
     mut global_state: GlobalState,
     client: K8sClient,
     namespace: Option<String>,
-    include_flux: bool,
+    options: RefreshOptions,
     request_id: u64,
     context_generation: u64,
 ) -> tokio::task::JoinHandle<()> {
     let requested_namespace = namespace.clone();
     tokio::spawn(async move {
         let result = global_state
-            .refresh_with_options(
-                &client,
-                namespace.as_deref(),
-                RefreshOptions { include_flux },
-            )
+            .refresh_with_options(&client, namespace.as_deref(), options)
             .await
             .map(|_| global_state)
             .map_err(|err| err.to_string());
@@ -317,7 +387,7 @@ fn request_refresh(
     global_state: &GlobalState,
     client: &K8sClient,
     namespace: Option<String>,
-    include_flux: bool,
+    options: RefreshOptions,
     refresh_state: &mut RefreshRuntimeState,
 ) {
     refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
@@ -330,7 +400,7 @@ fn request_refresh(
             global_state.clone(),
             client.clone(),
             namespace,
-            include_flux,
+            options,
             request_id,
             refresh_state.context_generation,
         ));
@@ -338,12 +408,32 @@ fn request_refresh(
         let merged_include_flux = refresh_state
             .queued_refresh
             .as_ref()
-            .is_some_and(|queued| queued.include_flux)
-            || include_flux;
+            .is_some_and(|queued| queued.options.include_flux)
+            || options.include_flux;
+        let merged_include_cluster_info = refresh_state
+            .queued_refresh
+            .as_ref()
+            .is_some_and(|queued| queued.options.include_cluster_info)
+            || options.include_cluster_info;
+        let merged_include_secondary_resources = refresh_state
+            .queued_refresh
+            .as_ref()
+            .is_some_and(|queued| queued.options.include_secondary_resources)
+            || options.include_secondary_resources;
+        let merged_include_events = refresh_state
+            .queued_refresh
+            .as_ref()
+            .is_some_and(|queued| queued.options.include_events)
+            || options.include_events;
         refresh_state.queued_refresh = Some(QueuedRefresh {
             request_id,
             namespace,
-            include_flux: merged_include_flux,
+            options: RefreshOptions {
+                include_flux: merged_include_flux,
+                include_cluster_info: merged_include_cluster_info,
+                include_secondary_resources: merged_include_secondary_resources,
+                include_events: merged_include_events,
+            },
             context_generation: refresh_state.context_generation,
         });
     }
@@ -440,10 +530,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         }
     }
 
-    let port_forwarder = PortForwarderService::new(std::sync::Arc::new(client.clone()));
+    let mut port_forwarder = PortForwarderService::new(std::sync::Arc::new(client.clone()));
 
     let (update_tx, mut update_rx) = tokio::sync::mpsc::unbounded_channel::<UpdateMessage>();
-    let coordinator = UpdateCoordinator::new(client.clone(), update_tx);
+    let mut coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
 
     // Channel for async detail view fetches — carries the requested resource to prevent stale writes.
     let (detail_tx, mut detail_rx) =
@@ -463,13 +553,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     // Background refresh scheduling state — one in-flight + one coalesced queued request.
     let mut refresh_state = RefreshRuntimeState::default();
 
-    // Start first refresh in the background so the TUI is responsive immediately.
+    // Start with view-scoped refresh (workload-first for core views, secondary deferred).
+    let startup_include_flux = app.view().is_fluxcd();
     request_refresh(
         &refresh_tx,
         &global_state,
         &client,
         startup_namespace_scope,
-        true,
+        refresh_options_for_view(app.view(), startup_include_flux, true),
         &mut refresh_state,
     );
 
@@ -722,7 +813,11 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         &global_state,
                                         &client,
                                         None,
-                                        true,
+                                        refresh_options_for_view(
+                                            app.view(),
+                                            app.view().is_fluxcd(),
+                                            false,
+                                        ),
                                         &mut refresh_state,
                                     );
                                 } else {
@@ -750,7 +845,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             global_state.clone(),
                             client.clone(),
                             queued.namespace,
-                            queued.include_flux,
+                            queued.options,
                             queued.request_id,
                             queued.context_generation,
                         ));
@@ -790,7 +885,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 &global_state,
                                 &client,
                                 active_namespace_scope.clone(),
-                                true,
+                                fast_refresh_options(app.view().is_fluxcd(), false),
                                 &mut refresh_state,
                             );
                             // Controllers may recreate resources shortly after delete.
@@ -831,7 +926,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &global_state,
                         &client,
                         trigger.namespace,
-                        true,
+                        fast_refresh_options(app.view().is_fluxcd(), false),
                         &mut refresh_state,
                     );
                 }
@@ -868,7 +963,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &global_state,
                         &client,
                         namespace_scope(app.get_namespace()).map(str::to_string),
-                        include_flux,
+                        refresh_options_for_view(app.view(), include_flux, false),
                         &mut refresh_state,
                     );
                 } else if backoff_secs > 0 {
@@ -930,7 +1025,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             &global_state,
                             &client,
                             namespace_scope(app.get_namespace()).map(str::to_string),
-                            true,
+                            full_refresh_options(true, true, true),
                             &mut refresh_state,
                         );
                         // Reset auto-refresh timer after manual refresh
@@ -955,6 +1050,19 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.selected_idx = 0;
                         app.focus = kubectui::app::Focus::Content;
                         app.extension_in_instances = false;
+                        if !matches!(
+                            view,
+                            kubectui::app::AppView::PortForwarding | kubectui::app::AppView::HelmCharts
+                        ) {
+                            request_refresh(
+                                &refresh_tx,
+                                &global_state,
+                                &client,
+                                namespace_scope(app.get_namespace()).map(str::to_string),
+                                refresh_options_for_view(view, view.is_fluxcd(), false),
+                                &mut refresh_state,
+                            );
+                        }
                         // Trigger extensions sync when navigating to Extensions view
                         if view == kubectui::app::AppView::Extensions {
                             sync_extensions_instances(&client, &mut app, &cached_snapshot).await;
@@ -974,8 +1082,18 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.close_context_picker();
                         match K8sClient::connect_with_context(&ctx).await {
                             Ok(new_client) => {
+                                // Context-bound long-lived services must be rebuilt to avoid
+                                // continuing background work against the previous cluster.
+                                let _ = coordinator.shutdown().await;
+                                port_forwarder.stop_all().await;
+                                app.tunnel_registry.update_tunnels(Vec::new());
+
                                 client = new_client;
+                                coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
+                                port_forwarder =
+                                    PortForwarderService::new(std::sync::Arc::new(client.clone()));
                                 global_state.begin_loading_transition(true);
+                                app.selected_idx = 0;
                                 // Invalidate stale async results from the previous client/context.
                                 refresh_state.context_generation =
                                     refresh_state.context_generation.wrapping_add(1);
@@ -990,7 +1108,11 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     &global_state,
                                     &client,
                                     namespace_scope(app.get_namespace()).map(str::to_string),
-                                    true,
+                                    refresh_options_for_view(
+                                        app.view(),
+                                        app.view().is_fluxcd(),
+                                        true,
+                                    ),
                                     &mut refresh_state,
                                 );
                             }
@@ -1001,6 +1123,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                     AppAction::SelectNamespace(namespace) => {
                         app.set_namespace(namespace);
+                        app.selected_idx = 0;
                         app.close_namespace_picker();
                         save_config(&app);
                         // Invalidate stale async results from previous namespace selections.
@@ -1020,7 +1143,11 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             &global_state,
                             &client,
                             namespace_scope(app.get_namespace()).map(str::to_string),
-                            true,
+                            refresh_options_for_view(
+                                app.view(),
+                                app.view().is_fluxcd(),
+                                false,
+                            ),
                             &mut refresh_state,
                         );
                     }
@@ -1443,6 +1570,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             }
         }
     }
+
+    let _ = coordinator.shutdown().await;
+    port_forwarder.stop_all().await;
 
     Ok(())
 }

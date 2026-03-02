@@ -392,11 +392,19 @@ pub struct GlobalState {
 #[derive(Debug, Clone, Copy)]
 pub struct RefreshOptions {
     pub include_flux: bool,
+    pub include_cluster_info: bool,
+    pub include_secondary_resources: bool,
+    pub include_events: bool,
 }
 
 impl Default for RefreshOptions {
     fn default() -> Self {
-        Self { include_flux: true }
+        Self {
+            include_flux: true,
+            include_cluster_info: true,
+            include_secondary_resources: true,
+            include_events: true,
+        }
     }
 }
 
@@ -450,7 +458,7 @@ impl GlobalState {
         let mut attempt = 0;
         loop {
             attempt += 1;
-            let _permit = RESOURCE_FETCH_SEMAPHORE
+            let permit = RESOURCE_FETCH_SEMAPHORE
                 .acquire()
                 .await
                 .map_err(|_| anyhow!("resource fetch coordinator shut down"))?;
@@ -462,6 +470,7 @@ impl GlobalState {
                     if attempt < Self::TRANSIENT_RETRY_ATTEMPTS
                         && Self::is_transient_send_request_error(&err)
                     {
+                        drop(permit);
                         tokio::time::sleep(Duration::from_millis(Self::TRANSIENT_RETRY_DELAY_MS))
                             .await;
                         continue;
@@ -470,6 +479,7 @@ impl GlobalState {
                 }
                 Err(_) => {
                     if attempt < Self::TRANSIENT_RETRY_ATTEMPTS {
+                        drop(permit);
                         tokio::time::sleep(Duration::from_millis(Self::TRANSIENT_RETRY_DELAY_MS))
                             .await;
                         continue;
@@ -510,21 +520,6 @@ impl GlobalState {
         }
     }
 
-    fn keep_prev_opt_on_error<T: Clone>(
-        result: Result<T>,
-        previous: Option<T>,
-        label: &str,
-        errors: &mut Vec<String>,
-    ) -> Option<T> {
-        match result {
-            Ok(value) => Some(value),
-            Err(err) => {
-                errors.push(format!("{label}: {err}"));
-                previous
-            }
-        }
-    }
-
     fn filter_namespace<T, F>(items: Vec<T>, namespace: Option<&str>, namespace_of: F) -> Vec<T>
     where
         F: Fn(&T) -> &str,
@@ -536,6 +531,17 @@ impl GlobalState {
                 .collect(),
             None => items,
         }
+    }
+
+    fn namespace_names_from_list(namespace_list: &[NamespaceInfo]) -> Vec<String> {
+        let mut names: Vec<String> = namespace_list
+            .iter()
+            .map(|ns| ns.name.clone())
+            .filter(|name| !name.is_empty())
+            .collect();
+        names.sort();
+        names.dedup();
+        names
     }
 
     /// Refreshes core resources in parallel, updating status and timestamps.
@@ -596,17 +602,35 @@ impl GlobalState {
         self.snapshot.last_error = None;
         self.snapshot.cluster_url = Some(client.cluster_url().to_string());
 
-        let namespaces_res =
-            Self::fetch_with_timeout("namespaces", || client.fetch_namespaces()).await;
-
         let prev_flux_resources = self.snapshot.flux_resources.clone();
+        let prev_cluster_info = self.snapshot.cluster_info.clone();
+        let prev_events = self.snapshot.events.clone();
         let include_flux = options.include_flux;
+        let include_cluster_info = options.include_cluster_info;
+        let include_secondary_resources = options.include_secondary_resources;
+        let include_events = options.include_events;
         let flux_fetch = async move {
             if include_flux {
                 Self::fetch_with_timeout("fluxresources", || client.fetch_flux_resources(namespace))
                     .await
             } else {
                 Ok(prev_flux_resources)
+            }
+        };
+        let cluster_info_fetch = async move {
+            if include_cluster_info {
+                Self::fetch_with_timeout("cluster info", || client.fetch_cluster_info())
+                    .await
+                    .map(Some)
+            } else {
+                Ok(None)
+            }
+        };
+        let events_fetch = async move {
+            if include_events {
+                Self::fetch_with_timeout("events", || client.fetch_events(namespace)).await
+            } else {
+                Ok(prev_events)
             }
         };
 
@@ -621,32 +645,10 @@ impl GlobalState {
             replication_controllers_res,
             jobs_res,
             cronjobs_res,
-            resource_quotas_res,
-            limit_ranges_res,
-            pod_disruption_budgets_res,
-            service_accounts_res,
-            roles_res,
-            role_bindings_res,
-            cluster_roles_res,
-            cluster_role_bindings_res,
-            custom_resource_definitions_res,
-            cluster_info_res,
-            endpoints_res,
-            ingresses_res,
-            ingress_classes_res,
-            network_policies_res,
-            config_maps_res,
-            secrets_res,
-            hpas_res,
-            pvcs_res,
-            pvs_res,
-            storage_classes_res,
             namespace_list_res,
-            events_res,
-            priority_classes_res,
-            helm_releases_res,
             flux_resources_res,
-            node_metrics_res,
+            cluster_info_res,
+            events_res,
         ) = tokio::join!(
             Self::fetch_with_timeout("nodes", || client.fetch_nodes()),
             Self::fetch_with_timeout("pods", || client.fetch_pods(namespace)),
@@ -659,45 +661,92 @@ impl GlobalState {
                 .fetch_replication_controllers(namespace)),
             Self::fetch_with_timeout("jobs", || client.fetch_jobs(namespace)),
             Self::fetch_with_timeout("cronjobs", || client.fetch_cronjobs(namespace)),
-            Self::fetch_with_timeout("resourcequotas", || client.fetch_resource_quotas(namespace)),
-            Self::fetch_with_timeout("limitranges", || client.fetch_limit_ranges(namespace)),
-            Self::fetch_with_timeout("pdbs", || client.fetch_pod_disruption_budgets(namespace)),
-            Self::fetch_with_timeout("serviceaccounts", || client
-                .fetch_service_accounts(namespace)),
-            Self::fetch_with_timeout("roles", || client.fetch_roles(namespace)),
-            Self::fetch_with_timeout("rolebindings", || client.fetch_role_bindings(namespace)),
-            Self::fetch_with_timeout("clusterroles", || client.fetch_cluster_roles()),
-            Self::fetch_with_timeout("clusterrolebindings", || client
-                .fetch_cluster_role_bindings()),
-            Self::fetch_with_timeout("crds", || client.fetch_custom_resource_definitions()),
-            Self::fetch_with_timeout("cluster info", || client.fetch_cluster_info()),
-            Self::fetch_with_timeout("endpoints", || client.fetch_endpoints(namespace)),
-            Self::fetch_with_timeout("ingresses", || client.fetch_ingresses(namespace)),
-            Self::fetch_with_timeout("ingressclasses", || client.fetch_ingress_classes()),
-            Self::fetch_with_timeout("networkpolicies", || client
-                .fetch_network_policies(namespace)),
-            Self::fetch_with_timeout("configmaps", || client.fetch_config_maps(namespace)),
-            Self::fetch_with_timeout("secrets", || client.fetch_secrets(namespace)),
-            Self::fetch_with_timeout("hpas", || client.fetch_hpas(namespace)),
-            Self::fetch_with_timeout("pvcs", || client.fetch_pvcs(namespace)),
-            Self::fetch_with_timeout("pvs", || client.fetch_pvs()),
-            Self::fetch_with_timeout("storageclasses", || client.fetch_storage_classes()),
             Self::fetch_with_timeout("namespacelist", || client.fetch_namespace_list()),
-            Self::fetch_with_timeout("events", || client.fetch_events(namespace)),
-            Self::fetch_with_timeout("priorityclasses", || client.fetch_priority_classes()),
-            Self::fetch_with_timeout("helmreleases", || client.fetch_helm_releases(namespace)),
             flux_fetch,
-            Self::fetch_with_timeout("nodemetrics", || client.fetch_all_node_metrics()),
+            cluster_info_fetch,
+            events_fetch,
         );
+
+        let (
+            resource_quotas_res,
+            limit_ranges_res,
+            pod_disruption_budgets_res,
+            service_accounts_res,
+            roles_res,
+            role_bindings_res,
+            cluster_roles_res,
+            cluster_role_bindings_res,
+            custom_resource_definitions_res,
+            endpoints_res,
+            ingresses_res,
+            ingress_classes_res,
+            network_policies_res,
+            config_maps_res,
+            secrets_res,
+            hpas_res,
+            pvcs_res,
+            pvs_res,
+            storage_classes_res,
+            priority_classes_res,
+            helm_releases_res,
+            node_metrics_res,
+        ) = if include_secondary_resources {
+            tokio::join!(
+                Self::fetch_with_timeout("resourcequotas", || client
+                    .fetch_resource_quotas(namespace)),
+                Self::fetch_with_timeout("limitranges", || client.fetch_limit_ranges(namespace)),
+                Self::fetch_with_timeout("pdbs", || client.fetch_pod_disruption_budgets(namespace)),
+                Self::fetch_with_timeout("serviceaccounts", || client
+                    .fetch_service_accounts(namespace)),
+                Self::fetch_with_timeout("roles", || client.fetch_roles(namespace)),
+                Self::fetch_with_timeout("rolebindings", || client.fetch_role_bindings(namespace)),
+                Self::fetch_with_timeout("clusterroles", || client.fetch_cluster_roles()),
+                Self::fetch_with_timeout("clusterrolebindings", || client
+                    .fetch_cluster_role_bindings()),
+                Self::fetch_with_timeout("crds", || client.fetch_custom_resource_definitions()),
+                Self::fetch_with_timeout("endpoints", || client.fetch_endpoints(namespace)),
+                Self::fetch_with_timeout("ingresses", || client.fetch_ingresses(namespace)),
+                Self::fetch_with_timeout("ingressclasses", || client.fetch_ingress_classes()),
+                Self::fetch_with_timeout("networkpolicies", || client
+                    .fetch_network_policies(namespace)),
+                Self::fetch_with_timeout("configmaps", || client.fetch_config_maps(namespace)),
+                Self::fetch_with_timeout("secrets", || client.fetch_secrets(namespace)),
+                Self::fetch_with_timeout("hpas", || client.fetch_hpas(namespace)),
+                Self::fetch_with_timeout("pvcs", || client.fetch_pvcs(namespace)),
+                Self::fetch_with_timeout("pvs", || client.fetch_pvs()),
+                Self::fetch_with_timeout("storageclasses", || client.fetch_storage_classes()),
+                Self::fetch_with_timeout("priorityclasses", || client.fetch_priority_classes()),
+                Self::fetch_with_timeout("helmreleases", || client.fetch_helm_releases(namespace)),
+                Self::fetch_with_timeout("nodemetrics", || client.fetch_all_node_metrics()),
+            )
+        } else {
+            (
+                Ok(self.snapshot.resource_quotas.clone()),
+                Ok(self.snapshot.limit_ranges.clone()),
+                Ok(self.snapshot.pod_disruption_budgets.clone()),
+                Ok(self.snapshot.service_accounts.clone()),
+                Ok(self.snapshot.roles.clone()),
+                Ok(self.snapshot.role_bindings.clone()),
+                Ok(self.snapshot.cluster_roles.clone()),
+                Ok(self.snapshot.cluster_role_bindings.clone()),
+                Ok(self.snapshot.custom_resource_definitions.clone()),
+                Ok(self.snapshot.endpoints.clone()),
+                Ok(self.snapshot.ingresses.clone()),
+                Ok(self.snapshot.ingress_classes.clone()),
+                Ok(self.snapshot.network_policies.clone()),
+                Ok(self.snapshot.config_maps.clone()),
+                Ok(self.snapshot.secrets.clone()),
+                Ok(self.snapshot.hpas.clone()),
+                Ok(self.snapshot.pvcs.clone()),
+                Ok(self.snapshot.pvs.clone()),
+                Ok(self.snapshot.storage_classes.clone()),
+                Ok(self.snapshot.priority_classes.clone()),
+                Ok(self.snapshot.helm_releases.clone()),
+                Ok(self.snapshot.node_metrics.clone()),
+            )
+        };
 
         let mut errors = Vec::new();
-
-        self.namespaces = Self::keep_prev_vec_on_error(
-            namespaces_res,
-            &self.namespaces,
-            "namespaces",
-            &mut errors,
-        );
 
         let nodes =
             Self::keep_prev_vec_on_error(nodes_res, &self.snapshot.nodes, "nodes", &mut errors);
@@ -795,12 +844,14 @@ impl GlobalState {
             "crds",
             &mut errors,
         );
-        let cluster_info = Self::keep_prev_opt_on_error(
-            cluster_info_res,
-            self.snapshot.cluster_info.clone(),
-            "cluster info",
-            &mut errors,
-        );
+        let cluster_info = match cluster_info_res {
+            Ok(Some(info)) => Some(info),
+            Ok(None) => prev_cluster_info,
+            Err(err) => {
+                errors.push(format!("cluster info: {err}"));
+                prev_cluster_info
+            }
+        };
 
         let endpoints = Self::keep_prev_vec_on_error(
             endpoints_res,
@@ -853,6 +904,7 @@ impl GlobalState {
             "namespacelist",
             &mut errors,
         );
+        self.namespaces = Self::namespace_names_from_list(&namespace_list);
         let events =
             Self::keep_prev_vec_on_error(events_res, &self.snapshot.events, "events", &mut errors);
         let priority_classes = Self::keep_prev_vec_on_error(
@@ -877,7 +929,12 @@ impl GlobalState {
             "fluxresources",
             &mut errors,
         );
-        let node_metrics = node_metrics_res.unwrap_or_else(|_| self.snapshot.node_metrics.clone());
+        let node_metrics = Self::keep_prev_vec_on_error(
+            node_metrics_res,
+            &self.snapshot.node_metrics,
+            "nodemetrics",
+            &mut errors,
+        );
 
         let all_failed = nodes.is_empty()
             && pods.is_empty()
@@ -889,15 +946,6 @@ impl GlobalState {
             && replication_controllers.is_empty()
             && jobs.is_empty()
             && cronjobs.is_empty()
-            && resource_quotas.is_empty()
-            && limit_ranges.is_empty()
-            && pod_disruption_budgets.is_empty()
-            && service_accounts.is_empty()
-            && roles.is_empty()
-            && role_bindings.is_empty()
-            && cluster_roles.is_empty()
-            && cluster_role_bindings.is_empty()
-            && custom_resource_definitions.is_empty()
             && cluster_info.is_none();
 
         if all_failed {
@@ -1489,7 +1537,15 @@ mod tests {
             Ok(vec![])
         }
         async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
-            Ok(vec![])
+            Ok(self
+                .namespaces
+                .iter()
+                .map(|name| NamespaceInfo {
+                    name: name.clone(),
+                    status: "Active".to_string(),
+                    ..NamespaceInfo::default()
+                })
+                .collect())
         }
         async fn fetch_events(&self, _namespace: Option<&str>) -> Result<Vec<K8sEventInfo>> {
             Ok(vec![])
@@ -1731,6 +1787,9 @@ mod tests {
                 Some("default"),
                 RefreshOptions {
                     include_flux: false,
+                    include_cluster_info: true,
+                    include_secondary_resources: true,
+                    include_events: true,
                 },
             )
             .await
