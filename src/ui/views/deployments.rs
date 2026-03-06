@@ -79,6 +79,7 @@ pub fn render_deployments(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             snapshot,
+            AppView::Deployments,
             query,
             "  Loading deployments...",
             "  No deployments found",

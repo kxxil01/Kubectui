@@ -85,6 +85,7 @@ pub fn render_replication_controllers(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::ReplicationControllers,
             query,
             "  Loading replication controllers...",
             "  No replication controllers found",

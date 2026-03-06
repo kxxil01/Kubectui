@@ -76,6 +76,7 @@ pub fn render_services(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             snapshot,
+            AppView::Services,
             query,
             "  Loading services...",
             "  No services found",

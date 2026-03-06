@@ -53,6 +53,7 @@ pub fn render_pvcs(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::PersistentVolumeClaims,
             query,
             "  Loading persistent volume claims...",
             "  No persistent volume claims found",
@@ -189,6 +190,7 @@ pub fn render_pvs(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::PersistentVolumes,
             query,
             "  Loading persistent volumes...",
             "  No persistent volumes found",
@@ -334,6 +336,7 @@ pub fn render_storage_classes(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::StorageClasses,
             query,
             "  Loading storage classes...",
             "  No storage classes found",

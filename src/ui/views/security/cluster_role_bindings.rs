@@ -81,6 +81,7 @@ pub fn render_cluster_role_bindings(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::ClusterRoleBindings,
             query,
             "  Loading clusterrolebindings...",
             "  No clusterrolebindings found",

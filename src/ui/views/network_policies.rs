@@ -80,6 +80,7 @@ pub fn render_network_policies(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::NetworkPolicies,
             query,
             "  Loading network policies...",
             "  No network policies found",

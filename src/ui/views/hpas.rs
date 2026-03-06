@@ -56,6 +56,7 @@ pub fn render_hpas(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::HPAs,
             query,
             "  Loading horizontal pod autoscalers...",
             "  No horizontal pod autoscalers found",

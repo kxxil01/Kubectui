@@ -80,6 +80,7 @@ pub fn render_replicasets(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::ReplicaSets,
             query,
             "  Loading replica sets...",
             "  No replica sets found",

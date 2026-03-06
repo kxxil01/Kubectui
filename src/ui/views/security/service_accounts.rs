@@ -93,6 +93,7 @@ pub fn render_service_accounts(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::ServiceAccounts,
             query,
             "  Loading serviceaccounts...",
             "  No serviceaccounts found",

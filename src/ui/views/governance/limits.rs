@@ -59,6 +59,7 @@ pub fn render_limit_ranges(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::LimitRanges,
             query,
             "  Loading limit ranges...",
             "  No limit ranges found",

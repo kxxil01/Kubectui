@@ -89,6 +89,7 @@ pub fn render_daemonsets(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::DaemonSets,
             query,
             "  Loading daemonsets...",
             "  No daemonsets found",

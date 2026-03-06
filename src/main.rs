@@ -329,10 +329,6 @@ fn refresh_options_for_view(
     }
 }
 
-fn needs_secondary_backfill(snapshot: &ClusterSnapshot, view: AppView) -> bool {
-    !snapshot.secondary_resources_loaded && !view_prefers_secondary_refresh(view)
-}
-
 fn is_transient_transport_error(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
         let text = cause.to_string();
@@ -418,16 +414,31 @@ fn abort_in_flight_refresh(refresh_state: &mut RefreshRuntimeState) {
 
 fn request_refresh(
     refresh_tx: &tokio::sync::mpsc::Sender<RefreshAsyncResult>,
-    global_state: &GlobalState,
+    global_state: &mut GlobalState,
     client: &K8sClient,
     namespace: Option<String>,
     options: RefreshOptions,
     refresh_state: &mut RefreshRuntimeState,
+    snapshot_dirty: &mut bool,
 ) {
+    let snapshot = global_state.snapshot();
+    let should_queue_secondary_backfill =
+        !options.include_secondary_resources && !snapshot.secondary_resources_loaded;
+    let visible_options = RefreshOptions {
+        include_flux: options.include_flux,
+        include_cluster_info: options.include_cluster_info,
+        include_secondary_resources: options.include_secondary_resources
+            || should_queue_secondary_backfill,
+        include_events: options.include_events,
+    };
+    global_state.mark_refresh_requested(visible_options);
+    *snapshot_dirty = true;
+
     refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
     let request_id = refresh_state.request_seq;
 
     if refresh_state.in_flight_id.is_none() {
+        let queued_namespace = namespace.clone();
         refresh_state.in_flight_id = Some(request_id);
         refresh_state.in_flight_task = Some(spawn_refresh_task(
             refresh_tx.clone(),
@@ -438,6 +449,20 @@ fn request_refresh(
             request_id,
             refresh_state.context_generation,
         ));
+        if should_queue_secondary_backfill {
+            refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
+            refresh_state.queued_refresh = Some(QueuedRefresh {
+                request_id: refresh_state.request_seq,
+                namespace: queued_namespace,
+                options: RefreshOptions {
+                    include_flux: options.include_flux,
+                    include_cluster_info: false,
+                    include_secondary_resources: true,
+                    include_events: false,
+                },
+                context_generation: refresh_state.context_generation,
+            });
+        }
     } else {
         let merged_include_flux = refresh_state
             .queued_refresh
@@ -453,7 +478,8 @@ fn request_refresh(
             .queued_refresh
             .as_ref()
             .is_some_and(|queued| queued.options.include_secondary_resources)
-            || options.include_secondary_resources;
+            || options.include_secondary_resources
+            || should_queue_secondary_backfill;
         let merged_include_events = refresh_state
             .queued_refresh
             .as_ref()
@@ -591,21 +617,23 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::channel::<RefreshAsyncResult>(16);
     // Background refresh scheduling state — one in-flight + one coalesced queued request.
     let mut refresh_state = RefreshRuntimeState::default();
+    let mut snapshot_dirty = false;
 
     // Start with view-scoped refresh (workload-first for core views, secondary deferred).
     let startup_include_flux = app.view().is_fluxcd();
     request_refresh(
         &refresh_tx,
-        &global_state,
+        &mut global_state,
         &client,
         startup_namespace_scope,
         refresh_options_for_view(app.view(), startup_include_flux, true),
         &mut refresh_state,
+        &mut snapshot_dirty,
     );
 
     // Cached snapshot — only re-clone when state is marked dirty
     let mut cached_snapshot = global_state.snapshot();
-    let mut snapshot_dirty = false;
+    snapshot_dirty = false;
 
     // Render-skip: only redraw when state actually changed
     let mut needs_redraw = true;
@@ -856,7 +884,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     ));
                                     request_refresh(
                                         &refresh_tx,
-                                        &global_state,
+                                        &mut global_state,
                                         &client,
                                         None,
                                         refresh_options_for_view(
@@ -865,22 +893,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                             false,
                                         ),
                                         &mut refresh_state,
+                                        &mut snapshot_dirty,
                                     );
                                 } else {
                                     app.clear_error();
                                 }
                                 app.set_available_namespaces(global_state.namespaces().to_vec());
                                 snapshot_dirty = true;
-                                if needs_secondary_backfill(global_state.snapshot().as_ref(), app.view()) {
-                                    request_refresh(
-                                        &refresh_tx,
-                                        &global_state,
-                                        &client,
-                                        active_namespace_scope.clone(),
-                                        full_refresh_options(app.view().is_fluxcd(), false, false),
-                                        &mut refresh_state,
-                                    );
-                                }
                                 sync_extensions_instances(&client, &mut app, &global_state.snapshot()).await;
                             }
                             Err(err) => {
@@ -938,11 +957,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             app.clear_error();
                             request_refresh(
                                 &refresh_tx,
-                                &global_state,
+                                &mut global_state,
                                 &client,
                                 active_namespace_scope.clone(),
                                 fast_refresh_options(app.view().is_fluxcd(), false),
                                 &mut refresh_state,
+                                &mut snapshot_dirty,
                             );
                             // Controllers may recreate resources shortly after delete.
                             // Queue follow-up refreshes so age/status/restarts converge quickly.
@@ -1031,11 +1051,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                     request_refresh(
                         &refresh_tx,
-                        &global_state,
+                        &mut global_state,
                         &client,
                         trigger.namespace,
                         fast_refresh_options(app.view().is_fluxcd(), false),
                         &mut refresh_state,
+                        &mut snapshot_dirty,
                     );
                 }
             }
@@ -1068,11 +1089,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         || auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY);
                     request_refresh(
                         &refresh_tx,
-                        &global_state,
+                        &mut global_state,
                         &client,
                         namespace_scope(app.get_namespace()).map(str::to_string),
                         refresh_options_for_view(app.view(), include_flux, false),
                         &mut refresh_state,
+                        &mut snapshot_dirty,
                     );
                 } else if backoff_secs > 0 {
                     // Decrement backoff counter each tick
@@ -1130,11 +1152,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     AppAction::RefreshData => {
                         request_refresh(
                             &refresh_tx,
-                            &global_state,
+                            &mut global_state,
                             &client,
                             namespace_scope(app.get_namespace()).map(str::to_string),
                             full_refresh_options(true, true, true),
                             &mut refresh_state,
+                            &mut snapshot_dirty,
                         );
                         // Reset auto-refresh timer after manual refresh
                         auto_refresh.reset();
@@ -1164,11 +1187,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         ) {
                             request_refresh(
                                 &refresh_tx,
-                                &global_state,
+                                &mut global_state,
                                 &client,
                                 namespace_scope(app.get_namespace()).map(str::to_string),
                                 refresh_options_for_view(view, view.is_fluxcd(), false),
                                 &mut refresh_state,
+                                &mut snapshot_dirty,
                             );
                         }
                         // Trigger extensions sync when navigating to Extensions view
@@ -1213,7 +1237,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
                                 request_refresh(
                                     &refresh_tx,
-                                    &global_state,
+                                    &mut global_state,
                                     &client,
                                     namespace_scope(app.get_namespace()).map(str::to_string),
                                     refresh_options_for_view(
@@ -1222,6 +1246,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         true,
                                     ),
                                     &mut refresh_state,
+                                    &mut snapshot_dirty,
                                 );
                             }
                             Err(err) => {
@@ -1248,7 +1273,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         // Queue newest namespace refresh; if one is in flight it gets coalesced.
                         request_refresh(
                             &refresh_tx,
-                            &global_state,
+                            &mut global_state,
                             &client,
                             namespace_scope(app.get_namespace()).map(str::to_string),
                             refresh_options_for_view(
@@ -1257,6 +1282,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 false,
                             ),
                             &mut refresh_state,
+                            &mut snapshot_dirty,
                         );
                     }
                     AppAction::OpenDetail(resource) => {

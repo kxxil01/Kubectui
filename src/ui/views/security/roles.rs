@@ -80,6 +80,7 @@ pub fn render_roles(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::Roles,
             query,
             "  Loading roles...",
             "  No roles found",

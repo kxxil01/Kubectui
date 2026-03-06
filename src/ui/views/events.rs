@@ -58,6 +58,7 @@ pub fn render_events(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::Events,
             query,
             "  Loading events...",
             "  No events found",

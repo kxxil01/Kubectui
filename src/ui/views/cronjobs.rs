@@ -82,6 +82,7 @@ pub fn render_cronjobs(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::CronJobs,
             query,
             "  Loading cronjobs...",
             "  No cronjobs found",

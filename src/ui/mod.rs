@@ -23,7 +23,7 @@ use std::{
 
 use crate::{
     app::{AppState, AppView, PodSortColumn, PodSortState, filtered_pod_indices},
-    state::ClusterSnapshot,
+    state::{ClusterSnapshot, ViewLoadState},
     ui::components::{active_block, default_block, default_theme},
 };
 use filter_cache::{cached_filter_indices_with_variant, data_fingerprint};
@@ -123,14 +123,15 @@ pub(crate) fn table_window(total: usize, selected: usize, viewport_rows: usize) 
 
 pub(crate) fn loading_or_empty_message(
     snapshot: &ClusterSnapshot,
+    view: AppView,
     query: &str,
     loading: &'static str,
     empty: &'static str,
     no_match: &'static str,
 ) -> &'static str {
     if matches!(
-        snapshot.phase,
-        crate::state::DataPhase::Loading | crate::state::DataPhase::Idle
+        snapshot.view_load_state(view),
+        ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
     ) {
         return loading;
     }
@@ -143,16 +144,25 @@ pub(crate) fn loading_or_empty_message(
 
 pub(crate) fn loading_or_empty_message_no_search(
     snapshot: &ClusterSnapshot,
+    view: AppView,
     loading: &'static str,
     empty: &'static str,
 ) -> &'static str {
     if matches!(
-        snapshot.phase,
-        crate::state::DataPhase::Loading | crate::state::DataPhase::Idle
+        snapshot.view_load_state(view),
+        ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
     ) {
         loading
     } else {
         empty
+    }
+}
+
+fn current_view_activity(snapshot: &ClusterSnapshot, view: AppView) -> Option<String> {
+    match snapshot.view_load_state(view) {
+        ViewLoadState::Loading => Some(format!("{} loading...", view.label())),
+        ViewLoadState::Refreshing => Some(format!("{} refreshing...", view.label())),
+        ViewLoadState::Idle | ViewLoadState::Ready => None,
     }
 }
 
@@ -548,6 +558,9 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         format!("[{}] Search: {}", app.get_namespace(), app.search_query())
     } else {
         let theme_name = theme::active_theme().name;
+        let current_activity = current_view_activity(cluster, app.view())
+            .map(|activity| format!(" {activity} •"))
+            .unwrap_or_default();
         let pods_sort_hint = if app.view() == AppView::Pods {
             let active = app.pod_sort().map_or("default", PodSortState::short_label);
             format!(" • [1/2/3] pod-sort ({active}) • [0] clear-sort")
@@ -555,8 +568,9 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             String::new()
         };
         format!(
-            "[{}]  [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{pods_sort_hint} • [r] refresh • [q] quit",
-            app.get_namespace()
+            "[{}]{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{pods_sort_hint} • [r] refresh • [q] quit",
+            app.get_namespace(),
+            current_activity
         )
     };
 
@@ -676,6 +690,7 @@ fn render_pods_widget(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::Pods,
             query,
             "  Loading pods...",
             "  No pods available  (try pressing ~ to switch namespace, or select 'all')",
@@ -868,11 +883,12 @@ mod tests {
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
         k8s::dtos::{
             ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo, CustomResourceDefinitionInfo,
-            CustomResourceInfo, DaemonSetInfo, DeploymentInfo, FluxResourceInfo, JobInfo,
-            LimitRangeInfo, NodeInfo, PodDisruptionBudgetInfo, PodInfo, ResourceQuotaInfo,
-            RoleBindingInfo, RoleInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
+            CustomResourceInfo, DaemonSetInfo, DeploymentInfo, FluxResourceInfo, IngressClassInfo,
+            IngressInfo, JobInfo, LimitRangeInfo, NetworkPolicyInfo, NodeInfo,
+            PodDisruptionBudgetInfo, PodInfo, PvInfo, PvcInfo, ResourceQuotaInfo, RoleBindingInfo,
+            RoleInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
         },
-        state::{ClusterSnapshot, DataPhase},
+        state::{ClusterSnapshot, DataPhase, ViewLoadState},
     };
 
     use super::*;
@@ -939,47 +955,74 @@ mod tests {
     }
 
     #[test]
-    fn loading_or_empty_message_respects_snapshot_phase_and_query() {
-        let loading_snapshot = ClusterSnapshot {
-            phase: DataPhase::Loading,
-            ..ClusterSnapshot::default()
-        };
+    fn loading_or_empty_message_respects_view_load_state_and_query() {
+        let loading_snapshot = ClusterSnapshot::default();
         assert_eq!(
-            loading_or_empty_message(&loading_snapshot, "", "loading", "empty", "no-match",),
+            loading_or_empty_message(
+                &loading_snapshot,
+                AppView::Pods,
+                "",
+                "loading",
+                "empty",
+                "no-match",
+            ),
             "loading"
         );
 
-        let loaded_snapshot = ClusterSnapshot {
+        let mut loaded_snapshot = ClusterSnapshot {
             phase: DataPhase::Ready,
             ..ClusterSnapshot::default()
         };
+        loaded_snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Ready;
         assert_eq!(
-            loading_or_empty_message(&loaded_snapshot, "", "loading", "empty", "no-match"),
+            loading_or_empty_message(
+                &loaded_snapshot,
+                AppView::Pods,
+                "",
+                "loading",
+                "empty",
+                "no-match",
+            ),
             "empty"
         );
         assert_eq!(
-            loading_or_empty_message(&loaded_snapshot, "prod", "loading", "empty", "no-match"),
+            loading_or_empty_message(
+                &loaded_snapshot,
+                AppView::Pods,
+                "prod",
+                "loading",
+                "empty",
+                "no-match",
+            ),
             "no-match"
         );
     }
 
     #[test]
-    fn loading_or_empty_message_no_search_respects_snapshot_phase() {
-        let loading_snapshot = ClusterSnapshot {
-            phase: DataPhase::Loading,
-            ..ClusterSnapshot::default()
-        };
+    fn loading_or_empty_message_no_search_respects_view_load_state() {
+        let loading_snapshot = ClusterSnapshot::default();
         assert_eq!(
-            loading_or_empty_message_no_search(&loading_snapshot, "loading", "empty"),
+            loading_or_empty_message_no_search(
+                &loading_snapshot,
+                AppView::Nodes,
+                "loading",
+                "empty",
+            ),
             "loading"
         );
 
-        let loaded_snapshot = ClusterSnapshot {
+        let mut loaded_snapshot = ClusterSnapshot {
             phase: DataPhase::Ready,
             ..ClusterSnapshot::default()
         };
+        loaded_snapshot.view_load_states[AppView::Nodes.index()] = ViewLoadState::Ready;
         assert_eq!(
-            loading_or_empty_message_no_search(&loaded_snapshot, "loading", "empty"),
+            loading_or_empty_message_no_search(
+                &loaded_snapshot,
+                AppView::Nodes,
+                "loading",
+                "empty",
+            ),
             "empty"
         );
     }
@@ -1239,6 +1282,78 @@ mod tests {
 
         let app = app_with_view(AppView::ServiceAccounts);
         draw(&app, &snapshot);
+    }
+
+    /// Verifies network-related views render without panic.
+    #[test]
+    fn render_network_views_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.ingresses.push(IngressInfo {
+            name: "web".to_string(),
+            namespace: "default".to_string(),
+            class: Some("nginx".to_string()),
+            hosts: vec!["app.example.test".to_string()],
+            address: Some("10.0.0.10".to_string()),
+            ports: vec!["80".to_string(), "443".to_string()],
+            ..IngressInfo::default()
+        });
+        snapshot.ingress_classes.push(IngressClassInfo {
+            name: "nginx".to_string(),
+            controller: "k8s.io/ingress-nginx".to_string(),
+            is_default: true,
+            ..IngressClassInfo::default()
+        });
+        snapshot.network_policies.push(NetworkPolicyInfo {
+            name: "deny-all".to_string(),
+            namespace: "default".to_string(),
+            pod_selector: "app=web".to_string(),
+            ingress_rules: 0,
+            egress_rules: 0,
+            ..NetworkPolicyInfo::default()
+        });
+
+        draw(&app_with_view(AppView::Ingresses), &snapshot);
+        draw(&app_with_view(AppView::IngressClasses), &snapshot);
+        draw(&app_with_view(AppView::NetworkPolicies), &snapshot);
+    }
+
+    /// Verifies storage-related views render without panic.
+    #[test]
+    fn render_storage_views_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pvcs.push(PvcInfo {
+            name: "data-web-0".to_string(),
+            namespace: "default".to_string(),
+            status: "Bound".to_string(),
+            volume: Some("pv-web-0".to_string()),
+            capacity: Some("10Gi".to_string()),
+            access_modes: vec!["ReadWriteOnce".to_string()],
+            storage_class: Some("fast-ssd".to_string()),
+            ..PvcInfo::default()
+        });
+        snapshot.pvs.push(PvInfo {
+            name: "pv-web-0".to_string(),
+            capacity: Some("10Gi".to_string()),
+            access_modes: vec!["ReadWriteOnce".to_string()],
+            reclaim_policy: "Delete".to_string(),
+            status: "Bound".to_string(),
+            claim: Some("default/data-web-0".to_string()),
+            storage_class: Some("fast-ssd".to_string()),
+            ..PvInfo::default()
+        });
+        snapshot.storage_classes.push(StorageClassInfo {
+            name: "fast-ssd".to_string(),
+            provisioner: "kubernetes.io/no-provisioner".to_string(),
+            reclaim_policy: Some("Delete".to_string()),
+            volume_binding_mode: Some("WaitForFirstConsumer".to_string()),
+            allow_volume_expansion: true,
+            is_default: true,
+            ..StorageClassInfo::default()
+        });
+
+        draw(&app_with_view(AppView::PersistentVolumeClaims), &snapshot);
+        draw(&app_with_view(AppView::PersistentVolumes), &snapshot);
+        draw(&app_with_view(AppView::StorageClasses), &snapshot);
     }
 
     /// Verifies Roles view renders rule details without panic.

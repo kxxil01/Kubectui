@@ -65,6 +65,7 @@ pub fn render_ingresses(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::Ingresses,
             query,
             "  Loading ingresses...",
             "  No ingresses found",
@@ -211,6 +212,7 @@ pub fn render_ingress_classes(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::IngressClasses,
             query,
             "  Loading ingress classes...",
             "  No ingress classes found",

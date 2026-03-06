@@ -59,6 +59,7 @@ pub fn render_resource_quotas(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::ResourceQuotas,
             query,
             "  Loading resource quotas...",
             "  No resource quotas found",

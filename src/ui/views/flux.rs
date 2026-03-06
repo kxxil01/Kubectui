@@ -277,6 +277,7 @@ pub fn render_flux_resources(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            view,
             query,
             mode.loading_text(),
             mode.empty_text(),
