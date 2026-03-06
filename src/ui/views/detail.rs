@@ -435,9 +435,7 @@ fn render_yaml_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
     let visible_height = inner.height as usize;
 
     // Clamp scroll
-    let scroll = detail_state
-        .yaml_scroll
-        .min(total.saturating_sub(1));
+    let scroll = detail_state.yaml_scroll.min(total.saturating_sub(1));
 
     let line_num_width = total.to_string().len().max(2);
     // Reserve: line_num_width + 2 (space + │ + space)

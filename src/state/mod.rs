@@ -58,6 +58,8 @@ impl fmt::Display for DataPhase {
 pub struct ClusterSnapshot {
     /// Monotonic snapshot revision incremented whenever snapshot data is replaced.
     pub snapshot_version: u64,
+    /// True once the current scope has completed at least one secondary-resource fetch.
+    pub secondary_resources_loaded: bool,
     pub nodes: Vec<NodeInfo>,
     pub pods: Vec<PodInfo>,
     pub services: Vec<ServiceInfo>,
@@ -1028,6 +1030,11 @@ impl GlobalState {
         self.snapshot.flux_resources = flux_resources;
         self.snapshot.helm_repositories = crate::k8s::helm::read_helm_repositories();
         self.snapshot.node_metrics = node_metrics;
+        self.snapshot.secondary_resources_loaded = if include_secondary_resources {
+            true
+        } else {
+            self.snapshot.secondary_resources_loaded
+        };
         self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
         self.snapshot_dirty = true;
         self.snapshot.phase = DataPhase::Ready;
@@ -1815,6 +1822,45 @@ mod tests {
         let snapshot = state.snapshot();
         assert_eq!(snapshot.flux_resources.len(), 1);
         assert_eq!(snapshot.flux_resources[0].name, "apps");
+    }
+
+    #[tokio::test]
+    async fn refresh_with_options_tracks_secondary_resource_hydration() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+
+        state.begin_loading_transition(false);
+        assert!(!state.snapshot().secondary_resources_loaded);
+
+        state
+            .refresh_with_options(
+                &source,
+                Some("default"),
+                RefreshOptions {
+                    include_flux: true,
+                    include_cluster_info: true,
+                    include_secondary_resources: false,
+                    include_events: true,
+                },
+            )
+            .await
+            .expect("fast refresh should succeed");
+        assert!(!state.snapshot().secondary_resources_loaded);
+
+        state
+            .refresh_with_options(
+                &source,
+                Some("default"),
+                RefreshOptions {
+                    include_flux: true,
+                    include_cluster_info: true,
+                    include_secondary_resources: true,
+                    include_events: true,
+                },
+            )
+            .await
+            .expect("full refresh should succeed");
+        assert!(state.snapshot().secondary_resources_loaded);
     }
 
     #[tokio::test]

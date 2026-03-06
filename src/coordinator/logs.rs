@@ -26,12 +26,14 @@ pub async fn stream_logs(
     update_tx: mpsc::Sender<UpdateMessage>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
-    let _ = update_tx.send(UpdateMessage::LogStreamStatus {
-        pod_name: pod_ref.name.clone(),
-        namespace: pod_ref.namespace.clone(),
-        container_name: container_name.clone(),
-        status: LogStreamStatus::Started,
-    }).await;
+    let _ = update_tx
+        .send(UpdateMessage::LogStreamStatus {
+            pod_name: pod_ref.name.clone(),
+            namespace: pod_ref.namespace.clone(),
+            container_name: container_name.clone(),
+            status: LogStreamStatus::Started,
+        })
+        .await;
 
     let result = stream_logs_internal(
         &client,
@@ -45,28 +47,34 @@ pub async fn stream_logs(
 
     match result {
         Ok(StreamOutcome::Ended) => {
-            let _ = update_tx.send(UpdateMessage::LogStreamStatus {
-                pod_name: pod_ref.name.clone(),
-                namespace: pod_ref.namespace.clone(),
-                container_name: container_name.clone(),
-                status: LogStreamStatus::Ended,
-            }).await;
+            let _ = update_tx
+                .send(UpdateMessage::LogStreamStatus {
+                    pod_name: pod_ref.name.clone(),
+                    namespace: pod_ref.namespace.clone(),
+                    container_name: container_name.clone(),
+                    status: LogStreamStatus::Ended,
+                })
+                .await;
         }
         Ok(StreamOutcome::Cancelled) => {
-            let _ = update_tx.send(UpdateMessage::LogStreamStatus {
-                pod_name: pod_ref.name.clone(),
-                namespace: pod_ref.namespace.clone(),
-                container_name: container_name.clone(),
-                status: LogStreamStatus::Cancelled,
-            }).await;
+            let _ = update_tx
+                .send(UpdateMessage::LogStreamStatus {
+                    pod_name: pod_ref.name.clone(),
+                    namespace: pod_ref.namespace.clone(),
+                    container_name: container_name.clone(),
+                    status: LogStreamStatus::Cancelled,
+                })
+                .await;
         }
         Err(e) => {
-            let _ = update_tx.send(UpdateMessage::LogStreamStatus {
-                pod_name: pod_ref.name.clone(),
-                namespace: pod_ref.namespace.clone(),
-                container_name: container_name.clone(),
-                status: LogStreamStatus::Error(e.to_string()),
-            }).await;
+            let _ = update_tx
+                .send(UpdateMessage::LogStreamStatus {
+                    pod_name: pod_ref.name.clone(),
+                    namespace: pod_ref.namespace.clone(),
+                    container_name: container_name.clone(),
+                    status: LogStreamStatus::Error(e.to_string()),
+                })
+                .await;
         }
     }
 }

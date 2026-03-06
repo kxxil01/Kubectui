@@ -329,6 +329,10 @@ fn refresh_options_for_view(
     }
 }
 
+fn needs_secondary_backfill(snapshot: &ClusterSnapshot, view: AppView) -> bool {
+    !snapshot.secondary_resources_loaded && !view_prefers_secondary_refresh(view)
+}
+
 fn is_transient_transport_error(err: &anyhow::Error) -> bool {
     err.chain().any(|cause| {
         let text = cause.to_string();
@@ -394,12 +398,14 @@ fn spawn_refresh_task(
             .await
             .map(|_| global_state)
             .map_err(|err| err.to_string());
-        let _ = refresh_tx.send(RefreshAsyncResult {
-            request_id,
-            context_generation,
-            requested_namespace,
-            result,
-        }).await;
+        let _ = refresh_tx
+            .send(RefreshAsyncResult {
+                request_id,
+                context_generation,
+                requested_namespace,
+                result,
+            })
+            .await;
     })
 }
 
@@ -514,12 +520,14 @@ fn spawn_delete_task(
             Err(_) => Err("Delete request timed out after 20s".to_string()),
         };
 
-        let _ = delete_tx.send(DeleteAsyncResult {
-            request_id,
-            context_generation,
-            resource,
-            result,
-        }).await;
+        let _ = delete_tx
+            .send(DeleteAsyncResult {
+                request_id,
+                context_generation,
+                resource,
+                result,
+            })
+            .await;
     });
 }
 
@@ -863,6 +871,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 }
                                 app.set_available_namespaces(global_state.namespaces().to_vec());
                                 snapshot_dirty = true;
+                                if needs_secondary_backfill(global_state.snapshot().as_ref(), app.view()) {
+                                    request_refresh(
+                                        &refresh_tx,
+                                        &global_state,
+                                        &client,
+                                        active_namespace_scope.clone(),
+                                        full_refresh_options(app.view().is_fluxcd(), false, false),
+                                        &mut refresh_state,
+                                    );
+                                }
                                 sync_extensions_instances(&client, &mut app, &global_state.snapshot()).await;
                             }
                             Err(err) => {

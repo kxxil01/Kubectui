@@ -125,7 +125,11 @@ fn map_events(list: ObjectList<Event>) -> Vec<EventInfo> {
         })
         .collect();
 
-    mapped.sort_by(|a, b| a.reason.cmp(&b.reason).then_with(|| a.message.cmp(&b.message)));
+    mapped.sort_by(|a, b| {
+        a.reason
+            .cmp(&b.reason)
+            .then_with(|| a.message.cmp(&b.message))
+    });
     mapped.dedup_by(|b, a| {
         if a.reason == b.reason && a.message == b.message {
             a.count = a.count.saturating_add(b.count);
