@@ -221,7 +221,8 @@ mod coordinator_tests {
             container_name: "app".to_string(),
             status: LogStreamStatus::Started,
         })
-        .await.unwrap();
+        .await
+        .unwrap();
 
         tx.send(UpdateMessage::LogStreamStatus {
             pod_name: "test".to_string(),
@@ -229,7 +230,8 @@ mod coordinator_tests {
             container_name: "app".to_string(),
             status: LogStreamStatus::Ended,
         })
-        .await.unwrap();
+        .await
+        .unwrap();
 
         // Receive and verify
         if let Some(UpdateMessage::LogStreamStatus { status, .. }) = rx.recv().await {
@@ -362,7 +364,8 @@ mod log_streaming_tests {
                 container_name: "app".to_string(),
                 line: format!("log line {}", i),
             })
-            .await.unwrap();
+            .await
+            .unwrap();
         }
 
         // Verify order
@@ -428,21 +431,24 @@ mod coordinator_channel_tests {
             container_name: "app".to_string(),
             line: "test".to_string(),
         })
-        .await.unwrap();
+        .await
+        .unwrap();
 
         tx.send(UpdateMessage::ProbeUpdate {
             pod_name: "pod2".to_string(),
             namespace: "default".to_string(),
             probes: vec![],
         })
-        .await.unwrap();
+        .await
+        .unwrap();
 
         tx.send(UpdateMessage::ProbeError {
             pod_name: "pod3".to_string(),
             namespace: "default".to_string(),
             error: "error".to_string(),
         })
-        .await.unwrap();
+        .await
+        .unwrap();
 
         // Verify we can match on them
         let mut log_count = 0;

@@ -1,6 +1,5 @@
 //! Command palette — fuzzy-search jump to any view with `:`.
 
-use std::cell::RefCell;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -9,6 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
 };
+use std::cell::RefCell;
 
 use crate::app::AppView;
 

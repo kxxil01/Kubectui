@@ -223,7 +223,10 @@ fn cached_replication_controller_derived(
     let key = ReplicationControllerDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.replication_controllers, cluster.snapshot_version),
+        data_fingerprint: data_fingerprint(
+            &cluster.replication_controllers,
+            cluster.snapshot_version,
+        ),
     };
 
     if let Ok(cache) = REPLICATION_CONTROLLER_DERIVED_CACHE.lock()
