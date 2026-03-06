@@ -5,7 +5,11 @@
 
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 
-use std::{io, path::PathBuf, time::Duration};
+use std::{
+    io,
+    path::PathBuf,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result};
 use crossterm::{
@@ -240,6 +244,7 @@ struct RolloutRestartAsyncResult {
 #[derive(Debug)]
 struct FluxReconcileAsyncResult {
     context_generation: u64,
+    resource_label: String,
     result: Result<(), String>,
 }
 
@@ -253,6 +258,7 @@ struct ProbeAsyncResult {
 #[derive(Debug, Clone)]
 struct DeferredRefreshTrigger {
     context_generation: u64,
+    include_flux: bool,
     namespace: Option<String>,
 }
 
@@ -663,6 +669,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     // Track consecutive refresh failures for backoff
     let mut consecutive_refresh_failures: u32 = 0;
     let mut auto_refresh_count: u64 = 0;
+    let mut status_message_clear_at: Option<Instant> = None;
 
     let mut event_stream = EventStream::new();
 
@@ -978,6 +985,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 let tx = deferred_refresh_tx.clone();
                                 let trigger = DeferredRefreshTrigger {
                                     context_generation: refresh_state.context_generation,
+                                    include_flux: app.view().is_fluxcd(),
                                     namespace: active_namespace_scope.clone(),
                                 };
                                 tokio::spawn(async move {
@@ -1047,7 +1055,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     needs_redraw = true;
                     match result.result {
                         Ok(()) => {
-                            app.clear_error();
+                            app.set_status(format!(
+                                "Reconcile requested for {}. Refreshing Flux status...",
+                                result.resource_label
+                            ));
+                            status_message_clear_at =
+                                Some(Instant::now() + Duration::from_secs(12));
                             request_refresh(
                                 &refresh_tx,
                                 &mut global_state,
@@ -1057,8 +1070,23 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 &mut refresh_state,
                                 &mut snapshot_dirty,
                             );
+                            let active_namespace_scope =
+                                namespace_scope(app.get_namespace()).map(str::to_string);
+                            for delay_secs in [2_u64, 5_u64, 9_u64] {
+                                let tx = deferred_refresh_tx.clone();
+                                let trigger = DeferredRefreshTrigger {
+                                    context_generation: refresh_state.context_generation,
+                                    include_flux: true,
+                                    namespace: active_namespace_scope.clone(),
+                                };
+                                tokio::spawn(async move {
+                                    tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                                    let _ = tx.send(trigger).await;
+                                });
+                            }
                         }
                         Err(err) => {
+                            status_message_clear_at = None;
                             app.set_error(format!("Flux reconcile failed: {err}"));
                         }
                     }
@@ -1089,7 +1117,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &mut global_state,
                         &client,
                         trigger.namespace,
-                        fast_refresh_options(app.view().is_fluxcd(), false),
+                        fast_refresh_options(trigger.include_flux, false),
                         &mut refresh_state,
                         &mut snapshot_dirty,
                     );
@@ -1098,6 +1126,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
             // Periodic tick — heartbeat for follow-mode log scrolling
             _ = tick.tick() => {
+                if status_message_clear_at.is_some_and(|deadline| Instant::now() >= deadline) {
+                    app.clear_status();
+                    status_message_clear_at = None;
+                    needs_redraw = true;
+                }
+
                 // Only redraw on tick if logs are actively streaming (follow mode)
                 if app.detail_view.as_ref()
                     .and_then(|d| d.logs_viewer.as_ref())
@@ -1207,7 +1241,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 }
                             };
 
-                        app.clear_error();
+                        let resource_label = format!(
+                            "{} '{}'",
+                            reconcile_resource.kind(),
+                            reconcile_resource.name()
+                        );
+                        app.detail_view = None;
+                        app.focus = kubectui::app::Focus::Content;
+                        app.set_status(format!("Requesting reconcile for {resource_label}..."));
+                        status_message_clear_at = Some(Instant::now() + Duration::from_secs(12));
                         let tx = flux_reconcile_tx.clone();
                         let c = client.clone();
                         let context_generation = refresh_state.context_generation;
@@ -1237,6 +1279,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             let _ = tx
                                 .send(FluxReconcileAsyncResult {
                                     context_generation,
+                                    resource_label,
                                     result,
                                 })
                                 .await;
