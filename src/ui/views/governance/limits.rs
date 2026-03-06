@@ -33,7 +33,7 @@ pub fn render_limit_ranges(
         AppView::LimitRanges,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.limit_ranges),
+        data_fingerprint(&cluster.limit_ranges, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.limit_ranges.len()).collect();

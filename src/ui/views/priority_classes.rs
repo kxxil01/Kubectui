@@ -34,7 +34,7 @@ pub fn render_priority_classes(
         AppView::PriorityClasses,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.priority_classes),
+        data_fingerprint(&cluster.priority_classes, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.priority_classes.len()).collect();

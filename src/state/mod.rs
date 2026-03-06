@@ -386,6 +386,7 @@ pub struct GlobalState {
     /// Cached Arc snapshot — only rebuilt when data changes.
     arc_snapshot: std::sync::Arc<ClusterSnapshot>,
     pub namespaces: Vec<String>,
+    snapshot_dirty: bool,
 }
 
 /// Runtime refresh knobs for optional expensive fetch paths.
@@ -418,6 +419,10 @@ impl GlobalState {
     /// Rebuilds the Arc snapshot from the inner mutable snapshot.
     /// Called after every successful refresh.
     fn publish_snapshot(&mut self) {
+        if !self.snapshot_dirty {
+            return;
+        }
+        self.snapshot_dirty = false;
         self.arc_snapshot = std::sync::Arc::new(self.snapshot.clone());
     }
 
@@ -441,6 +446,7 @@ impl GlobalState {
         if clear_namespaces {
             self.namespaces.clear();
         }
+        self.snapshot_dirty = true;
         self.publish_snapshot();
     }
 
@@ -455,10 +461,8 @@ impl GlobalState {
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
-        let mut attempt = 0;
-        loop {
-            attempt += 1;
-            let permit = RESOURCE_FETCH_SEMAPHORE
+        for attempt in 0..=Self::TRANSIENT_RETRY_ATTEMPTS {
+            let _permit = RESOURCE_FETCH_SEMAPHORE
                 .acquire()
                 .await
                 .map_err(|_| anyhow!("resource fetch coordinator shut down"))?;
@@ -470,7 +474,7 @@ impl GlobalState {
                     if attempt < Self::TRANSIENT_RETRY_ATTEMPTS
                         && Self::is_transient_send_request_error(&err)
                     {
-                        drop(permit);
+                        drop(_permit);
                         tokio::time::sleep(Duration::from_millis(Self::TRANSIENT_RETRY_DELAY_MS))
                             .await;
                         continue;
@@ -479,7 +483,7 @@ impl GlobalState {
                 }
                 Err(_) => {
                     if attempt < Self::TRANSIENT_RETRY_ATTEMPTS {
-                        drop(permit);
+                        drop(_permit);
                         tokio::time::sleep(Duration::from_millis(Self::TRANSIENT_RETRY_DELAY_MS))
                             .await;
                         continue;
@@ -491,10 +495,21 @@ impl GlobalState {
                 }
             }
         }
+        unreachable!()
     }
 
     fn is_transient_send_request_error(err: &anyhow::Error) -> bool {
         err.chain().any(|cause| {
+            if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
+                return matches!(
+                    io_err.kind(),
+                    std::io::ErrorKind::ConnectionRefused
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                        | std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::TimedOut
+                );
+            }
             let text = cause.to_string();
             text.contains("SendRequest")
                 || text.contains("Connection refused")
@@ -579,6 +594,7 @@ impl GlobalState {
             Err(_) => {
                 self.snapshot.phase = DataPhase::Error;
                 self.snapshot.last_error = Some("Global refresh timed out (60s)".to_string());
+                self.snapshot_dirty = true;
                 self.publish_snapshot();
                 Err(anyhow!("Global refresh timed out (60s)"))
             }
@@ -956,6 +972,7 @@ impl GlobalState {
             };
             self.snapshot.phase = DataPhase::Error;
             self.snapshot.last_error = Some(message.clone());
+            self.snapshot_dirty = true;
             self.publish_snapshot();
             return Err(anyhow!(message));
         }
@@ -1012,6 +1029,7 @@ impl GlobalState {
         self.snapshot.helm_repositories = crate::k8s::helm::read_helm_repositories();
         self.snapshot.node_metrics = node_metrics;
         self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
+        self.snapshot_dirty = true;
         self.snapshot.phase = DataPhase::Ready;
         self.snapshot.last_updated = Some(Utc::now());
         self.snapshot.last_error = if errors.is_empty() {
@@ -2079,6 +2097,7 @@ mod tests {
     async fn refresh_skips_when_already_loading() {
         let mut state = GlobalState::default();
         state.snapshot.phase = DataPhase::Loading;
+        state.snapshot_dirty = true;
         state.publish_snapshot();
         let source = MockDataSource::success().with_delay(100);
 
@@ -2100,6 +2119,7 @@ mod tests {
             ..PodInfo::default()
         }];
         state.namespaces = vec!["all".to_string(), "default".to_string()];
+        state.snapshot_dirty = true;
         state.publish_snapshot();
 
         state.begin_loading_transition(false);

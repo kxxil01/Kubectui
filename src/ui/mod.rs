@@ -182,7 +182,7 @@ fn cached_pod_derived(
     let key = PodDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.pods),
+        data_fingerprint: data_fingerprint(&cluster.pods, cluster.snapshot_version),
         minute_bucket: now_unix / 60,
     };
 
@@ -668,7 +668,7 @@ fn render_pods_widget(
         AppView::Pods,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.pods),
+        data_fingerprint(&cluster.pods, cluster.snapshot_version),
         cache_variant,
         |q| filtered_pod_indices(&cluster.pods, q, pod_sort),
     );
@@ -844,7 +844,10 @@ fn format_age_from_timestamp(
     let Some(created_at) = created_at else {
         return "-".to_string();
     };
-    let age_secs = now_unix.saturating_sub(created_at.timestamp());
+    let age_secs = now_unix - created_at.timestamp();
+    if age_secs < 0 {
+        return "future".to_string();
+    }
     let days = age_secs / 86_400;
     let hours = (age_secs % 86_400) / 3_600;
     let mins = (age_secs % 3_600) / 60;
@@ -1007,7 +1010,6 @@ mod tests {
             name: "svc".to_string(),
             namespace: "default".to_string(),
             type_: "ClusterIP".to_string(),
-            service_type: "ClusterIP".to_string(),
             ..ServiceInfo::default()
         });
         snapshot.deployments.push(DeploymentInfo {
@@ -1049,7 +1051,6 @@ mod tests {
                 name: format!("svc-{t}"),
                 namespace: "default".to_string(),
                 type_: t.to_string(),
-                service_type: t.to_string(),
                 ports: vec!["80/TCP".to_string(), "443/TCP".to_string()],
                 ..ServiceInfo::default()
             });

@@ -10,7 +10,7 @@ mod coordinator_tests {
 
     #[tokio::test]
     async fn test_coordinator_creation() {
-        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
             .await
             .expect("Failed to connect to K8s cluster");
@@ -23,7 +23,7 @@ mod coordinator_tests {
 
     #[tokio::test]
     async fn test_coordinator_multiple_probes() {
-        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
             .await
             .expect("Failed to connect to K8s cluster");
@@ -45,7 +45,7 @@ mod coordinator_tests {
 
     #[tokio::test]
     async fn test_coordinator_start_stop_probe() {
-        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
             .await
             .expect("Failed to connect to K8s cluster");
@@ -76,7 +76,7 @@ mod coordinator_tests {
 
     #[tokio::test]
     async fn test_coordinator_idempotent_start_probe() {
-        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
             .await
             .expect("Failed to connect to K8s cluster");
@@ -109,7 +109,7 @@ mod coordinator_tests {
 
     #[tokio::test]
     async fn test_coordinator_multiple_log_streams() {
-        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
             .await
             .expect("Failed to connect to K8s cluster");
@@ -149,7 +149,7 @@ mod coordinator_tests {
 
     #[tokio::test]
     async fn test_coordinator_shutdown_cleanup() {
-        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
             .await
             .expect("Failed to connect to K8s cluster");
@@ -212,7 +212,7 @@ mod coordinator_tests {
 
     #[tokio::test]
     async fn test_log_stream_status_transitions() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(4096);
 
         // Send status transitions
         tx.send(UpdateMessage::LogStreamStatus {
@@ -221,7 +221,7 @@ mod coordinator_tests {
             container_name: "app".to_string(),
             status: LogStreamStatus::Started,
         })
-        .unwrap();
+        .await.unwrap();
 
         tx.send(UpdateMessage::LogStreamStatus {
             pod_name: "test".to_string(),
@@ -229,7 +229,7 @@ mod coordinator_tests {
             container_name: "app".to_string(),
             status: LogStreamStatus::Ended,
         })
-        .unwrap();
+        .await.unwrap();
 
         // Receive and verify
         if let Some(UpdateMessage::LogStreamStatus { status, .. }) = rx.recv().await {
@@ -352,7 +352,7 @@ mod log_streaming_tests {
         use kubectui::coordinator::UpdateMessage;
         use tokio::sync::mpsc;
 
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(4096);
 
         // Send multiple log updates
         for i in 0..5 {
@@ -362,7 +362,7 @@ mod log_streaming_tests {
                 container_name: "app".to_string(),
                 line: format!("log line {}", i),
             })
-            .unwrap();
+            .await.unwrap();
         }
 
         // Verify order
@@ -383,7 +383,7 @@ mod coordinator_channel_tests {
 
     #[tokio::test]
     async fn test_unbounded_channel_capacity() {
-        let (tx, mut rx) = mpsc::unbounded_channel::<UpdateMessage>();
+        let (tx, mut rx) = mpsc::channel::<UpdateMessage>(4096);
 
         // Send many messages
         for i in 0..1000 {
@@ -393,7 +393,7 @@ mod coordinator_channel_tests {
                 container_name: "app".to_string(),
                 line: format!("line {}", i),
             };
-            tx.send(msg).unwrap();
+            tx.send(msg).await.unwrap();
         }
 
         // Verify we can receive them all
@@ -410,7 +410,7 @@ mod coordinator_channel_tests {
 
     #[tokio::test]
     async fn test_channel_closure_on_drop() {
-        let (tx, rx) = mpsc::unbounded_channel::<UpdateMessage>();
+        let (tx, rx) = mpsc::channel::<UpdateMessage>(4096);
         drop(tx);
 
         // Should return None when sender is dropped
@@ -419,7 +419,7 @@ mod coordinator_channel_tests {
 
     #[tokio::test]
     async fn test_mixed_message_types() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(4096);
 
         // Send different message types
         tx.send(UpdateMessage::LogUpdate {
@@ -428,21 +428,21 @@ mod coordinator_channel_tests {
             container_name: "app".to_string(),
             line: "test".to_string(),
         })
-        .unwrap();
+        .await.unwrap();
 
         tx.send(UpdateMessage::ProbeUpdate {
             pod_name: "pod2".to_string(),
             namespace: "default".to_string(),
             probes: vec![],
         })
-        .unwrap();
+        .await.unwrap();
 
         tx.send(UpdateMessage::ProbeError {
             pod_name: "pod3".to_string(),
             namespace: "default".to_string(),
             error: "error".to_string(),
         })
-        .unwrap();
+        .await.unwrap();
 
         // Verify we can match on them
         let mut log_count = 0;

@@ -34,7 +34,7 @@ pub fn render_ingresses(
         AppView::Ingresses,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.ingresses),
+        data_fingerprint(&cluster.ingresses, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.ingresses.len()).collect();
@@ -190,7 +190,7 @@ pub fn render_ingress_classes(
         AppView::IngressClasses,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.ingress_classes),
+        data_fingerprint(&cluster.ingress_classes, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.ingress_classes.len()).collect();

@@ -41,7 +41,6 @@ pub struct PodInfo {
 pub struct ServiceInfo {
     pub name: String,
     pub namespace: String,
-    pub service_type: String,
     pub type_: String,
     pub cluster_ip: Option<String>,
     pub ports: Vec<String>,
@@ -60,8 +59,6 @@ pub struct DeploymentInfo {
     pub updated_replicas: i32,
     pub created_at: Option<DateTime<Utc>>,
     pub ready: String,
-    pub updated: i32,
-    pub available: i32,
     pub age: Option<Duration>,
     pub image: Option<String>,
 }

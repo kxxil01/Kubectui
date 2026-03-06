@@ -10,6 +10,7 @@ use std::fmt;
 pub enum ProbeType {
     Liveness,
     Readiness,
+    Startup,
 }
 
 impl fmt::Display for ProbeType {
@@ -17,6 +18,7 @@ impl fmt::Display for ProbeType {
         match self {
             ProbeType::Liveness => write!(f, "Liveness"),
             ProbeType::Readiness => write!(f, "Readiness"),
+            ProbeType::Startup => write!(f, "Startup"),
         }
     }
 }
@@ -41,7 +43,7 @@ impl fmt::Display for ProbeHandler {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ProbeHandler::Http { path, port, scheme } => {
-                write!(f, "{} {}:{}{}", scheme, port, path, port)
+                write!(f, "{}://localhost:{}{}", scheme.to_lowercase(), port, path)
             }
             ProbeHandler::Exec { command } => {
                 write!(f, "exec: {}", command.join(" "))
@@ -104,12 +106,13 @@ impl ProbeConfig {
 pub struct ContainerProbes {
     pub liveness: Option<ProbeConfig>,
     pub readiness: Option<ProbeConfig>,
+    pub startup: Option<ProbeConfig>,
 }
 
 impl ContainerProbes {
     /// Check if container has any probes configured.
     pub fn has_probes(&self) -> bool {
-        self.liveness.is_some() || self.readiness.is_some()
+        self.liveness.is_some() || self.readiness.is_some() || self.startup.is_some()
     }
 
     /// Count healthy probes (assuming success).
@@ -119,6 +122,9 @@ impl ContainerProbes {
             count += 1;
         }
         if self.readiness.is_some() {
+            count += 1;
+        }
+        if self.startup.is_some() {
             count += 1;
         }
         count
@@ -148,6 +154,12 @@ pub fn extract_probes_from_pod(pod: &Pod) -> Result<Vec<(String, ContainerProbes
                 container_probes.readiness = Some(config);
             }
 
+            if let Some(probe) = &container.startup_probe
+                && let Some(config) = parse_probe(probe, ProbeType::Startup)
+            {
+                container_probes.startup = Some(config);
+            }
+
             if container_probes.has_probes() {
                 probes.push((container_name, container_probes));
             }
@@ -162,7 +174,9 @@ fn parse_probe(probe: &Probe, probe_type: ProbeType) -> Option<ProbeConfig> {
     let handler = if let Some(http_get) = &probe.http_get {
         let port = match &http_get.port {
             k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(p) => *p,
-            k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::String(_) => 8080,
+            k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::String(s) => {
+                s.parse::<i32>().unwrap_or(0)
+            }
         };
         ProbeHandler::Http {
             path: http_get.path.clone().unwrap_or_default(),
@@ -179,7 +193,9 @@ fn parse_probe(probe: &Probe, probe_type: ProbeType) -> Option<ProbeConfig> {
     } else if let Some(tcp_socket) = &probe.tcp_socket {
         let port = match &tcp_socket.port {
             k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(p) => *p,
-            k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::String(_) => 8080,
+            k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::String(s) => {
+                s.parse::<i32>().unwrap_or(0)
+            }
         };
         ProbeHandler::Tcp { port }
     } else {
@@ -222,7 +238,7 @@ mod tests {
             port: 8080,
             scheme: "HTTP".to_string(),
         };
-        assert_eq!(handler.to_string(), "HTTP 8080:/healthz8080");
+        assert_eq!(handler.to_string(), "http://localhost:8080/healthz");
     }
 
     #[test]

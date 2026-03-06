@@ -34,7 +34,7 @@ pub fn render_namespaces(
         AppView::Namespaces,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.namespace_list),
+        data_fingerprint(&cluster.namespace_list, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.namespace_list.len()).collect();

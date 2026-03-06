@@ -194,7 +194,6 @@ fn profile_render_path_and_emit_reports() {
             name: format!("svc-{i:04}"),
             namespace: ns.to_string(),
             type_: if i % 4 == 0 { "NodePort" } else { "ClusterIP" }.to_string(),
-            service_type: if i % 4 == 0 { "NodePort" } else { "ClusterIP" }.to_string(),
             ports: vec!["80/TCP".to_string(), "443/TCP".to_string()],
             ..ServiceInfo::default()
         });

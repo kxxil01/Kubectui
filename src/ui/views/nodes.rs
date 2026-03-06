@@ -76,7 +76,7 @@ pub fn render_nodes(
         AppView::Nodes,
         query,
         snapshot.snapshot_version,
-        data_fingerprint(&snapshot.nodes),
+        data_fingerprint(&snapshot.nodes, snapshot.snapshot_version),
         |q| {
             let mut out: Vec<usize> = if q.is_empty() {
                 (0..snapshot.nodes.len()).collect()
@@ -238,7 +238,7 @@ fn cached_node_derived(
     let key = NodeDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
-        data_fingerprint: data_fingerprint(&snapshot.nodes),
+        data_fingerprint: data_fingerprint(&snapshot.nodes, snapshot.snapshot_version),
         minute_bucket: now_unix / 60,
     };
 

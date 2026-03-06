@@ -59,7 +59,7 @@ pub fn render_cronjobs(
         AppView::CronJobs,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.cronjobs),
+        data_fingerprint(&cluster.cronjobs, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.cronjobs.len()).collect();
@@ -223,7 +223,7 @@ fn cached_cronjob_derived(
     let key = CronJobDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.cronjobs),
+        data_fingerprint: data_fingerprint(&cluster.cronjobs, cluster.snapshot_version),
     };
 
     if let Ok(cache) = CRONJOB_DERIVED_CACHE.lock()

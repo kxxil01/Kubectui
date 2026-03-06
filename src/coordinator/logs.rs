@@ -4,6 +4,7 @@ use futures::io::AsyncBufReadExt;
 use k8s_openapi::api::core::v1::Pod;
 use kube::{Api, api::LogParams};
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 use super::{LogStreamStatus, UpdateMessage};
@@ -22,7 +23,7 @@ pub async fn stream_logs(
     pod_ref: PodRef,
     container_name: String,
     follow: bool,
-    update_tx: mpsc::UnboundedSender<UpdateMessage>,
+    update_tx: mpsc::Sender<UpdateMessage>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
     let _ = update_tx.send(UpdateMessage::LogStreamStatus {
@@ -30,7 +31,7 @@ pub async fn stream_logs(
         namespace: pod_ref.namespace.clone(),
         container_name: container_name.clone(),
         status: LogStreamStatus::Started,
-    });
+    }).await;
 
     let result = stream_logs_internal(
         &client,
@@ -49,7 +50,7 @@ pub async fn stream_logs(
                 namespace: pod_ref.namespace.clone(),
                 container_name: container_name.clone(),
                 status: LogStreamStatus::Ended,
-            });
+            }).await;
         }
         Ok(StreamOutcome::Cancelled) => {
             let _ = update_tx.send(UpdateMessage::LogStreamStatus {
@@ -57,7 +58,7 @@ pub async fn stream_logs(
                 namespace: pod_ref.namespace.clone(),
                 container_name: container_name.clone(),
                 status: LogStreamStatus::Cancelled,
-            });
+            }).await;
         }
         Err(e) => {
             let _ = update_tx.send(UpdateMessage::LogStreamStatus {
@@ -65,7 +66,7 @@ pub async fn stream_logs(
                 namespace: pod_ref.namespace.clone(),
                 container_name: container_name.clone(),
                 status: LogStreamStatus::Error(e.to_string()),
-            });
+            }).await;
         }
     }
 }
@@ -75,7 +76,7 @@ async fn stream_logs_internal(
     pod_ref: &PodRef,
     container_name: &str,
     follow: bool,
-    update_tx: &mpsc::UnboundedSender<UpdateMessage>,
+    update_tx: &mpsc::Sender<UpdateMessage>,
     cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<StreamOutcome> {
     let pods_api: Api<Pod> = Api::namespaced(client.get_client(), &pod_ref.namespace);
@@ -92,6 +93,8 @@ async fn stream_logs_internal(
         // Use streaming API for follow mode
         let log_stream = pods_api.log_stream(&pod_ref.name, &params).await?;
         let mut lines = log_stream.lines();
+        let idle_timeout = tokio::time::sleep(Duration::from_secs(300));
+        tokio::pin!(idle_timeout);
 
         loop {
             tokio::select! {
@@ -105,7 +108,7 @@ async fn stream_logs_internal(
                                     container_name: container_name.to_string(),
                                     line,
                                 };
-                                if update_tx.send(msg).is_err() {
+                                if update_tx.send(msg).await.is_err() {
                                     return Ok(StreamOutcome::Ended);
                                 }
                             }
@@ -113,6 +116,10 @@ async fn stream_logs_internal(
                         Some(Err(e)) => return Err(anyhow::anyhow!("{e}")),
                         None => return Ok(StreamOutcome::Ended), // stream ended
                     }
+                    idle_timeout.as_mut().reset(tokio::time::Instant::now() + Duration::from_secs(300));
+                }
+                _ = &mut idle_timeout => {
+                    return Ok(StreamOutcome::Ended);
                 }
                 _ = &mut *cancel_rx => {
                     return Ok(StreamOutcome::Cancelled);
@@ -121,7 +128,12 @@ async fn stream_logs_internal(
         }
     } else {
         // Fetch all logs at once (non-follow mode)
-        let raw = pods_api.logs(&pod_ref.name, &params).await?;
+        let raw = tokio::time::timeout(
+            Duration::from_secs(30),
+            pods_api.logs(&pod_ref.name, &params),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("log fetch timed out after 30s"))??;
         for line in raw.lines() {
             if update_tx
                 .send(UpdateMessage::LogUpdate {
@@ -130,6 +142,7 @@ async fn stream_logs_internal(
                     container_name: container_name.to_string(),
                     line: line.to_string(),
                 })
+                .await
                 .is_err()
             {
                 return Ok(StreamOutcome::Ended);
@@ -152,7 +165,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_stream_status_message() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(4096);
 
         let msg = UpdateMessage::LogStreamStatus {
             pod_name: "test-pod".to_string(),
@@ -161,7 +174,7 @@ mod tests {
             status: LogStreamStatus::Started,
         };
 
-        tx.send(msg).unwrap();
+        tx.send(msg).await.unwrap();
 
         if let Some(UpdateMessage::LogStreamStatus {
             pod_name,
@@ -181,7 +194,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_log_update_message() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::channel(4096);
 
         let msg = UpdateMessage::LogUpdate {
             pod_name: "test-pod".to_string(),
@@ -190,7 +203,7 @@ mod tests {
             line: "test log line".to_string(),
         };
 
-        tx.send(msg).unwrap();
+        tx.send(msg).await.unwrap();
 
         if let Some(UpdateMessage::LogUpdate {
             pod_name,

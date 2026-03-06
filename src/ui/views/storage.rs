@@ -34,7 +34,7 @@ pub fn render_pvcs(
         AppView::PersistentVolumeClaims,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.pvcs),
+        data_fingerprint(&cluster.pvcs, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.pvcs.len()).collect();
@@ -172,7 +172,7 @@ pub fn render_pvs(
         AppView::PersistentVolumes,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.pvs),
+        data_fingerprint(&cluster.pvs, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.pvs.len()).collect();
@@ -315,7 +315,7 @@ pub fn render_storage_classes(
         AppView::StorageClasses,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.storage_classes),
+        data_fingerprint(&cluster.storage_classes, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.storage_classes.len()).collect();

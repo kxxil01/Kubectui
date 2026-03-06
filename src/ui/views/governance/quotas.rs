@@ -33,7 +33,7 @@ pub fn render_resource_quotas(
         AppView::ResourceQuotas,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.resource_quotas),
+        data_fingerprint(&cluster.resource_quotas, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.resource_quotas.len()).collect();

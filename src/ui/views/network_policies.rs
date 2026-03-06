@@ -58,7 +58,7 @@ pub fn render_network_policies(
         AppView::NetworkPolicies,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.network_policies),
+        data_fingerprint(&cluster.network_policies, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.network_policies.len()).collect();
@@ -204,7 +204,7 @@ fn cached_network_policy_derived(
     let key = NetworkPolicyDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.network_policies),
+        data_fingerprint: data_fingerprint(&cluster.network_policies, cluster.snapshot_version),
     };
 
     if let Ok(cache) = NETWORK_POLICY_DERIVED_CACHE.lock()

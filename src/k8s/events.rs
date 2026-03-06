@@ -125,6 +125,21 @@ fn map_events(list: ObjectList<Event>) -> Vec<EventInfo> {
         })
         .collect();
 
+    mapped.sort_by(|a, b| a.reason.cmp(&b.reason).then_with(|| a.message.cmp(&b.message)));
+    mapped.dedup_by(|b, a| {
+        if a.reason == b.reason && a.message == b.message {
+            a.count = a.count.saturating_add(b.count);
+            if b.last_timestamp > a.last_timestamp {
+                a.last_timestamp = b.last_timestamp;
+            }
+            if b.first_timestamp < a.first_timestamp {
+                a.first_timestamp = b.first_timestamp;
+            }
+            true
+        } else {
+            false
+        }
+    });
     mapped.sort_by_key(|evt| evt.last_timestamp);
     mapped
 }

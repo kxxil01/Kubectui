@@ -34,7 +34,7 @@ pub fn render_hpas(
         AppView::HPAs,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.hpas),
+        data_fingerprint(&cluster.hpas, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.hpas.len()).collect();

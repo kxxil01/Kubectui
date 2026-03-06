@@ -77,6 +77,17 @@ async fn main() -> Result<()> {
         ui::profiling::set_output_dir(PathBuf::from(dir));
     }
 
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = crossterm::terminal::disable_raw_mode();
+        let _ = crossterm::execute!(
+            std::io::stdout(),
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::event::DisableMouseCapture
+        );
+        original_hook(info);
+    }));
+
     let mut terminal = setup_terminal().context("failed to initialize terminal")?;
     let run_result = run_app(&mut terminal).await;
     let restore_result = restore_terminal(&mut terminal);
@@ -216,6 +227,23 @@ struct DeleteAsyncResult {
     result: Result<(), String>,
 }
 
+#[derive(Debug)]
+struct ScaleAsyncResult {
+    result: Result<(), String>,
+}
+
+#[derive(Debug)]
+struct RolloutRestartAsyncResult {
+    result: Result<(), String>,
+}
+
+#[derive(Debug)]
+struct ProbeAsyncResult {
+    pod_name: String,
+    namespace: String,
+    probes: Vec<(String, kubectui::k8s::probes::ContainerProbes)>,
+}
+
 #[derive(Debug, Clone)]
 struct DeferredRefreshTrigger {
     context_generation: u64,
@@ -351,7 +379,7 @@ async fn fetch_namespaces_with_startup_retry(client: &K8sClient) -> Result<Vec<S
 }
 
 fn spawn_refresh_task(
-    refresh_tx: tokio::sync::mpsc::UnboundedSender<RefreshAsyncResult>,
+    refresh_tx: tokio::sync::mpsc::Sender<RefreshAsyncResult>,
     mut global_state: GlobalState,
     client: K8sClient,
     namespace: Option<String>,
@@ -371,7 +399,7 @@ fn spawn_refresh_task(
             context_generation,
             requested_namespace,
             result,
-        });
+        }).await;
     })
 }
 
@@ -383,7 +411,7 @@ fn abort_in_flight_refresh(refresh_state: &mut RefreshRuntimeState) {
 }
 
 fn request_refresh(
-    refresh_tx: &tokio::sync::mpsc::UnboundedSender<RefreshAsyncResult>,
+    refresh_tx: &tokio::sync::mpsc::Sender<RefreshAsyncResult>,
     global_state: &GlobalState,
     client: &K8sClient,
     namespace: Option<String>,
@@ -440,7 +468,7 @@ fn request_refresh(
 }
 
 fn spawn_delete_task(
-    delete_tx: tokio::sync::mpsc::UnboundedSender<DeleteAsyncResult>,
+    delete_tx: tokio::sync::mpsc::Sender<DeleteAsyncResult>,
     client: K8sClient,
     resource: ResourceRef,
     request_id: u64,
@@ -491,7 +519,7 @@ fn spawn_delete_task(
             context_generation,
             resource,
             result,
-        });
+        }).await;
     });
 }
 
@@ -532,24 +560,27 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
     let mut port_forwarder = PortForwarderService::new(std::sync::Arc::new(client.clone()));
 
-    let (update_tx, mut update_rx) = tokio::sync::mpsc::unbounded_channel::<UpdateMessage>();
+    let (update_tx, mut update_rx) = tokio::sync::mpsc::channel::<UpdateMessage>(4096);
     let mut coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
 
     // Channel for async detail view fetches — carries the requested resource to prevent stale writes.
     let (detail_tx, mut detail_rx) =
-        tokio::sync::mpsc::unbounded_channel::<(ResourceRef, Result<DetailViewState, String>)>();
+        tokio::sync::mpsc::channel::<(ResourceRef, Result<DetailViewState, String>)>(16);
     let (logs_viewer_tx, mut logs_viewer_rx) =
-        tokio::sync::mpsc::unbounded_channel::<LogsViewerAsyncResult>();
+        tokio::sync::mpsc::channel::<LogsViewerAsyncResult>(64);
     let mut logs_viewer_request_seq: u64 = 0;
-    let (delete_tx, mut delete_rx) = tokio::sync::mpsc::unbounded_channel::<DeleteAsyncResult>();
+    let (delete_tx, mut delete_rx) = tokio::sync::mpsc::channel::<DeleteAsyncResult>(16);
     let mut delete_request_seq: u64 = 0;
     let mut delete_in_flight_id: Option<u64> = None;
     let (deferred_refresh_tx, mut deferred_refresh_rx) =
-        tokio::sync::mpsc::unbounded_channel::<DeferredRefreshTrigger>();
+        tokio::sync::mpsc::channel::<DeferredRefreshTrigger>(32);
+    let (scale_tx, mut scale_rx) = tokio::sync::mpsc::channel::<ScaleAsyncResult>(16);
+    let (rollout_tx, mut rollout_rx) = tokio::sync::mpsc::channel::<RolloutRestartAsyncResult>(16);
+    let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
 
     // Channel for background data refreshes — namespace switches, manual refresh, auto-refresh
     // all go through here so the UI stays responsive during API calls.
-    let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::unbounded_channel::<RefreshAsyncResult>();
+    let (refresh_tx, mut refresh_rx) = tokio::sync::mpsc::channel::<RefreshAsyncResult>(16);
     // Background refresh scheduling state — one in-flight + one coalesced queued request.
     let mut refresh_state = RefreshRuntimeState::default();
 
@@ -622,8 +653,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     needs_redraw = true;
                 }
                 // Drain any additional queued messages without blocking
-                while let Ok(msg) = update_rx.try_recv() {
-                    apply_coordinator_msg(msg, &mut app);
+                let mut drain_count = 0;
+                while drain_count < 100 {
+                    match update_rx.try_recv() {
+                        Ok(msg) => {
+                            apply_coordinator_msg(msg, &mut app);
+                            drain_count += 1;
+                        }
+                        Err(_) => break,
+                    }
                 }
             }
 
@@ -739,7 +777,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         namespace: pod_ns,
                                         container_name,
                                         result,
-                                    });
+                                    }).await;
                                 });
                             }
                         }
@@ -898,7 +936,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 };
                                 tokio::spawn(async move {
                                     tokio::time::sleep(Duration::from_secs(delay_secs)).await;
-                                    let _ = tx.send(trigger);
+                                    let _ = tx.send(trigger).await;
                                 });
                             }
                             auto_refresh.reset();
@@ -912,6 +950,58 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 detail.loading = false;
                             }
                         }
+                    }
+                }
+            }
+
+            result = scale_rx.recv() => {
+                if let Some(result) = result {
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(()) => {
+                            app.clear_error();
+                            if let Some(detail) = &mut app.detail_view {
+                                detail.scale_dialog = None;
+                            }
+                        }
+                        Err(err) => {
+                            if let Some(detail) = &mut app.detail_view
+                                && let Some(scale) = &mut detail.scale_dialog
+                            {
+                                scale.error_message = Some(format!("Scale failed: {err}"));
+                            }
+                        }
+                    }
+                }
+            }
+
+            result = rollout_rx.recv() => {
+                if let Some(result) = result {
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(()) => {
+                            app.clear_error();
+                            if let Some(detail) = &mut app.detail_view {
+                                detail.error = None;
+                            }
+                        }
+                        Err(err) => {
+                            app.set_error(format!("Restart failed: {err}"));
+                        }
+                    }
+                }
+            }
+
+            result = probe_rx.recv() => {
+                if let Some(result) = result {
+                    needs_redraw = true;
+                    if let Some(detail) = &mut app.detail_view {
+                        use kubectui::ui::components::probe_panel::ProbePanelState;
+                        detail.probe_panel = Some(ProbePanelState::new(
+                            result.pod_name,
+                            result.namespace,
+                            result.probes,
+                        ));
                     }
                 }
             }
@@ -1166,7 +1256,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             )
                             .await
                             .map_err(|err| err.to_string());
-                            let _ = tx.send((requested_resource, result));
+                            let _ = tx.send((requested_resource, result)).await;
                         });
                     }
                     AppAction::CloseDetail => {
@@ -1244,7 +1334,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     pod_name,
                                     namespace: pod_ns,
                                     result,
-                                });
+                                }).await;
                             });
                         }
                     }
@@ -1285,7 +1375,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     namespace: pod_ns,
                                     container_name,
                                     result,
-                                });
+                                }).await;
                             });
                         }
                     }
@@ -1330,20 +1420,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             })
                         });
                         if let Some((name, namespace, replicas)) = scale_info {
-                            match client.scale_deployment(&name, &namespace, replicas).await {
-                                Ok(()) => {
-                                    app.clear_error();
-                                    if let Some(detail) = &mut app.detail_view {
-                                        detail.scale_dialog = None;
-                                    }
-                                }
-                                Err(err) => {
-                                    if let Some(detail) = &mut app.detail_view
-                                        && let Some(scale) = &mut detail.scale_dialog {
-                                            scale.error_message = Some(format!("Scale failed: {err:#}"));
-                                        }
-                                }
-                            }
+                            let tx = scale_tx.clone();
+                            let c = client.clone();
+                            tokio::spawn(async move {
+                                let result = c.scale_deployment(&name, &namespace, replicas).await
+                                    .map_err(|e| format!("{e:#}"));
+                                let _ = tx.send(ScaleAsyncResult { result }).await;
+                            });
                         }
                     }
                     AppAction::RolloutRestart => {
@@ -1356,17 +1439,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             })
                         });
                         if let Some((kind, name, namespace)) = restart_info {
-                            match client.rollout_restart(&kind, &name, &namespace).await {
-                                Ok(()) => {
-                                    app.clear_error();
-                                    if let Some(detail) = &mut app.detail_view {
-                                        detail.error = None;
-                                    }
-                                }
-                                Err(err) => {
-                                    app.set_error(format!("Restart failed: {err:#}"));
-                                }
-                            }
+                            let tx = rollout_tx.clone();
+                            let c = client.clone();
+                            tokio::spawn(async move {
+                                let result = c.rollout_restart(&kind, &name, &namespace).await
+                                    .map_err(|e| format!("{e:#}"));
+                                let _ = tx.send(RolloutRestartAsyncResult { result }).await;
+                            });
                         }
                     }
                     AppAction::DeleteResource => {
@@ -1542,19 +1621,22 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             })
                         });
                         if let Some((pod_name, pod_ns)) = pod_info {
-                            let pods_api: Api<Pod> = Api::namespaced(client.get_client(), &pod_ns);
-                            let container_probes = match pods_api.get(&pod_name).await {
-                                Ok(pod) => extract_probes_from_pod(&pod).unwrap_or_default(),
-                                Err(_) => Vec::new(),
-                            };
-                            if let Some(detail) = &mut app.detail_view {
-                                use kubectui::ui::components::probe_panel::ProbePanelState;
-                                detail.probe_panel = Some(ProbePanelState::new(
-                                    pod_name,
-                                    pod_ns,
-                                    container_probes,
-                                ));
-                            }
+                            let tx = probe_tx.clone();
+                            let k = client.get_client();
+                            let pn = pod_name.clone();
+                            let ns = pod_ns.clone();
+                            tokio::spawn(async move {
+                                let pods_api: Api<Pod> = Api::namespaced(k, &ns);
+                                let probes = match pods_api.get(&pn).await {
+                                    Ok(pod) => extract_probes_from_pod(&pod).unwrap_or_default(),
+                                    Err(_) => Vec::new(),
+                                };
+                                let _ = tx.send(ProbeAsyncResult {
+                                    pod_name: pn,
+                                    namespace: ns,
+                                    probes,
+                                }).await;
+                            });
                         } else {
                             apply_action(AppAction::ProbePanelOpen, &mut app);
                         }
@@ -2431,7 +2513,7 @@ fn sections_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                     } else {
                         format!("- {}", svc.ports.join(", "))
                     },
-                    format!("type: {}", svc.service_type),
+                    format!("type: {}", svc.type_),
                     format!(
                         "cluster IP: {}",
                         svc.cluster_ip.as_deref().unwrap_or("None")

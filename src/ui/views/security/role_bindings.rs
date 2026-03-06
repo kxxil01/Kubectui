@@ -47,7 +47,7 @@ pub fn render_role_bindings(
         AppView::RoleBindings,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.role_bindings),
+        data_fingerprint(&cluster.role_bindings, cluster.snapshot_version),
         |q| {
             let mut out: Vec<usize> = cluster
                 .role_bindings

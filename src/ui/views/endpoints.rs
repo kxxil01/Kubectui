@@ -57,7 +57,7 @@ pub fn render_endpoints(
         AppView::Endpoints,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.endpoints),
+        data_fingerprint(&cluster.endpoints, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.endpoints.len()).collect();
@@ -201,7 +201,7 @@ fn cached_endpoint_derived(
     let key = EndpointDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.endpoints),
+        data_fingerprint: data_fingerprint(&cluster.endpoints, cluster.snapshot_version),
     };
 
     if let Ok(cache) = ENDPOINT_DERIVED_CACHE.lock()

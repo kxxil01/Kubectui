@@ -34,7 +34,7 @@ pub fn render_events(
         AppView::Events,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.events),
+        data_fingerprint(&cluster.events, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.events.len()).collect();

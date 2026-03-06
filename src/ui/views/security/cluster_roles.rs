@@ -46,7 +46,7 @@ pub fn render_cluster_roles(
         AppView::ClusterRoles,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.cluster_roles),
+        data_fingerprint(&cluster.cluster_roles, cluster.snapshot_version),
         |q| {
             let mut out: Vec<usize> = cluster
                 .cluster_roles

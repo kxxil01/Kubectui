@@ -35,7 +35,7 @@ impl InputFieldWidget {
     /// Create with initial value.
     pub fn with_value(initial: &str, max_length: usize) -> Self {
         let value = initial.to_string();
-        let cursor_pos = value.len();
+        let cursor_pos = value.chars().count();
         Self {
             value,
             max_length,
@@ -47,9 +47,14 @@ impl InputFieldWidget {
 
     /// Update character at cursor position.
     pub fn add_char(&mut self, c: char) {
-        if self.value.len() < self.max_length {
-            self.value.insert(self.cursor_pos, c);
-            self.cursor_pos = (self.cursor_pos + 1).min(self.value.len());
+        if self.value.chars().count() < self.max_length {
+            let byte_pos = self
+                .value
+                .char_indices()
+                .nth(self.cursor_pos)
+                .map_or(self.value.len(), |(i, _)| i);
+            self.value.insert(byte_pos, c);
+            self.cursor_pos += 1;
             self.error = false;
         }
     }
@@ -57,8 +62,14 @@ impl InputFieldWidget {
     /// Delete character before cursor.
     pub fn delete_char(&mut self) {
         if self.cursor_pos > 0 {
-            self.value.remove(self.cursor_pos - 1);
-            self.cursor_pos = self.cursor_pos.saturating_sub(1);
+            let byte_pos = self
+                .value
+                .char_indices()
+                .nth(self.cursor_pos - 1)
+                .map(|(i, _)| i)
+                .unwrap_or(0);
+            self.value.remove(byte_pos);
+            self.cursor_pos -= 1;
             self.error = false;
         }
     }
@@ -107,11 +118,12 @@ impl InputFieldWidget {
     pub fn styled_text(&self, focused: bool) -> Span<'static> {
         let mut display = self.value.clone();
 
-        // Insert cursor placeholder
-        if focused && !display.is_empty() {
-            display.insert(self.cursor_pos.min(display.len()), '█');
-        } else if focused {
-            display.push('█');
+        if focused {
+            let byte_pos = display
+                .char_indices()
+                .nth(self.cursor_pos)
+                .map_or(display.len(), |(i, _)| i);
+            display.insert(byte_pos, '█');
         }
 
         let style = if self.error {
@@ -134,7 +146,7 @@ impl InputFieldWidget {
 
     /// Move cursor right.
     pub fn cursor_right(&mut self) {
-        self.cursor_pos = (self.cursor_pos + 1).min(self.value.len());
+        self.cursor_pos = (self.cursor_pos + 1).min(self.value.chars().count());
     }
 
     /// Move cursor to start.
@@ -144,7 +156,7 @@ impl InputFieldWidget {
 
     /// Move cursor to end.
     pub fn cursor_end(&mut self) {
-        self.cursor_pos = self.value.len();
+        self.cursor_pos = self.value.chars().count();
     }
 }
 

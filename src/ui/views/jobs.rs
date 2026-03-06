@@ -56,7 +56,7 @@ pub fn render_jobs(
         AppView::Jobs,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.jobs),
+        data_fingerprint(&cluster.jobs, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.jobs.len()).collect();
@@ -223,7 +223,7 @@ fn cached_job_derived(
     let key = JobDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.jobs),
+        data_fingerprint: data_fingerprint(&cluster.jobs, cluster.snapshot_version),
     };
 
     if let Ok(cache) = JOB_DERIVED_CACHE.lock()

@@ -59,7 +59,7 @@ pub fn render_services(
         AppView::Services,
         query,
         snapshot.snapshot_version,
-        data_fingerprint(&snapshot.services),
+        data_fingerprint(&snapshot.services, snapshot.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..snapshot.services.len()).collect();
@@ -203,7 +203,7 @@ fn cached_service_derived(
     let key = ServiceDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
-        data_fingerprint: data_fingerprint(&snapshot.services),
+        data_fingerprint: data_fingerprint(&snapshot.services, snapshot.snapshot_version),
     };
 
     if let Ok(cache) = SERVICE_DERIVED_CACHE.lock()
