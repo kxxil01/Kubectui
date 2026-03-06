@@ -79,6 +79,7 @@ pub fn render_jobs(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::Jobs,
             query,
             "  Loading jobs...",
             "  No jobs found",

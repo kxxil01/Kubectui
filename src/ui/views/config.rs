@@ -53,6 +53,7 @@ pub fn render_config_maps(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::ConfigMaps,
             query,
             "  Loading configmaps...",
             "  No configmaps found",
@@ -184,6 +185,7 @@ pub fn render_secrets(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::Secrets,
             query,
             "  Loading secrets...",
             "  No secrets found",

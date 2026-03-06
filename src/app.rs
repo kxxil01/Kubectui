@@ -147,6 +147,8 @@ pub enum AppView {
 }
 
 impl AppView {
+    pub const COUNT: usize = 46;
+
     const ORDER: [AppView; 46] = [
         // Overview
         AppView::Dashboard,

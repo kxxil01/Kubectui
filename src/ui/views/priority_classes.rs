@@ -53,6 +53,7 @@ pub fn render_priority_classes(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::PriorityClasses,
             query,
             "  Loading priority classes...",
             "  No priority classes found",

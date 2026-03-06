@@ -61,6 +61,7 @@ pub fn render_pdbs(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::PodDisruptionBudgets,
             query,
             "  Loading pod disruption budgets...",
             "  No pod disruption budgets found",

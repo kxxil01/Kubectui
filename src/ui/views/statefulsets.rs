@@ -84,6 +84,7 @@ pub fn render_statefulsets(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::StatefulSets,
             query,
             "  Loading statefulsets...",
             "  No statefulsets found",

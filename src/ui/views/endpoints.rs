@@ -77,6 +77,7 @@ pub fn render_endpoints(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::Endpoints,
             query,
             "  Loading endpoints...",
             "  No endpoints found",

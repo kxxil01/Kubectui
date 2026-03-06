@@ -51,6 +51,7 @@ pub fn render_namespaces(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             cluster,
+            AppView::Namespaces,
             query,
             "  Loading namespaces...",
             "  No namespaces found",

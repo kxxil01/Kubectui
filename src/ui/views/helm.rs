@@ -70,6 +70,7 @@ pub fn render_helm_releases(
     if indices.is_empty() {
         let empty_msg = loading_or_empty_message(
             cluster,
+            AppView::HelmReleases,
             query,
             "Loading Helm releases...",
             "No Helm releases found (Helm v3 stores releases as Kubernetes Secrets)",
@@ -219,6 +220,7 @@ pub fn render_helm_repos(
     if indices.is_empty() {
         let empty_msg = loading_or_empty_message(
             cluster,
+            AppView::HelmCharts,
             query,
             "Loading Helm repositories...",
             "No Helm repositories configured (helm repo add <name> <url>)",

@@ -60,6 +60,7 @@ pub fn render_nodes(
     if snapshot.nodes.is_empty() {
         let msg = loading_or_empty_message_no_search(
             snapshot,
+            AppView::Nodes,
             "  Loading nodes...",
             "  No nodes available",
         );
@@ -96,6 +97,7 @@ pub fn render_nodes(
     if indices.is_empty() {
         let msg = loading_or_empty_message(
             snapshot,
+            AppView::Nodes,
             query,
             "  Loading nodes...",
             "  No nodes available",

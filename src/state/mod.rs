@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use std::{collections::HashSet, fmt, sync::LazyLock, time::Duration};
 use tokio::sync::Semaphore;
 
+use crate::app::AppView;
 use crate::k8s::{
     client::K8sClient,
     dtos::{
@@ -53,13 +54,34 @@ impl fmt::Display for DataPhase {
     }
 }
 
+/// Fine-grained loading state for each top-level view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewLoadState {
+    /// No request has been made for this view in the current scope yet.
+    #[default]
+    Idle,
+    /// Data is expected but has not been shown yet.
+    Loading,
+    /// Existing data is on-screen while a background refresh is in progress.
+    Refreshing,
+    /// Data for this view has completed at least one successful fetch in the current scope.
+    Ready,
+}
+
+impl ViewLoadState {
+    pub const fn is_loading(self) -> bool {
+        matches!(self, Self::Loading | Self::Refreshing)
+    }
+}
+
 /// Snapshot used by rendering layer.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ClusterSnapshot {
     /// Monotonic snapshot revision incremented whenever snapshot data is replaced.
     pub snapshot_version: u64,
     /// True once the current scope has completed at least one secondary-resource fetch.
     pub secondary_resources_loaded: bool,
+    pub view_load_states: [ViewLoadState; AppView::COUNT],
     pub nodes: Vec<NodeInfo>,
     pub pods: Vec<PodInfo>,
     pub services: Vec<ServiceInfo>,
@@ -106,12 +128,69 @@ pub struct ClusterSnapshot {
     pub cluster_url: Option<String>,
 }
 
+impl Default for ClusterSnapshot {
+    fn default() -> Self {
+        Self {
+            snapshot_version: 0,
+            secondary_resources_loaded: false,
+            view_load_states: [ViewLoadState::Idle; AppView::COUNT],
+            nodes: Vec::new(),
+            pods: Vec::new(),
+            services: Vec::new(),
+            deployments: Vec::new(),
+            statefulsets: Vec::new(),
+            daemonsets: Vec::new(),
+            replicasets: Vec::new(),
+            replication_controllers: Vec::new(),
+            jobs: Vec::new(),
+            cronjobs: Vec::new(),
+            resource_quotas: Vec::new(),
+            limit_ranges: Vec::new(),
+            pod_disruption_budgets: Vec::new(),
+            service_accounts: Vec::new(),
+            roles: Vec::new(),
+            role_bindings: Vec::new(),
+            cluster_roles: Vec::new(),
+            cluster_role_bindings: Vec::new(),
+            custom_resource_definitions: Vec::new(),
+            cluster_info: None,
+            endpoints: Vec::new(),
+            ingresses: Vec::new(),
+            ingress_classes: Vec::new(),
+            network_policies: Vec::new(),
+            config_maps: Vec::new(),
+            secrets: Vec::new(),
+            hpas: Vec::new(),
+            pvcs: Vec::new(),
+            pvs: Vec::new(),
+            storage_classes: Vec::new(),
+            namespace_list: Vec::new(),
+            events: Vec::new(),
+            priority_classes: Vec::new(),
+            helm_releases: Vec::new(),
+            flux_resources: Vec::new(),
+            helm_repositories: Vec::new(),
+            node_metrics: Vec::new(),
+            services_count: 0,
+            namespaces_count: 0,
+            phase: DataPhase::Idle,
+            last_updated: None,
+            last_error: None,
+            cluster_url: None,
+        }
+    }
+}
+
 impl ClusterSnapshot {
     /// Returns a compact string suitable for header display.
     pub fn cluster_summary(&self) -> &str {
         self.cluster_url
             .as_deref()
             .unwrap_or("Cluster endpoint unavailable")
+    }
+
+    pub fn view_load_state(&self, view: AppView) -> ViewLoadState {
+        self.view_load_states[view.index()]
     }
 }
 
@@ -411,6 +490,61 @@ impl Default for RefreshOptions {
     }
 }
 
+const CORE_REFRESH_VIEWS: &[AppView] = &[
+    AppView::Dashboard,
+    AppView::Nodes,
+    AppView::Namespaces,
+    AppView::Pods,
+    AppView::Deployments,
+    AppView::StatefulSets,
+    AppView::DaemonSets,
+    AppView::ReplicaSets,
+    AppView::ReplicationControllers,
+    AppView::Jobs,
+    AppView::CronJobs,
+    AppView::Services,
+    AppView::HelmCharts,
+];
+
+const SECONDARY_REFRESH_VIEWS: &[AppView] = &[
+    AppView::Endpoints,
+    AppView::Ingresses,
+    AppView::IngressClasses,
+    AppView::NetworkPolicies,
+    AppView::ConfigMaps,
+    AppView::Secrets,
+    AppView::ResourceQuotas,
+    AppView::LimitRanges,
+    AppView::HPAs,
+    AppView::PodDisruptionBudgets,
+    AppView::PriorityClasses,
+    AppView::PersistentVolumeClaims,
+    AppView::PersistentVolumes,
+    AppView::StorageClasses,
+    AppView::HelmReleases,
+    AppView::ServiceAccounts,
+    AppView::ClusterRoles,
+    AppView::Roles,
+    AppView::ClusterRoleBindings,
+    AppView::RoleBindings,
+    AppView::Extensions,
+];
+
+const FLUX_REFRESH_VIEWS: &[AppView] = &[
+    AppView::FluxCDAlertProviders,
+    AppView::FluxCDAlerts,
+    AppView::FluxCDAll,
+    AppView::FluxCDArtifacts,
+    AppView::FluxCDHelmReleases,
+    AppView::FluxCDHelmRepositories,
+    AppView::FluxCDImages,
+    AppView::FluxCDKustomizations,
+    AppView::FluxCDReceivers,
+    AppView::FluxCDSources,
+];
+
+const EVENT_REFRESH_VIEWS: &[AppView] = &[AppView::Events];
+
 impl GlobalState {
     /// Returns a cheap Arc-wrapped snapshot for UI rendering.
     /// No deep clone — just an Arc pointer bump.
@@ -431,6 +565,129 @@ impl GlobalState {
     /// Returns fetched namespaces.
     pub fn namespaces(&self) -> &[String] {
         &self.namespaces
+    }
+
+    fn has_view_data(&self, view: AppView) -> bool {
+        match view {
+            AppView::Dashboard => {
+                self.snapshot.cluster_info.is_some()
+                    || !self.snapshot.nodes.is_empty()
+                    || !self.snapshot.pods.is_empty()
+                    || !self.snapshot.services.is_empty()
+                    || !self.snapshot.deployments.is_empty()
+            }
+            AppView::Nodes => !self.snapshot.nodes.is_empty(),
+            AppView::Namespaces => !self.snapshot.namespace_list.is_empty(),
+            AppView::Events => !self.snapshot.events.is_empty(),
+            AppView::Pods => !self.snapshot.pods.is_empty(),
+            AppView::Deployments => !self.snapshot.deployments.is_empty(),
+            AppView::StatefulSets => !self.snapshot.statefulsets.is_empty(),
+            AppView::DaemonSets => !self.snapshot.daemonsets.is_empty(),
+            AppView::ReplicaSets => !self.snapshot.replicasets.is_empty(),
+            AppView::ReplicationControllers => !self.snapshot.replication_controllers.is_empty(),
+            AppView::Jobs => !self.snapshot.jobs.is_empty(),
+            AppView::CronJobs => !self.snapshot.cronjobs.is_empty(),
+            AppView::Services => !self.snapshot.services.is_empty(),
+            AppView::Endpoints => !self.snapshot.endpoints.is_empty(),
+            AppView::Ingresses => !self.snapshot.ingresses.is_empty(),
+            AppView::IngressClasses => !self.snapshot.ingress_classes.is_empty(),
+            AppView::NetworkPolicies => !self.snapshot.network_policies.is_empty(),
+            AppView::PortForwarding => true,
+            AppView::ConfigMaps => !self.snapshot.config_maps.is_empty(),
+            AppView::Secrets => !self.snapshot.secrets.is_empty(),
+            AppView::ResourceQuotas => !self.snapshot.resource_quotas.is_empty(),
+            AppView::LimitRanges => !self.snapshot.limit_ranges.is_empty(),
+            AppView::HPAs => !self.snapshot.hpas.is_empty(),
+            AppView::PodDisruptionBudgets => !self.snapshot.pod_disruption_budgets.is_empty(),
+            AppView::PriorityClasses => !self.snapshot.priority_classes.is_empty(),
+            AppView::PersistentVolumeClaims => !self.snapshot.pvcs.is_empty(),
+            AppView::PersistentVolumes => !self.snapshot.pvs.is_empty(),
+            AppView::StorageClasses => !self.snapshot.storage_classes.is_empty(),
+            AppView::HelmCharts => !self.snapshot.helm_repositories.is_empty(),
+            AppView::HelmReleases => !self.snapshot.helm_releases.is_empty(),
+            AppView::FluxCDAlertProviders
+            | AppView::FluxCDAlerts
+            | AppView::FluxCDAll
+            | AppView::FluxCDArtifacts
+            | AppView::FluxCDHelmReleases
+            | AppView::FluxCDHelmRepositories
+            | AppView::FluxCDImages
+            | AppView::FluxCDKustomizations
+            | AppView::FluxCDReceivers
+            | AppView::FluxCDSources => !self.snapshot.flux_resources.is_empty(),
+            AppView::ServiceAccounts => !self.snapshot.service_accounts.is_empty(),
+            AppView::ClusterRoles => !self.snapshot.cluster_roles.is_empty(),
+            AppView::Roles => !self.snapshot.roles.is_empty(),
+            AppView::ClusterRoleBindings => !self.snapshot.cluster_role_bindings.is_empty(),
+            AppView::RoleBindings => !self.snapshot.role_bindings.is_empty(),
+            AppView::Extensions => !self.snapshot.custom_resource_definitions.is_empty(),
+        }
+    }
+
+    fn set_view_load_state(&mut self, view: AppView, state: ViewLoadState) -> bool {
+        let slot = &mut self.snapshot.view_load_states[view.index()];
+        if *slot == state {
+            return false;
+        }
+        *slot = state;
+        true
+    }
+
+    fn set_many_view_load_states(&mut self, views: &[AppView], state: ViewLoadState) -> bool {
+        views.iter().fold(false, |changed, &view| {
+            self.set_view_load_state(view, state) || changed
+        })
+    }
+
+    fn mark_views_requested(&mut self, views: &[AppView]) -> bool {
+        views.iter().fold(false, |changed, &view| {
+            let next = if self.has_view_data(view) {
+                ViewLoadState::Refreshing
+            } else {
+                ViewLoadState::Loading
+            };
+            self.set_view_load_state(view, next) || changed
+        })
+    }
+
+    pub fn mark_refresh_requested(&mut self, options: RefreshOptions) {
+        let mut changed = false;
+        changed |= self.mark_views_requested(CORE_REFRESH_VIEWS);
+        if options.include_secondary_resources || !self.snapshot.secondary_resources_loaded {
+            changed |= self.mark_views_requested(SECONDARY_REFRESH_VIEWS);
+        }
+        if options.include_flux {
+            changed |= self.mark_views_requested(FLUX_REFRESH_VIEWS);
+        }
+        if options.include_events {
+            changed |= self.mark_views_requested(EVENT_REFRESH_VIEWS);
+        }
+        changed |= self.set_view_load_state(AppView::PortForwarding, ViewLoadState::Ready);
+
+        if changed {
+            self.snapshot_dirty = true;
+            self.publish_snapshot();
+        }
+    }
+
+    fn mark_refresh_completed(&mut self, options: RefreshOptions) {
+        let mut changed = false;
+        changed |= self.set_many_view_load_states(CORE_REFRESH_VIEWS, ViewLoadState::Ready);
+        if options.include_secondary_resources {
+            changed |=
+                self.set_many_view_load_states(SECONDARY_REFRESH_VIEWS, ViewLoadState::Ready);
+        }
+        if options.include_flux {
+            changed |= self.set_many_view_load_states(FLUX_REFRESH_VIEWS, ViewLoadState::Ready);
+        }
+        if options.include_events {
+            changed |= self.set_many_view_load_states(EVENT_REFRESH_VIEWS, ViewLoadState::Ready);
+        }
+        changed |= self.set_view_load_state(AppView::PortForwarding, ViewLoadState::Ready);
+
+        if changed {
+            self.snapshot_dirty = true;
+        }
     }
 
     /// Resets rendered resource data for a scope transition (namespace/context)
@@ -1035,6 +1292,7 @@ impl GlobalState {
         } else {
             self.snapshot.secondary_resources_loaded
         };
+        self.mark_refresh_completed(options);
         self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
         self.snapshot_dirty = true;
         self.snapshot.phase = DataPhase::Ready;
@@ -1831,6 +2089,25 @@ mod tests {
 
         state.begin_loading_transition(false);
         assert!(!state.snapshot().secondary_resources_loaded);
+        state.mark_refresh_requested(RefreshOptions {
+            include_flux: true,
+            include_cluster_info: true,
+            include_secondary_resources: false,
+            include_events: true,
+        });
+        let pending_snapshot = state.snapshot();
+        assert_eq!(
+            pending_snapshot.view_load_state(AppView::Pods),
+            ViewLoadState::Loading
+        );
+        assert_eq!(
+            pending_snapshot.view_load_state(AppView::NetworkPolicies),
+            ViewLoadState::Loading
+        );
+        assert_eq!(
+            pending_snapshot.view_load_state(AppView::StorageClasses),
+            ViewLoadState::Loading
+        );
 
         state
             .refresh_with_options(
@@ -1845,7 +2122,20 @@ mod tests {
             )
             .await
             .expect("fast refresh should succeed");
-        assert!(!state.snapshot().secondary_resources_loaded);
+        let snapshot = state.snapshot();
+        assert!(!snapshot.secondary_resources_loaded);
+        assert_eq!(
+            snapshot.view_load_state(AppView::Pods),
+            ViewLoadState::Ready
+        );
+        assert_eq!(
+            snapshot.view_load_state(AppView::NetworkPolicies),
+            ViewLoadState::Loading
+        );
+        assert_eq!(
+            snapshot.view_load_state(AppView::StorageClasses),
+            ViewLoadState::Loading
+        );
 
         state
             .refresh_with_options(
@@ -1860,7 +2150,16 @@ mod tests {
             )
             .await
             .expect("full refresh should succeed");
-        assert!(state.snapshot().secondary_resources_loaded);
+        let snapshot = state.snapshot();
+        assert!(snapshot.secondary_resources_loaded);
+        assert_eq!(
+            snapshot.view_load_state(AppView::NetworkPolicies),
+            ViewLoadState::Ready
+        );
+        assert_eq!(
+            snapshot.view_load_state(AppView::StorageClasses),
+            ViewLoadState::Ready
+        );
     }
 
     #[tokio::test]
