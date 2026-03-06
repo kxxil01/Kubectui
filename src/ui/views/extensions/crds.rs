@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::k8s::dtos::CustomResourceDefinitionInfo;
-use crate::ui::contains_ci;
+use crate::ui::{contains_ci, responsive_table_widths};
 
 pub fn render_crd_picker(
     frame: &mut Frame,
@@ -68,12 +68,15 @@ pub fn render_crd_picker(
 
     let table = Table::new(
         rows,
-        [
-            Constraint::Length(22),
-            Constraint::Length(24),
-            Constraint::Length(12),
-            Constraint::Length(10),
-        ],
+        responsive_table_widths(
+            area.width,
+            [
+                Constraint::Length(22),
+                Constraint::Length(24),
+                Constraint::Length(12),
+                Constraint::Length(10),
+            ],
+        ),
     )
     .header(header)
     .block(crate::ui::components::default_block("CRDs"));

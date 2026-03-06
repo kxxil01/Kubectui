@@ -22,7 +22,8 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
+        format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
+        table_window,
     },
 };
 
@@ -181,15 +182,18 @@ pub fn render_replication_controllers(
 
     let table = Table::new(
         rows,
-        [
-            Constraint::Length(28),
-            Constraint::Length(16),
-            Constraint::Length(9),
-            Constraint::Length(9),
-            Constraint::Length(11),
-            Constraint::Min(24),
-            Constraint::Length(9),
-        ],
+        responsive_table_widths(
+            area.width,
+            [
+                Constraint::Length(28),
+                Constraint::Length(16),
+                Constraint::Length(9),
+                Constraint::Length(9),
+                Constraint::Length(11),
+                Constraint::Min(24),
+                Constraint::Length(9),
+            ],
+        ),
     )
     .header(header)
     .block(block)

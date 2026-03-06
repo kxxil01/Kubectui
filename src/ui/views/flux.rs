@@ -24,7 +24,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        loading_or_empty_message, table_viewport_rows, table_window,
+        loading_or_empty_message, responsive_table_widths, table_viewport_rows, table_window,
     },
 };
 
@@ -370,14 +370,17 @@ pub fn render_flux_resources(
 
     let table = Table::new(
         rows,
-        [
-            Constraint::Min(22),
-            Constraint::Length(18),
-            Constraint::Length(18),
-            Constraint::Length(11),
-            Constraint::Length(9),
-            Constraint::Min(28),
-        ],
+        responsive_table_widths(
+            area.width,
+            [
+                Constraint::Min(22),
+                Constraint::Length(18),
+                Constraint::Length(18),
+                Constraint::Length(11),
+                Constraint::Length(9),
+                Constraint::Min(28),
+            ],
+        ),
     )
     .header(header)
     .block(block)

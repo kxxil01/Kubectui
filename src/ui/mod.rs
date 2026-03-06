@@ -121,6 +121,60 @@ pub(crate) fn table_window(total: usize, selected: usize, viewport_rows: usize) 
     }
 }
 
+pub(crate) fn responsive_table_widths<const N: usize>(
+    area_width: u16,
+    wide: [Constraint; N],
+) -> [Constraint; N] {
+    let usable_width = area_width.saturating_sub(3);
+    let ideal_total = wide
+        .iter()
+        .map(|constraint| constraint_ideal_width(*constraint))
+        .sum::<u16>();
+
+    if usable_width >= ideal_total {
+        return wide;
+    }
+
+    let mut percentages = [0u16; N];
+    let total_weight = ideal_total.max(1) as u32;
+    let mut assigned = 0u16;
+    let mut remainders = [(0u32, 0usize); N];
+
+    for (idx, constraint) in wide.iter().copied().enumerate() {
+        let ideal = u32::from(constraint_ideal_width(constraint).max(1));
+        let scaled = ideal * 100;
+        let percentage = (scaled / total_weight) as u16;
+        percentages[idx] = percentage;
+        assigned = assigned.saturating_add(percentage);
+        remainders[idx] = (scaled % total_weight, idx);
+    }
+
+    remainders.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let remaining = 100u16.saturating_sub(assigned);
+    for idx in 0..usize::from(remaining) {
+        percentages[remainders[idx % N].1] = percentages[remainders[idx % N].1].saturating_add(1);
+    }
+
+    std::array::from_fn(|idx| Constraint::Percentage(percentages[idx]))
+}
+
+fn constraint_ideal_width(constraint: Constraint) -> u16 {
+    match constraint {
+        Constraint::Percentage(value) => value.max(1),
+        Constraint::Ratio(numerator, denominator) => {
+            if denominator == 0 {
+                1
+            } else {
+                ((numerator.saturating_mul(100)) / denominator)
+                    .try_into()
+                    .unwrap_or(100)
+            }
+        }
+        Constraint::Length(value) | Constraint::Min(value) | Constraint::Max(value) => value.max(1),
+        Constraint::Fill(value) => value.max(1),
+    }
+}
+
 pub(crate) fn loading_or_empty_message(
     snapshot: &ClusterSnapshot,
     view: AppView,
@@ -829,14 +883,17 @@ fn render_pods_widget(
 
     let table = Table::new(
         rows,
-        [
-            Constraint::Min(28),
-            Constraint::Length(18),
-            Constraint::Length(20),
-            Constraint::Length(22),
-            Constraint::Length(10),
-            Constraint::Length(9),
-        ],
+        responsive_table_widths(
+            area.width,
+            [
+                Constraint::Min(28),
+                Constraint::Length(18),
+                Constraint::Length(20),
+                Constraint::Length(22),
+                Constraint::Length(10),
+                Constraint::Length(9),
+            ],
+        ),
     )
     .header(header)
     .block(block)
@@ -913,6 +970,14 @@ mod tests {
             .expect("render should not panic");
     }
 
+    fn draw_with_size(app: &AppState, snapshot: &ClusterSnapshot, width: u16, height: u16) {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, app, snapshot))
+            .expect("render should not panic");
+    }
+
     fn app_with_view(view: AppView) -> AppState {
         let mut app = AppState::default();
         while app.view() != view {
@@ -964,6 +1029,45 @@ mod tests {
             height: 2,
         };
         assert_eq!(table_viewport_rows(area), 1);
+    }
+
+    #[test]
+    fn responsive_table_widths_preserves_wide_layouts_when_space_allows() {
+        let wide = [
+            Constraint::Length(24),
+            Constraint::Length(16),
+            Constraint::Length(9),
+            Constraint::Min(20),
+        ];
+
+        assert_eq!(responsive_table_widths(96, wide), wide);
+    }
+
+    #[test]
+    fn responsive_table_widths_falls_back_to_percentages_that_fill_width() {
+        let widths = responsive_table_widths(
+            40,
+            [
+                Constraint::Length(24),
+                Constraint::Length(16),
+                Constraint::Length(9),
+                Constraint::Min(20),
+            ],
+        );
+
+        assert!(
+            widths
+                .iter()
+                .all(|constraint| matches!(constraint, Constraint::Percentage(_)))
+        );
+        let total: u16 = widths
+            .iter()
+            .map(|constraint| match constraint {
+                Constraint::Percentage(value) => *value,
+                _ => 0,
+            })
+            .sum();
+        assert_eq!(total, 100);
     }
 
     #[test]
@@ -1095,6 +1199,31 @@ mod tests {
             }
             draw(&app, &snapshot);
         }
+    }
+
+    #[test]
+    fn render_pods_narrow_width_smoke() {
+        let app = app_with_view(AppView::Pods);
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Ready;
+        snapshot.pods.push(PodInfo {
+            name: "redpanda-0".to_string(),
+            namespace: "staging".to_string(),
+            status: "Running".to_string(),
+            node: Some("gke-luxor-staging-redp".to_string()),
+            restarts: 0,
+            ..PodInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "redpanda-console-7dc45cb5d8-4482g".to_string(),
+            namespace: "staging".to_string(),
+            status: "Running".to_string(),
+            node: Some("gke-luxor-staging-redp".to_string()),
+            restarts: 2,
+            ..PodInfo::default()
+        });
+
+        draw_with_size(&app, &snapshot, 96, 20);
     }
 
     /// Verifies services view renders without panic for mixed service types.

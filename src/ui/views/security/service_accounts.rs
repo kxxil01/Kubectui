@@ -21,7 +21,8 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
+        format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
+        table_window,
     },
 };
 
@@ -187,14 +188,17 @@ pub fn render_service_accounts(
 
     let table = Table::new(
         rows,
-        [
-            Constraint::Length(26),
-            Constraint::Length(18),
-            Constraint::Length(9),
-            Constraint::Length(13),
-            Constraint::Length(11),
-            Constraint::Fill(1),
-        ],
+        responsive_table_widths(
+            area.width,
+            [
+                Constraint::Length(26),
+                Constraint::Length(18),
+                Constraint::Length(9),
+                Constraint::Length(13),
+                Constraint::Length(11),
+                Constraint::Fill(1),
+            ],
+        ),
     )
     .header(header)
     .block(block)
