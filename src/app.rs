@@ -1226,6 +1226,7 @@ pub struct AppState {
     pub should_quit: bool,
     pub confirm_quit: bool,
     pub error_message: Option<String>,
+    pub status_message: Option<String>,
     pub detail_view: Option<DetailViewState>,
     pub current_namespace: String,
     pub namespace_picker: NamespacePicker,
@@ -1263,6 +1264,7 @@ impl Default for AppState {
             should_quit: false,
             confirm_quit: false,
             error_message: None,
+            status_message: None,
             detail_view: None,
             current_namespace: "all".to_string(),
             namespace_picker: NamespacePicker::new(vec!["all".to_string(), "default".to_string()]),
@@ -1333,14 +1335,31 @@ impl AppState {
         self.error_message.as_deref()
     }
 
+    /// Returns the latest non-error status message, if any.
+    pub fn status_message(&self) -> Option<&str> {
+        self.status_message.as_deref()
+    }
+
     /// Sets an error message to be shown in the status bar.
     pub fn set_error(&mut self, message: String) {
+        self.status_message = None;
         self.error_message = Some(message);
     }
 
     /// Clears any active error message.
     pub fn clear_error(&mut self) {
         self.error_message = None;
+    }
+
+    /// Sets a transient non-error status message in the status bar.
+    pub fn set_status(&mut self, message: String) {
+        self.error_message = None;
+        self.status_message = Some(message);
+    }
+
+    /// Clears any active non-error status message.
+    pub fn clear_status(&mut self) {
+        self.status_message = None;
     }
 
     /// Sets active namespace for namespaced resource fetches.
@@ -2587,6 +2606,17 @@ mod tests {
 
         app.clear_error();
         assert_eq!(app.error_message(), None);
+    }
+
+    #[test]
+    fn status_message_set_and_clear() {
+        let mut app = AppState::default();
+        app.set_status("working".to_string());
+        assert_eq!(app.status_message(), Some("working"));
+        assert_eq!(app.error_message(), None);
+
+        app.clear_status();
+        assert_eq!(app.status_message(), None);
     }
 
     /// Verifies resource reference helper methods return expected kind/name/namespace.

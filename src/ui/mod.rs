@@ -554,6 +554,8 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     let status = if let Some(err) = app.error_message() {
         format!("[{}] ERROR: {err}", app.get_namespace())
+    } else if let Some(message) = app.status_message() {
+        format!("[{}] {message}", app.get_namespace())
     } else if app.is_search_mode() {
         format!("[{}] Search: {}", app.get_namespace(), app.search_query())
     } else {
