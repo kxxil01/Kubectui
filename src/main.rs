@@ -233,11 +233,15 @@ struct DeleteAsyncResult {
 
 #[derive(Debug)]
 struct ScaleAsyncResult {
+    context_generation: u64,
+    resource_label: String,
     result: Result<(), String>,
 }
 
 #[derive(Debug)]
 struct RolloutRestartAsyncResult {
+    context_generation: u64,
+    resource_label: String,
     result: Result<(), String>,
 }
 
@@ -266,6 +270,8 @@ const STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS: u64 = 3;
 const STARTUP_NAMESPACE_FETCH_ATTEMPTS: usize = 2;
 const STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS: u64 = 150;
 const FLUX_AUTO_REFRESH_EVERY: u64 = 3;
+const MUTATION_REFRESH_DELAYS_SECS: &[u64] = &[2, 5];
+const FLUX_RECONCILE_REFRESH_DELAYS_SECS: &[u64] = &[2, 5, 9];
 
 fn fast_refresh_options(include_flux: bool, include_events: bool) -> RefreshOptions {
     RefreshOptions {
@@ -273,6 +279,27 @@ fn fast_refresh_options(include_flux: bool, include_events: bool) -> RefreshOpti
         include_cluster_info: false,
         include_secondary_resources: false,
         include_events,
+    }
+}
+
+fn queue_deferred_refreshes(
+    tx: &tokio::sync::mpsc::Sender<DeferredRefreshTrigger>,
+    context_generation: u64,
+    namespace: Option<String>,
+    include_flux: bool,
+    delays_secs: &[u64],
+) {
+    for &delay_secs in delays_secs {
+        let tx = tx.clone();
+        let trigger = DeferredRefreshTrigger {
+            context_generation,
+            include_flux,
+            namespace: namespace.clone(),
+        };
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+            let _ = tx.send(trigger).await;
+        });
     }
 }
 
@@ -960,49 +987,40 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         Ok(()) => {
                             let active_namespace_scope =
                                 namespace_scope(app.get_namespace()).map(str::to_string);
-                            if app
-                                .detail_view
-                                .as_ref()
-                                .and_then(|detail| detail.resource.as_ref())
-                                .is_some_and(|resource| resource == &result.resource)
-                            {
-                                app.detail_view = None;
-                            }
-
-                            app.clear_error();
+                            global_state.apply_optimistic_delete(&result.resource);
+                            snapshot_dirty = true;
+                            app.set_status(format!(
+                                "Deleted {} '{}'. Refreshing view...",
+                                result.resource.kind(),
+                                result.resource.name()
+                            ));
+                            status_message_clear_at =
+                                Some(Instant::now() + Duration::from_secs(12));
                             request_refresh(
                                 &refresh_tx,
                                 &mut global_state,
                                 &client,
                                 active_namespace_scope.clone(),
-                                fast_refresh_options(app.view().is_fluxcd(), false),
+                                refresh_options_for_view(
+                                    app.view(),
+                                    app.view().is_fluxcd(),
+                                    false,
+                                ),
                                 &mut refresh_state,
                                 &mut snapshot_dirty,
                             );
-                            // Controllers may recreate resources shortly after delete.
-                            // Queue follow-up refreshes so age/status/restarts converge quickly.
-                            for delay_secs in [2_u64, 5_u64] {
-                                let tx = deferred_refresh_tx.clone();
-                                let trigger = DeferredRefreshTrigger {
-                                    context_generation: refresh_state.context_generation,
-                                    include_flux: app.view().is_fluxcd(),
-                                    namespace: active_namespace_scope.clone(),
-                                };
-                                tokio::spawn(async move {
-                                    tokio::time::sleep(Duration::from_secs(delay_secs)).await;
-                                    let _ = tx.send(trigger).await;
-                                });
-                            }
+                            queue_deferred_refreshes(
+                                &deferred_refresh_tx,
+                                refresh_state.context_generation,
+                                active_namespace_scope.clone(),
+                                app.view().is_fluxcd(),
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
                             auto_refresh.reset();
                         }
                         Err(err) => {
+                            status_message_clear_at = None;
                             app.set_error(format!("Delete failed: {err}"));
-                            if let Some(detail) = &mut app.detail_view
-                                && detail.resource.as_ref().is_some_and(|r| r == &result.resource)
-                            {
-                                detail.confirm_delete = false;
-                                detail.loading = false;
-                            }
                         }
                     }
                 }
@@ -1010,20 +1028,44 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
             result = scale_rx.recv() => {
                 if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     needs_redraw = true;
                     match result.result {
                         Ok(()) => {
-                            app.clear_error();
-                            if let Some(detail) = &mut app.detail_view {
-                                detail.scale_dialog = None;
-                            }
+                            let active_namespace_scope =
+                                namespace_scope(app.get_namespace()).map(str::to_string);
+                            app.set_status(format!(
+                                "Scaled {}. Refreshing view...",
+                                result.resource_label
+                            ));
+                            status_message_clear_at =
+                                Some(Instant::now() + Duration::from_secs(12));
+                            request_refresh(
+                                &refresh_tx,
+                                &mut global_state,
+                                &client,
+                                active_namespace_scope.clone(),
+                                refresh_options_for_view(
+                                    app.view(),
+                                    app.view().is_fluxcd(),
+                                    false,
+                                ),
+                                &mut refresh_state,
+                                &mut snapshot_dirty,
+                            );
+                            queue_deferred_refreshes(
+                                &deferred_refresh_tx,
+                                refresh_state.context_generation,
+                                active_namespace_scope,
+                                app.view().is_fluxcd(),
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
                         }
                         Err(err) => {
-                            if let Some(detail) = &mut app.detail_view
-                                && let Some(scale) = &mut detail.scale_dialog
-                            {
-                                scale.error_message = Some(format!("Scale failed: {err}"));
-                            }
+                            status_message_clear_at = None;
+                            app.set_error(format!("Scale failed: {err}"));
                         }
                     }
                 }
@@ -1031,15 +1073,43 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
             result = rollout_rx.recv() => {
                 if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     needs_redraw = true;
                     match result.result {
                         Ok(()) => {
-                            app.clear_error();
-                            if let Some(detail) = &mut app.detail_view {
-                                detail.error = None;
-                            }
+                            let active_namespace_scope =
+                                namespace_scope(app.get_namespace()).map(str::to_string);
+                            app.set_status(format!(
+                                "Restart requested for {}. Refreshing view...",
+                                result.resource_label
+                            ));
+                            status_message_clear_at =
+                                Some(Instant::now() + Duration::from_secs(12));
+                            request_refresh(
+                                &refresh_tx,
+                                &mut global_state,
+                                &client,
+                                active_namespace_scope.clone(),
+                                refresh_options_for_view(
+                                    app.view(),
+                                    app.view().is_fluxcd(),
+                                    false,
+                                ),
+                                &mut refresh_state,
+                                &mut snapshot_dirty,
+                            );
+                            queue_deferred_refreshes(
+                                &deferred_refresh_tx,
+                                refresh_state.context_generation,
+                                active_namespace_scope,
+                                app.view().is_fluxcd(),
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
                         }
                         Err(err) => {
+                            status_message_clear_at = None;
                             app.set_error(format!("Restart failed: {err}"));
                         }
                     }
@@ -1072,18 +1142,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             );
                             let active_namespace_scope =
                                 namespace_scope(app.get_namespace()).map(str::to_string);
-                            for delay_secs in [2_u64, 5_u64, 9_u64] {
-                                let tx = deferred_refresh_tx.clone();
-                                let trigger = DeferredRefreshTrigger {
-                                    context_generation: refresh_state.context_generation,
-                                    include_flux: true,
-                                    namespace: active_namespace_scope.clone(),
-                                };
-                                tokio::spawn(async move {
-                                    tokio::time::sleep(Duration::from_secs(delay_secs)).await;
-                                    let _ = tx.send(trigger).await;
-                                });
-                            }
+                            queue_deferred_refreshes(
+                                &deferred_refresh_tx,
+                                refresh_state.context_generation,
+                                active_namespace_scope,
+                                true,
+                                FLUX_RECONCILE_REFRESH_DELAYS_SECS,
+                            );
                         }
                         Err(err) => {
                             status_message_clear_at = None;
@@ -1117,7 +1182,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &mut global_state,
                         &client,
                         trigger.namespace,
-                        fast_refresh_options(trigger.include_flux, false),
+                        refresh_options_for_view(app.view(), trigger.include_flux, false),
                         &mut refresh_state,
                         &mut snapshot_dirty,
                     );
@@ -1587,12 +1652,26 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             })
                         });
                         if let Some((name, namespace, replicas)) = scale_info {
+                            let resource_label =
+                                format!("Deployment '{name}' in namespace '{namespace}'");
+                            app.detail_view = None;
+                            app.focus = kubectui::app::Focus::Content;
+                            app.set_status(format!("Scaling {resource_label} to {replicas}..."));
+                            status_message_clear_at =
+                                Some(Instant::now() + Duration::from_secs(12));
                             let tx = scale_tx.clone();
                             let c = client.clone();
+                            let context_generation = refresh_state.context_generation;
                             tokio::spawn(async move {
                                 let result = c.scale_deployment(&name, &namespace, replicas).await
                                     .map_err(|e| format!("{e:#}"));
-                                let _ = tx.send(ScaleAsyncResult { result }).await;
+                                let _ = tx
+                                    .send(ScaleAsyncResult {
+                                        context_generation,
+                                        resource_label,
+                                        result,
+                                    })
+                                    .await;
                             });
                         }
                     }
@@ -1606,12 +1685,28 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             })
                         });
                         if let Some((kind, name, namespace)) = restart_info {
+                            let resource_label =
+                                format!("{} '{}' in namespace '{}'", kind, name, namespace);
+                            app.detail_view = None;
+                            app.focus = kubectui::app::Focus::Content;
+                            app.set_status(format!(
+                                "Requesting restart for {resource_label}..."
+                            ));
+                            status_message_clear_at =
+                                Some(Instant::now() + Duration::from_secs(12));
                             let tx = rollout_tx.clone();
                             let c = client.clone();
+                            let context_generation = refresh_state.context_generation;
                             tokio::spawn(async move {
                                 let result = c.rollout_restart(&kind, &name, &namespace).await
                                     .map_err(|e| format!("{e:#}"));
-                                let _ = tx.send(RolloutRestartAsyncResult { result }).await;
+                                let _ = tx
+                                    .send(RolloutRestartAsyncResult {
+                                        context_generation,
+                                        resource_label,
+                                        result,
+                                    })
+                                    .await;
                             });
                         }
                     }
@@ -1631,6 +1726,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             delete_request_seq = delete_request_seq.wrapping_add(1);
                             let request_id = delete_request_seq;
                             delete_in_flight_id = Some(request_id);
+                            let resource_label =
+                                format!("{} '{}'", resource.kind(), resource.name());
+                            app.detail_view = None;
+                            app.focus = kubectui::app::Focus::Content;
+                            app.set_status(format!("Deleting {resource_label}..."));
+                            status_message_clear_at =
+                                Some(Instant::now() + Duration::from_secs(12));
                             spawn_delete_task(
                                 delete_tx.clone(),
                                 client.clone(),
@@ -1709,12 +1811,40 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                                         .await
                                                     {
                                                         Ok(()) => {
-                                                            app.clear_error();
-                                                            // Reload the detail view with fresh YAML
-                                                            if let Some(detail) = &mut app.detail_view {
-                                                                detail.yaml = Some(edited_yaml);
-                                                                detail.yaml_scroll = 0;
-                                                            }
+                                                            let active_namespace_scope =
+                                                                namespace_scope(app.get_namespace())
+                                                                    .map(str::to_string);
+                                                            app.detail_view = None;
+                                                            app.focus = kubectui::app::Focus::Content;
+                                                            app.set_status(format!(
+                                                                "Applied changes to {} '{}'. Refreshing view...",
+                                                                kind,
+                                                                name
+                                                            ));
+                                                            status_message_clear_at = Some(
+                                                                Instant::now()
+                                                                    + Duration::from_secs(12),
+                                                            );
+                                                            request_refresh(
+                                                                &refresh_tx,
+                                                                &mut global_state,
+                                                                &client,
+                                                                active_namespace_scope.clone(),
+                                                                refresh_options_for_view(
+                                                                    app.view(),
+                                                                    app.view().is_fluxcd(),
+                                                                    false,
+                                                                ),
+                                                                &mut refresh_state,
+                                                                &mut snapshot_dirty,
+                                                            );
+                                                            queue_deferred_refreshes(
+                                                                &deferred_refresh_tx,
+                                                                refresh_state.context_generation,
+                                                                active_namespace_scope,
+                                                                app.view().is_fluxcd(),
+                                                                MUTATION_REFRESH_DELAYS_SECS,
+                                                            );
                                                         }
                                                         Err(err) => {
                                                             app.set_error(format!("Apply failed: {err:#}"));

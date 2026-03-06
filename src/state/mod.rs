@@ -10,7 +10,7 @@ use chrono::{DateTime, Utc};
 use std::{collections::HashSet, fmt, sync::LazyLock, time::Duration};
 use tokio::sync::Semaphore;
 
-use crate::app::AppView;
+use crate::app::{AppView, ResourceRef};
 use crate::k8s::{
     client::K8sClient,
     dtos::{
@@ -545,6 +545,32 @@ const FLUX_REFRESH_VIEWS: &[AppView] = &[
 
 const EVENT_REFRESH_VIEWS: &[AppView] = &[AppView::Events];
 
+fn remove_named<T, F>(items: &mut Vec<T>, key: F, expected_name: &str) -> bool
+where
+    F: Fn(&T) -> &String,
+{
+    let before = items.len();
+    items.retain(|item| key(item) != expected_name);
+    before != items.len()
+}
+
+fn remove_named_in_namespace<T, F>(
+    items: &mut Vec<T>,
+    key: F,
+    expected_name: &str,
+    expected_namespace: &str,
+) -> bool
+where
+    F: Fn(&T) -> (&String, &String),
+{
+    let before = items.len();
+    items.retain(|item| {
+        let (name, namespace) = key(item);
+        name != expected_name || namespace != expected_namespace
+    });
+    before != items.len()
+}
+
 impl GlobalState {
     /// Returns a cheap Arc-wrapped snapshot for UI rendering.
     /// No deep clone — just an Arc pointer bump.
@@ -565,6 +591,228 @@ impl GlobalState {
     /// Returns fetched namespaces.
     pub fn namespaces(&self) -> &[String] {
         &self.namespaces
+    }
+
+    /// Applies a successful delete locally so the list updates immediately
+    /// before the background refresh completes.
+    pub fn apply_optimistic_delete(&mut self, resource: &ResourceRef) {
+        let changed = match resource {
+            ResourceRef::Node(name) => {
+                remove_named(&mut self.snapshot.nodes, |item| &item.name, name)
+            }
+            ResourceRef::Pod(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.pods,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::Service(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.services,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::Deployment(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.deployments,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::StatefulSet(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.statefulsets,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::DaemonSet(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.daemonsets,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::ReplicaSet(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.replicasets,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::ReplicationController(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.replication_controllers,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::Job(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.jobs,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::CronJob(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.cronjobs,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::ResourceQuota(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.resource_quotas,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::LimitRange(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.limit_ranges,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::PodDisruptionBudget(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.pod_disruption_budgets,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::Endpoint(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.endpoints,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::Ingress(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.ingresses,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::IngressClass(name) => {
+                remove_named(&mut self.snapshot.ingress_classes, |item| &item.name, name)
+            }
+            ResourceRef::NetworkPolicy(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.network_policies,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::ConfigMap(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.config_maps,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::Secret(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.secrets,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::Hpa(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.hpas,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::PriorityClass(name) => {
+                remove_named(&mut self.snapshot.priority_classes, |item| &item.name, name)
+            }
+            ResourceRef::Pvc(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.pvcs,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::Pv(name) => remove_named(&mut self.snapshot.pvs, |item| &item.name, name),
+            ResourceRef::StorageClass(name) => {
+                remove_named(&mut self.snapshot.storage_classes, |item| &item.name, name)
+            }
+            ResourceRef::Namespace(name) => {
+                remove_named(&mut self.snapshot.namespace_list, |item| &item.name, name)
+            }
+            ResourceRef::Event(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.events,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::ServiceAccount(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.service_accounts,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::Role(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.roles,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::RoleBinding(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.role_bindings,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::ClusterRole(name) => {
+                remove_named(&mut self.snapshot.cluster_roles, |item| &item.name, name)
+            }
+            ResourceRef::ClusterRoleBinding(name) => remove_named(
+                &mut self.snapshot.cluster_role_bindings,
+                |item| &item.name,
+                name,
+            ),
+            ResourceRef::HelmRelease(name, ns) => remove_named_in_namespace(
+                &mut self.snapshot.helm_releases,
+                |item| (&item.name, &item.namespace),
+                name,
+                ns,
+            ),
+            ResourceRef::CustomResource {
+                name,
+                namespace,
+                group,
+                version,
+                kind,
+                plural,
+            } => {
+                let before = self.snapshot.flux_resources.len();
+                self.snapshot.flux_resources.retain(|item| {
+                    item.name != *name
+                        || item.namespace != *namespace
+                        || item.group != *group
+                        || item.version != *version
+                        || item.kind != *kind
+                        || item.plural != *plural
+                });
+                before != self.snapshot.flux_resources.len()
+            }
+        };
+
+        if !changed {
+            return;
+        }
+
+        self.snapshot.services_count = self.snapshot.services.len();
+        self.snapshot.namespaces_count = self
+            .snapshot
+            .pods
+            .iter()
+            .map(|pod| pod.namespace.as_str())
+            .chain(
+                self.snapshot
+                    .services
+                    .iter()
+                    .map(|service| service.namespace.as_str()),
+            )
+            .chain(
+                self.snapshot
+                    .deployments
+                    .iter()
+                    .map(|deployment| deployment.namespace.as_str()),
+            )
+            .collect::<HashSet<_>>()
+            .len();
+        self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
+        self.snapshot_dirty = true;
+        self.publish_snapshot();
     }
 
     fn has_view_data(&self, view: AppView) -> bool {
@@ -2160,6 +2408,49 @@ mod tests {
             snapshot.view_load_state(AppView::StorageClasses),
             ViewLoadState::Ready
         );
+    }
+
+    #[test]
+    fn optimistic_delete_removes_resource_from_snapshot_immediately() {
+        let mut state = GlobalState::default();
+        state.snapshot.pods = vec![
+            PodInfo {
+                name: "pod-a".to_string(),
+                namespace: "default".to_string(),
+                ..PodInfo::default()
+            },
+            PodInfo {
+                name: "pod-b".to_string(),
+                namespace: "default".to_string(),
+                ..PodInfo::default()
+            },
+        ];
+        state.snapshot.services = vec![ServiceInfo {
+            name: "svc-a".to_string(),
+            namespace: "default".to_string(),
+            ..ServiceInfo::default()
+        }];
+        state.snapshot.deployments = vec![DeploymentInfo {
+            name: "deploy-a".to_string(),
+            namespace: "default".to_string(),
+            ..DeploymentInfo::default()
+        }];
+        state.snapshot.services_count = 1;
+        state.snapshot.namespaces_count = 1;
+        state.snapshot.snapshot_version = 41;
+        state.snapshot_dirty = true;
+        state.publish_snapshot();
+
+        state.apply_optimistic_delete(&ResourceRef::Pod(
+            "pod-a".to_string(),
+            "default".to_string(),
+        ));
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.pods.len(), 1);
+        assert_eq!(snapshot.pods[0].name, "pod-b");
+        assert_eq!(snapshot.snapshot_version, 42);
+        assert_eq!(snapshot.namespaces_count, 1);
     }
 
     #[tokio::test]
