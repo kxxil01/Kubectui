@@ -1936,6 +1936,21 @@ impl K8sClient {
             .await
     }
 
+    /// Requests Flux reconciliation for a custom resource using Flux's
+    /// standard `reconcile.fluxcd.io/requestedAt` annotation.
+    pub async fn request_flux_reconcile(
+        &self,
+        group: &str,
+        version: &str,
+        kind: &str,
+        plural: &str,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<()> {
+        yaml::request_flux_reconcile(&self.client, group, version, kind, plural, name, namespace)
+            .await
+    }
+
     /// Fetches the Helm release secret as YAML.
     ///
     /// Helm v3 stores releases as Secrets named `sh.helm.release.v1.{name}.v{revision}`.

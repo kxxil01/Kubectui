@@ -9,6 +9,7 @@ use crate::{
     k8s::{
         client::EventInfo,
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodInfo, PodMetricsInfo},
+        flux::flux_reconcile_support,
     },
     ui::components::{
         CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction, NamespacePicker,
@@ -820,6 +821,26 @@ impl ResourceRef {
             ResourceRef::CustomResource { namespace, .. } => namespace.as_deref(),
         }
     }
+
+    /// Returns true when this resource is a Flux custom resource that supports
+    /// the direct reconcile action.
+    pub fn supports_flux_reconcile(&self) -> bool {
+        matches!(
+            self,
+            ResourceRef::CustomResource { group, kind, .. }
+                if flux_reconcile_support(group, kind).is_supported()
+        )
+    }
+
+    /// Returns the disabled reason for Flux reconcile when not supported.
+    pub fn flux_reconcile_disabled_reason(&self) -> Option<&'static str> {
+        match self {
+            ResourceRef::CustomResource { group, kind, .. } => {
+                flux_reconcile_support(group, kind).unsupported_reason()
+            }
+            _ => Some("Flux reconcile is only available for Flux toolkit resources."),
+        }
+    }
 }
 
 /// Human-readable metadata displayed in the detail modal.
@@ -832,6 +853,7 @@ pub struct DetailMetadata {
     pub ip: Option<String>,
     pub created: Option<String>,
     pub labels: Vec<(String, String)>,
+    pub flux_reconcile_enabled: bool,
 }
 
 /// Top-level active component when detail modal is open.
@@ -1097,6 +1119,7 @@ pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> &'static [SidebarItem] {
 pub enum AppAction {
     None,
     RefreshData,
+    FluxReconcile,
     Quit,
     OpenDetail(ResourceRef),
     CloseDetail,
@@ -1649,6 +1672,7 @@ impl AppState {
     /// | `c` | no detail | Open context picker |
     /// | `:` | no detail | Open command palette |
     /// | `r` / `Ctrl+R` | — | Trigger data refresh |
+    /// | `Shift+R` | Flux view or Flux detail | Reconcile selected Flux resource |
     ///
     /// `Enter` is **not** handled here — it is intercepted in `main.rs` before this method
     /// is called, because its behaviour depends on both `focus` and `detail_view`.
@@ -1906,25 +1930,19 @@ impl AppState {
             KeyCode::Char('f') if self.detail_view.is_some() => AppAction::PortForwardOpen,
             KeyCode::Char('s') if self.detail_view.is_some() => AppAction::ScaleDialogOpen,
             KeyCode::Char('p') if self.detail_view.is_some() => AppAction::ProbePanelOpen,
-            KeyCode::Char('R') if self.detail_view.is_some() => {
-                // Only for restartable workload kinds
-                let restartable = self
-                    .detail_view
-                    .as_ref()
-                    .and_then(|d| d.resource.as_ref())
-                    .map(|r| {
-                        matches!(
-                            r,
-                            ResourceRef::Deployment(_, _)
-                                | ResourceRef::StatefulSet(_, _)
-                                | ResourceRef::DaemonSet(_, _)
-                        )
-                    })
-                    .unwrap_or(false);
-                if restartable {
-                    AppAction::RolloutRestart
-                } else {
-                    AppAction::None
+            KeyCode::Char('R')
+                if self.detail_view.is_some() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                match self.detail_view.as_ref().and_then(|d| d.resource.as_ref()) {
+                    Some(
+                        ResourceRef::Deployment(_, _)
+                        | ResourceRef::StatefulSet(_, _)
+                        | ResourceRef::DaemonSet(_, _),
+                    ) => AppAction::RolloutRestart,
+                    Some(resource) if resource.supports_flux_reconcile() => {
+                        AppAction::FluxReconcile
+                    }
+                    _ => AppAction::None,
                 }
             }
             KeyCode::Char('e') if self.detail_view.is_some() => {
@@ -2068,6 +2086,13 @@ impl AppState {
             KeyCode::Char('~') => AppAction::OpenNamespacePicker,
             KeyCode::Char('c') if self.detail_view.is_none() => AppAction::OpenContextPicker,
             KeyCode::Char(':') if self.detail_view.is_none() => AppAction::OpenCommandPalette,
+            KeyCode::Char('R')
+                if self.detail_view.is_none()
+                    && self.view.is_fluxcd()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::FluxReconcile
+            }
             KeyCode::Char('r') => AppAction::RefreshData,
             KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 AppAction::RefreshData
@@ -2285,6 +2310,63 @@ mod tests {
         assert_eq!(
             app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::CONTROL)),
             AppAction::RefreshData
+        );
+    }
+
+    #[test]
+    fn flux_view_uppercase_r_triggers_reconcile_without_overriding_ctrl_r() {
+        let mut app = AppState::default();
+        app.view = AppView::FluxCDKustomizations;
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('R'))),
+            AppAction::FluxReconcile
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::CONTROL)),
+            AppAction::RefreshData
+        );
+    }
+
+    #[test]
+    fn flux_detail_uppercase_r_triggers_reconcile_for_supported_resource() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CustomResource {
+                name: "apps".to_string(),
+                namespace: Some("flux-system".to_string()),
+                group: "kustomize.toolkit.fluxcd.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Kustomization".to_string(),
+                plural: "kustomizations".to_string(),
+            }),
+            ..DetailViewState::default()
+        });
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('R'))),
+            AppAction::FluxReconcile
+        );
+    }
+
+    #[test]
+    fn unsupported_flux_detail_uppercase_r_is_noop() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CustomResource {
+                name: "webhook".to_string(),
+                namespace: Some("flux-system".to_string()),
+                group: "notification.toolkit.fluxcd.io".to_string(),
+                version: "v1beta3".to_string(),
+                kind: "Alert".to_string(),
+                plural: "alerts".to_string(),
+            }),
+            ..DetailViewState::default()
+        });
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('R'))),
+            AppAction::None
         );
     }
 

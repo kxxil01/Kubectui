@@ -608,6 +608,10 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
                 | ResourceRef::DaemonSet(_, _)
         )
     );
+    let is_flux_reconcilable = detail_state
+        .resource
+        .as_ref()
+        .is_some_and(ResourceRef::supports_flux_reconcile);
     let has_yaml = detail_state.yaml.is_some();
 
     if is_pod {
@@ -625,6 +629,9 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
     if is_restartable {
         footer_spans.push(Span::styled("[R] ", theme.keybind_key_style()));
         footer_spans.push(Span::styled("Restart  ", theme.keybind_desc_style()));
+    } else if is_flux_reconcilable {
+        footer_spans.push(Span::styled("[R] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Reconcile  ", theme.keybind_desc_style()));
     }
     if has_yaml {
         footer_spans.push(Span::styled("[e] ", theme.keybind_key_style()));
