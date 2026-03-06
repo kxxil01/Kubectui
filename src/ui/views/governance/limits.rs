@@ -17,7 +17,8 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
+        format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
+        table_window,
     },
 };
 
@@ -132,13 +133,16 @@ pub fn render_limit_ranges(
 
     let table = Table::new(
         rows,
-        [
-            Constraint::Min(28),
-            Constraint::Length(18),
-            Constraint::Length(8),
-            Constraint::Min(24),
-            Constraint::Length(9),
-        ],
+        responsive_table_widths(
+            area.width,
+            [
+                Constraint::Min(28),
+                Constraint::Length(18),
+                Constraint::Length(8),
+                Constraint::Min(24),
+                Constraint::Length(9),
+            ],
+        ),
     )
     .header(header)
     .block(block)

@@ -22,7 +22,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        loading_or_empty_message, table_viewport_rows, table_window,
+        loading_or_empty_message, responsive_table_widths, table_viewport_rows, table_window,
     },
 };
 
@@ -162,14 +162,17 @@ pub fn render_services(
 
     let table = Table::new(
         rows,
-        [
-            Constraint::Length(24),
-            Constraint::Length(16),
-            Constraint::Length(14),
-            Constraint::Length(16),
-            Constraint::Min(18),
-            Constraint::Length(9),
-        ],
+        responsive_table_widths(
+            area.width,
+            [
+                Constraint::Length(24),
+                Constraint::Length(16),
+                Constraint::Length(14),
+                Constraint::Length(16),
+                Constraint::Min(18),
+                Constraint::Length(9),
+            ],
+        ),
     )
     .header(header)
     .block(block)
