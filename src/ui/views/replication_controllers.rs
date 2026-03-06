@@ -16,14 +16,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window,
+        table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -56,30 +56,27 @@ pub fn render_replication_controllers(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let theme = default_theme();
     let query = query.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::ReplicationControllers,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.replication_controllers, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            if q.is_empty() {
-                return (0..cluster.replication_controllers.len()).collect();
-            }
-            cluster
-                .replication_controllers
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, rc)| {
-                    if contains_ci(&rc.name, q) || contains_ci(&rc.namespace, q) {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+            filtered_workload_indices(
+                &cluster.replication_controllers,
+                q,
+                sort,
+                |rc, needle| contains_ci(&rc.name, needle) || contains_ci(&rc.namespace, needle),
+                |rc| rc.name.as_str(),
+                |rc| rc.namespace.as_str(),
+                |rc| rc.age,
+            )
         },
     );
 
@@ -103,15 +100,20 @@ pub fn render_replication_controllers(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Desired", theme.header_style())),
         Cell::from(Span::styled("Ready", theme.header_style())),
         Cell::from(Span::styled("Available", theme.header_style())),
         Cell::from(Span::styled("Image", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -170,13 +172,14 @@ pub fn render_replication_controllers(
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
-    let title = format!(" Replication Controllers ({total}) ");
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" Replication Controllers ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = cluster.replication_controllers.len();
         active_block(&format!(
-            " Replication Controllers ({total} of {all}) [/{query}]"
+            " Replication Controllers ({total} of {all}) [/{query}]{sort_suffix}"
         ))
     };
 

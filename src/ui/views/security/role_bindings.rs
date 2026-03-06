@@ -9,16 +9,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     k8s::dtos::RoleBindingSubject,
     state::ClusterSnapshot,
     ui::{
-        cmp_ci,
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window,
+        table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 use std::sync::{Arc, LazyLock, Mutex};
@@ -42,41 +41,31 @@ pub fn render_role_bindings(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let query = query.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::RoleBindings,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.role_bindings, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            let mut out: Vec<usize> = cluster
-                .role_bindings
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, rb)| {
-                    if q.is_empty()
-                        || contains_ci(&rb.name, q)
-                        || contains_ci(&rb.namespace, q)
-                        || contains_ci(&rb.role_ref_name, q)
-                    {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            out.sort_unstable_by(|a, b| {
-                let left = &cluster.role_bindings[*a];
-                let right = &cluster.role_bindings[*b];
-                let ns_order = cmp_ci(&left.namespace, &right.namespace);
-                if ns_order == std::cmp::Ordering::Equal {
-                    cmp_ci(&left.name, &right.name)
-                } else {
-                    ns_order
-                }
-            });
-            out
+            filtered_workload_indices(
+                &cluster.role_bindings,
+                q,
+                sort,
+                |rb, needle| {
+                    needle.is_empty()
+                        || contains_ci(&rb.name, needle)
+                        || contains_ci(&rb.namespace, needle)
+                        || contains_ci(&rb.role_ref_name, needle)
+                },
+                |rb| rb.name.as_str(),
+                |rb| rb.namespace.as_str(),
+                |rb| rb.age,
+            )
         },
     );
 
@@ -107,13 +96,18 @@ pub fn render_role_bindings(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(chunks[0]));
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("RoleRef", theme.header_style())),
         Cell::from(Span::styled("Subjects", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -152,12 +146,15 @@ pub fn render_role_bindings(
         .collect();
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
-    let title = format!(" 🔗 RoleBindings ({total}) ");
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" 🔗 RoleBindings ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = cluster.role_bindings.len();
-        active_block(&format!(" 🔗 RoleBindings ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " 🔗 RoleBindings ({total} of {all}) [/{query}]{sort_suffix}"
+        ))
     };
 
     let table = Table::new(

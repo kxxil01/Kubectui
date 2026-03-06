@@ -17,15 +17,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     state::ClusterSnapshot,
     ui::{
-        cmp_ci,
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, loading_or_empty_message_no_search, table_viewport_rows,
-        table_window,
+        table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -53,6 +52,7 @@ pub fn render_nodes(
     snapshot: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let theme = default_theme();
     let query = query.trim();
@@ -73,24 +73,29 @@ pub fn render_nodes(
         return;
     }
 
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::Nodes,
         query,
         snapshot.snapshot_version,
         data_fingerprint(&snapshot.nodes, snapshot.snapshot_version),
+        cache_variant,
         |q| {
-            let mut out: Vec<usize> = if q.is_empty() {
-                (0..snapshot.nodes.len()).collect()
-            } else {
-                snapshot
-                    .nodes
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(idx, node)| contains_ci(&node.name, q).then_some(idx))
-                    .collect()
-            };
-            out.sort_unstable_by(|a, b| cmp_ci(&snapshot.nodes[*a].name, &snapshot.nodes[*b].name));
-            out
+            filtered_workload_indices(
+                &snapshot.nodes,
+                q,
+                sort,
+                |node, needle| contains_ci(&node.name, needle),
+                |node| node.name.as_str(),
+                |_node| "",
+                |node| {
+                    node.created_at.map(|created_at| {
+                        let age_secs =
+                            (Utc::now().timestamp() - created_at.timestamp()).max(0) as u64;
+                        std::time::Duration::from_secs(age_secs)
+                    })
+                },
+            )
         },
     );
 
@@ -112,14 +117,19 @@ pub fn render_nodes(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Status", theme.header_style())),
         Cell::from(Span::styled("Role", theme.header_style())),
         Cell::from(Span::styled("CPU", theme.header_style())),
         Cell::from(Span::styled("Memory", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -197,12 +207,15 @@ pub fn render_nodes(
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
-    let title = format!(" 🖥  Nodes ({total}) ");
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" 🖥  Nodes ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = snapshot.nodes.len();
-        active_block(&format!(" 🖥  Nodes ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " 🖥  Nodes ({total} of {all}) [/{query}]{sort_suffix}"
+        ))
     };
 
     let table = Table::new(rows, widths)

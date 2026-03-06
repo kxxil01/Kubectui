@@ -11,14 +11,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window,
+        table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -28,30 +28,32 @@ pub fn render_limit_ranges(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let query = query.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::LimitRanges,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.limit_ranges, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            if q.is_empty() {
-                return (0..cluster.limit_ranges.len()).collect();
-            }
-            cluster
-                .limit_ranges
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, lr)| {
-                    let type_match = lr.limits.iter().any(|spec| contains_ci(&spec.type_, q));
-                    if contains_ci(&lr.name, q) || type_match {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+            filtered_workload_indices(
+                &cluster.limit_ranges,
+                q,
+                sort,
+                |lr, needle| {
+                    let type_match = lr
+                        .limits
+                        .iter()
+                        .any(|spec| contains_ci(&spec.type_, needle));
+                    contains_ci(&lr.name, needle) || type_match
+                },
+                |lr| lr.name.as_str(),
+                |lr| lr.namespace.as_str(),
+                |lr| lr.age,
+            )
         },
     );
 
@@ -77,13 +79,18 @@ pub fn render_limit_ranges(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Specs", theme.header_style())),
         Cell::from(Span::styled("Types", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -123,12 +130,15 @@ pub fn render_limit_ranges(
         .collect();
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
-    let title = format!(" ⚖️  LimitRanges ({total}) ");
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" ⚖️  LimitRanges ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = cluster.limit_ranges.len();
-        active_block(&format!(" ⚖️  LimitRanges ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " ⚖️  LimitRanges ({total} of {all}) [/{query}]{sort_suffix}"
+        ))
     };
 
     let table = Table::new(

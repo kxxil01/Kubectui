@@ -16,14 +16,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window,
+        table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -50,30 +50,27 @@ pub fn render_jobs(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let theme = default_theme();
     let query = query.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::Jobs,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.jobs, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            if q.is_empty() {
-                return (0..cluster.jobs.len()).collect();
-            }
-            cluster
-                .jobs
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, job)| {
-                    if contains_ci(&job.name, q) || contains_ci(&job.status, q) {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+            filtered_workload_indices(
+                &cluster.jobs,
+                q,
+                sort,
+                |job, needle| contains_ci(&job.name, needle) || contains_ci(&job.status, needle),
+                |job| job.name.as_str(),
+                |job| job.namespace.as_str(),
+                |job| job.age,
+            )
         },
     );
 
@@ -96,16 +93,21 @@ pub fn render_jobs(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Status", theme.header_style())),
         Cell::from(Span::styled("Completions", theme.header_style())),
         Cell::from(Span::styled("Duration", theme.header_style())),
         Cell::from(Span::styled("Active", theme.header_style())),
         Cell::from(Span::styled("Failed", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -171,12 +173,15 @@ pub fn render_jobs(
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
-    let title = format!(" ⚙  Jobs ({total}) ");
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" ⚙  Jobs ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = cluster.jobs.len();
-        active_block(&format!(" ⚙  Jobs ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " ⚙  Jobs ({total} of {all}) [/{query}]{sort_suffix}"
+        ))
     };
 
     let table = Table::new(
