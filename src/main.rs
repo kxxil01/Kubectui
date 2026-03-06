@@ -227,6 +227,7 @@ struct RefreshRuntimeState {
 struct DeleteAsyncResult {
     request_id: u64,
     context_generation: u64,
+    origin_view: AppView,
     resource: ResourceRef,
     result: Result<(), String>,
 }
@@ -234,6 +235,9 @@ struct DeleteAsyncResult {
 #[derive(Debug)]
 struct ScaleAsyncResult {
     context_generation: u64,
+    origin_view: AppView,
+    resource: ResourceRef,
+    target_replicas: i32,
     resource_label: String,
     result: Result<(), String>,
 }
@@ -241,6 +245,7 @@ struct ScaleAsyncResult {
 #[derive(Debug)]
 struct RolloutRestartAsyncResult {
     context_generation: u64,
+    origin_view: AppView,
     resource_label: String,
     result: Result<(), String>,
 }
@@ -248,6 +253,7 @@ struct RolloutRestartAsyncResult {
 #[derive(Debug)]
 struct FluxReconcileAsyncResult {
     context_generation: u64,
+    origin_view: AppView,
     resource_label: String,
     result: Result<(), String>,
 }
@@ -262,14 +268,27 @@ struct ProbeAsyncResult {
 #[derive(Debug, Clone)]
 struct DeferredRefreshTrigger {
     context_generation: u64,
+    view: AppView,
     include_flux: bool,
     namespace: Option<String>,
+}
+
+struct MutationRuntime<'a> {
+    global_state: &'a mut GlobalState,
+    client: &'a K8sClient,
+    refresh_tx: &'a tokio::sync::mpsc::Sender<RefreshAsyncResult>,
+    deferred_refresh_tx: &'a tokio::sync::mpsc::Sender<DeferredRefreshTrigger>,
+    refresh_state: &'a mut RefreshRuntimeState,
+    snapshot_dirty: &'a mut bool,
+    auto_refresh: &'a mut tokio::time::Interval,
+    status_message_clear_at: &'a mut Option<Instant>,
 }
 
 const STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS: u64 = 3;
 const STARTUP_NAMESPACE_FETCH_ATTEMPTS: usize = 2;
 const STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS: u64 = 150;
 const FLUX_AUTO_REFRESH_EVERY: u64 = 3;
+const STATUS_MESSAGE_TIMEOUT_SECS: u64 = 12;
 const MUTATION_REFRESH_DELAYS_SECS: &[u64] = &[2, 5];
 const FLUX_RECONCILE_REFRESH_DELAYS_SECS: &[u64] = &[2, 5, 9];
 
@@ -285,6 +304,7 @@ fn fast_refresh_options(include_flux: bool, include_events: bool) -> RefreshOpti
 fn queue_deferred_refreshes(
     tx: &tokio::sync::mpsc::Sender<DeferredRefreshTrigger>,
     context_generation: u64,
+    view: AppView,
     namespace: Option<String>,
     include_flux: bool,
     delays_secs: &[u64],
@@ -293,6 +313,7 @@ fn queue_deferred_refreshes(
         let tx = tx.clone();
         let trigger = DeferredRefreshTrigger {
             context_generation,
+            view,
             include_flux,
             namespace: namespace.clone(),
         };
@@ -301,6 +322,61 @@ fn queue_deferred_refreshes(
             let _ = tx.send(trigger).await;
         });
     }
+}
+
+fn active_namespace_scope(app: &AppState) -> Option<String> {
+    namespace_scope(app.get_namespace()).map(str::to_string)
+}
+
+fn set_transient_status(
+    app: &mut AppState,
+    status_message_clear_at: &mut Option<Instant>,
+    message: impl Into<String>,
+) {
+    app.set_status(message.into());
+    *status_message_clear_at =
+        Some(Instant::now() + Duration::from_secs(STATUS_MESSAGE_TIMEOUT_SECS));
+}
+
+fn begin_detail_mutation(
+    app: &mut AppState,
+    status_message_clear_at: &mut Option<Instant>,
+    message: impl Into<String>,
+) {
+    app.detail_view = None;
+    app.focus = kubectui::app::Focus::Content;
+    set_transient_status(app, status_message_clear_at, message);
+}
+
+fn finish_mutation_success(
+    app: &mut AppState,
+    runtime: &mut MutationRuntime<'_>,
+    origin_view: AppView,
+    message: impl Into<String>,
+    force_include_flux: bool,
+    delays_secs: &[u64],
+) {
+    let active_namespace_scope = active_namespace_scope(app);
+    let include_flux = force_include_flux || origin_view.is_fluxcd();
+    set_transient_status(app, runtime.status_message_clear_at, message);
+    request_refresh(
+        runtime.refresh_tx,
+        runtime.global_state,
+        runtime.client,
+        active_namespace_scope.clone(),
+        refresh_options_for_view(origin_view, include_flux, false),
+        runtime.refresh_state,
+        runtime.snapshot_dirty,
+    );
+    queue_deferred_refreshes(
+        runtime.deferred_refresh_tx,
+        runtime.refresh_state.context_generation,
+        origin_view,
+        active_namespace_scope,
+        include_flux,
+        delays_secs,
+    );
+    runtime.auto_refresh.reset();
 }
 
 fn full_refresh_options(
@@ -544,6 +620,7 @@ fn spawn_delete_task(
     resource: ResourceRef,
     request_id: u64,
     context_generation: u64,
+    origin_view: AppView,
 ) {
     tokio::spawn(async move {
         let outcome = tokio::time::timeout(Duration::from_secs(20), async {
@@ -589,6 +666,7 @@ fn spawn_delete_task(
             .send(DeleteAsyncResult {
                 request_id,
                 context_generation,
+                origin_view,
                 resource,
                 result,
             })
@@ -985,38 +1063,29 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
                     match result.result {
                         Ok(()) => {
-                            let active_namespace_scope =
-                                namespace_scope(app.get_namespace()).map(str::to_string);
                             global_state.apply_optimistic_delete(&result.resource);
                             snapshot_dirty = true;
-                            app.set_status(format!(
-                                "Deleted {} '{}'. Refreshing view...",
-                                result.resource.kind(),
-                                result.resource.name()
-                            ));
-                            status_message_clear_at =
-                                Some(Instant::now() + Duration::from_secs(12));
-                            request_refresh(
-                                &refresh_tx,
-                                &mut global_state,
-                                &client,
-                                active_namespace_scope.clone(),
-                                refresh_options_for_view(
-                                    app.view(),
-                                    app.view().is_fluxcd(),
-                                    false,
+                            finish_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                format!(
+                                    "Deleted {} '{}'. Refreshing view...",
+                                    result.resource.kind(),
+                                    result.resource.name()
                                 ),
-                                &mut refresh_state,
-                                &mut snapshot_dirty,
-                            );
-                            queue_deferred_refreshes(
-                                &deferred_refresh_tx,
-                                refresh_state.context_generation,
-                                active_namespace_scope.clone(),
-                                app.view().is_fluxcd(),
+                                false,
                                 MUTATION_REFRESH_DELAYS_SECS,
                             );
-                            auto_refresh.reset();
                         }
                         Err(err) => {
                             status_message_clear_at = None;
@@ -1034,32 +1103,24 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     needs_redraw = true;
                     match result.result {
                         Ok(()) => {
-                            let active_namespace_scope =
-                                namespace_scope(app.get_namespace()).map(str::to_string);
-                            app.set_status(format!(
-                                "Scaled {}. Refreshing view...",
-                                result.resource_label
-                            ));
-                            status_message_clear_at =
-                                Some(Instant::now() + Duration::from_secs(12));
-                            request_refresh(
-                                &refresh_tx,
-                                &mut global_state,
-                                &client,
-                                active_namespace_scope.clone(),
-                                refresh_options_for_view(
-                                    app.view(),
-                                    app.view().is_fluxcd(),
-                                    false,
-                                ),
-                                &mut refresh_state,
-                                &mut snapshot_dirty,
-                            );
-                            queue_deferred_refreshes(
-                                &deferred_refresh_tx,
-                                refresh_state.context_generation,
-                                active_namespace_scope,
-                                app.view().is_fluxcd(),
+                            global_state
+                                .apply_optimistic_scale(&result.resource, result.target_replicas);
+                            snapshot_dirty = true;
+                            finish_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                format!("Scaled {}. Refreshing view...", result.resource_label),
+                                false,
                                 MUTATION_REFRESH_DELAYS_SECS,
                             );
                         }
@@ -1079,32 +1140,24 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     needs_redraw = true;
                     match result.result {
                         Ok(()) => {
-                            let active_namespace_scope =
-                                namespace_scope(app.get_namespace()).map(str::to_string);
-                            app.set_status(format!(
-                                "Restart requested for {}. Refreshing view...",
-                                result.resource_label
-                            ));
-                            status_message_clear_at =
-                                Some(Instant::now() + Duration::from_secs(12));
-                            request_refresh(
-                                &refresh_tx,
-                                &mut global_state,
-                                &client,
-                                active_namespace_scope.clone(),
-                                refresh_options_for_view(
-                                    app.view(),
-                                    app.view().is_fluxcd(),
-                                    false,
+                            finish_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                format!(
+                                    "Restart requested for {}. Refreshing view...",
+                                    result.resource_label
                                 ),
-                                &mut refresh_state,
-                                &mut snapshot_dirty,
-                            );
-                            queue_deferred_refreshes(
-                                &deferred_refresh_tx,
-                                refresh_state.context_generation,
-                                active_namespace_scope,
-                                app.view().is_fluxcd(),
+                                false,
                                 MUTATION_REFRESH_DELAYS_SECS,
                             );
                         }
@@ -1125,27 +1178,23 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     needs_redraw = true;
                     match result.result {
                         Ok(()) => {
-                            app.set_status(format!(
-                                "Reconcile requested for {}. Refreshing Flux status...",
-                                result.resource_label
-                            ));
-                            status_message_clear_at =
-                                Some(Instant::now() + Duration::from_secs(12));
-                            request_refresh(
-                                &refresh_tx,
-                                &mut global_state,
-                                &client,
-                                namespace_scope(app.get_namespace()).map(str::to_string),
-                                refresh_options_for_view(app.view(), true, false),
-                                &mut refresh_state,
-                                &mut snapshot_dirty,
-                            );
-                            let active_namespace_scope =
-                                namespace_scope(app.get_namespace()).map(str::to_string);
-                            queue_deferred_refreshes(
-                                &deferred_refresh_tx,
-                                refresh_state.context_generation,
-                                active_namespace_scope,
+                            finish_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                format!(
+                                    "Reconcile requested for {}. Refreshing Flux status...",
+                                    result.resource_label
+                                ),
                                 true,
                                 FLUX_RECONCILE_REFRESH_DELAYS_SECS,
                             );
@@ -1182,7 +1231,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &mut global_state,
                         &client,
                         trigger.namespace,
-                        refresh_options_for_view(app.view(), trigger.include_flux, false),
+                        refresh_options_for_view(trigger.view, trigger.include_flux, false),
                         &mut refresh_state,
                         &mut snapshot_dirty,
                     );
@@ -1311,10 +1360,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             reconcile_resource.kind(),
                             reconcile_resource.name()
                         );
-                        app.detail_view = None;
-                        app.focus = kubectui::app::Focus::Content;
-                        app.set_status(format!("Requesting reconcile for {resource_label}..."));
-                        status_message_clear_at = Some(Instant::now() + Duration::from_secs(12));
+                        let origin_view = app.view();
+                        begin_detail_mutation(
+                            &mut app,
+                            &mut status_message_clear_at,
+                            format!("Requesting reconcile for {resource_label}..."),
+                        );
                         let tx = flux_reconcile_tx.clone();
                         let c = client.clone();
                         let context_generation = refresh_state.context_generation;
@@ -1344,6 +1395,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             let _ = tx
                                 .send(FluxReconcileAsyncResult {
                                     context_generation,
+                                    origin_view,
                                     resource_label,
                                     result,
                                 })
@@ -1420,6 +1472,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 abort_in_flight_refresh(&mut refresh_state);
                                 refresh_state.queued_refresh = None;
                                 delete_in_flight_id = None;
+                                status_message_clear_at = None;
+                                app.clear_status();
                                 snapshot_dirty = true;
                                 app.detail_view = None;
 
@@ -1453,6 +1507,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         abort_in_flight_refresh(&mut refresh_state);
                         refresh_state.queued_refresh = None;
                         delete_in_flight_id = None;
+                        status_message_clear_at = None;
+                        app.clear_status();
                         // Drop old namespace data immediately to prevent inconsistent mixed views.
                         global_state.begin_loading_transition(false);
                         snapshot_dirty = true;
@@ -1645,29 +1701,55 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                     AppAction::ScaleDialogSubmit => {
                         let scale_info = app.detail_view.as_ref().and_then(|d| {
-                            d.scale_dialog.as_ref().and_then(|s| {
-                                s.desired_replicas_as_int().map(|replicas| {
-                                    (s.deployment_name.clone(), s.namespace.clone(), replicas)
-                                })
-                            })
+                            let replicas =
+                                d.scale_dialog.as_ref()?.desired_replicas_as_int()?;
+                            match d.resource.as_ref()? {
+                                ResourceRef::Deployment(name, namespace) => Some((
+                                    ResourceRef::Deployment(name.clone(), namespace.clone()),
+                                    name.clone(),
+                                    namespace.clone(),
+                                    "Deployment",
+                                    replicas,
+                                )),
+                                ResourceRef::StatefulSet(name, namespace) => Some((
+                                    ResourceRef::StatefulSet(name.clone(), namespace.clone()),
+                                    name.clone(),
+                                    namespace.clone(),
+                                    "StatefulSet",
+                                    replicas,
+                                )),
+                                _ => None,
+                            }
                         });
-                        if let Some((name, namespace, replicas)) = scale_info {
+                        if let Some((resource, name, namespace, kind_label, replicas)) = scale_info {
                             let resource_label =
-                                format!("Deployment '{name}' in namespace '{namespace}'");
-                            app.detail_view = None;
-                            app.focus = kubectui::app::Focus::Content;
-                            app.set_status(format!("Scaling {resource_label} to {replicas}..."));
-                            status_message_clear_at =
-                                Some(Instant::now() + Duration::from_secs(12));
+                                format!("{kind_label} '{name}' in namespace '{namespace}'");
+                            let origin_view = app.view();
+                            begin_detail_mutation(
+                                &mut app,
+                                &mut status_message_clear_at,
+                                format!("Scaling {resource_label} to {replicas}..."),
+                            );
                             let tx = scale_tx.clone();
                             let c = client.clone();
                             let context_generation = refresh_state.context_generation;
                             tokio::spawn(async move {
-                                let result = c.scale_deployment(&name, &namespace, replicas).await
-                                    .map_err(|e| format!("{e:#}"));
+                                let result = match &resource {
+                                    ResourceRef::Deployment(..) => {
+                                        c.scale_deployment(&name, &namespace, replicas).await
+                                    }
+                                    ResourceRef::StatefulSet(..) => {
+                                        c.scale_statefulset(&name, &namespace, replicas).await
+                                    }
+                                    _ => unreachable!("validated scalable resource"),
+                                }
+                                .map_err(|e| format!("{e:#}"));
                                 let _ = tx
                                     .send(ScaleAsyncResult {
                                         context_generation,
+                                        origin_view,
+                                        resource,
+                                        target_replicas: replicas,
                                         resource_label,
                                         result,
                                     })
@@ -1687,13 +1769,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         if let Some((kind, name, namespace)) = restart_info {
                             let resource_label =
                                 format!("{} '{}' in namespace '{}'", kind, name, namespace);
-                            app.detail_view = None;
-                            app.focus = kubectui::app::Focus::Content;
-                            app.set_status(format!(
-                                "Requesting restart for {resource_label}..."
-                            ));
-                            status_message_clear_at =
-                                Some(Instant::now() + Duration::from_secs(12));
+                            let origin_view = app.view();
+                            begin_detail_mutation(
+                                &mut app,
+                                &mut status_message_clear_at,
+                                format!("Requesting restart for {resource_label}..."),
+                            );
                             let tx = rollout_tx.clone();
                             let c = client.clone();
                             let context_generation = refresh_state.context_generation;
@@ -1703,6 +1784,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 let _ = tx
                                     .send(RolloutRestartAsyncResult {
                                         context_generation,
+                                        origin_view,
                                         resource_label,
                                         result,
                                     })
@@ -1728,17 +1810,19 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             delete_in_flight_id = Some(request_id);
                             let resource_label =
                                 format!("{} '{}'", resource.kind(), resource.name());
-                            app.detail_view = None;
-                            app.focus = kubectui::app::Focus::Content;
-                            app.set_status(format!("Deleting {resource_label}..."));
-                            status_message_clear_at =
-                                Some(Instant::now() + Duration::from_secs(12));
+                            let origin_view = app.view();
+                            begin_detail_mutation(
+                                &mut app,
+                                &mut status_message_clear_at,
+                                format!("Deleting {resource_label}..."),
+                            );
                             spawn_delete_task(
                                 delete_tx.clone(),
                                 client.clone(),
                                 resource,
                                 request_id,
                                 refresh_state.context_generation,
+                                origin_view,
                             );
                         }
                     }
@@ -1811,38 +1895,28 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                                         .await
                                                     {
                                                         Ok(()) => {
-                                                            let active_namespace_scope =
-                                                                namespace_scope(app.get_namespace())
-                                                                    .map(str::to_string);
+                                                            let origin_view = app.view();
                                                             app.detail_view = None;
                                                             app.focus = kubectui::app::Focus::Content;
-                                                            app.set_status(format!(
-                                                                "Applied changes to {} '{}'. Refreshing view...",
-                                                                kind,
-                                                                name
-                                                            ));
-                                                            status_message_clear_at = Some(
-                                                                Instant::now()
-                                                                    + Duration::from_secs(12),
-                                                            );
-                                                            request_refresh(
-                                                                &refresh_tx,
-                                                                &mut global_state,
-                                                                &client,
-                                                                active_namespace_scope.clone(),
-                                                                refresh_options_for_view(
-                                                                    app.view(),
-                                                                    app.view().is_fluxcd(),
-                                                                    false,
+                                                            finish_mutation_success(
+                                                                &mut app,
+                                                                &mut MutationRuntime {
+                                                                    global_state: &mut global_state,
+                                                                    client: &client,
+                                                                    refresh_tx: &refresh_tx,
+                                                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                                                    refresh_state: &mut refresh_state,
+                                                                    snapshot_dirty: &mut snapshot_dirty,
+                                                                    auto_refresh: &mut auto_refresh,
+                                                                    status_message_clear_at: &mut status_message_clear_at,
+                                                                },
+                                                                origin_view,
+                                                                format!(
+                                                                    "Applied changes to {} '{}'. Refreshing view...",
+                                                                    kind,
+                                                                    name
                                                                 ),
-                                                                &mut refresh_state,
-                                                                &mut snapshot_dirty,
-                                                            );
-                                                            queue_deferred_refreshes(
-                                                                &deferred_refresh_tx,
-                                                                refresh_state.context_generation,
-                                                                active_namespace_scope,
-                                                                app.view().is_fluxcd(),
+                                                                false,
                                                                 MUTATION_REFRESH_DELAYS_SECS,
                                                             );
                                                         }
@@ -1907,7 +1981,24 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         });
                         if let Some((name, namespace, replicas)) = scale_info
                             && let Some(detail) = &mut app.detail_view {
-                                detail.scale_dialog = Some(kubectui::ui::components::scale_dialog::ScaleDialogState::new(name, namespace, replicas));
+                                detail.scale_dialog = Some(
+                                    kubectui::ui::components::scale_dialog::ScaleDialogState::new(
+                                        match detail.resource.as_ref() {
+                                            Some(ResourceRef::Deployment(_, _)) => {
+                                                kubectui::ui::components::scale_dialog::ScaleTargetKind::Deployment
+                                            }
+                                            Some(ResourceRef::StatefulSet(_, _)) => {
+                                                kubectui::ui::components::scale_dialog::ScaleTargetKind::StatefulSet
+                                            }
+                                            _ => {
+                                                kubectui::ui::components::scale_dialog::ScaleTargetKind::Deployment
+                                            }
+                                        },
+                                        name,
+                                        namespace,
+                                        replicas,
+                                    ),
+                                );
                             }
                     }
                     AppAction::ProbePanelOpen => {

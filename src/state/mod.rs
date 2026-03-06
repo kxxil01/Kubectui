@@ -815,6 +815,47 @@ impl GlobalState {
         self.publish_snapshot();
     }
 
+    /// Applies a successful scale locally so list views reflect the requested
+    /// replica target immediately before the background refresh completes.
+    pub fn apply_optimistic_scale(&mut self, resource: &ResourceRef, replicas: i32) {
+        let changed = match resource {
+            ResourceRef::Deployment(name, ns) => self
+                .snapshot
+                .deployments
+                .iter_mut()
+                .find(|item| item.name == *name && item.namespace == *ns)
+                .is_some_and(|deployment| {
+                    if deployment.desired_replicas == replicas {
+                        return false;
+                    }
+                    deployment.desired_replicas = replicas;
+                    deployment.ready = format!("{}/{}", deployment.ready_replicas, replicas);
+                    true
+                }),
+            ResourceRef::StatefulSet(name, ns) => self
+                .snapshot
+                .statefulsets
+                .iter_mut()
+                .find(|item| item.name == *name && item.namespace == *ns)
+                .is_some_and(|statefulset| {
+                    if statefulset.desired_replicas == replicas {
+                        return false;
+                    }
+                    statefulset.desired_replicas = replicas;
+                    true
+                }),
+            _ => false,
+        };
+
+        if !changed {
+            return;
+        }
+
+        self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
+        self.snapshot_dirty = true;
+        self.publish_snapshot();
+    }
+
     fn has_view_data(&self, view: AppView) -> bool {
         match view {
             AppView::Dashboard => {
@@ -2451,6 +2492,44 @@ mod tests {
         assert_eq!(snapshot.pods[0].name, "pod-b");
         assert_eq!(snapshot.snapshot_version, 42);
         assert_eq!(snapshot.namespaces_count, 1);
+    }
+
+    #[test]
+    fn optimistic_scale_updates_workload_replica_targets_immediately() {
+        let mut state = GlobalState::default();
+        state.snapshot.deployments = vec![DeploymentInfo {
+            name: "deploy-a".to_string(),
+            namespace: "default".to_string(),
+            desired_replicas: 2,
+            ready_replicas: 1,
+            ready: "1/2".to_string(),
+            ..DeploymentInfo::default()
+        }];
+        state.snapshot.statefulsets = vec![StatefulSetInfo {
+            name: "db".to_string(),
+            namespace: "default".to_string(),
+            desired_replicas: 3,
+            ready_replicas: 3,
+            ..StatefulSetInfo::default()
+        }];
+        state.snapshot.snapshot_version = 10;
+        state.snapshot_dirty = true;
+        state.publish_snapshot();
+
+        state.apply_optimistic_scale(
+            &ResourceRef::Deployment("deploy-a".to_string(), "default".to_string()),
+            5,
+        );
+        state.apply_optimistic_scale(
+            &ResourceRef::StatefulSet("db".to_string(), "default".to_string()),
+            1,
+        );
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.deployments[0].desired_replicas, 5);
+        assert_eq!(snapshot.deployments[0].ready, "1/5");
+        assert_eq!(snapshot.statefulsets[0].desired_replicas, 1);
+        assert_eq!(snapshot.snapshot_version, 12);
     }
 
     #[tokio::test]
