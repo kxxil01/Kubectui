@@ -14,15 +14,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     state::ClusterSnapshot,
     ui::{
-        cmp_ci,
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window,
+        table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -55,37 +54,30 @@ pub fn render_service_accounts(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let query = query.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::ServiceAccounts,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.service_accounts, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            let mut out: Vec<usize> = cluster
-                .service_accounts
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, sa)| {
-                    if q.is_empty() || contains_ci(&sa.name, q) || contains_ci(&sa.namespace, q) {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            out.sort_unstable_by(|a, b| {
-                let left = &cluster.service_accounts[*a];
-                let right = &cluster.service_accounts[*b];
-                let ns_order = cmp_ci(&left.namespace, &right.namespace);
-                if ns_order == std::cmp::Ordering::Equal {
-                    cmp_ci(&left.name, &right.name)
-                } else {
-                    ns_order
-                }
-            });
-            out
+            filtered_workload_indices(
+                &cluster.service_accounts,
+                q,
+                sort,
+                |sa, needle| {
+                    q.is_empty()
+                        || contains_ci(&sa.name, needle)
+                        || contains_ci(&sa.namespace, needle)
+                },
+                |sa| sa.name.as_str(),
+                |sa| sa.namespace.as_str(),
+                |sa| sa.age,
+            )
         },
     );
 
@@ -111,14 +103,19 @@ pub fn render_service_accounts(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Secrets", theme.header_style())),
         Cell::from(Span::styled("PullSecrets", theme.header_style())),
         Cell::from(Span::styled("Automount", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -176,13 +173,14 @@ pub fn render_service_accounts(
         .collect();
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
-    let title = format!(" 🔑 ServiceAccounts ({total}) ");
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" 🔑 ServiceAccounts ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = cluster.service_accounts.len();
         active_block(&format!(
-            " 🔑 ServiceAccounts ({total} of {all}) [/{query}]"
+            " 🔑 ServiceAccounts ({total} of {all}) [/{query}]{sort_suffix}"
         ))
     };
 

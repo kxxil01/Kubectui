@@ -9,16 +9,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     k8s::dtos::RbacRule,
     state::ClusterSnapshot,
     ui::{
-        cmp_ci,
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window,
+        table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 use std::sync::{Arc, LazyLock, Mutex};
@@ -41,33 +40,26 @@ pub fn render_cluster_roles(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let query = query.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::ClusterRoles,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.cluster_roles, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            let mut out: Vec<usize> = cluster
-                .cluster_roles
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, role)| {
-                    if q.is_empty() || contains_ci(&role.name, q) {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            out.sort_unstable_by(|a, b| {
-                cmp_ci(
-                    &cluster.cluster_roles[*a].name,
-                    &cluster.cluster_roles[*b].name,
-                )
-            });
-            out
+            filtered_workload_indices(
+                &cluster.cluster_roles,
+                q,
+                sort,
+                |role, needle| needle.is_empty() || contains_ci(&role.name, needle),
+                |role| role.name.as_str(),
+                |_role| "",
+                |role| role.age,
+            )
         },
     );
 
@@ -98,11 +90,16 @@ pub fn render_cluster_roles(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(chunks[0]));
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Rules", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -135,12 +132,15 @@ pub fn render_cluster_roles(
         .collect();
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
-    let title = format!(" 🛡️  ClusterRoles ({total}) ");
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" 🛡️  ClusterRoles ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = cluster.cluster_roles.len();
-        active_block(&format!(" 🛡️  ClusterRoles ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " 🛡️  ClusterRoles ({total} of {all}) [/{query}]{sort_suffix}"
+        ))
     };
 
     let table = Table::new(

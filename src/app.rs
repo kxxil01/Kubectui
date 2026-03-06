@@ -483,6 +483,46 @@ impl AppView {
         )
     }
 
+    pub const fn shared_sort_capabilities(self) -> &'static [WorkloadSortColumn] {
+        match self {
+            AppView::Nodes
+            | AppView::Services
+            | AppView::Deployments
+            | AppView::StatefulSets
+            | AppView::DaemonSets
+            | AppView::ReplicaSets
+            | AppView::ReplicationControllers
+            | AppView::Jobs
+            | AppView::CronJobs
+            | AppView::ResourceQuotas
+            | AppView::LimitRanges
+            | AppView::PodDisruptionBudgets
+            | AppView::FluxCDAlertProviders
+            | AppView::FluxCDAlerts
+            | AppView::FluxCDAll
+            | AppView::FluxCDArtifacts
+            | AppView::FluxCDHelmReleases
+            | AppView::FluxCDHelmRepositories
+            | AppView::FluxCDImages
+            | AppView::FluxCDKustomizations
+            | AppView::FluxCDReceivers
+            | AppView::FluxCDSources
+            | AppView::ServiceAccounts
+            | AppView::ClusterRoles
+            | AppView::Roles
+            | AppView::ClusterRoleBindings
+            | AppView::RoleBindings => SHARED_SORT_NAME_AGE,
+            AppView::PersistentVolumeClaims
+            | AppView::PersistentVolumes
+            | AppView::StorageClasses => SHARED_SORT_NAME_ONLY,
+            _ => SHARED_SORT_NONE,
+        }
+    }
+
+    pub fn supports_shared_sort(self, column: WorkloadSortColumn) -> bool {
+        self.shared_sort_capabilities().contains(&column)
+    }
+
     pub(crate) fn index(self) -> usize {
         Self::ORDER
             .iter()
@@ -514,9 +554,62 @@ impl AppView {
     }
 }
 
+/// Shared sortable columns for cross-view list sorting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum WorkloadSortColumn {
+    Name,
+    Age,
+}
+
+impl WorkloadSortColumn {
+    const fn default_descending(self) -> bool {
+        match self {
+            WorkloadSortColumn::Name => false,
+            WorkloadSortColumn::Age => true,
+        }
+    }
+}
+
+const SHARED_SORT_NONE: &[WorkloadSortColumn] = &[];
+const SHARED_SORT_NAME_ONLY: &[WorkloadSortColumn] = &[WorkloadSortColumn::Name];
+const SHARED_SORT_NAME_AGE: &[WorkloadSortColumn] =
+    &[WorkloadSortColumn::Name, WorkloadSortColumn::Age];
+
+/// Active shared sort configuration for cross-view list sorting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct WorkloadSortState {
+    pub column: WorkloadSortColumn,
+    pub descending: bool,
+}
+
+impl WorkloadSortState {
+    pub const fn new(column: WorkloadSortColumn, descending: bool) -> Self {
+        Self { column, descending }
+    }
+
+    pub const fn cache_variant(self) -> u64 {
+        let column = match self.column {
+            WorkloadSortColumn::Name => 1_u64,
+            WorkloadSortColumn::Age => 2_u64,
+        };
+        let direction = if self.descending { 1_u64 } else { 0_u64 };
+        (column << 1) | direction
+    }
+
+    pub const fn short_label(self) -> &'static str {
+        match (self.column, self.descending) {
+            (WorkloadSortColumn::Name, true) => "name desc",
+            (WorkloadSortColumn::Name, false) => "name asc",
+            (WorkloadSortColumn::Age, true) => "age desc",
+            (WorkloadSortColumn::Age, false) => "age asc",
+        }
+    }
+}
+
 /// Sortable columns for Pods view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PodSortColumn {
+    Name,
     Age,
     Status,
     Restarts,
@@ -525,8 +618,8 @@ pub enum PodSortColumn {
 impl PodSortColumn {
     const fn default_descending(self) -> bool {
         match self {
+            PodSortColumn::Name | PodSortColumn::Status => false,
             PodSortColumn::Age | PodSortColumn::Restarts => true,
-            PodSortColumn::Status => false,
         }
     }
 }
@@ -545,9 +638,10 @@ impl PodSortState {
 
     pub const fn cache_variant(self) -> u64 {
         let column = match self.column {
-            PodSortColumn::Age => 1_u64,
-            PodSortColumn::Status => 2_u64,
-            PodSortColumn::Restarts => 3_u64,
+            PodSortColumn::Name => 1_u64,
+            PodSortColumn::Age => 2_u64,
+            PodSortColumn::Status => 3_u64,
+            PodSortColumn::Restarts => 4_u64,
         };
         let direction = if self.descending { 1_u64 } else { 0_u64 };
         (column << 1) | direction
@@ -555,6 +649,8 @@ impl PodSortState {
 
     pub const fn short_label(self) -> &'static str {
         match (self.column, self.descending) {
+            (PodSortColumn::Name, true) => "name desc",
+            (PodSortColumn::Name, false) => "name asc",
             (PodSortColumn::Age, true) => "age desc",
             (PodSortColumn::Age, false) => "age asc",
             (PodSortColumn::Status, true) => "status desc",
@@ -632,6 +728,7 @@ pub fn filtered_pod_indices(
             let left = &pods[*left_idx];
             let right = &pods[*right_idx];
             let base_order = match sort.column {
+                PodSortColumn::Name => cmp_ci_ascii(&left.name, &right.name),
                 PodSortColumn::Age => left.created_at.cmp(&right.created_at),
                 PodSortColumn::Status => cmp_ci_ascii(&left.status, &right.status),
                 PodSortColumn::Restarts => left.restarts.cmp(&right.restarts),
@@ -651,6 +748,60 @@ pub fn filtered_pod_indices(
             let name = cmp_ci_ascii(&left.name, &right.name);
             if name != std::cmp::Ordering::Equal {
                 return name;
+            }
+            left_idx.cmp(right_idx)
+        });
+    }
+
+    out
+}
+
+/// Builds filtered workload indices and applies shared name/age sorting.
+pub fn filtered_workload_indices<T, Match, Name, Namespace, Age>(
+    items: &[T],
+    query: &str,
+    sort: Option<WorkloadSortState>,
+    matches_query: Match,
+    name: Name,
+    namespace: Namespace,
+    age: Age,
+) -> Vec<usize>
+where
+    Match: Fn(&T, &str) -> bool,
+    Name: Fn(&T) -> &str,
+    Namespace: Fn(&T) -> &str,
+    Age: Fn(&T) -> Option<std::time::Duration>,
+{
+    let query = query.trim();
+    let mut out: Vec<usize> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, item)| matches_query(item, query).then_some(idx))
+        .collect();
+
+    if let Some(sort) = sort {
+        out.sort_by(|left_idx, right_idx| {
+            let left = &items[*left_idx];
+            let right = &items[*right_idx];
+            let base_order = match sort.column {
+                WorkloadSortColumn::Name => cmp_ci_ascii(name(left), name(right)),
+                WorkloadSortColumn::Age => age(left).cmp(&age(right)),
+            };
+            let ordered = if sort.descending {
+                base_order.reverse()
+            } else {
+                base_order
+            };
+            if ordered != std::cmp::Ordering::Equal {
+                return ordered;
+            }
+            let ns = cmp_ci_ascii(namespace(left), namespace(right));
+            if ns != std::cmp::Ordering::Equal {
+                return ns;
+            }
+            let item_name = cmp_ci_ascii(name(left), name(right));
+            if item_name != std::cmp::Ordering::Equal {
+                return item_name;
             }
             left_idx.cmp(right_idx)
         });
@@ -1250,6 +1401,8 @@ pub struct AppState {
     pub extension_instance_cursor: usize,
     /// Auto-refresh interval in seconds (0 = disabled).
     pub refresh_interval_secs: u64,
+    /// Optional shared name/age sort mode for workload list views.
+    pub workload_sort: Option<WorkloadSortState>,
     /// Optional sort mode for Pods view.
     pub pod_sort: Option<PodSortState>,
     /// Active port-forward tunnels displayed in the PortForwarding view.
@@ -1281,6 +1434,7 @@ impl Default for AppState {
             extension_in_instances: false,
             extension_instance_cursor: 0,
             refresh_interval_secs: 30,
+            workload_sort: None,
             pod_sort: None,
             tunnel_registry: crate::state::port_forward::TunnelRegistry::new(),
         }
@@ -1310,6 +1464,17 @@ impl AppState {
     /// Returns the currently selected list index.
     pub fn selected_idx(&self) -> usize {
         self.selected_idx
+    }
+
+    /// Returns the active shared sort mode for the given view, if supported.
+    pub fn workload_sort_for_view(&self, view: AppView) -> Option<WorkloadSortState> {
+        self.workload_sort
+            .filter(|sort| view.supports_shared_sort(sort.column))
+    }
+
+    /// Returns the active shared sort mode for the current view, if supported.
+    pub fn workload_sort(&self) -> Option<WorkloadSortState> {
+        self.workload_sort_for_view(self.view)
     }
 
     /// Returns the active search query.
@@ -1485,6 +1650,21 @@ impl AppState {
     fn clear_pod_sort(&mut self) {
         self.selected_idx = 0;
         self.pod_sort = None;
+    }
+
+    fn set_or_toggle_workload_sort(&mut self, column: WorkloadSortColumn) {
+        self.selected_idx = 0;
+        self.workload_sort = match self.workload_sort {
+            Some(current) if current.column == column => {
+                Some(WorkloadSortState::new(column, !current.descending))
+            }
+            _ => Some(WorkloadSortState::new(column, column.default_descending())),
+        };
+    }
+
+    fn clear_workload_sort(&mut self) {
+        self.selected_idx = 0;
+        self.workload_sort = None;
     }
 
     /// Moves the sidebar cursor down one row, wrapping from the last row back to the first.
@@ -1700,10 +1880,12 @@ impl AppState {
     /// | `j` / `↓` | no detail, `focus == Content` | Move content selection down |
     /// | `k` / `↑` | no detail, `focus == Sidebar` | Move sidebar cursor up |
     /// | `k` / `↑` | no detail, `focus == Content` | Move content selection up |
+    /// | `n` | workload view, no detail | Sort by Name (toggle asc/desc on repeat) |
+    /// | `a` | workload view, no detail | Sort by Age (toggle asc/desc on repeat) |
     /// | `1` | Pods view, no detail | Sort pods by Age (toggle asc/desc on repeat) |
     /// | `2` | Pods view, no detail | Sort pods by Status (toggle asc/desc on repeat) |
     /// | `3` | Pods view, no detail | Sort pods by Restarts (toggle asc/desc on repeat) |
-    /// | `0` | Pods view, no detail | Clear pods sort and return to default order |
+    /// | `0` | workload view, no detail | Clear active sort and return to default order |
     /// | `/` | — | Enter search mode |
     /// | `~` | — | Open namespace picker |
     /// | `c` | no detail | Open context picker |
@@ -2100,6 +2282,28 @@ impl AppState {
                 self.select_previous();
                 AppAction::None
             }
+            KeyCode::Char('n') if self.detail_view.is_none() && self.view == AppView::Pods => {
+                self.set_or_toggle_pod_sort(PodSortColumn::Name);
+                AppAction::None
+            }
+            KeyCode::Char('n')
+                if self.detail_view.is_none()
+                    && self.view.supports_shared_sort(WorkloadSortColumn::Name) =>
+            {
+                self.set_or_toggle_workload_sort(WorkloadSortColumn::Name);
+                AppAction::None
+            }
+            KeyCode::Char('a') if self.detail_view.is_none() && self.view == AppView::Pods => {
+                self.set_or_toggle_pod_sort(PodSortColumn::Age);
+                AppAction::None
+            }
+            KeyCode::Char('a')
+                if self.detail_view.is_none()
+                    && self.view.supports_shared_sort(WorkloadSortColumn::Age) =>
+            {
+                self.set_or_toggle_workload_sort(WorkloadSortColumn::Age);
+                AppAction::None
+            }
             KeyCode::Char('1') if self.detail_view.is_none() && self.view == AppView::Pods => {
                 self.set_or_toggle_pod_sort(PodSortColumn::Age);
                 AppAction::None
@@ -2114,6 +2318,13 @@ impl AppState {
             }
             KeyCode::Char('0') if self.detail_view.is_none() && self.view == AppView::Pods => {
                 self.clear_pod_sort();
+                AppAction::None
+            }
+            KeyCode::Char('0')
+                if self.detail_view.is_none()
+                    && !self.view.shared_sort_capabilities().is_empty() =>
+            {
+                self.clear_workload_sort();
                 AppAction::None
             }
             KeyCode::Char('/') => {
@@ -2456,6 +2667,25 @@ mod tests {
     }
 
     #[test]
+    fn pods_name_sort_shortcut_toggles() {
+        let mut app = AppState::default();
+        app.view = AppView::Pods;
+        app.focus = Focus::Content;
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('n')));
+        assert_eq!(
+            app.pod_sort(),
+            Some(PodSortState::new(PodSortColumn::Name, false))
+        );
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('n')));
+        assert_eq!(
+            app.pod_sort(),
+            Some(PodSortState::new(PodSortColumn::Name, true))
+        );
+    }
+
+    #[test]
     fn pods_sort_keybindings_are_scoped_to_pods_view() {
         let mut app = AppState::default();
         app.view = AppView::Services;
@@ -2463,6 +2693,46 @@ mod tests {
 
         app.handle_key_event(KeyEvent::from(KeyCode::Char('1')));
         assert_eq!(app.pod_sort(), None);
+    }
+
+    #[test]
+    fn workload_sort_keybindings_toggle_and_clear() {
+        let mut app = AppState::default();
+        app.view = AppView::Deployments;
+        app.focus = Focus::Content;
+
+        assert_eq!(app.workload_sort(), None);
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('n')));
+        assert_eq!(
+            app.workload_sort(),
+            Some(WorkloadSortState::new(WorkloadSortColumn::Name, false))
+        );
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('n')));
+        assert_eq!(
+            app.workload_sort(),
+            Some(WorkloadSortState::new(WorkloadSortColumn::Name, true))
+        );
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+        assert_eq!(
+            app.workload_sort(),
+            Some(WorkloadSortState::new(WorkloadSortColumn::Age, true))
+        );
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('0')));
+        assert_eq!(app.workload_sort(), None);
+    }
+
+    #[test]
+    fn workload_sort_keybindings_are_scoped_to_workload_views() {
+        let mut app = AppState::default();
+        app.view = AppView::ConfigMaps;
+        app.focus = Focus::Content;
+
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('n')));
+        assert_eq!(app.workload_sort(), None);
     }
 
     #[test]
@@ -2502,6 +2772,46 @@ mod tests {
         );
 
         // Highest restarts first, then namespace/name tie-breakers for equal restart count.
+        assert_eq!(sorted, vec![2, 1, 0]);
+    }
+
+    #[test]
+    fn filtered_workload_indices_apply_age_sort_with_name_tie_breaker() {
+        #[derive(Clone)]
+        struct Item {
+            name: String,
+            namespace: String,
+            age: Option<std::time::Duration>,
+        }
+
+        let items = vec![
+            Item {
+                name: "zeta".to_string(),
+                namespace: "prod".to_string(),
+                age: Some(std::time::Duration::from_secs(60)),
+            },
+            Item {
+                name: "alpha".to_string(),
+                namespace: "dev".to_string(),
+                age: Some(std::time::Duration::from_secs(60)),
+            },
+            Item {
+                name: "beta".to_string(),
+                namespace: "prod".to_string(),
+                age: Some(std::time::Duration::from_secs(120)),
+            },
+        ];
+
+        let sorted = filtered_workload_indices(
+            &items,
+            "",
+            Some(WorkloadSortState::new(WorkloadSortColumn::Age, true)),
+            |item, _| !item.name.is_empty(),
+            |item| item.name.as_str(),
+            |item| item.namespace.as_str(),
+            |item| item.age,
+        );
+
         assert_eq!(sorted, vec![2, 1, 0]);
     }
 

@@ -16,13 +16,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, responsive_table_widths, table_viewport_rows, table_window,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -52,32 +53,30 @@ pub fn render_statefulsets(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let theme = default_theme();
     let query = query.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::StatefulSets,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.statefulsets, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            if q.is_empty() {
-                return (0..cluster.statefulsets.len()).collect();
-            }
-            cluster
-                .statefulsets
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, ss)| {
-                    if contains_ci(&ss.name, q)
-                        || contains_ci(ss.image.as_deref().unwrap_or_default(), q)
-                    {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+            filtered_workload_indices(
+                &cluster.statefulsets,
+                q,
+                sort,
+                |ss, needle| {
+                    contains_ci(&ss.name, needle)
+                        || contains_ci(ss.image.as_deref().unwrap_or_default(), needle)
+                },
+                |ss| ss.name.as_str(),
+                |ss| ss.namespace.as_str(),
+                |ss| ss.age,
+            )
         },
     );
 
@@ -101,14 +100,19 @@ pub fn render_statefulsets(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Ready", theme.header_style())),
         Cell::from(Span::styled("Service", theme.header_style())),
         Cell::from(Span::styled("Image", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -162,12 +166,15 @@ pub fn render_statefulsets(
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
-    let title = format!(" 🗄  StatefulSets ({total}) ");
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" 🗄  StatefulSets ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = cluster.statefulsets.len();
-        active_block(&format!(" 🗄  StatefulSets ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " 🗄  StatefulSets ({total} of {all}) [/{query}]{sort_suffix}"
+        ))
     };
 
     let table = Table::new(

@@ -17,14 +17,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     k8s::dtos::FluxResourceInfo,
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, responsive_table_widths, table_viewport_rows, table_window,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -176,31 +177,33 @@ pub fn filtered_flux_indices_for_view(
     view: AppView,
     cluster: &ClusterSnapshot,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) -> Arc<Vec<usize>> {
     let Some(mode) = FluxMode::from_view(view) else {
         return Arc::new(Vec::new());
     };
     let query = query.trim();
 
-    cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    cached_filter_indices_with_variant(
         view,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.flux_resources, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            cluster
-                .flux_resources
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, resource)| {
-                    if resource_matches_mode(mode, resource) && resource_matches_query(resource, q)
-                    {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+            filtered_workload_indices(
+                &cluster.flux_resources,
+                q,
+                sort,
+                |resource, needle| {
+                    resource_matches_mode(mode, resource)
+                        && resource_matches_query(resource, needle)
+                },
+                |resource| resource.name.as_str(),
+                |resource| resource.namespace.as_deref().unwrap_or(""),
+                |resource| resource.age,
+            )
         },
     )
 }
@@ -257,6 +260,7 @@ pub fn render_flux_resources(
     selected_idx: usize,
     query: &str,
     view: AppView,
+    sort: Option<WorkloadSortState>,
 ) {
     let Some(mode) = FluxMode::from_view(view) else {
         frame.render_widget(
@@ -271,7 +275,7 @@ pub fn render_flux_resources(
     };
 
     let query = query.trim();
-    let indices = filtered_flux_indices_for_view(view, cluster, query);
+    let indices = filtered_flux_indices_for_view(view, cluster, query, sort);
 
     let theme = default_theme();
     if indices.is_empty() {
@@ -295,7 +299,7 @@ pub fn render_flux_resources(
     let mode_total = if query.is_empty() {
         total
     } else {
-        filtered_flux_indices_for_view(view, cluster, "").len()
+        filtered_flux_indices_for_view(view, cluster, "", sort).len()
     };
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
@@ -305,13 +309,18 @@ pub fn render_flux_resources(
         FluxMode::HelmRepositories => "URL",
         _ => "Message",
     };
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Kind", theme.header_style())),
         Cell::from(Span::styled("Status", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
         Cell::from(Span::styled(detail_col_name, theme.header_style())),
     ])
     .height(1)
@@ -358,12 +367,13 @@ pub fn render_flux_resources(
         .collect();
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
-    let title = format!(" 🌀 FluxCD · {} ({total}) ", mode.title());
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" 🌀 FluxCD · {} ({total}){sort_suffix} ", mode.title());
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         active_block(&format!(
-            " 🌀 FluxCD · {} ({total} of {mode_total}) [/{query}]",
+            " 🌀 FluxCD · {} ({total} of {mode_total}) [/{query}]{sort_suffix}",
             mode.title()
         ))
     };
@@ -562,7 +572,8 @@ mod tests {
             ..ClusterSnapshot::default()
         };
 
-        let filtered = filtered_flux_indices_for_view(AppView::FluxCDHelmReleases, &snapshot, "");
+        let filtered =
+            filtered_flux_indices_for_view(AppView::FluxCDHelmReleases, &snapshot, "", None);
         assert_eq!(filtered.len(), 2);
         assert!(
             filtered
@@ -601,7 +612,8 @@ mod tests {
             ..ClusterSnapshot::default()
         };
 
-        let filtered = filtered_flux_indices_for_view(AppView::FluxCDKustomizations, &snapshot, "");
+        let filtered =
+            filtered_flux_indices_for_view(AppView::FluxCDKustomizations, &snapshot, "", None);
         assert_eq!(filtered.len(), 2);
     }
 }

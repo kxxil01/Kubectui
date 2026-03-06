@@ -11,13 +11,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
-        loading_or_empty_message, table_viewport_rows, table_window,
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
+        loading_or_empty_message, table_viewport_rows, table_window, workload_sort_header,
+        workload_sort_suffix,
     },
 };
 
@@ -27,26 +28,27 @@ pub fn render_pvcs(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let theme = default_theme();
     let query = search.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::PersistentVolumeClaims,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.pvcs, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            if q.is_empty() {
-                return (0..cluster.pvcs.len()).collect();
-            }
-            cluster
-                .pvcs
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, pvc)| {
-                    (contains_ci(&pvc.name, q) || contains_ci(&pvc.namespace, q)).then_some(idx)
-                })
-                .collect()
+            filtered_workload_indices(
+                &cluster.pvcs,
+                q,
+                sort,
+                |pvc, needle| contains_ci(&pvc.name, needle) || contains_ci(&pvc.namespace, needle),
+                |pvc| pvc.name.as_str(),
+                |pvc| pvc.namespace.as_str(),
+                |_pvc| None,
+            )
         },
     );
 
@@ -71,8 +73,12 @@ pub fn render_pvcs(
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
 
+    let name_header = workload_sort_header("NAME", sort, WorkloadSortColumn::Name);
     let header = Row::new([
-        Cell::from(Span::styled("  NAME", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("NAMESPACE", theme.header_style())),
         Cell::from(Span::styled("STATUS", theme.header_style())),
         Cell::from(Span::styled("CAPACITY", theme.header_style())),
@@ -132,11 +138,12 @@ pub fn render_pvcs(
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
+    let sort_suffix = workload_sort_suffix(sort);
     let title = if query.is_empty() {
-        format!(" PersistentVolumeClaims ({total}) ")
+        format!(" PersistentVolumeClaims ({total}){sort_suffix} ")
     } else {
         let all = cluster.pvcs.len();
-        format!(" PersistentVolumeClaims ({total} of {all}) [/{query}]")
+        format!(" PersistentVolumeClaims ({total} of {all}) [/{query}]{sort_suffix}")
     };
 
     let table = Table::new(
@@ -166,24 +173,27 @@ pub fn render_pvs(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let theme = default_theme();
     let query = search.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::PersistentVolumes,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.pvs, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            if q.is_empty() {
-                return (0..cluster.pvs.len()).collect();
-            }
-            cluster
-                .pvs
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, pv)| contains_ci(&pv.name, q).then_some(idx))
-                .collect()
+            filtered_workload_indices(
+                &cluster.pvs,
+                q,
+                sort,
+                |pv, needle| contains_ci(&pv.name, needle),
+                |pv| pv.name.as_str(),
+                |_pv| "",
+                |_pv| None,
+            )
         },
     );
 
@@ -208,8 +218,12 @@ pub fn render_pvs(
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
 
+    let name_header = workload_sort_header("NAME", sort, WorkloadSortColumn::Name);
     let header = Row::new([
-        Cell::from(Span::styled("  NAME", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("CAPACITY", theme.header_style())),
         Cell::from(Span::styled("ACCESS MODES", theme.header_style())),
         Cell::from(Span::styled("RECLAIM", theme.header_style())),
@@ -275,11 +289,12 @@ pub fn render_pvs(
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
+    let sort_suffix = workload_sort_suffix(sort);
     let title = if query.is_empty() {
-        format!(" PersistentVolumes ({total}) ")
+        format!(" PersistentVolumes ({total}){sort_suffix} ")
     } else {
         let all = cluster.pvs.len();
-        format!(" PersistentVolumes ({total} of {all}) [/{query}]")
+        format!(" PersistentVolumes ({total} of {all}) [/{query}]{sort_suffix}")
     };
 
     let table = Table::new(
@@ -310,26 +325,27 @@ pub fn render_storage_classes(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let theme = default_theme();
     let query = search.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::StorageClasses,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.storage_classes, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            if q.is_empty() {
-                return (0..cluster.storage_classes.len()).collect();
-            }
-            cluster
-                .storage_classes
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, storage_class)| {
-                    contains_ci(&storage_class.name, q).then_some(idx)
-                })
-                .collect()
+            filtered_workload_indices(
+                &cluster.storage_classes,
+                q,
+                sort,
+                |storage_class, needle| contains_ci(&storage_class.name, needle),
+                |storage_class| storage_class.name.as_str(),
+                |_storage_class| "",
+                |_storage_class| None,
+            )
         },
     );
 
@@ -354,8 +370,12 @@ pub fn render_storage_classes(
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
 
+    let name_header = workload_sort_header("NAME", sort, WorkloadSortColumn::Name);
     let header = Row::new([
-        Cell::from(Span::styled("  NAME", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("PROVISIONER", theme.header_style())),
         Cell::from(Span::styled("RECLAIM", theme.header_style())),
         Cell::from(Span::styled("BINDING MODE", theme.header_style())),
@@ -415,11 +435,12 @@ pub fn render_storage_classes(
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
+    let sort_suffix = workload_sort_suffix(sort);
     let title = if query.is_empty() {
-        format!(" StorageClasses ({total}) ")
+        format!(" StorageClasses ({total}){sort_suffix} ")
     } else {
         let all = cluster.storage_classes.len();
-        format!(" StorageClasses ({total} of {all}) [/{query}]")
+        format!(" StorageClasses ({total} of {all}) [/{query}]{sort_suffix}")
     };
 
     let table = Table::new(

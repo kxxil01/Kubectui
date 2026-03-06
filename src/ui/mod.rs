@@ -17,12 +17,14 @@ use ratatui::{
 };
 use std::{
     borrow::Cow,
-    cmp::Ordering,
     sync::{Arc, LazyLock, Mutex},
 };
 
 use crate::{
-    app::{AppState, AppView, PodSortColumn, PodSortState, filtered_pod_indices},
+    app::{
+        AppState, AppView, PodSortColumn, PodSortState, WorkloadSortColumn, WorkloadSortState,
+        filtered_pod_indices,
+    },
     state::{ClusterSnapshot, ViewLoadState},
     ui::components::{active_block, default_block, default_theme},
 };
@@ -41,27 +43,6 @@ pub(crate) fn contains_ci(haystack: &str, needle: &str) -> bool {
         .as_bytes()
         .windows(needle.len())
         .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
-}
-
-/// ASCII case-insensitive lexicographic compare without allocating lowercase copies.
-#[inline]
-pub(crate) fn cmp_ci(left: &str, right: &str) -> Ordering {
-    let mut l = left.bytes();
-    let mut r = right.bytes();
-    loop {
-        match (l.next(), r.next()) {
-            (Some(lb), Some(rb)) => {
-                let lc = lb.to_ascii_lowercase();
-                let rc = rb.to_ascii_lowercase();
-                if lc != rc {
-                    return lc.cmp(&rc);
-                }
-            }
-            (None, Some(_)) => return Ordering::Less,
-            (Some(_), None) => return Ordering::Greater,
-            (None, None) => return Ordering::Equal,
-        }
-    }
 }
 
 /// Formats small integer values without heap allocation for common cases.
@@ -220,6 +201,29 @@ fn current_view_activity(snapshot: &ClusterSnapshot, view: AppView) -> Option<St
     }
 }
 
+pub(crate) fn workload_sort_header(
+    label: &str,
+    sort: Option<WorkloadSortState>,
+    column: WorkloadSortColumn,
+) -> String {
+    match sort {
+        Some(WorkloadSortState {
+            column: active,
+            descending: true,
+        }) if active == column => format!("{label}▼"),
+        Some(WorkloadSortState {
+            column: active,
+            descending: false,
+        }) if active == column => format!("{label}▲"),
+        _ => label.to_string(),
+    }
+}
+
+pub(crate) fn workload_sort_suffix(sort: Option<WorkloadSortState>) -> String {
+    sort.map(|state| format!(" • sort: {}", state.short_label()))
+        .unwrap_or_default()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PodDerivedCacheKey {
     query: String,
@@ -344,6 +348,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::Pods => {
                 render_pods_widget(
@@ -361,6 +366,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::ReplicationControllers => {
                 views::replication_controllers::render_replication_controllers(
@@ -369,6 +375,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     cluster,
                     app.selected_idx(),
                     app.search_query(),
+                    app.workload_sort(),
                 )
             }
             AppView::HelmCharts => views::helm::render_helm_repos(
@@ -401,6 +408,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.view(),
+                app.workload_sort(),
             ),
             AppView::Endpoints => views::endpoints::render_endpoints(
                 frame,
@@ -471,6 +479,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::PersistentVolumes => views::storage::render_pvs(
                 frame,
@@ -478,6 +487,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::StorageClasses => views::storage::render_storage_classes(
                 frame,
@@ -485,6 +495,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::Namespaces => views::namespaces::render_namespaces(
                 frame,
@@ -506,6 +517,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::Deployments => views::deployments::render_deployments(
                 frame,
@@ -513,6 +525,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::StatefulSets => views::statefulsets::render_statefulsets(
                 frame,
@@ -520,6 +533,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::DaemonSets => views::daemonsets::render_daemonsets(
                 frame,
@@ -527,6 +541,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::Jobs => views::jobs::render_jobs(
                 frame,
@@ -534,6 +549,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::CronJobs => views::cronjobs::render_cronjobs(
                 frame,
@@ -541,6 +557,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::ServiceAccounts => views::security::service_accounts::render_service_accounts(
                 frame,
@@ -548,6 +565,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::Roles => views::security::roles::render_roles(
                 frame,
@@ -555,6 +573,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::RoleBindings => views::security::role_bindings::render_role_bindings(
                 frame,
@@ -562,6 +581,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::ClusterRoles => views::security::cluster_roles::render_cluster_roles(
                 frame,
@@ -569,6 +589,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::ClusterRoleBindings => {
                 views::security::cluster_role_bindings::render_cluster_role_bindings(
@@ -577,6 +598,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     cluster,
                     app.selected_idx(),
                     app.search_query(),
+                    app.workload_sort(),
                 )
             }
             AppView::ResourceQuotas => views::governance::quotas::render_resource_quotas(
@@ -585,6 +607,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::LimitRanges => views::governance::limits::render_limit_ranges(
                 frame,
@@ -592,6 +615,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::PodDisruptionBudgets => views::governance::pdbs::render_pdbs(
                 frame,
@@ -599,6 +623,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.workload_sort(),
             ),
             AppView::Extensions => {
                 views::extensions::render_extensions(frame, content, cluster, app)
@@ -617,11 +642,24 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         let current_activity = current_view_activity(cluster, app.view())
             .map(|activity| format!(" {activity} •"))
             .unwrap_or_default();
-        let pods_sort_hint = if app.view() == AppView::Pods {
+        let sort_hint = if app.view() == AppView::Pods {
             let active = app.pod_sort().map_or("default", PodSortState::short_label);
-            format!(" • [1/2/3] pod-sort ({active}) • [0] clear-sort")
+            format!(" • [n/a] sort ({active}) • [1/2/3] pod-sort • [0] clear-sort")
         } else {
-            String::new()
+            let caps = app.view().shared_sort_capabilities();
+            if caps.is_empty() {
+                String::new()
+            } else {
+                let key_hint = if caps == [WorkloadSortColumn::Name] {
+                    "[n]"
+                } else {
+                    "[n/a]"
+                };
+                let active = app
+                    .workload_sort()
+                    .map_or("default", WorkloadSortState::short_label);
+                format!(" • {key_hint} sort ({active}) • [0] clear-sort")
+            }
         };
         let flux_reconcile_hint = if app.detail_view.is_none()
             && app.view().is_fluxcd()
@@ -634,7 +672,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             ""
         };
         format!(
-            "[{}]{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{pods_sort_hint}{flux_reconcile_hint} • [r] refresh • [q] quit",
+            "[{}]{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint} • [r] refresh • [q] quit",
             app.get_namespace(),
             current_activity
         )
@@ -773,6 +811,17 @@ fn render_pods_widget(
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
 
+    let name_header = match pod_sort {
+        Some(PodSortState {
+            column: PodSortColumn::Name,
+            descending: true,
+        }) => "Name▼",
+        Some(PodSortState {
+            column: PodSortColumn::Name,
+            descending: false,
+        }) => "Name▲",
+        _ => "Name",
+    };
     let age_header = match pod_sort {
         Some(PodSortState {
             column: PodSortColumn::Age,
@@ -808,7 +857,10 @@ fn render_pods_widget(
     };
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled(status_header, theme.header_style())),
         Cell::from(Span::styled("Node", theme.header_style())),

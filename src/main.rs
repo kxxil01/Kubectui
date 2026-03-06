@@ -25,7 +25,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use kubectui::{
     app::{
         AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState,
-        ResourceRef, filtered_pod_indices, load_config, save_config,
+        ResourceRef, filtered_pod_indices, filtered_workload_indices, load_config, save_config,
     },
     coordinator::{LogStreamStatus, UpdateCoordinator, UpdateMessage},
     events::apply_action,
@@ -2130,10 +2130,27 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
     let q = app.search_query();
     match app.view() {
         AppView::Dashboard => None,
-        AppView::Nodes => filtered_get(&snapshot.nodes, idx, q, |n, q| {
-            contains_ci(&n.name, q) || contains_ci(&n.role, q)
-        })
-        .map(|n| ResourceRef::Node(n.name.clone())),
+        AppView::Nodes => {
+            let indices = filtered_workload_indices(
+                &snapshot.nodes,
+                q,
+                app.workload_sort(),
+                |node, needle| contains_ci(&node.name, needle),
+                |node| node.name.as_str(),
+                |_node| "",
+                |node| {
+                    node.created_at.map(|created_at| {
+                        let age_secs =
+                            (chrono::Utc::now().timestamp() - created_at.timestamp()).max(0) as u64;
+                        Duration::from_secs(age_secs)
+                    })
+                },
+            );
+            indices.get(idx).map(|node_idx| {
+                let node = &snapshot.nodes[*node_idx];
+                ResourceRef::Node(node.name.clone())
+            })
+        }
         AppView::Pods => {
             let indices = filtered_pod_indices(&snapshot.pods, q, app.pod_sort());
             indices.get(idx).map(|pod_idx| {
@@ -2141,56 +2158,202 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 ResourceRef::Pod(pod.name.clone(), pod.namespace.clone())
             })
         }
-        AppView::Services => filtered_get(&snapshot.services, idx, q, |s, q| {
-            contains_ci(&s.name, q) || contains_ci(&s.namespace, q) || contains_ci(&s.type_, q)
-        })
-        .map(|s| ResourceRef::Service(s.name.clone(), s.namespace.clone())),
-        AppView::Deployments => filtered_get(&snapshot.deployments, idx, q, |d, q| {
-            contains_ci(&d.name, q) || contains_ci(&d.namespace, q)
-        })
-        .map(|d| ResourceRef::Deployment(d.name.clone(), d.namespace.clone())),
-        AppView::StatefulSets => filtered_get(&snapshot.statefulsets, idx, q, |ss, q| {
-            contains_ci(&ss.name, q) || contains_ci(&ss.namespace, q)
-        })
-        .map(|ss| ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone())),
-        AppView::ResourceQuotas => filtered_get(&snapshot.resource_quotas, idx, q, |rq, q| {
-            contains_ci(&rq.name, q) || contains_ci(&rq.namespace, q)
-        })
-        .map(|rq| ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone())),
-        AppView::LimitRanges => filtered_get(&snapshot.limit_ranges, idx, q, |lr, q| {
-            contains_ci(&lr.name, q) || contains_ci(&lr.namespace, q)
-        })
-        .map(|lr| ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone())),
+        AppView::Services => {
+            let indices = filtered_workload_indices(
+                &snapshot.services,
+                q,
+                app.workload_sort(),
+                |svc, needle| {
+                    contains_ci(&svc.name, needle)
+                        || contains_ci(&svc.namespace, needle)
+                        || contains_ci(&svc.type_, needle)
+                },
+                |svc| svc.name.as_str(),
+                |svc| svc.namespace.as_str(),
+                |svc| svc.age,
+            );
+            indices.get(idx).map(|svc_idx| {
+                let svc = &snapshot.services[*svc_idx];
+                ResourceRef::Service(svc.name.clone(), svc.namespace.clone())
+            })
+        }
+        AppView::ResourceQuotas => {
+            let indices = filtered_workload_indices(
+                &snapshot.resource_quotas,
+                q,
+                app.workload_sort(),
+                |rq, needle| {
+                    let hard_key_match = rq.hard.keys().any(|key| contains_ci(key, needle));
+                    contains_ci(&rq.name, needle) || hard_key_match
+                },
+                |rq| rq.name.as_str(),
+                |rq| rq.namespace.as_str(),
+                |rq| rq.age,
+            );
+            indices.get(idx).map(|rq_idx| {
+                let rq = &snapshot.resource_quotas[*rq_idx];
+                ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone())
+            })
+        }
+        AppView::LimitRanges => {
+            let indices = filtered_workload_indices(
+                &snapshot.limit_ranges,
+                q,
+                app.workload_sort(),
+                |lr, needle| {
+                    let type_match = lr
+                        .limits
+                        .iter()
+                        .any(|spec| contains_ci(&spec.type_, needle));
+                    contains_ci(&lr.name, needle) || type_match
+                },
+                |lr| lr.name.as_str(),
+                |lr| lr.namespace.as_str(),
+                |lr| lr.age,
+            );
+            indices.get(idx).map(|lr_idx| {
+                let lr = &snapshot.limit_ranges[*lr_idx];
+                ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone())
+            })
+        }
         AppView::PodDisruptionBudgets => {
-            filtered_get(&snapshot.pod_disruption_budgets, idx, q, |pdb, q| {
-                contains_ci(&pdb.name, q) || contains_ci(&pdb.namespace, q)
+            let indices = filtered_workload_indices(
+                &snapshot.pod_disruption_budgets,
+                q,
+                app.workload_sort(),
+                |pdb, needle| {
+                    contains_ci(&pdb.name, needle)
+                        || contains_ci(pdb.min_available.as_deref().unwrap_or_default(), needle)
+                        || contains_ci(pdb.max_unavailable.as_deref().unwrap_or_default(), needle)
+                },
+                |pdb| pdb.name.as_str(),
+                |pdb| pdb.namespace.as_str(),
+                |pdb| pdb.age,
+            );
+            indices.get(idx).map(|pdb_idx| {
+                let pdb = &snapshot.pod_disruption_budgets[*pdb_idx];
+                ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone())
             })
-            .map(|pdb| ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone()))
         }
-        AppView::DaemonSets => filtered_get(&snapshot.daemonsets, idx, q, |ds, q| {
-            contains_ci(&ds.name, q) || contains_ci(&ds.namespace, q)
-        })
-        .map(|ds| ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone())),
-        AppView::ReplicaSets => filtered_get(&snapshot.replicasets, idx, q, |rs, q| {
-            contains_ci(&rs.name, q) || contains_ci(&rs.namespace, q)
-        })
-        .map(|rs| ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone())),
+        AppView::Deployments => {
+            let indices = filtered_workload_indices(
+                &snapshot.deployments,
+                q,
+                app.workload_sort(),
+                |deploy, needle| {
+                    contains_ci(&deploy.name, needle) || contains_ci(&deploy.namespace, needle)
+                },
+                |deploy| deploy.name.as_str(),
+                |deploy| deploy.namespace.as_str(),
+                |deploy| deploy.age,
+            );
+            indices.get(idx).map(|deploy_idx| {
+                let deploy = &snapshot.deployments[*deploy_idx];
+                ResourceRef::Deployment(deploy.name.clone(), deploy.namespace.clone())
+            })
+        }
+        AppView::StatefulSets => {
+            let indices = filtered_workload_indices(
+                &snapshot.statefulsets,
+                q,
+                app.workload_sort(),
+                |ss, needle| {
+                    contains_ci(&ss.name, needle)
+                        || contains_ci(ss.image.as_deref().unwrap_or_default(), needle)
+                },
+                |ss| ss.name.as_str(),
+                |ss| ss.namespace.as_str(),
+                |ss| ss.age,
+            );
+            indices.get(idx).map(|ss_idx| {
+                let ss = &snapshot.statefulsets[*ss_idx];
+                ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone())
+            })
+        }
+        AppView::DaemonSets => {
+            let indices = filtered_workload_indices(
+                &snapshot.daemonsets,
+                q,
+                app.workload_sort(),
+                |ds, needle| {
+                    let label_match = ds
+                        .labels
+                        .iter()
+                        .any(|(key, value)| contains_ci(key, needle) || contains_ci(value, needle));
+                    contains_ci(&ds.name, needle)
+                        || contains_ci(&ds.selector, needle)
+                        || contains_ci(ds.image.as_deref().unwrap_or_default(), needle)
+                        || label_match
+                },
+                |ds| ds.name.as_str(),
+                |ds| ds.namespace.as_str(),
+                |ds| ds.age,
+            );
+            indices.get(idx).map(|ds_idx| {
+                let ds = &snapshot.daemonsets[*ds_idx];
+                ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone())
+            })
+        }
+        AppView::ReplicaSets => {
+            let indices = filtered_workload_indices(
+                &snapshot.replicasets,
+                q,
+                app.workload_sort(),
+                |rs, needle| contains_ci(&rs.name, needle) || contains_ci(&rs.namespace, needle),
+                |rs| rs.name.as_str(),
+                |rs| rs.namespace.as_str(),
+                |rs| rs.age,
+            );
+            indices.get(idx).map(|rs_idx| {
+                let rs = &snapshot.replicasets[*rs_idx];
+                ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone())
+            })
+        }
         AppView::ReplicationControllers => {
-            filtered_get(&snapshot.replication_controllers, idx, q, |rc, q| {
-                contains_ci(&rc.name, q) || contains_ci(&rc.namespace, q)
+            let indices = filtered_workload_indices(
+                &snapshot.replication_controllers,
+                q,
+                app.workload_sort(),
+                |rc, needle| contains_ci(&rc.name, needle) || contains_ci(&rc.namespace, needle),
+                |rc| rc.name.as_str(),
+                |rc| rc.namespace.as_str(),
+                |rc| rc.age,
+            );
+            indices.get(idx).map(|rc_idx| {
+                let rc = &snapshot.replication_controllers[*rc_idx];
+                ResourceRef::ReplicationController(rc.name.clone(), rc.namespace.clone())
             })
-            .map(|rc| ResourceRef::ReplicationController(rc.name.clone(), rc.namespace.clone()))
         }
-        AppView::Jobs => filtered_get(&snapshot.jobs, idx, q, |j, q| {
-            contains_ci(&j.name, q) || contains_ci(&j.namespace, q) || contains_ci(&j.status, q)
-        })
-        .map(|j| ResourceRef::Job(j.name.clone(), j.namespace.clone())),
-        AppView::CronJobs => filtered_get(&snapshot.cronjobs, idx, q, |cj, q| {
-            contains_ci(&cj.name, q)
-                || contains_ci(&cj.namespace, q)
-                || contains_ci(&cj.schedule, q)
-        })
-        .map(|cj| ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone())),
+        AppView::Jobs => {
+            let indices = filtered_workload_indices(
+                &snapshot.jobs,
+                q,
+                app.workload_sort(),
+                |job, needle| contains_ci(&job.name, needle) || contains_ci(&job.status, needle),
+                |job| job.name.as_str(),
+                |job| job.namespace.as_str(),
+                |job| job.age,
+            );
+            indices.get(idx).map(|job_idx| {
+                let job = &snapshot.jobs[*job_idx];
+                ResourceRef::Job(job.name.clone(), job.namespace.clone())
+            })
+        }
+        AppView::CronJobs => {
+            let indices = filtered_workload_indices(
+                &snapshot.cronjobs,
+                q,
+                app.workload_sort(),
+                |cj, needle| contains_ci(&cj.name, needle) || contains_ci(&cj.schedule, needle),
+                |cj| cj.name.as_str(),
+                |cj| cj.namespace.as_str(),
+                |cj| cj.age,
+            );
+            indices.get(idx).map(|cj_idx| {
+                let cj = &snapshot.cronjobs[*cj_idx];
+                ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone())
+            })
+        }
         AppView::Endpoints => filtered_get(&snapshot.endpoints, idx, q, |e, q| {
             contains_ci(&e.name, q) || contains_ci(&e.namespace, q)
         })
@@ -2223,18 +2386,49 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
             contains_ci(&pc.name, q)
         })
         .map(|pc| ResourceRef::PriorityClass(pc.name.clone())),
-        AppView::PersistentVolumeClaims => filtered_get(&snapshot.pvcs, idx, q, |pvc, q| {
-            contains_ci(&pvc.name, q) || contains_ci(&pvc.namespace, q)
-        })
-        .map(|pvc| ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone())),
-        AppView::PersistentVolumes => {
-            filtered_get(&snapshot.pvs, idx, q, |pv, q| contains_ci(&pv.name, q))
-                .map(|pv| ResourceRef::Pv(pv.name.clone()))
+        AppView::PersistentVolumeClaims => {
+            let indices = filtered_workload_indices(
+                &snapshot.pvcs,
+                q,
+                app.workload_sort(),
+                |pvc, needle| contains_ci(&pvc.name, needle) || contains_ci(&pvc.namespace, needle),
+                |pvc| pvc.name.as_str(),
+                |pvc| pvc.namespace.as_str(),
+                |_pvc| None,
+            );
+            indices.get(idx).map(|pvc_idx| {
+                let pvc = &snapshot.pvcs[*pvc_idx];
+                ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone())
+            })
         }
-        AppView::StorageClasses => filtered_get(&snapshot.storage_classes, idx, q, |sc, q| {
-            contains_ci(&sc.name, q)
-        })
-        .map(|sc| ResourceRef::StorageClass(sc.name.clone())),
+        AppView::PersistentVolumes => {
+            let indices = filtered_workload_indices(
+                &snapshot.pvs,
+                q,
+                app.workload_sort(),
+                |pv, needle| contains_ci(&pv.name, needle),
+                |pv| pv.name.as_str(),
+                |_pv| "",
+                |_pv| None,
+            );
+            indices
+                .get(idx)
+                .map(|pv_idx| ResourceRef::Pv(snapshot.pvs[*pv_idx].name.clone()))
+        }
+        AppView::StorageClasses => {
+            let indices = filtered_workload_indices(
+                &snapshot.storage_classes,
+                q,
+                app.workload_sort(),
+                |sc, needle| contains_ci(&sc.name, needle),
+                |sc| sc.name.as_str(),
+                |_sc| "",
+                |_sc| None,
+            );
+            indices.get(idx).map(|sc_idx| {
+                ResourceRef::StorageClass(snapshot.storage_classes[*sc_idx].name.clone())
+            })
+        }
         AppView::Namespaces => filtered_get(&snapshot.namespace_list, idx, q, |ns, q| {
             contains_ci(&ns.name, q) || contains_ci(&ns.status, q)
         })
@@ -2243,27 +2437,88 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
             contains_ci(&ev.name, q) || contains_ci(&ev.namespace, q) || contains_ci(&ev.reason, q)
         })
         .map(|ev| ResourceRef::Event(ev.name.clone(), ev.namespace.clone())),
-        AppView::ServiceAccounts => filtered_get(&snapshot.service_accounts, idx, q, |sa, q| {
-            contains_ci(&sa.name, q) || contains_ci(&sa.namespace, q)
-        })
-        .map(|sa| ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone())),
-        AppView::Roles => filtered_get(&snapshot.roles, idx, q, |r, q| {
-            contains_ci(&r.name, q) || contains_ci(&r.namespace, q)
-        })
-        .map(|r| ResourceRef::Role(r.name.clone(), r.namespace.clone())),
-        AppView::RoleBindings => filtered_get(&snapshot.role_bindings, idx, q, |rb, q| {
-            contains_ci(&rb.name, q) || contains_ci(&rb.namespace, q)
-        })
-        .map(|rb| ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone())),
-        AppView::ClusterRoles => filtered_get(&snapshot.cluster_roles, idx, q, |cr, q| {
-            contains_ci(&cr.name, q)
-        })
-        .map(|cr| ResourceRef::ClusterRole(cr.name.clone())),
-        AppView::ClusterRoleBindings => {
-            filtered_get(&snapshot.cluster_role_bindings, idx, q, |crb, q| {
-                contains_ci(&crb.name, q)
+        AppView::ServiceAccounts => {
+            let indices = filtered_workload_indices(
+                &snapshot.service_accounts,
+                q,
+                app.workload_sort(),
+                |sa, needle| contains_ci(&sa.name, needle) || contains_ci(&sa.namespace, needle),
+                |sa| sa.name.as_str(),
+                |sa| sa.namespace.as_str(),
+                |sa| sa.age,
+            );
+            indices.get(idx).map(|sa_idx| {
+                let sa = &snapshot.service_accounts[*sa_idx];
+                ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone())
             })
-            .map(|crb| ResourceRef::ClusterRoleBinding(crb.name.clone()))
+        }
+        AppView::Roles => {
+            let indices = filtered_workload_indices(
+                &snapshot.roles,
+                q,
+                app.workload_sort(),
+                |role, needle| {
+                    contains_ci(&role.name, needle) || contains_ci(&role.namespace, needle)
+                },
+                |role| role.name.as_str(),
+                |role| role.namespace.as_str(),
+                |role| role.age,
+            );
+            indices.get(idx).map(|role_idx| {
+                let role = &snapshot.roles[*role_idx];
+                ResourceRef::Role(role.name.clone(), role.namespace.clone())
+            })
+        }
+        AppView::RoleBindings => {
+            let indices = filtered_workload_indices(
+                &snapshot.role_bindings,
+                q,
+                app.workload_sort(),
+                |rb, needle| {
+                    contains_ci(&rb.name, needle)
+                        || contains_ci(&rb.namespace, needle)
+                        || contains_ci(&rb.role_ref_name, needle)
+                },
+                |rb| rb.name.as_str(),
+                |rb| rb.namespace.as_str(),
+                |rb| rb.age,
+            );
+            indices.get(idx).map(|rb_idx| {
+                let rb = &snapshot.role_bindings[*rb_idx];
+                ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone())
+            })
+        }
+        AppView::ClusterRoles => {
+            let indices = filtered_workload_indices(
+                &snapshot.cluster_roles,
+                q,
+                app.workload_sort(),
+                |cr, needle| contains_ci(&cr.name, needle),
+                |cr| cr.name.as_str(),
+                |_cr| "",
+                |cr| cr.age,
+            );
+            indices.get(idx).map(|cr_idx| {
+                ResourceRef::ClusterRole(snapshot.cluster_roles[*cr_idx].name.clone())
+            })
+        }
+        AppView::ClusterRoleBindings => {
+            let indices = filtered_workload_indices(
+                &snapshot.cluster_role_bindings,
+                q,
+                app.workload_sort(),
+                |crb, needle| {
+                    contains_ci(&crb.name, needle) || contains_ci(&crb.role_ref_name, needle)
+                },
+                |crb| crb.name.as_str(),
+                |_crb| "",
+                |crb| crb.age,
+            );
+            indices.get(idx).map(|crb_idx| {
+                ResourceRef::ClusterRoleBinding(
+                    snapshot.cluster_role_bindings[*crb_idx].name.clone(),
+                )
+            })
         }
         AppView::HelmCharts => None, // Helm repos are local config, no detail view
         AppView::PortForwarding => None, // Port forwards are managed via the dialog
@@ -2306,8 +2561,12 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
         | AppView::FluxCDKustomizations
         | AppView::FluxCDReceivers
         | AppView::FluxCDSources => {
-            let filtered =
-                kubectui::ui::views::flux::filtered_flux_indices_for_view(app.view(), snapshot, q);
+            let filtered = kubectui::ui::views::flux::filtered_flux_indices_for_view(
+                app.view(),
+                snapshot,
+                q,
+                app.workload_sort(),
+            );
             filtered
                 .get(idx)
                 .and_then(|resource_idx| snapshot.flux_resources.get(*resource_idx))

@@ -16,14 +16,14 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
         contains_ci,
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window,
+        table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -51,30 +51,27 @@ pub fn render_replicasets(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     query: &str,
+    sort: Option<WorkloadSortState>,
 ) {
     let theme = default_theme();
     let query = query.trim();
-    let indices = cached_filter_indices(
+    let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
+    let indices = cached_filter_indices_with_variant(
         AppView::ReplicaSets,
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.replicasets, cluster.snapshot_version),
+        cache_variant,
         |q| {
-            if q.is_empty() {
-                return (0..cluster.replicasets.len()).collect();
-            }
-            cluster
-                .replicasets
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, rs)| {
-                    if contains_ci(&rs.name, q) || contains_ci(&rs.namespace, q) {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                })
-                .collect()
+            filtered_workload_indices(
+                &cluster.replicasets,
+                q,
+                sort,
+                |rs, needle| contains_ci(&rs.name, needle) || contains_ci(&rs.namespace, needle),
+                |rs| rs.name.as_str(),
+                |rs| rs.namespace.as_str(),
+                |rs| rs.age,
+            )
         },
     );
 
@@ -98,15 +95,20 @@ pub fn render_replicasets(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
+    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
+    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
     let header = Row::new([
-        Cell::from(Span::styled("  Name", theme.header_style())),
+        Cell::from(Span::styled(
+            format!("  {name_header}"),
+            theme.header_style(),
+        )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Desired", theme.header_style())),
         Cell::from(Span::styled("Ready", theme.header_style())),
         Cell::from(Span::styled("Available", theme.header_style())),
         Cell::from(Span::styled("Image", theme.header_style())),
-        Cell::from(Span::styled("Age", theme.header_style())),
+        Cell::from(Span::styled(age_header, theme.header_style())),
     ])
     .height(1)
     .style(theme.header_style());
@@ -165,12 +167,15 @@ pub fn render_replicasets(
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
-    let title = format!(" Replica Sets ({total}) ");
+    let sort_suffix = workload_sort_suffix(sort);
+    let title = format!(" Replica Sets ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         active_block(&title)
     } else {
         let all = cluster.replicasets.len();
-        active_block(&format!(" Replica Sets ({total} of {all}) [/{query}]"))
+        active_block(&format!(
+            " Replica Sets ({total} of {all}) [/{query}]{sort_suffix}"
+        ))
     };
 
     let table = Table::new(
