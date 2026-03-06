@@ -113,6 +113,39 @@ impl K8sClient {
         Ok(())
     }
 
+    pub async fn scale_statefulset(
+        &self,
+        name: &str,
+        namespace: &str,
+        replicas: i32,
+    ) -> Result<()> {
+        if !(0..=100).contains(&replicas) {
+            return Err(anyhow!(
+                "invalid replica count {}: must be between 0 and 100",
+                replicas
+            ));
+        }
+        let client = self.get_client();
+        let statefulsets: Api<StatefulSet> = Api::namespaced(client, namespace);
+        statefulsets.get(name).await.with_context(|| {
+            format!(
+                "statefulset '{}' not found in namespace '{}'",
+                name, namespace
+            )
+        })?;
+        let patch = Patch::Merge(json!({"spec": {"replicas": replicas}}));
+        statefulsets
+            .patch(name, &PatchParams::apply("kubectui"), &patch)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to patch statefulset '{}' in namespace '{}'",
+                    name, namespace
+                )
+            })?;
+        Ok(())
+    }
+
     /// Triggers a rolling restart by patching the pod template annotation
     /// `kubectl.kubernetes.io/restartedAt` with the current UTC timestamp.
     /// Works for Deployments, StatefulSets, and DaemonSets.

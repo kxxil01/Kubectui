@@ -13,8 +13,10 @@ use crate::{
     },
     ui::components::{
         CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction, NamespacePicker,
-        NamespacePickerAction, port_forward_dialog::PortForwardDialog,
-        probe_panel::ProbePanelState as ProbePanelComponentState, scale_dialog::ScaleDialogState,
+        NamespacePickerAction,
+        port_forward_dialog::PortForwardDialog,
+        probe_panel::ProbePanelState as ProbePanelComponentState,
+        scale_dialog::{ScaleDialogState, ScaleTargetKind},
     },
 };
 
@@ -1607,18 +1609,34 @@ impl AppState {
         }
     }
 
+    /// Convenience initializer used by tests and non-runtime callers.
+    /// The runtime path in `main.rs` overrides this with snapshot-derived replicas.
     pub fn open_scale_dialog(&mut self) {
         if let Some(detail) = &mut self.detail_view {
-            let (name, namespace, current_replicas) = detail
+            let (target_kind, name, namespace, current_replicas) = detail
                 .resource
                 .as_ref()
                 .and_then(|r| match r {
-                    ResourceRef::Deployment(name, ns) => Some((name.clone(), ns.clone(), 1i32)),
-                    ResourceRef::StatefulSet(name, ns) => Some((name.clone(), ns.clone(), 1i32)),
+                    ResourceRef::Deployment(name, ns) => {
+                        Some((ScaleTargetKind::Deployment, name.clone(), ns.clone(), 1i32))
+                    }
+                    ResourceRef::StatefulSet(name, ns) => {
+                        Some((ScaleTargetKind::StatefulSet, name.clone(), ns.clone(), 1i32))
+                    }
                     _ => None,
                 })
-                .unwrap_or_else(|| (String::new(), "default".to_string(), 1));
-            detail.scale_dialog = Some(ScaleDialogState::new(name, namespace, current_replicas));
+                .unwrap_or((
+                    ScaleTargetKind::Deployment,
+                    String::new(),
+                    "default".to_string(),
+                    1,
+                ));
+            detail.scale_dialog = Some(ScaleDialogState::new(
+                target_kind,
+                name,
+                namespace,
+                current_replicas,
+            ));
         }
     }
 

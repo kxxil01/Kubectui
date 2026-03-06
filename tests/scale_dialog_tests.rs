@@ -1,18 +1,19 @@
 //! Integration tests for the Scale Dialog component
 
-use kubectui::ui::components::{ScaleAction, ScaleDialogState, ScaleField};
+use kubectui::ui::components::{ScaleAction, ScaleDialogState, ScaleField, ScaleTargetKind};
 
 #[test]
 fn test_scale_dialog_state_creation() {
-    let state = ScaleDialogState::new("nginx", "default", 3);
-    assert_eq!(state.deployment_name, "nginx");
+    let state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
+    assert_eq!(state.target_kind, ScaleTargetKind::Deployment);
+    assert_eq!(state.workload_name, "nginx");
     assert_eq!(state.namespace, "default");
     assert_eq!(state.current_replicas, 3);
 }
 
 #[test]
 fn test_increment_decrement_logic() {
-    let mut state = ScaleDialogState::new("app", "prod", 5);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "app", "prod", 5);
 
     // Test increment
     state.handle_action(ScaleAction::Increment);
@@ -26,7 +27,7 @@ fn test_increment_decrement_logic() {
 
 #[test]
 fn test_digit_input() {
-    let mut state = ScaleDialogState::new("web", "dev", 1);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "web", "dev", 1);
 
     state.handle_action(ScaleAction::AddChar('2'));
     state.handle_action(ScaleAction::AddChar('5'));
@@ -36,7 +37,7 @@ fn test_digit_input() {
 
 #[test]
 fn test_validation_range() {
-    let mut state = ScaleDialogState::new("api", "test", 5);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "api", "test", 5);
 
     // Add valid digits
     state.handle_action(ScaleAction::AddChar('5'));
@@ -53,7 +54,7 @@ fn test_validation_range() {
 
 #[test]
 fn test_warning_for_large_jump() {
-    let mut state = ScaleDialogState::new("db", "prod", 5);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "db", "prod", 5);
 
     state.handle_action(ScaleAction::AddChar('8'));
     state.handle_action(ScaleAction::AddChar('0'));
@@ -64,7 +65,7 @@ fn test_warning_for_large_jump() {
 
 #[test]
 fn test_field_focus_cycling() {
-    let mut state = ScaleDialogState::new("cache", "staging", 2);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "cache", "staging", 2);
 
     assert_eq!(state.focus_field, ScaleField::InputField);
 
@@ -80,7 +81,7 @@ fn test_field_focus_cycling() {
 
 #[test]
 fn test_is_valid_check() {
-    let mut state = ScaleDialogState::new("worker", "prod", 10);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "worker", "prod", 10);
 
     // Empty is invalid
     assert!(!state.is_valid());
@@ -100,7 +101,7 @@ fn test_is_valid_check() {
 
 #[test]
 fn test_submit_updates_desired_replicas() {
-    let mut state = ScaleDialogState::new("service", "dev", 3);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "service", "dev", 3);
 
     state.handle_action(ScaleAction::AddChar('1'));
     state.handle_action(ScaleAction::AddChar('0'));
@@ -111,7 +112,7 @@ fn test_submit_updates_desired_replicas() {
 
 #[test]
 fn test_pending_flag() {
-    let mut state = ScaleDialogState::new("app", "test", 1);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "app", "test", 1);
 
     assert!(!state.pending);
     state.set_pending(true);
@@ -122,7 +123,7 @@ fn test_pending_flag() {
 
 #[test]
 fn test_decrement_at_zero_boundary() {
-    let mut state = ScaleDialogState::new("minimal", "edge", 0);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "minimal", "edge", 0);
 
     state.handle_action(ScaleAction::Decrement);
     assert_eq!(state.input_buffer, "0");
@@ -134,7 +135,7 @@ fn test_decrement_at_zero_boundary() {
 
 #[test]
 fn test_increment_at_max_boundary() {
-    let mut state = ScaleDialogState::new("maxed", "prod", 100);
+    let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "maxed", "prod", 100);
 
     state.handle_action(ScaleAction::Increment);
     assert_eq!(state.input_buffer, "100");

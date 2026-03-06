@@ -19,7 +19,9 @@ pub use input_field::InputFieldWidget;
 pub use namespace_picker::{NamespacePicker, NamespacePickerAction};
 pub use port_forward_dialog::{FormField, PortForwardAction, PortForwardDialog, PortForwardMode};
 pub use probe_panel::ProbePanelState;
-pub use scale_dialog::{ScaleAction, ScaleDialogState, ScaleField, render_scale_dialog};
+pub use scale_dialog::{
+    ScaleAction, ScaleDialogState, ScaleField, ScaleTargetKind, render_scale_dialog,
+};
 
 use ratatui::{
     layout::{Alignment, Rect},

@@ -1,4 +1,4 @@
-//! Scale dialog component for deployment replica scaling.
+//! Scale dialog component for workload replica scaling.
 
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -27,10 +27,27 @@ pub enum ScaleAction {
     None,
 }
 
+/// Scalable workload kinds supported by the dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScaleTargetKind {
+    Deployment,
+    StatefulSet,
+}
+
+impl ScaleTargetKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Deployment => "Deployment",
+            Self::StatefulSet => "StatefulSet",
+        }
+    }
+}
+
 /// State machine for the scale dialog.
 #[derive(Debug, Clone)]
 pub struct ScaleDialogState {
-    pub deployment_name: String,
+    pub target_kind: ScaleTargetKind,
+    pub workload_name: String,
     pub namespace: String,
     pub current_replicas: i32,
     pub desired_replicas: String,
@@ -42,14 +59,16 @@ pub struct ScaleDialogState {
 }
 
 impl ScaleDialogState {
-    /// Creates a new scale dialog state for a deployment.
+    /// Creates a new scale dialog state for a scalable workload.
     pub fn new(
-        deployment_name: impl Into<String>,
+        target_kind: ScaleTargetKind,
+        workload_name: impl Into<String>,
         namespace: impl Into<String>,
         current_replicas: i32,
     ) -> Self {
         Self {
-            deployment_name: deployment_name.into(),
+            target_kind,
+            workload_name: workload_name.into(),
             namespace: namespace.into(),
             current_replicas,
             desired_replicas: current_replicas.to_string(),
@@ -206,7 +225,11 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         .split(popup);
 
     // Title
-    let title = format!("Scale Deployment: {}", state.deployment_name);
+    let title = format!(
+        "Scale {}: {}",
+        state.target_kind.label(),
+        state.workload_name
+    );
     let title_widget = Paragraph::new(Line::from(vec![Span::styled(
         title,
         Style::default().fg(Color::Cyan).bold(),
@@ -357,8 +380,9 @@ mod tests {
 
     #[test]
     fn test_scale_dialog_state_creation() {
-        let state = ScaleDialogState::new("nginx", "default", 3);
-        assert_eq!(state.deployment_name, "nginx");
+        let state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
+        assert_eq!(state.target_kind, ScaleTargetKind::Deployment);
+        assert_eq!(state.workload_name, "nginx");
         assert_eq!(state.namespace, "default");
         assert_eq!(state.current_replicas, 3);
         assert_eq!(state.desired_replicas, "3");
@@ -366,28 +390,28 @@ mod tests {
 
     #[test]
     fn test_increment_logic() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.handle_action(ScaleAction::Increment);
         assert_eq!(state.input_buffer, "4");
     }
 
     #[test]
     fn test_decrement_logic() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.handle_action(ScaleAction::Decrement);
         assert_eq!(state.input_buffer, "2");
     }
 
     #[test]
     fn test_digit_input() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.handle_action(ScaleAction::AddChar('5'));
         assert_eq!(state.input_buffer, "5");
     }
 
     #[test]
     fn test_backspace() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.handle_action(ScaleAction::AddChar('5'));
         state.handle_action(ScaleAction::AddChar('0'));
         state.handle_action(ScaleAction::DeleteChar);
@@ -396,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_validation_range() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.input_buffer = "101".to_string();
         state.validate_and_update();
         assert!(state.error_message.is_some());
@@ -404,7 +428,7 @@ mod tests {
 
     #[test]
     fn test_zero_replica_valid() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.input_buffer = "0".to_string();
         state.validate_and_update();
         assert!(state.error_message.is_none());
@@ -413,7 +437,7 @@ mod tests {
 
     #[test]
     fn test_leading_zero_invalid() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.input_buffer = "05".to_string();
         state.validate_and_update();
         assert!(state.error_message.is_some());
@@ -421,7 +445,7 @@ mod tests {
 
     #[test]
     fn test_large_jump_warning() {
-        let mut state = ScaleDialogState::new("nginx", "default", 5);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 5);
         state.handle_action(ScaleAction::AddChar('8'));
         state.handle_action(ScaleAction::AddChar('0'));
         assert!(state.warning_message.is_some());
@@ -429,7 +453,7 @@ mod tests {
 
     #[test]
     fn test_field_focus_cycling() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         assert_eq!(state.focus_field, ScaleField::InputField);
         state.next_field();
         assert_eq!(state.focus_field, ScaleField::ApplyBtn);
@@ -441,7 +465,7 @@ mod tests {
 
     #[test]
     fn test_prev_field_cycling() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.prev_field();
         assert_eq!(state.focus_field, ScaleField::CancelBtn);
         state.prev_field();
@@ -450,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_submit_updates_desired_replicas_when_valid() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.handle_action(ScaleAction::AddChar('9'));
         state.handle_action(ScaleAction::Submit);
         assert_eq!(state.desired_replicas, "9");
@@ -458,7 +482,7 @@ mod tests {
 
     #[test]
     fn test_submit_ignored_for_invalid_input() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.input_buffer = "500".to_string();
         state.validate_and_update();
         state.handle_action(ScaleAction::Submit);
@@ -467,7 +491,7 @@ mod tests {
 
     #[test]
     fn test_desired_replicas_as_int_only_when_valid() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         assert_eq!(state.desired_replicas_as_int(), None);
 
         state.handle_action(ScaleAction::AddChar('7'));
@@ -476,7 +500,7 @@ mod tests {
 
     #[test]
     fn test_increment_and_decrement_boundaries() {
-        let mut state = ScaleDialogState::new("nginx", "default", 100);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 100);
         state.handle_action(ScaleAction::Increment);
         assert_eq!(state.input_buffer, "100");
 
@@ -487,13 +511,13 @@ mod tests {
 
     #[test]
     fn render_scale_dialog_smoke_default_state() {
-        let state = ScaleDialogState::new("nginx", "default", 3);
+        let state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         draw(&state);
     }
 
     #[test]
     fn render_scale_dialog_smoke_error_warning_pending_states() {
-        let mut state = ScaleDialogState::new("nginx", "default", 3);
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
 
         state.error_message = Some("Invalid range".to_string());
         draw(&state);
