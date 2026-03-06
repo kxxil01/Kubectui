@@ -3,6 +3,7 @@
 pub mod client;
 pub mod dtos;
 pub mod events;
+pub mod flux;
 pub mod helm;
 pub mod logs;
 pub mod portforward;

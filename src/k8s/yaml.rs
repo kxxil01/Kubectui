@@ -1,10 +1,16 @@
 //! Helpers for fetching Kubernetes resources and serializing them to YAML.
 
 use anyhow::{Context, Result, anyhow};
+use chrono::{SecondsFormat, Utc};
 use kube::{
     Api, Client,
     api::{ApiResource, DynamicObject, GroupVersionKind, Patch, PatchParams},
     error::ErrorResponse,
+};
+use serde_json::json;
+
+use crate::k8s::flux::{
+    FluxReconcileSupport, RECONCILE_REQUEST_ANNOTATION, flux_reconcile_support,
 };
 
 /// Maximum rendered YAML length in bytes (10 KiB).
@@ -413,11 +419,58 @@ pub async fn delete_custom_resource(
     Ok(())
 }
 
+/// Requests Flux reconciliation for a custom resource by patching the standard
+/// `reconcile.fluxcd.io/requestedAt` annotation.
+pub async fn request_flux_reconcile(
+    client: &Client,
+    group: &str,
+    version: &str,
+    kind: &str,
+    plural: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> Result<()> {
+    match flux_reconcile_support(group, kind) {
+        FluxReconcileSupport::Supported => {}
+        FluxReconcileSupport::Unsupported(reason) => return Err(anyhow!(reason)),
+    }
+
+    let gvk = GroupVersionKind::gvk(group, version, kind);
+    let mut ar = ApiResource::from_gvk(&gvk);
+    ar.plural = plural.to_string();
+
+    let api: Api<DynamicObject> = match namespace {
+        Some(ns) => Api::namespaced_with(client.clone(), ns, &ar),
+        None => Api::all_with(client.clone(), &ar),
+    };
+
+    let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true);
+    let patch = Patch::Merge(json!({
+        "metadata": {
+            "annotations": {
+                RECONCILE_REQUEST_ANNOTATION: timestamp,
+            }
+        }
+    }));
+
+    api.patch(name, &PatchParams::default(), &patch)
+        .await
+        .with_context(|| {
+            format!(
+                "failed to request Flux reconciliation for {group}/{version}/{kind} name='{name}' namespace='{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            )
+        })?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use kube::error::ErrorResponse;
 
     use super::*;
+    use crate::k8s::flux::RECONCILE_REQUEST_ANNOTATION;
 
     /// Verifies YAML truncation keeps short payloads intact.
     #[test]
@@ -469,5 +522,20 @@ mod tests {
 
         assert!(is_forbidden_error(&forbidden));
         assert!(!is_forbidden_error(&not_found));
+    }
+
+    #[test]
+    fn flux_reconcile_patch_contains_requested_at_annotation() {
+        let patch = json!({
+            "metadata": {
+                "annotations": {
+                    RECONCILE_REQUEST_ANNOTATION: "2026-03-06T12:00:00.123456789Z",
+                }
+            }
+        });
+        assert_eq!(
+            patch["metadata"]["annotations"][RECONCILE_REQUEST_ANNOTATION],
+            "2026-03-06T12:00:00.123456789Z"
+        );
     }
 }

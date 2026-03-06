@@ -18,6 +18,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::RefreshData => true,
+        AppAction::FluxReconcile => true,
         AppAction::OpenDetail(_) => true,
         AppAction::CloseDetail => {
             app_state.detail_view = None;

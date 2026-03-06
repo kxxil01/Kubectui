@@ -238,6 +238,12 @@ struct RolloutRestartAsyncResult {
 }
 
 #[derive(Debug)]
+struct FluxReconcileAsyncResult {
+    context_generation: u64,
+    result: Result<(), String>,
+}
+
+#[derive(Debug)]
 struct ProbeAsyncResult {
     pod_name: String,
     namespace: String,
@@ -610,6 +616,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         tokio::sync::mpsc::channel::<DeferredRefreshTrigger>(32);
     let (scale_tx, mut scale_rx) = tokio::sync::mpsc::channel::<ScaleAsyncResult>(16);
     let (rollout_tx, mut rollout_rx) = tokio::sync::mpsc::channel::<RolloutRestartAsyncResult>(16);
+    let (flux_reconcile_tx, mut flux_reconcile_rx) =
+        tokio::sync::mpsc::channel::<FluxReconcileAsyncResult>(16);
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
 
     // Channel for background data refreshes — namespace switches, manual refresh, auto-refresh
@@ -1030,6 +1038,33 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
+            result = flux_reconcile_rx.recv() => {
+                if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        continue;
+                    }
+
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(()) => {
+                            app.clear_error();
+                            request_refresh(
+                                &refresh_tx,
+                                &mut global_state,
+                                &client,
+                                namespace_scope(app.get_namespace()).map(str::to_string),
+                                refresh_options_for_view(app.view(), true, false),
+                                &mut refresh_state,
+                                &mut snapshot_dirty,
+                            );
+                        }
+                        Err(err) => {
+                            app.set_error(format!("Flux reconcile failed: {err}"));
+                        }
+                    }
+                }
+            }
+
             result = probe_rx.recv() => {
                 if let Some(result) = result {
                     needs_redraw = true;
@@ -1161,6 +1196,51 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         );
                         // Reset auto-refresh timer after manual refresh
                         auto_refresh.reset();
+                    }
+                    AppAction::FluxReconcile => {
+                        let reconcile_resource =
+                            match selected_flux_reconcile_resource(&app, &cached_snapshot) {
+                                Ok(resource) => resource,
+                                Err(err) => {
+                                    app.set_error(err);
+                                    continue;
+                                }
+                            };
+
+                        app.clear_error();
+                        let tx = flux_reconcile_tx.clone();
+                        let c = client.clone();
+                        let context_generation = refresh_state.context_generation;
+                        tokio::spawn(async move {
+                            let result = match reconcile_resource {
+                                ResourceRef::CustomResource {
+                                    name,
+                                    namespace,
+                                    group,
+                                    version,
+                                    kind,
+                                    plural,
+                                } => c
+                                    .request_flux_reconcile(
+                                        &group,
+                                        &version,
+                                        &kind,
+                                        &plural,
+                                        &name,
+                                        namespace.as_deref(),
+                                    )
+                                    .await
+                                    .map_err(|err| format!("{err:#}")),
+                                _ => Err("Flux reconcile is only available for custom resources."
+                                    .to_string()),
+                            };
+                            let _ = tx
+                                .send(FluxReconcileAsyncResult {
+                                    context_generation,
+                                    result,
+                                })
+                                .await;
+                        });
                     }
                     AppAction::OpenNamespacePicker => {
                         app.set_available_namespaces(global_state.namespaces().to_vec());
@@ -1977,6 +2057,52 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 })
         }
     }
+}
+
+fn selected_flux_reconcile_resource(
+    app: &AppState,
+    snapshot: &ClusterSnapshot,
+) -> Result<ResourceRef, String> {
+    let resource = app
+        .detail_view
+        .as_ref()
+        .and_then(|detail| detail.resource.clone())
+        .or_else(|| selected_resource(app, snapshot))
+        .ok_or_else(|| "No Flux resource is selected.".to_string())?;
+
+    if let Some(reason) = resource.flux_reconcile_disabled_reason() {
+        return Err(reason.to_string());
+    }
+
+    let ResourceRef::CustomResource {
+        name,
+        namespace,
+        group,
+        version,
+        kind,
+        plural,
+    } = &resource
+    else {
+        return Err("Flux reconcile is only available for Flux toolkit resources.".to_string());
+    };
+
+    let is_suspended = snapshot.flux_resources.iter().any(|candidate| {
+        candidate.name == *name
+            && candidate.namespace == *namespace
+            && candidate.group == *group
+            && candidate.version == *version
+            && candidate.kind == *kind
+            && candidate.plural == *plural
+            && candidate.suspended
+    });
+
+    if is_suspended {
+        return Err(format!(
+            "Flux reconcile is unavailable because {kind} '{name}' is suspended."
+        ));
+    }
+
+    Ok(resource)
 }
 
 fn initial_loading_state(resource: ResourceRef, snapshot: &ClusterSnapshot) -> DetailViewState {
@@ -3097,4 +3223,60 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
     .context("failed leaving alternate screen")?;
     terminal.show_cursor().context("failed to show cursor")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::selected_flux_reconcile_resource;
+    use kubectui::{
+        app::{AppState, AppView, DetailViewState, ResourceRef},
+        k8s::dtos::FluxResourceInfo,
+        state::ClusterSnapshot,
+    };
+
+    #[test]
+    fn selected_flux_reconcile_resource_rejects_suspended_flux_objects() {
+        let mut app = AppState::default();
+        app.view = AppView::FluxCDKustomizations;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.flux_resources.push(FluxResourceInfo {
+            name: "apps".to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            suspended: true,
+            ..FluxResourceInfo::default()
+        });
+
+        let err = selected_flux_reconcile_resource(&app, &snapshot).expect_err("must reject");
+        assert_eq!(
+            err,
+            "Flux reconcile is unavailable because Kustomization 'apps' is suspended."
+        );
+    }
+
+    #[test]
+    fn selected_flux_reconcile_resource_uses_detail_resource_when_present() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CustomResource {
+                name: "backend".to_string(),
+                namespace: Some("flux-system".to_string()),
+                group: "helm.toolkit.fluxcd.io".to_string(),
+                version: "v2".to_string(),
+                kind: "HelmRelease".to_string(),
+                plural: "helmreleases".to_string(),
+            }),
+            ..DetailViewState::default()
+        });
+
+        let resource = selected_flux_reconcile_resource(&app, &ClusterSnapshot::default())
+            .expect("detail flux resource is selected");
+        assert_eq!(resource.kind(), "HelmRelease");
+        assert_eq!(resource.name(), "backend");
+        assert_eq!(resource.namespace(), Some("flux-system"));
+    }
 }

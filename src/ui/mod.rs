@@ -567,8 +567,18 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         } else {
             String::new()
         };
+        let flux_reconcile_hint = if app.detail_view.is_none()
+            && app.view().is_fluxcd()
+            && !matches!(
+                app.view(),
+                AppView::FluxCDAlertProviders | AppView::FluxCDAlerts
+            ) {
+            " • [R] reconcile"
+        } else {
+            ""
+        };
         format!(
-            "[{}]{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{pods_sort_hint} • [r] refresh • [q] quit",
+            "[{}]{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{pods_sort_hint}{flux_reconcile_hint} • [r] refresh • [q] quit",
             app.get_namespace(),
             current_activity
         )
