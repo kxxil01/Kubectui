@@ -62,7 +62,7 @@ pub fn render_deployments(
         AppView::Deployments,
         query,
         snapshot.snapshot_version,
-        data_fingerprint(&snapshot.deployments),
+        data_fingerprint(&snapshot.deployments, snapshot.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..snapshot.deployments.len()).collect();
@@ -146,11 +146,11 @@ pub fn render_deployments(
                 Cell::from(Span::styled(deploy.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(deploy.ready.as_str(), ready_style)),
                 Cell::from(Span::styled(
-                    format_small_int(i64::from(deploy.updated)),
+                    format_small_int(i64::from(deploy.updated_replicas)),
                     dim_style,
                 )),
                 Cell::from(Span::styled(
-                    format_small_int(i64::from(deploy.available)),
+                    format_small_int(i64::from(deploy.available_replicas)),
                     dim_style,
                 )),
                 Cell::from(Span::styled(age_text, theme.inactive_style())),
@@ -223,7 +223,7 @@ fn cached_deployment_derived(
     let key = DeploymentDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
-        data_fingerprint: data_fingerprint(&snapshot.deployments),
+        data_fingerprint: data_fingerprint(&snapshot.deployments, snapshot.snapshot_version),
     };
 
     if let Ok(cache) = DEPLOYMENT_DERIVED_CACHE.lock()
@@ -260,10 +260,8 @@ fn format_image(image: Option<&str>) -> String {
     };
 
     const MAX_LEN: usize = 34;
-    if image.len() <= MAX_LEN {
+    if image.chars().count() <= MAX_LEN {
         image.to_string()
-    } else if image.is_ascii() {
-        format!("{}...", &image[..MAX_LEN.saturating_sub(3)])
     } else {
         format!(
             "{}...",

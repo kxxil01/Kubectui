@@ -33,7 +33,7 @@ pub fn render_pdbs(
         AppView::PodDisruptionBudgets,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.pod_disruption_budgets),
+        data_fingerprint(&cluster.pod_disruption_budgets, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.pod_disruption_budgets.len()).collect();

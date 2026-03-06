@@ -16,6 +16,9 @@ use crate::ui::theme::Theme;
 use crate::ui::contains_ci;
 use crate::k8s::logs::PodRef;
 
+const MAX_LOG_LINES: usize = 50_000;
+const MAX_LINE_LENGTH: usize = 10_000;
+
 /// Action emitted by logs view based on keyboard input
 #[derive(Debug, Clone, PartialEq)]
 pub enum LogsViewAction {
@@ -127,6 +130,14 @@ impl LogsViewState {
 
     /// Add a log line
     pub fn add_log(&mut self, content: String) {
+        let content = if content.len() > MAX_LINE_LENGTH {
+            let mut truncated = content;
+            truncated.truncate(MAX_LINE_LENGTH);
+            truncated.push_str("…[truncated]");
+            truncated
+        } else {
+            content
+        };
         let number = self.logs.len() + 1;
         let level = LogLevel::from_line(&content);
         self.logs.push(LogLine {
@@ -134,6 +145,11 @@ impl LogsViewState {
             content,
             level,
         });
+
+        if self.logs.len() > MAX_LOG_LINES {
+            let excess = self.logs.len() - MAX_LOG_LINES;
+            self.logs.drain(..excess);
+        }
 
         if self.follow_mode {
             self.scroll_to_end();
@@ -448,37 +464,31 @@ fn render_log_area(
                 && contains_ci(&log.content, &state.search_query);
 
             if has_match {
-                // Split content into normal + highlighted spans at each match
                 let highlight_style = Style::default()
                     .fg(theme.bg)
                     .bg(theme.warning);
-                let needle_len = state.search_query.len();
-                let content_bytes = log.content.as_bytes();
-                let needle_bytes = state.search_query.as_bytes();
-                let mut pos = 0usize;
-                for window_start in 0..=content_bytes.len().saturating_sub(needle_len) {
-                    if content_bytes[window_start..window_start + needle_len]
-                        .eq_ignore_ascii_case(needle_bytes)
-                    {
-                        // Text before the match
-                        if window_start > pos {
-                            spans.push(Span::styled(
-                                log.content[pos..window_start].to_string(),
-                                content_style,
-                            ));
-                        }
-                        // The matched text
-                        spans.push(Span::styled(
-                            log.content[window_start..window_start + needle_len].to_string(),
-                            highlight_style,
-                        ));
-                        pos = window_start + needle_len;
+                let lower_content = log.content.to_ascii_lowercase();
+                let lower_needle = state.search_query.to_ascii_lowercase();
+                let mut last_end = 0usize;
+                for (start, _) in lower_content.match_indices(&lower_needle) {
+                    if start < last_end {
+                        continue;
                     }
-                }
-                // Remaining text after last match
-                if pos < log.content.len() {
+                    if start > last_end {
+                        spans.push(Span::styled(
+                            log.content[last_end..start].to_string(),
+                            content_style,
+                        ));
+                    }
                     spans.push(Span::styled(
-                        log.content[pos..].to_string(),
+                        log.content[start..start + lower_needle.len()].to_string(),
+                        highlight_style,
+                    ));
+                    last_end = start + lower_needle.len();
+                }
+                if last_end < log.content.len() {
+                    spans.push(Span::styled(
+                        log.content[last_end..].to_string(),
                         content_style,
                     ));
                 }

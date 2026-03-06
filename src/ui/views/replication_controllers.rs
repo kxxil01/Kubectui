@@ -62,7 +62,7 @@ pub fn render_replication_controllers(
         AppView::ReplicationControllers,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.replication_controllers),
+        data_fingerprint(&cluster.replication_controllers, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.replication_controllers.len()).collect();
@@ -223,7 +223,7 @@ fn cached_replication_controller_derived(
     let key = ReplicationControllerDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.replication_controllers),
+        data_fingerprint: data_fingerprint(&cluster.replication_controllers, cluster.snapshot_version),
     };
 
     if let Ok(cache) = REPLICATION_CONTROLLER_DERIVED_CACHE.lock()
@@ -268,10 +268,8 @@ fn format_image(image: Option<&str>) -> String {
         return "-".to_string();
     };
     const MAX_LEN: usize = 32;
-    if image.len() <= MAX_LEN {
+    if image.chars().count() <= MAX_LEN {
         image.to_string()
-    } else if image.is_ascii() {
-        format!("{}...", &image[..MAX_LEN.saturating_sub(3)])
     } else {
         format!(
             "{}...",

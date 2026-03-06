@@ -79,9 +79,18 @@ impl ScaleQueue {
         }
     }
 
-    /// Adds a scale request to the queue.
+    /// Adds a scale request to the queue, purging stale completed items first.
     pub fn add(&mut self, item: ScaleQueueItem) {
+        self.purge_completed();
         self.items.insert(item.id.clone(), item);
+    }
+
+    /// Removes completed items older than 5 minutes.
+    pub fn purge_completed(&mut self) {
+        let cutoff = Utc::now() - chrono::Duration::seconds(300);
+        self.items.retain(|_, i| {
+            i.status == ScaleStatus::Pending || i.created_at > cutoff
+        });
     }
 
     /// Retrieves a scale request by ID.

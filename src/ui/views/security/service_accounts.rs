@@ -60,7 +60,7 @@ pub fn render_service_accounts(
         AppView::ServiceAccounts,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.service_accounts),
+        data_fingerprint(&cluster.service_accounts, cluster.snapshot_version),
         |q| {
             let mut out: Vec<usize> = cluster
                 .service_accounts
@@ -227,7 +227,7 @@ fn cached_service_account_derived(
     let key = ServiceAccountDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.service_accounts),
+        data_fingerprint: data_fingerprint(&cluster.service_accounts, cluster.snapshot_version),
     };
 
     if let Ok(cache) = SERVICE_ACCOUNT_DERIVED_CACHE.lock()

@@ -1,5 +1,6 @@
 //! Command palette — fuzzy-search jump to any view with `:`.
 
+use std::cell::RefCell;
 use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -179,6 +180,7 @@ pub struct CommandPalette {
     query: String,
     selected_index: usize,
     is_open: bool,
+    cached_filtered: RefCell<Option<Vec<AppView>>>,
 }
 
 impl CommandPalette {
@@ -186,6 +188,7 @@ impl CommandPalette {
         self.is_open = true;
         self.query.clear();
         self.selected_index = 0;
+        self.cached_filtered.borrow_mut().take();
     }
 
     pub fn close(&mut self) {
@@ -231,11 +234,13 @@ impl CommandPalette {
             KeyCode::Backspace => {
                 self.query.pop();
                 self.selected_index = 0;
+                self.cached_filtered.borrow_mut().take();
                 CommandPaletteAction::None
             }
             KeyCode::Char(c) => {
                 self.query.push(c);
                 self.selected_index = 0;
+                self.cached_filtered.borrow_mut().take();
                 CommandPaletteAction::None
             }
             _ => CommandPaletteAction::None,
@@ -244,18 +249,24 @@ impl CommandPalette {
 
     /// Returns views whose aliases fuzzy-match the current query.
     pub fn filtered(&self) -> Vec<AppView> {
-        if self.query.is_empty() {
-            return COMMANDS.iter().map(|c| c.view).collect();
+        if let Some(cached) = self.cached_filtered.borrow().as_ref() {
+            return cached.clone();
         }
-        COMMANDS
-            .iter()
-            .filter(|cmd| {
-                cmd.aliases
-                    .iter()
-                    .any(|alias| fuzzy_match(alias, &self.query))
-            })
-            .map(|c| c.view)
-            .collect()
+        let result: Vec<AppView> = if self.query.is_empty() {
+            COMMANDS.iter().map(|c| c.view).collect()
+        } else {
+            COMMANDS
+                .iter()
+                .filter(|cmd| {
+                    cmd.aliases
+                        .iter()
+                        .any(|alias| fuzzy_match(alias, &self.query))
+                })
+                .map(|c| c.view)
+                .collect()
+        };
+        *self.cached_filtered.borrow_mut() = Some(result.clone());
+        result
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {

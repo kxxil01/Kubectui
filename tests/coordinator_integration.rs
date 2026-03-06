@@ -23,7 +23,7 @@ mod integration_tests {
             .await
             .expect("Failed to connect to K8s cluster");
 
-        let (update_tx, mut update_rx) = mpsc::unbounded_channel();
+        let (update_tx, mut update_rx) = mpsc::channel(4096);
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start polling for a pod
@@ -67,7 +67,7 @@ mod integration_tests {
             .await
             .expect("Failed to connect to K8s cluster");
 
-        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let (update_tx, _update_rx) = mpsc::channel(4096);
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start polling for multiple pods
@@ -108,7 +108,7 @@ mod integration_tests {
             .await
             .expect("Failed to connect to K8s cluster");
 
-        let (update_tx, mut update_rx) = mpsc::unbounded_channel();
+        let (update_tx, mut update_rx) = mpsc::channel(4096);
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start streaming logs
@@ -156,7 +156,7 @@ mod integration_tests {
             .await
             .expect("Failed to connect to K8s cluster");
 
-        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let (update_tx, _update_rx) = mpsc::channel(4096);
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start polling
@@ -191,7 +191,7 @@ mod integration_tests {
             .await
             .expect("Failed to connect to K8s cluster");
 
-        let (update_tx, _update_rx) = mpsc::unbounded_channel();
+        let (update_tx, _update_rx) = mpsc::channel(4096);
         let coordinator = UpdateCoordinator::new(client, update_tx);
 
         // Start many tasks

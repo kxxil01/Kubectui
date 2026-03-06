@@ -54,6 +54,9 @@ impl FilterCache {
     }
 
     fn touch(&mut self, key: &FilterCacheKey) {
+        if self.order.back().is_some_and(|k| k == key) {
+            return;
+        }
         if let Some(pos) = self.order.iter().position(|item| item == key) {
             self.order.remove(pos);
             self.order.push_back(key.clone());
@@ -129,10 +132,9 @@ where
     built
 }
 
-pub(crate) fn data_fingerprint<T>(items: &[T]) -> u64 {
-    let ptr = items.as_ptr() as usize as u64;
+pub(crate) fn data_fingerprint<T>(items: &[T], generation: u64) -> u64 {
     let len = items.len() as u64;
-    ptr ^ len.rotate_left(13)
+    generation.wrapping_mul(0x517cc1b727220a95) ^ len.rotate_left(13)
 }
 
 pub(crate) fn filter_cache_stats() -> FilterCacheStats {

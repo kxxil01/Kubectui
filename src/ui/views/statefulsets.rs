@@ -59,7 +59,7 @@ pub fn render_statefulsets(
         AppView::StatefulSets,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.statefulsets),
+        data_fingerprint(&cluster.statefulsets, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.statefulsets.len()).collect();
@@ -213,7 +213,7 @@ fn cached_statefulset_derived(
     let key = StatefulSetDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.statefulsets),
+        data_fingerprint: data_fingerprint(&cluster.statefulsets, cluster.snapshot_version),
     };
 
     if let Ok(cache) = STATEFULSET_DERIVED_CACHE.lock()

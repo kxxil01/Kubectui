@@ -96,7 +96,7 @@ impl TaskHandle {
 pub struct UpdateCoordinator {
     client: Arc<K8sClient>,
     /// Channel to send updates to the main event loop
-    update_tx: mpsc::UnboundedSender<UpdateMessage>,
+    update_tx: mpsc::Sender<UpdateMessage>,
     /// Active probe polling tasks (keyed by pod_ref: "namespace/name")
     probe_tasks: Arc<RwLock<HashMap<String, TaskHandle>>>,
     /// Active log streaming tasks (keyed by pod_ref + container)
@@ -105,7 +105,7 @@ pub struct UpdateCoordinator {
 
 impl UpdateCoordinator {
     /// Create a new UpdateCoordinator.
-    pub fn new(client: K8sClient, update_tx: mpsc::UnboundedSender<UpdateMessage>) -> Self {
+    pub fn new(client: K8sClient, update_tx: mpsc::Sender<UpdateMessage>) -> Self {
         Self {
             client: Arc::new(client),
             update_tx,
@@ -142,14 +142,16 @@ impl UpdateCoordinator {
         let key_clone = key.clone();
 
         tokio::spawn(async move {
-            probes::poll_probes_loop(
+            let fut = std::panic::AssertUnwindSafe(probes::poll_probes_loop(
                 client,
                 pod_name_clone,
                 namespace_clone.clone(),
                 coordinator.update_tx.clone(),
                 cancel_rx,
-            )
-            .await;
+            ));
+            if futures::FutureExt::catch_unwind(fut).await.is_err() {
+                tracing::error!("probe polling task panicked for {key_clone}");
+            }
 
             // Clean up the task handle
             let mut tasks = coordinator.probe_tasks.write().await;
@@ -206,15 +208,17 @@ impl UpdateCoordinator {
         let key_clone = key.clone();
 
         tokio::spawn(async move {
-            logs::stream_logs(
+            let fut = std::panic::AssertUnwindSafe(logs::stream_logs(
                 client,
                 PodRef::new(pod_name_clone, namespace_clone.clone()),
                 container_name_clone.clone(),
                 follow,
                 coordinator.update_tx.clone(),
                 cancel_rx,
-            )
-            .await;
+            ));
+            if futures::FutureExt::catch_unwind(fut).await.is_err() {
+                tracing::error!("log streaming task panicked for {key_clone}");
+            }
 
             // Clean up the task handle
             let mut tasks = coordinator.log_tasks.write().await;
@@ -286,7 +290,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_coordinator_creation() {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, _rx) = mpsc::channel(4096);
         let client = K8sClient::connect()
             .await
             .expect("Failed to connect to K8s cluster");

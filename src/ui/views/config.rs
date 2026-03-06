@@ -34,7 +34,7 @@ pub fn render_config_maps(
         AppView::ConfigMaps,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.config_maps),
+        data_fingerprint(&cluster.config_maps, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.config_maps.len()).collect();
@@ -162,7 +162,7 @@ pub fn render_secrets(
         AppView::Secrets,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.secrets),
+        data_fingerprint(&cluster.secrets, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.secrets.len()).collect();

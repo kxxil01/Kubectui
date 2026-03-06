@@ -186,7 +186,7 @@ pub fn filtered_flux_indices_for_view(
         view,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.flux_resources),
+        data_fingerprint(&cluster.flux_resources, cluster.snapshot_version),
         |q| {
             cluster
                 .flux_resources
@@ -214,7 +214,7 @@ fn cached_formatted_rows(
         view,
         snapshot_version: cluster.snapshot_version,
         minute_bucket: now_unix.div_euclid(60),
-        data_fingerprint: data_fingerprint(&cluster.flux_resources),
+        data_fingerprint: data_fingerprint(&cluster.flux_resources, cluster.snapshot_version),
     };
 
     if let Ok(mut cache) = FLUX_FORMATTED_CACHE.lock()

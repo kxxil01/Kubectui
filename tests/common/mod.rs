@@ -34,7 +34,6 @@ pub fn make_service(name: &str, namespace: &str, type_: &str) -> ServiceInfo {
         name: name.to_string(),
         namespace: namespace.to_string(),
         type_: type_.to_string(),
-        service_type: type_.to_string(),
         ports: vec!["80/TCP".to_string()],
         ..ServiceInfo::default()
     }

@@ -25,7 +25,7 @@ pub async fn poll_probes_loop(
     client: Arc<K8sClient>,
     pod_name: String,
     namespace: String,
-    update_tx: mpsc::UnboundedSender<UpdateMessage>,
+    update_tx: mpsc::Sender<UpdateMessage>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
     let mut ticker = interval(Duration::from_secs(2));
@@ -42,7 +42,7 @@ pub async fn poll_probes_loop(
                                 namespace: namespace.clone(),
                                 probes: probes.clone(),
                             };
-                            if update_tx.send(msg).is_err() {
+                            if update_tx.send(msg).await.is_err() {
                                 // Channel closed, exit task
                                 break;
                             }
@@ -55,7 +55,7 @@ pub async fn poll_probes_loop(
                             namespace: namespace.clone(),
                             error: e.to_string(),
                         };
-                        if update_tx.send(msg).is_err() {
+                        if update_tx.send(msg).await.is_err() {
                             // Channel closed, exit task
                             break;
                         }
@@ -122,6 +122,16 @@ fn probes_equal(
         (None, None) => {}
         (Some(r1), Some(r2)) => {
             if !probe_config_equal(r1, r2) {
+                return false;
+            }
+        }
+        _ => return false,
+    }
+
+    match (&a.startup, &b.startup) {
+        (None, None) => {}
+        (Some(s1), Some(s2)) => {
+            if !probe_config_equal(s1, s2) {
                 return false;
             }
         }

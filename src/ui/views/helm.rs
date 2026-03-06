@@ -36,7 +36,7 @@ pub fn render_helm_releases(
         AppView::HelmReleases,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.helm_releases),
+        data_fingerprint(&cluster.helm_releases, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.helm_releases.len()).collect();
@@ -193,7 +193,7 @@ pub fn render_helm_repos(
         AppView::HelmCharts,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.helm_repositories),
+        data_fingerprint(&cluster.helm_repositories, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.helm_repositories.len()).collect();

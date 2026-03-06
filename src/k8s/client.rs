@@ -324,8 +324,7 @@ impl K8sClient {
                         .metadata
                         .namespace
                         .unwrap_or_else(|| "default".to_string()),
-                    type_: service_type.clone(),
-                    service_type,
+                    type_: service_type,
                     cluster_ip: svc.spec.as_ref().and_then(|spec| spec.cluster_ip.clone()),
                     ports,
                     created_at,
@@ -396,8 +395,6 @@ impl K8sClient {
                     updated_replicas,
                     created_at,
                     ready: format!("{ready_replicas}/{desired_replicas}"),
-                    updated: updated_replicas,
-                    available: available_replicas,
                     age: created_at.and_then(|ts| (now - ts).to_std().ok()),
                     image,
                 }

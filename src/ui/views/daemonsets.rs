@@ -58,7 +58,7 @@ pub fn render_daemonsets(
         AppView::DaemonSets,
         query,
         cluster.snapshot_version,
-        data_fingerprint(&cluster.daemonsets),
+        data_fingerprint(&cluster.daemonsets, cluster.snapshot_version),
         |q| {
             if q.is_empty() {
                 return (0..cluster.daemonsets.len()).collect();
@@ -226,7 +226,7 @@ fn cached_daemonset_derived(
     let key = DaemonSetDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
-        data_fingerprint: data_fingerprint(&cluster.daemonsets),
+        data_fingerprint: data_fingerprint(&cluster.daemonsets, cluster.snapshot_version),
     };
 
     if let Ok(cache) = DAEMONSET_DERIVED_CACHE.lock()

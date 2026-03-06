@@ -872,6 +872,14 @@ pub struct LogsViewerState {
 impl LogsViewerState {
     /// Appends a log line, evicting the oldest lines if the buffer exceeds [`MAX_LOG_LINES`].
     pub fn push_line(&mut self, line: String) {
+        let line = if line.len() > 10_000 {
+            let mut truncated = line;
+            truncated.truncate(10_000);
+            truncated.push_str("…[truncated]");
+            truncated
+        } else {
+            line
+        };
         self.lines.push(line);
         if self.lines.len() > MAX_LOG_LINES {
             let excess = self.lines.len() - MAX_LOG_LINES;
@@ -1058,8 +1066,10 @@ fn collapsed_mask(collapsed: &HashSet<NavGroup>) -> u16 {
 }
 
 static SIDEBAR_ROWS_CACHE: LazyLock<Vec<Box<[SidebarItem]>>> = LazyLock::new(|| {
-    let mut cache = Vec::with_capacity(1usize << 9);
-    for mask in 0u16..(1u16 << 9) {
+    let num_groups = SIDEBAR_GROUPS.len();
+    let combos = 1usize << num_groups;
+    let mut cache = Vec::with_capacity(combos);
+    for mask in 0u16..(combos as u16) {
         let mut rows = Vec::with_capacity(56);
         for (group, views) in SIDEBAR_GROUPS {
             rows.push(SidebarItem::Group(*group));
@@ -2129,7 +2139,10 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
     }
 
     let serialized = serde_json::to_string(&cfg).unwrap_or_else(|_| "{}".to_string());
-    let _ = fs::write(path, serialized);
+    let tmp = path.with_extension("tmp");
+    if fs::write(&tmp, &serialized).is_ok() {
+        let _ = fs::rename(&tmp, path);
+    }
 }
 
 /// Loads app config from ~/.kube/kubectui-config.json.
