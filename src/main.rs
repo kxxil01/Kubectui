@@ -2232,6 +2232,7 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                     ip: None,
                     created: None,
                     labels: Vec::new(),
+                    ..DetailMetadata::default()
                 }
             } else {
                 DetailMetadata {
@@ -2256,6 +2257,7 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                         .created_at
                         .map(|ts: chrono::DateTime<chrono::Utc>| ts.to_rfc3339()),
                     labels: pod.labels.clone(),
+                    ..DetailMetadata::default()
                 }
             } else {
                 DetailMetadata {
