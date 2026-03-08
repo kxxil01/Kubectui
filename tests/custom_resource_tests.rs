@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 use kubectui::app::{AppAction, AppState, AppView, DetailViewState, Focus, ResourceRef};
 use kubectui::events::route_keyboard_input;
 use kubectui::k8s::dtos::{CustomResourceDefinitionInfo, CustomResourceInfo, HelmRepoInfo};
+use kubectui::policy::DetailAction;
 use kubectui::ui::components::probe_panel::ProbePanelState;
 
 // ─── ResourceRef::CustomResource helpers ─────────────────────────────────────
@@ -287,70 +288,54 @@ fn detail_footer_pod_resource_shows_logs_portfwd_probes() {
         yaml: Some("kind: Pod".to_string()),
         ..DetailViewState::default()
     };
-    let resource = detail.resource.as_ref().unwrap();
-    assert!(matches!(resource, ResourceRef::Pod(_, _)));
+    assert!(detail.supports_action(DetailAction::Logs));
+    assert!(detail.supports_action(DetailAction::PortForward));
+    assert!(detail.supports_action(DetailAction::Probes));
 }
 
 #[test]
 fn detail_footer_deployment_is_scalable_and_restartable() {
-    let resource = ResourceRef::Deployment("dep1".to_string(), "ns".to_string());
-    let is_scalable = matches!(
-        &resource,
-        ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _)
-    );
-    let is_restartable = matches!(
-        &resource,
-        ResourceRef::Deployment(_, _)
-            | ResourceRef::StatefulSet(_, _)
-            | ResourceRef::DaemonSet(_, _)
-    );
-    assert!(is_scalable);
-    assert!(is_restartable);
+    let detail = DetailViewState {
+        resource: Some(ResourceRef::Deployment(
+            "dep1".to_string(),
+            "ns".to_string(),
+        )),
+        yaml: Some("kind: Deployment".to_string()),
+        ..DetailViewState::default()
+    };
+    assert!(detail.supports_action(DetailAction::Scale));
+    assert!(detail.supports_action(DetailAction::Restart));
 }
 
 #[test]
 fn detail_footer_configmap_not_scalable_not_restartable() {
-    let resource = ResourceRef::ConfigMap("cm1".to_string(), "ns".to_string());
-    let is_scalable = matches!(
-        &resource,
-        ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _)
-    );
-    let is_restartable = matches!(
-        &resource,
-        ResourceRef::Deployment(_, _)
-            | ResourceRef::StatefulSet(_, _)
-            | ResourceRef::DaemonSet(_, _)
-    );
-    let is_pod = matches!(&resource, ResourceRef::Pod(_, _));
-    assert!(!is_scalable);
-    assert!(!is_restartable);
-    assert!(!is_pod);
+    let detail = DetailViewState {
+        resource: Some(ResourceRef::ConfigMap("cm1".to_string(), "ns".to_string())),
+        yaml: Some("kind: ConfigMap".to_string()),
+        ..DetailViewState::default()
+    };
+    assert!(!detail.supports_action(DetailAction::Scale));
+    assert!(!detail.supports_action(DetailAction::Restart));
+    assert!(!detail.supports_action(DetailAction::Logs));
 }
 
 #[test]
 fn detail_footer_custom_resource_not_scalable_not_restartable_not_pod() {
-    let resource = ResourceRef::CustomResource {
-        name: "item".to_string(),
-        namespace: Some("ns".to_string()),
-        group: "demo.io".to_string(),
-        version: "v1".to_string(),
-        kind: "Widget".to_string(),
-        plural: "widgets".to_string(),
+    let detail = DetailViewState {
+        resource: Some(ResourceRef::CustomResource {
+            name: "item".to_string(),
+            namespace: Some("ns".to_string()),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+        }),
+        yaml: Some("kind: Widget".to_string()),
+        ..DetailViewState::default()
     };
-    let is_pod = matches!(&resource, ResourceRef::Pod(_, _));
-    let is_scalable = matches!(
-        &resource,
-        ResourceRef::Deployment(_, _) | ResourceRef::StatefulSet(_, _)
-    );
-    let is_restartable = matches!(
-        &resource,
-        ResourceRef::Deployment(_, _)
-            | ResourceRef::StatefulSet(_, _)
-            | ResourceRef::DaemonSet(_, _)
-    );
-    assert!(!is_pod);
-    assert!(!is_scalable);
-    assert!(!is_restartable);
+    assert!(!detail.supports_action(DetailAction::Logs));
+    assert!(!detail.supports_action(DetailAction::Scale));
+    assert!(!detail.supports_action(DetailAction::Restart));
 }
 
 // ─── Keyboard: R only restarts restartable workloads ─────────────────────────

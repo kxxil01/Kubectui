@@ -22,6 +22,7 @@ use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
 use ratatui::{Terminal, backend::CrosstermBackend};
 
+use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     app::{
         AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState,
@@ -35,8 +36,10 @@ use kubectui::{
         portforward::PortForwarderService,
         probes::extract_probes_from_pod,
     },
+    policy::DetailAction,
     state::{ClusterSnapshot, GlobalState, RefreshOptions},
     ui,
+    workbench::{WorkbenchTabKey, WorkbenchTabState},
 };
 
 /// Main asynchronous runtime entrypoint.
@@ -116,15 +119,18 @@ fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
             container_name,
             line,
         } => {
-            if let Some(detail) = &mut app.detail_view
-                && let Some(viewer) = &mut detail.logs_viewer
-                && viewer.pod_name == pod_name
-                && viewer.pod_namespace == namespace
-                && viewer.container_name == container_name
-            {
-                viewer.push_line(line);
-                if viewer.follow_mode {
-                    viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
+            for tab in &mut app.workbench.tabs {
+                if let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
+                    let viewer = &mut logs_tab.viewer;
+                    if viewer.pod_name == pod_name
+                        && viewer.pod_namespace == namespace
+                        && viewer.container_name == container_name
+                    {
+                        viewer.push_line(line.clone());
+                        if viewer.follow_mode {
+                            viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
+                        }
+                    }
                 }
             }
         }
@@ -147,21 +153,24 @@ fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
             container_name,
             status,
         } => {
-            if let Some(detail) = &mut app.detail_view
-                && let Some(viewer) = &mut detail.logs_viewer
-                && viewer.pod_name == pod_name
-                && viewer.pod_namespace == namespace
-                && viewer.container_name == container_name
-            {
-                match status {
-                    LogStreamStatus::Error(err) => {
-                        viewer.error = Some(err);
-                        viewer.loading = false;
+            for tab in &mut app.workbench.tabs {
+                if let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
+                    let viewer = &mut logs_tab.viewer;
+                    if viewer.pod_name == pod_name
+                        && viewer.pod_namespace == namespace
+                        && viewer.container_name == container_name
+                    {
+                        match &status {
+                            LogStreamStatus::Error(err) => {
+                                viewer.error = Some(err.clone());
+                                viewer.loading = false;
+                            }
+                            LogStreamStatus::Ended | LogStreamStatus::Cancelled => {
+                                viewer.follow_mode = false;
+                            }
+                            LogStreamStatus::Started => {}
+                        }
                     }
-                    LogStreamStatus::Ended | LogStreamStatus::Cancelled => {
-                        viewer.follow_mode = false;
-                    }
-                    LogStreamStatus::Started => {}
                 }
             }
         }
@@ -179,6 +188,112 @@ fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
             }
         }
     }
+}
+
+fn apply_detail_state_to_workbench(app: &mut AppState, state: &DetailViewState) {
+    let Some(resource) = state.resource.as_ref() else {
+        return;
+    };
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceYaml(resource.clone()))
+        && let WorkbenchTabState::ResourceYaml(yaml_tab) = &mut tab.state
+    {
+        yaml_tab.yaml = state.yaml.clone();
+        yaml_tab.loading = false;
+        yaml_tab.error = state.error.clone();
+    }
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceEvents(resource.clone()))
+        && let WorkbenchTabState::ResourceEvents(events_tab) = &mut tab.state
+    {
+        events_tab.events = state.events.clone();
+        events_tab.loading = false;
+        events_tab.error = state.error.clone();
+    }
+}
+
+fn apply_detail_error_to_workbench(app: &mut AppState, resource: &ResourceRef, error: &str) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceYaml(resource.clone()))
+        && let WorkbenchTabState::ResourceYaml(yaml_tab) = &mut tab.state
+    {
+        yaml_tab.loading = false;
+        yaml_tab.error = Some(error.to_string());
+    }
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceEvents(resource.clone()))
+        && let WorkbenchTabState::ResourceEvents(events_tab) = &mut tab.state
+    {
+        events_tab.loading = false;
+        events_tab.error = Some(error.to_string());
+    }
+}
+
+fn workbench_follow_streams_to_stop(
+    app: &AppState,
+    action: AppAction,
+) -> Vec<(String, String, String)> {
+    let tabs: Vec<&WorkbenchTabState> = match action {
+        AppAction::ToggleWorkbench if app.workbench().open => {
+            app.workbench().tabs.iter().map(|tab| &tab.state).collect()
+        }
+        AppAction::WorkbenchCloseActiveTab => app
+            .workbench()
+            .active_tab()
+            .map(|tab| vec![&tab.state])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    tabs.into_iter()
+        .filter_map(|state| match state {
+            WorkbenchTabState::PodLogs(logs_tab) => {
+                let viewer = &logs_tab.viewer;
+                (viewer.follow_mode
+                    && !viewer.pod_name.is_empty()
+                    && !viewer.pod_namespace.is_empty()
+                    && !viewer.container_name.is_empty())
+                .then(|| {
+                    (
+                        viewer.pod_name.clone(),
+                        viewer.pod_namespace.clone(),
+                        viewer.container_name.clone(),
+                    )
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn refresh_port_forward_workbench(
+    app: &mut AppState,
+    port_forwarder: &PortForwarderService,
+    status_message_clear_at: &mut Option<Instant>,
+) {
+    let tunnels = port_forwarder.list_tunnels();
+    app.tunnel_registry.update_tunnels(tunnels.clone());
+    if let Some(tab) = app
+        .workbench_mut()
+        .find_tab_mut(&WorkbenchTabKey::PortForward)
+        && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
+    {
+        let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
+        registry.update_tunnels(tunnels);
+        port_tab.dialog.update_registry(registry);
+    }
+    set_transient_status(
+        app,
+        status_message_clear_at,
+        "Refreshed port-forward sessions.",
+    );
 }
 
 #[derive(Debug)]
@@ -824,25 +939,43 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             // Detail view fetch completed in background task
             result = detail_rx.recv() => {
                 if let Some((requested_resource, result)) = result {
-                    // Ignore stale async completions if the user navigated to a different resource.
-                    let still_waiting_for_this = app
+                    let detail_still_waiting_for_this = app
                         .detail_view
                         .as_ref()
                         .and_then(|detail| detail.resource.as_ref())
                         .is_some_and(|resource| resource == &requested_resource);
-                    if !still_waiting_for_this {
+                    let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
+                        matches!(
+                            &tab.state,
+                            WorkbenchTabState::ResourceYaml(yaml_tab)
+                                if yaml_tab.resource == requested_resource && yaml_tab.loading
+                        ) || matches!(
+                            &tab.state,
+                            WorkbenchTabState::ResourceEvents(events_tab)
+                                if events_tab.resource == requested_resource && events_tab.loading
+                        )
+                    });
+                    if !detail_still_waiting_for_this && !workbench_waiting_for_this {
                         continue;
                     }
                     needs_redraw = true;
                     match result {
-                        Ok(state) => app.detail_view = Some(state),
+                        Ok(state) => {
+                            apply_detail_state_to_workbench(&mut app, &state);
+                            if detail_still_waiting_for_this {
+                                app.detail_view = Some(state);
+                            }
+                        }
                         Err(err) => {
-                            app.detail_view = Some(DetailViewState {
-                                resource: Some(requested_resource),
-                                loading: false,
-                                error: Some(err),
-                                ..DetailViewState::default()
-                            });
+                            apply_detail_error_to_workbench(&mut app, &requested_resource, &err);
+                            if detail_still_waiting_for_this {
+                                app.detail_view = Some(DetailViewState {
+                                    resource: Some(requested_resource),
+                                    loading: false,
+                                    error: Some(err),
+                                    ..DetailViewState::default()
+                                });
+                            }
                         }
                     }
                 }
@@ -854,63 +987,65 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     match result {
                         LogsViewerAsyncResult::Containers { request_id, pod_name, namespace, result } => {
                             let mut tail_request: Option<(u64, String, String, String)> = None;
-                            if let Some(detail) = &mut app.detail_view
-                                && let Some(viewer) = &mut detail.logs_viewer
-                                && viewer.pod_name == pod_name
-                                && viewer.pod_namespace == namespace
-                                && viewer.pending_container_request_id == Some(request_id)
-                            {
-                                needs_redraw = true;
-                                viewer.pending_container_request_id = None;
-                                match result {
-                                    Ok(containers) => {
-                                        viewer.containers = containers.clone();
-                                        viewer.container_cursor = 0;
-                                        viewer.lines.clear();
-                                        viewer.scroll_offset = 0;
-                                        viewer.error = None;
+                            for tab in &mut app.workbench.tabs {
+                                if let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
+                                    let viewer = &mut logs_tab.viewer;
+                                    if viewer.pod_name == pod_name
+                                        && viewer.pod_namespace == namespace
+                                        && viewer.pending_container_request_id == Some(request_id)
+                                    {
+                                        needs_redraw = true;
+                                        viewer.pending_container_request_id = None;
+                                        match &result {
+                                            Ok(containers) => {
+                                                viewer.containers = containers.clone();
+                                                viewer.container_cursor = 0;
+                                                viewer.lines.clear();
+                                                viewer.scroll_offset = 0;
+                                                viewer.error = None;
 
-                                        match containers.len() {
-                                            0 => {
-                                                viewer.container_name.clear();
+                                                match containers.len() {
+                                                    0 => {
+                                                        viewer.container_name.clear();
+                                                        viewer.picking_container = false;
+                                                        viewer.pending_logs_request_id = None;
+                                                        viewer.loading = false;
+                                                        viewer.error = Some(
+                                                            "No containers found for this pod.".to_string(),
+                                                        );
+                                                    }
+                                                    1 => {
+                                                        let container_name = containers[0].clone();
+                                                        logs_viewer_request_seq =
+                                                            logs_viewer_request_seq.wrapping_add(1);
+                                                        let tail_request_id = logs_viewer_request_seq;
+                                                        viewer.container_name = container_name.clone();
+                                                        viewer.picking_container = false;
+                                                        viewer.loading = true;
+                                                        viewer.pending_logs_request_id = Some(tail_request_id);
+                                                        tail_request = Some((
+                                                            tail_request_id,
+                                                            pod_name.clone(),
+                                                            namespace.clone(),
+                                                            container_name,
+                                                        ));
+                                                    }
+                                                    _ => {
+                                                        viewer.container_name.clear();
+                                                        viewer.picking_container = true;
+                                                        viewer.pending_logs_request_id = None;
+                                                        viewer.loading = false;
+                                                    }
+                                                }
+                                            }
+                                            Err(err) => {
                                                 viewer.picking_container = false;
                                                 viewer.pending_logs_request_id = None;
                                                 viewer.loading = false;
-                                                viewer.error = Some(
-                                                    "No containers found for this pod.".to_string(),
-                                                );
-                                            }
-                                            1 => {
-                                                let container_name = containers[0].clone();
-                                                logs_viewer_request_seq =
-                                                    logs_viewer_request_seq.wrapping_add(1);
-                                                let tail_request_id = logs_viewer_request_seq;
-                                                viewer.container_name = container_name.clone();
-                                                viewer.picking_container = false;
-                                                viewer.loading = true;
-                                                viewer.pending_logs_request_id =
-                                                    Some(tail_request_id);
-                                                tail_request = Some((
-                                                    tail_request_id,
-                                                    pod_name.clone(),
-                                                    namespace.clone(),
-                                                    container_name,
-                                                ));
-                                            }
-                                            _ => {
-                                                viewer.container_name.clear();
-                                                viewer.picking_container = true;
-                                                viewer.pending_logs_request_id = None;
-                                                viewer.loading = false;
+                                                viewer.error =
+                                                    Some(format!("Failed to load containers: {err}"));
                                             }
                                         }
-                                    }
-                                    Err(err) => {
-                                        viewer.picking_container = false;
-                                        viewer.pending_logs_request_id = None;
-                                        viewer.loading = false;
-                                        viewer.error =
-                                            Some(format!("Failed to load containers: {err}"));
                                     }
                                 }
                             }
@@ -944,23 +1079,26 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             container_name,
                             result,
                         } => {
-                            if let Some(detail) = &mut app.detail_view
-                                && let Some(viewer) = &mut detail.logs_viewer
-                                && viewer.pod_name == pod_name
-                                && viewer.pod_namespace == namespace
-                                && viewer.container_name == container_name
-                                && viewer.pending_logs_request_id == Some(request_id)
-                            {
-                                needs_redraw = true;
-                                viewer.pending_logs_request_id = None;
-                                viewer.loading = false;
-                                match result {
-                                    Ok(lines) => {
-                                        viewer.lines = lines;
-                                        viewer.error = None;
-                                    }
-                                    Err(err) => {
-                                        viewer.error = Some(err);
+                            for tab in &mut app.workbench.tabs {
+                                if let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
+                                    let viewer = &mut logs_tab.viewer;
+                                    if viewer.pod_name == pod_name
+                                        && viewer.pod_namespace == namespace
+                                        && viewer.container_name == container_name
+                                        && viewer.pending_logs_request_id == Some(request_id)
+                                    {
+                                        needs_redraw = true;
+                                        viewer.pending_logs_request_id = None;
+                                        viewer.loading = false;
+                                        match &result {
+                                            Ok(lines) => {
+                                                viewer.lines = lines.clone();
+                                                viewer.error = None;
+                                            }
+                                            Err(err) => {
+                                                viewer.error = Some(err.clone());
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1247,10 +1385,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
 
                 // Only redraw on tick if logs are actively streaming (follow mode)
-                if app.detail_view.as_ref()
-                    .and_then(|d| d.logs_viewer.as_ref())
-                    .is_some_and(|v| v.follow_mode)
-                {
+                if app.workbench.tabs.iter().any(|tab| {
+                    matches!(&tab.state, WorkbenchTabState::PodLogs(logs_tab) if logs_tab.viewer.follow_mode)
+                }) {
                     needs_redraw = true;
                 }
             }
@@ -1296,6 +1433,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     && !app.is_context_picker_open()
                     && !app.command_palette.is_open()
                     && app.detail_view.is_none()
+                    && app.focus != kubectui::app::Focus::Workbench
                 {
                     if app.focus == kubectui::app::Focus::Content
                         && app.view() == AppView::Extensions
@@ -1401,6 +1539,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 })
                                 .await;
                         });
+                    }
+                    AppAction::ToggleWorkbench
+                    | AppAction::WorkbenchNextTab
+                    | AppAction::WorkbenchPreviousTab
+                    | AppAction::WorkbenchCloseActiveTab
+                    | AppAction::WorkbenchIncreaseHeight
+                    | AppAction::WorkbenchDecreaseHeight => {
+                        let streams_to_stop = workbench_follow_streams_to_stop(&app, action.clone());
+                        for (pod_name, namespace, container_name) in streams_to_stop {
+                            let _ = coordinator
+                                .stop_log_streaming(&pod_name, &namespace, &container_name)
+                                .await;
+                        }
+                        apply_action(action, &mut app);
+                        save_config(&app);
                     }
                     AppAction::OpenNamespacePicker => {
                         app.set_available_namespaces(global_state.namespaces().to_vec());
@@ -1548,41 +1701,86 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         });
                     }
                     AppAction::CloseDetail => {
-                        if let Some(detail) = &app.detail_view
-                            && let Some(viewer) = &detail.logs_viewer
-                                && viewer.follow_mode
-                                && !viewer.pod_name.is_empty()
-                                && !viewer.container_name.is_empty()
-                        {
-                                    let _ = coordinator
-                                        .stop_log_streaming(
-                                            &viewer.pod_name,
-                                            &viewer.pod_namespace,
-                                            &viewer.container_name,
-                                        )
-                                        .await;
-                                }
                         app.detail_view = None;
                     }
+                    AppAction::OpenResourceYaml => {
+                        let resource = app
+                            .detail_view
+                            .as_ref()
+                            .and_then(|detail| detail.resource.clone())
+                            .or_else(|| selected_resource(&app, &cached_snapshot));
+                        let Some(resource) = resource else {
+                            app.set_error("No resource selected for YAML inspection.".to_string());
+                            continue;
+                        };
+                        let cached_yaml = app.detail_view.as_ref().and_then(|detail| {
+                            (detail.resource.as_ref() == Some(&resource)).then(|| detail.yaml.clone())
+                        }).flatten();
+                        app.detail_view = None;
+                        app.open_resource_yaml_tab(resource.clone(), cached_yaml.clone(), None);
+                        if cached_yaml.is_none() {
+                            let client_clone = client.clone();
+                            let snapshot_clone = cached_snapshot.clone();
+                            let tx = detail_tx.clone();
+                            let requested_resource = resource.clone();
+                            tokio::spawn(async move {
+                                let result = fetch_detail_view(&client_clone, &snapshot_clone, requested_resource.clone())
+                                    .await
+                                    .map_err(|err| err.to_string());
+                                let _ = tx.send((requested_resource, result)).await;
+                            });
+                        }
+                    }
+                    AppAction::OpenResourceEvents => {
+                        let resource = app
+                            .detail_view
+                            .as_ref()
+                            .and_then(|detail| detail.resource.clone())
+                            .or_else(|| selected_resource(&app, &cached_snapshot));
+                        let Some(resource) = resource else {
+                            app.set_error("No resource selected for event inspection.".to_string());
+                            continue;
+                        };
+                        let cached_events = app.detail_view.as_ref().and_then(|detail| {
+                            (detail.resource.as_ref() == Some(&resource)).then(|| detail.events.clone())
+                        }).unwrap_or_default();
+                        let loading = cached_events.is_empty();
+                        app.detail_view = None;
+                        app.open_resource_events_tab(resource.clone(), cached_events, loading, None);
+                        if loading {
+                            let client_clone = client.clone();
+                            let snapshot_clone = cached_snapshot.clone();
+                            let tx = detail_tx.clone();
+                            let requested_resource = resource.clone();
+                            tokio::spawn(async move {
+                                let result = fetch_detail_view(&client_clone, &snapshot_clone, requested_resource.clone())
+                                    .await
+                                    .map_err(|err| err.to_string());
+                                let _ = tx.send((requested_resource, result)).await;
+                            });
+                        }
+                    }
                     AppAction::LogsViewerOpen => {
+                        let resource = app
+                            .detail_view
+                            .as_ref()
+                            .and_then(|detail| detail.resource.clone())
+                            .or_else(|| selected_resource(&app, &cached_snapshot));
+                        let Some(ResourceRef::Pod(pod_name, pod_ns)) = resource else {
+                            app.set_error(
+                                "Logs viewer is only available for Pod resources.".to_string(),
+                            );
+                            continue;
+                        };
                         let mut container_request: Option<(u64, String, String)> = None;
-                        if let Some(detail) = &mut app.detail_view {
-                            let pod_ref = detail
-                                .resource
-                                .as_ref()
-                                .and_then(|r| match r {
-                                    ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
-                                    _ => None,
-                                });
-                            let Some((pod_name, pod_ns)) = pod_ref else {
-                                app.set_error("Logs viewer is only available for Pod resources.".to_string());
-                                continue;
-                            };
-
+                        app.detail_view = None;
+                        app.open_pod_logs_tab(ResourceRef::Pod(pod_name.clone(), pod_ns.clone()));
+                        if let Some(tab) = app.workbench_mut().find_tab_mut(
+                            &WorkbenchTabKey::PodLogs(ResourceRef::Pod(pod_name.clone(), pod_ns.clone())),
+                        ) && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
                             logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
                             let request_id = logs_viewer_request_seq;
-
-                            detail.logs_viewer = Some(LogsViewerState {
+                            logs_tab.viewer = LogsViewerState {
                                 pod_name: pod_name.clone(),
                                 pod_namespace: pod_ns.clone(),
                                 loading: true,
@@ -1593,7 +1791,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 containers: Vec::new(),
                                 picking_container: false,
                                 ..Default::default()
-                            });
+                            };
                             container_request = Some((request_id, pod_name, pod_ns));
                         }
 
@@ -1628,8 +1826,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                     AppAction::LogsViewerSelectContainer(container) => {
                         let mut logs_request: Option<(u64, String, String, String)> = None;
-                        if let Some(detail) = &mut app.detail_view
-                            && let Some(viewer) = &mut detail.logs_viewer {
+                        if let Some(tab) = app.workbench_mut().active_tab_mut()
+                            && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
+                                let viewer = &mut logs_tab.viewer;
                                 logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
                                 let request_id = logs_viewer_request_seq;
                                 viewer.picking_container = false;
@@ -1668,21 +1867,25 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     }
                     AppAction::LogsViewerToggleFollow => {
-                        let follow_info = app.detail_view.as_ref().and_then(|d| {
-                            d.logs_viewer.as_ref().map(|v| {
-                                (
+                        let follow_info = app.workbench().active_tab().and_then(|tab| {
+                            if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
+                                let v = &logs_tab.viewer;
+                                Some((
                                     v.pod_name.clone(),
                                     v.pod_namespace.clone(),
                                     v.container_name.clone(),
                                     v.follow_mode,
                                     v.picking_container,
-                                )
-                            })
+                                ))
+                            } else {
+                                None
+                            }
                         });
                         if let Some((pod_name, pod_ns, container_name, was_following, picking_container)) = follow_info {
                             if !was_following && (pod_name.is_empty() || container_name.is_empty() || picking_container) {
-                                if let Some(detail) = &mut app.detail_view
-                                    && let Some(viewer) = &mut detail.logs_viewer {
+                                if let Some(tab) = app.workbench_mut().active_tab_mut()
+                                    && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
+                                        let viewer = &mut logs_tab.viewer;
                                         viewer.error = Some("Select a container before enabling follow mode.".to_string());
                                     }
                             } else {
@@ -1699,7 +1902,41 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             }
                         }
                     }
+                    AppAction::PortForwardOpen => {
+                        let resource = app
+                            .detail_view
+                            .as_ref()
+                            .and_then(|detail| detail.resource.clone())
+                            .or_else(|| selected_resource(&app, &cached_snapshot));
+                        let dialog = match &resource {
+                            Some(ResourceRef::Pod(name, ns)) => {
+                                PortForwardDialog::with_target(ns, name, 0)
+                            }
+                            _ => {
+                                app.set_error("Port forwarding is only available for Pod resources.".to_string());
+                                continue;
+                            }
+                        };
+                        app.detail_view = None;
+                        app.open_port_forward_tab(resource, dialog);
+                        let tunnels = port_forwarder.list_tunnels();
+                        app.tunnel_registry.update_tunnels(tunnels.clone());
+                        if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
+                            && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
+                                let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
+                                registry.update_tunnels(tunnels);
+                                port_tab.dialog.update_registry(registry);
+                            }
+                    }
                     AppAction::ScaleDialogSubmit => {
+                        if !app
+                            .detail_view
+                            .as_ref()
+                            .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
+                        {
+                            app.set_error("Scale is unavailable for the selected resource.".to_string());
+                            continue;
+                        }
                         let scale_info = app.detail_view.as_ref().and_then(|d| {
                             let replicas =
                                 d.scale_dialog.as_ref()?.desired_replicas_as_int()?;
@@ -1758,6 +1995,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     }
                     AppAction::RolloutRestart => {
+                        if !app
+                            .detail_view
+                            .as_ref()
+                            .is_some_and(|detail| detail.supports_action(DetailAction::Restart))
+                        {
+                            app.set_error("Restart is unavailable for the selected resource.".to_string());
+                            continue;
+                        }
                         let restart_info = app.detail_view.as_ref().and_then(|d| {
                             d.resource.as_ref().and_then(|r| match r {
                                 ResourceRef::Deployment(name, ns) => Some(("deployment".to_string(), name.clone(), ns.clone())),
@@ -1793,6 +2038,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     }
                     AppAction::DeleteResource => {
+                        if !app
+                            .detail_view
+                            .as_ref()
+                            .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
+                        {
+                            app.set_error("Delete is unavailable for the selected resource.".to_string());
+                            continue;
+                        }
                         let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
                         if let Some(resource) = delete_resource {
                             if delete_in_flight_id.is_some() {
@@ -1827,6 +2080,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     }
                     AppAction::EditYaml => {
+                        if !app
+                            .detail_view
+                            .as_ref()
+                            .is_some_and(|detail| detail.supports_action(DetailAction::EditYaml))
+                        {
+                            app.set_error("YAML editing is unavailable for the selected resource.".to_string());
+                            continue;
+                        }
                         // Gather what we need before suspending the TUI
                         let edit_info = app.detail_view.as_ref().and_then(|d| {
                             d.resource.as_ref().zip(d.yaml.as_ref()).map(|(r, y)| {
@@ -1938,27 +2199,61 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         match port_forwarder.create_tunnel_async(target, config).await {
                             Ok(tunnel_id) => {
                                 app.clear_error();
-                                if let Some(detail) = &mut app.detail_view
-                                    && let Some(dialog) = &mut detail.port_forward_dialog {
-                                        dialog.success = Some(format!("Tunnel created: {tunnel_id}"));
-                                        let tunnels = port_forwarder.list_tunnels();
-                                        let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
-                                        registry.update_tunnels(tunnels.clone());
-                                        dialog.update_registry(registry);
-                                    }
-                                // Sync top-level registry for PortForwarding view
                                 let tunnels = port_forwarder.list_tunnels();
-                                app.tunnel_registry.update_tunnels(tunnels);
+                                app.tunnel_registry.update_tunnels(tunnels.clone());
+                                if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
+                                    && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
+                                        port_tab.dialog.success = Some(format!("Tunnel created: {tunnel_id}"));
+                                        let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
+                                        registry.update_tunnels(tunnels);
+                                        port_tab.dialog.update_registry(registry);
+                                    }
                             }
                             Err(err) => {
-                                if let Some(detail) = &mut app.detail_view
-                                    && let Some(dialog) = &mut detail.port_forward_dialog {
-                                        dialog.error = Some(format!("{err}"));
+                                if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
+                                    && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
+                                        port_tab.dialog.error = Some(format!("{err}"));
+                                    }
+                            }
+                        }
+                    }
+                    AppAction::PortForwardRefresh => {
+                        refresh_port_forward_workbench(
+                            &mut app,
+                            &port_forwarder,
+                            &mut status_message_clear_at,
+                        );
+                    }
+                    AppAction::PortForwardStop(tunnel_id) => {
+                        match port_forwarder.stop_forward(&tunnel_id).await {
+                            Ok(()) => {
+                                let tunnels = port_forwarder.list_tunnels();
+                                app.tunnel_registry.update_tunnels(tunnels.clone());
+                                if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
+                                    && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
+                                        let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
+                                        registry.update_tunnels(tunnels);
+                                        port_tab.dialog.success = Some(format!("Closed tunnel: {tunnel_id}"));
+                                        port_tab.dialog.update_registry(registry);
+                                    }
+                            }
+                            Err(err) => {
+                                if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
+                                    && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
+                                        port_tab.dialog.error = Some(format!("{err:#}"));
                                     }
                             }
                         }
                     }
                     AppAction::ScaleDialogOpen => {
+                        if !app
+                            .detail_view
+                            .as_ref()
+                            .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
+                        {
+                            app.set_error("Scale is unavailable for the selected resource.".to_string());
+                            continue;
+                        }
                         // Read actual replica count from snapshot before opening dialog
                         let scale_info = app.detail_view.as_ref().and_then(|d| {
                             d.resource.as_ref().and_then(|r| match r {
@@ -2002,6 +2297,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             }
                     }
                     AppAction::ProbePanelOpen => {
+                        if !app
+                            .detail_view
+                            .as_ref()
+                            .is_some_and(|detail| detail.supports_action(DetailAction::Probes))
+                        {
+                            app.set_error("Probe inspection is only available for Pod resources.".to_string());
+                            continue;
+                        }
                         let pod_info = app.detail_view.as_ref().and_then(|d| {
                             d.resource.as_ref().and_then(|r| match r {
                                 ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
@@ -2727,7 +3030,6 @@ async fn fetch_detail_view(
         resource: Some(resource),
         metadata,
         yaml,
-        yaml_scroll: 0,
         events,
         sections,
         pod_metrics,
@@ -2735,8 +3037,6 @@ async fn fetch_detail_view(
         metrics_unavailable_message,
         loading: false,
         error: None,
-        logs_viewer: None,
-        port_forward_dialog: None,
         scale_dialog: None,
         probe_panel: None,
         confirm_delete: false,
@@ -3752,11 +4052,12 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::selected_flux_reconcile_resource;
+    use super::{selected_flux_reconcile_resource, workbench_follow_streams_to_stop};
     use kubectui::{
-        app::{AppState, AppView, DetailViewState, ResourceRef},
+        app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
         k8s::dtos::FluxResourceInfo,
         state::ClusterSnapshot,
+        workbench::{PodLogsTabState, WorkbenchTabState},
     };
 
     #[test]
@@ -3803,5 +4104,32 @@ mod tests {
         assert_eq!(resource.kind(), "HelmRelease");
         assert_eq!(resource.name(), "backend");
         assert_eq!(resource.namespace(), Some("flux-system"));
+    }
+
+    #[test]
+    fn closing_active_logs_tab_collects_follow_stream_to_stop() {
+        let mut app = AppState::default();
+        app.open_pod_logs_tab(ResourceRef::Pod("pod-0".to_string(), "ns".to_string()));
+        if let Some(tab) = app.workbench_mut().active_tab_mut()
+            && let WorkbenchTabState::PodLogs(PodLogsTabState { viewer, .. }) = &mut tab.state
+        {
+            viewer.pod_name = "pod-0".to_string();
+            viewer.pod_namespace = "ns".to_string();
+            viewer.container_name = "main".to_string();
+            viewer.follow_mode = true;
+        }
+
+        let streams = workbench_follow_streams_to_stop(&app, AppAction::WorkbenchCloseActiveTab);
+        assert_eq!(
+            streams,
+            vec![("pod-0".to_string(), "ns".to_string(), "main".to_string())]
+        );
+    }
+
+    #[test]
+    fn closing_non_logs_workbench_does_not_collect_streams() {
+        let app = AppState::default();
+        let streams = workbench_follow_streams_to_stop(&app, AppAction::WorkbenchCloseActiveTab);
+        assert!(streams.is_empty());
     }
 }

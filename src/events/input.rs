@@ -2,7 +2,10 @@
 
 use crossterm::event::KeyEvent;
 
-use crate::app::{AppAction, AppState};
+use crate::{
+    app::{AppAction, AppState, Focus},
+    workbench::WorkbenchTabState,
+};
 
 /// Routes a keyboard event to the appropriate handler based on application state.
 pub fn route_keyboard_input(key: KeyEvent, app_state: &mut AppState) -> AppAction {
@@ -68,20 +71,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::EscapePressed => {
-            if app_state
-                .detail_view
-                .as_ref()
-                .and_then(|d| d.logs_viewer.as_ref())
-                .is_some()
-            {
-                app_state.close_logs_viewer();
-            } else if app_state
-                .detail_view
-                .as_ref()
-                .and_then(|d| d.port_forward_dialog.as_ref())
-                .is_some()
-            {
-                app_state.close_port_forward();
+            if app_state.focus == Focus::Workbench {
+                app_state.blur_workbench();
             } else if app_state
                 .detail_view
                 .as_ref()
@@ -107,88 +98,86 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.open_logs_viewer();
             true
         }
-        AppAction::LogsViewerClose => {
-            app_state.close_logs_viewer();
-            true
-        }
+        AppAction::LogsViewerClose => false,
         AppAction::LogsViewerScrollUp => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(logs) = &mut detail.logs_viewer
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                logs.scroll_offset = logs.scroll_offset.saturating_sub(1);
+                logs_tab.viewer.scroll_offset = logs_tab.viewer.scroll_offset.saturating_sub(1);
                 return true;
             }
             false
         }
         AppAction::LogsViewerScrollDown => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(logs) = &mut detail.logs_viewer
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                let max = logs.lines.len().saturating_sub(1);
-                logs.scroll_offset = (logs.scroll_offset + 1).min(max);
+                let max = logs_tab.viewer.lines.len().saturating_sub(1);
+                logs_tab.viewer.scroll_offset = (logs_tab.viewer.scroll_offset + 1).min(max);
                 return true;
             }
             false
         }
         AppAction::LogsViewerScrollTop => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(logs) = &mut detail.logs_viewer
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                logs.scroll_offset = 0;
+                logs_tab.viewer.scroll_offset = 0;
                 return true;
             }
             false
         }
         AppAction::LogsViewerScrollBottom => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(logs) = &mut detail.logs_viewer
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                logs.scroll_offset = logs.lines.len().saturating_sub(1);
+                logs_tab.viewer.scroll_offset = logs_tab.viewer.lines.len().saturating_sub(1);
                 return true;
             }
             false
         }
         AppAction::LogsViewerToggleFollow => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(logs) = &mut detail.logs_viewer
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                logs.follow_mode = !logs.follow_mode;
+                logs_tab.viewer.follow_mode = !logs_tab.viewer.follow_mode;
                 return true;
             }
             false
         }
         AppAction::LogsViewerPickerUp => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(logs) = &mut detail.logs_viewer
-                && logs.picking_container
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                && logs_tab.viewer.picking_container
             {
-                logs.container_cursor = logs.container_cursor.saturating_sub(1);
+                logs_tab.viewer.container_cursor =
+                    logs_tab.viewer.container_cursor.saturating_sub(1);
                 return true;
             }
             false
         }
         AppAction::LogsViewerPickerDown => {
-            if let Some(detail) = &mut app_state.detail_view
-                && let Some(logs) = &mut detail.logs_viewer
-                && logs.picking_container
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                && logs_tab.viewer.picking_container
             {
-                let max = logs.containers.len().saturating_sub(1);
-                logs.container_cursor = (logs.container_cursor + 1).min(max);
+                let max = logs_tab.viewer.containers.len().saturating_sub(1);
+                logs_tab.viewer.container_cursor = (logs_tab.viewer.container_cursor + 1).min(max);
                 return true;
             }
             false
         }
         // LogsViewerSelectContainer is handled in main.rs (needs async log fetch)
         AppAction::LogsViewerSelectContainer(_) => true,
+        AppAction::OpenResourceYaml => true,
+        AppAction::OpenResourceEvents => true,
         AppAction::PortForwardOpen => {
             app_state.open_port_forward();
             true
         }
-        AppAction::PortForwardClose => {
-            app_state.close_port_forward();
-            true
-        }
-        AppAction::PortForwardCreate(_) => {
+        AppAction::PortForwardCreate(_)
+        | AppAction::PortForwardRefresh
+        | AppAction::PortForwardStop(_) => {
             // Handled in main.rs event loop
             true
         }
@@ -290,6 +279,30 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 return true;
             }
             false
+        }
+        AppAction::ToggleWorkbench => {
+            app_state.toggle_workbench();
+            true
+        }
+        AppAction::WorkbenchNextTab => {
+            app_state.workbench_next_tab();
+            true
+        }
+        AppAction::WorkbenchPreviousTab => {
+            app_state.workbench_previous_tab();
+            true
+        }
+        AppAction::WorkbenchCloseActiveTab => {
+            app_state.workbench_close_active_tab();
+            true
+        }
+        AppAction::WorkbenchIncreaseHeight => {
+            app_state.workbench_increase_height();
+            true
+        }
+        AppAction::WorkbenchDecreaseHeight => {
+            app_state.workbench_decrease_height();
+            true
         }
     }
 }
