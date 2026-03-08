@@ -10,6 +10,7 @@ use ratatui::{
 };
 
 use crate::{
+    action_history::{ActionHistoryEntry, ActionStatus},
     app::AppState,
     state::ClusterSnapshot,
     ui::components::default_theme,
@@ -72,6 +73,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
     };
 
     match &active_tab.state {
+        WorkbenchTabState::ActionHistory(tab) => render_action_history_tab(frame, inner, app, tab),
         WorkbenchTabState::ResourceYaml(tab) => {
             render_yaml_tab(frame, inner, tab.scroll, active_tab)
         }
@@ -97,11 +99,102 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             Line::from("  Open a resource tab with:"),
             Line::from("  [y] YAML  [v] Events  [l] Logs  [f] Port-Forward"),
             Line::from(""),
+            Line::from("  [H] opens action history."),
             Line::from("  [b] closes the workbench, [Ctrl+W] closes the active tab."),
         ])
         .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn render_action_history_tab(
+    frame: &mut Frame,
+    area: Rect,
+    app: &AppState,
+    tab: &crate::workbench::ActionHistoryTabState,
+) {
+    let theme = default_theme();
+    let entries = app.action_history().entries();
+
+    if entries.is_empty() {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(vec![Span::styled(
+                    " No mutation history yet",
+                    theme.section_title_style(),
+                )]),
+                Line::from(""),
+                Line::from("  Mutating actions will appear here with pending/success/error state."),
+                Line::from("  Use [Enter] on a jumpable row to reopen the affected resource."),
+            ])
+            .wrap(Wrap { trim: false }),
+            area,
+        );
+        return;
+    }
+
+    let visible_rows = area.height.max(1) as usize;
+    let start = tab
+        .selected
+        .saturating_sub(visible_rows.saturating_sub(1) / 2)
+        .min(entries.len().saturating_sub(1));
+    let end = (start + visible_rows).min(entries.len());
+    let lines: Vec<Line> = entries
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .map(|(idx, entry)| render_action_history_line(entry, idx == tab.selected, &theme))
+        .collect();
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    render_scrollbar(frame, area, entries.len(), start);
+}
+
+fn render_action_history_line(
+    entry: &ActionHistoryEntry,
+    selected: bool,
+    theme: &crate::ui::theme::Theme,
+) -> Line<'static> {
+    let badge = match entry.status {
+        ActionStatus::Pending => Span::styled(" PENDING ", theme.badge_warning_style()),
+        ActionStatus::Succeeded => Span::styled(" OK ", theme.badge_success_style()),
+        ActionStatus::Failed => Span::styled(" ERROR ", theme.badge_error_style()),
+    };
+    let timestamp = entry
+        .finished_at
+        .unwrap_or(entry.started_at)
+        .with_timezone(&chrono::Local)
+        .format("%H:%M:%S")
+        .to_string();
+    let row_style = if selected {
+        theme.hover_style()
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    let jump_hint = if entry.target.is_some() {
+        "  [Enter] open"
+    } else {
+        ""
+    };
+
+    Line::from(vec![
+        Span::styled(if selected { "› " } else { "  " }, row_style),
+        badge,
+        Span::raw(" "),
+        Span::styled(
+            format!("{} ", entry.kind.label()),
+            row_style.add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(entry.resource_label.clone(), row_style),
+        Span::styled("  ", row_style),
+        Span::styled(timestamp, theme.muted_style()),
+        Span::styled(jump_hint, theme.keybind_desc_style()),
+        Span::styled(
+            format!("  {}", entry.message),
+            Style::default().fg(theme.fg_dim),
+        ),
+    ])
 }
 
 fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &WorkbenchTab) {

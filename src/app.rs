@@ -6,6 +6,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    action_history::{ActionHistoryState, ActionHistoryTarget, ActionKind, ActionStatus},
     k8s::{
         client::EventInfo,
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodInfo, PodMetricsInfo},
@@ -19,8 +20,8 @@ use crate::{
         scale_dialog::{ScaleDialogState, ScaleTargetKind},
     },
     workbench::{
-        DEFAULT_WORKBENCH_HEIGHT, PodLogsTabState, PortForwardTabState, ResourceEventsTabState,
-        ResourceYamlTabState, WorkbenchState, WorkbenchTabState,
+        ActionHistoryTabState, DEFAULT_WORKBENCH_HEIGHT, PodLogsTabState, PortForwardTabState,
+        ResourceEventsTabState, ResourceYamlTabState, WorkbenchState, WorkbenchTabState,
     },
 };
 
@@ -1235,6 +1236,7 @@ pub enum AppAction {
     LogsViewerPickerDown,
     OpenResourceYaml,
     OpenResourceEvents,
+    OpenActionHistory,
     PortForwardOpen,
     PortForwardCreate(
         (
@@ -1262,6 +1264,7 @@ pub enum AppAction {
     WorkbenchCloseActiveTab,
     WorkbenchIncreaseHeight,
     WorkbenchDecreaseHeight,
+    ActionHistoryOpenSelected,
     RolloutRestart,
     EditYaml,
     DeleteResource,
@@ -1357,6 +1360,8 @@ pub struct AppState {
     pub pod_sort: Option<PodSortState>,
     /// Active port-forward tunnels displayed in the PortForwarding view.
     pub tunnel_registry: crate::state::port_forward::TunnelRegistry,
+    /// Canonical mutation/action history.
+    pub action_history: ActionHistoryState,
     /// Persistent bottom workbench state.
     pub workbench: WorkbenchState,
 }
@@ -1389,6 +1394,7 @@ impl Default for AppState {
             workload_sort: None,
             pod_sort: None,
             tunnel_registry: crate::state::port_forward::TunnelRegistry::new(),
+            action_history: ActionHistoryState::default(),
             workbench: WorkbenchState::default(),
         }
     }
@@ -1460,6 +1466,65 @@ impl AppState {
 
     pub fn workbench_mut(&mut self) -> &mut WorkbenchState {
         &mut self.workbench
+    }
+
+    pub fn action_history(&self) -> &ActionHistoryState {
+        &self.action_history
+    }
+
+    pub fn open_action_history_tab(&mut self, focus: bool) {
+        let history_key = crate::workbench::WorkbenchTabKey::ActionHistory;
+        if focus {
+            if !self.workbench.activate_tab(&history_key) {
+                self.workbench.open_tab(WorkbenchTabState::ActionHistory(
+                    ActionHistoryTabState::default(),
+                ));
+            }
+            self.focus_workbench();
+        } else if !self.workbench.has_tab(&history_key) {
+            self.workbench
+                .ensure_background_tab(WorkbenchTabState::ActionHistory(
+                    ActionHistoryTabState::default(),
+                ));
+        }
+    }
+
+    pub fn record_action_pending(
+        &mut self,
+        kind: ActionKind,
+        origin_view: AppView,
+        resource: Option<ResourceRef>,
+        resource_label: impl Into<String>,
+        message: impl Into<String>,
+    ) -> u64 {
+        self.open_action_history_tab(false);
+        let target = resource.map(|resource| ActionHistoryTarget {
+            view: origin_view,
+            resource,
+        });
+        self.action_history
+            .record_pending(kind, resource_label, message, target)
+    }
+
+    pub fn complete_action_history(
+        &mut self,
+        entry_id: u64,
+        status: ActionStatus,
+        message: impl Into<String>,
+        keep_target: bool,
+    ) {
+        self.action_history
+            .complete(entry_id, status, message, keep_target);
+    }
+
+    pub fn selected_action_history_target(&self) -> Option<&ActionHistoryTarget> {
+        let tab = self.workbench.active_tab()?;
+        let WorkbenchTabState::ActionHistory(history_tab) = &tab.state else {
+            return None;
+        };
+        self.action_history
+            .get(history_tab.selected)
+            .and_then(|entry| entry.target.as_ref())
     }
 
     /// Returns whether the event loop should terminate.
@@ -1932,11 +1997,45 @@ impl AppState {
     fn handle_workbench_key_event(&mut self, key: KeyEvent) -> AppAction {
         use crate::ui::components::port_forward_dialog::PortForwardAction;
 
+        let action_history_len = self.action_history.entries().len();
         let Some(tab) = self.workbench.active_tab_mut() else {
             return AppAction::None;
         };
 
         match &mut tab.state {
+            WorkbenchTabState::ActionHistory(tab) => match key.code {
+                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    tab.select_next(action_history_len);
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.select_previous();
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.select_top();
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    tab.select_bottom(action_history_len);
+                    AppAction::None
+                }
+                KeyCode::PageDown => {
+                    for _ in 0..10 {
+                        tab.select_next(action_history_len);
+                    }
+                    AppAction::None
+                }
+                KeyCode::PageUp => {
+                    for _ in 0..10 {
+                        tab.select_previous();
+                    }
+                    AppAction::None
+                }
+                KeyCode::Enter => AppAction::ActionHistoryOpenSelected,
+                _ => AppAction::None,
+            },
             WorkbenchTabState::ResourceYaml(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
                 KeyCode::Char('j') | KeyCode::Down => {
@@ -2218,6 +2317,7 @@ impl AppState {
             {
                 AppAction::OpenResourceEvents
             }
+            KeyCode::Char('H') => AppAction::OpenActionHistory,
             KeyCode::Char('f')
                 if self
                     .detail_view

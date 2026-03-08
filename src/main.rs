@@ -24,6 +24,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 
 use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
+    action_history::{ActionKind, ActionStatus},
     app::{
         AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState,
         ResourceRef, filtered_pod_indices, filtered_workload_indices, load_config, save_config,
@@ -296,6 +297,26 @@ fn refresh_port_forward_workbench(
     );
 }
 
+fn open_detail_for_resource(
+    app: &mut AppState,
+    snapshot: &ClusterSnapshot,
+    client: &K8sClient,
+    detail_tx: &tokio::sync::mpsc::Sender<(ResourceRef, Result<DetailViewState, String>)>,
+    resource: ResourceRef,
+) {
+    app.detail_view = Some(initial_loading_state(resource.clone(), snapshot));
+    let client_clone = client.clone();
+    let snapshot_clone = snapshot.clone();
+    let tx = detail_tx.clone();
+    let requested_resource = resource.clone();
+    tokio::spawn(async move {
+        let result = fetch_detail_view(&client_clone, &snapshot_clone, requested_resource.clone())
+            .await
+            .map_err(|err| err.to_string());
+        let _ = tx.send((requested_resource, result)).await;
+    });
+}
+
 #[derive(Debug)]
 enum LogsViewerAsyncResult {
     Containers {
@@ -341,6 +362,7 @@ struct RefreshRuntimeState {
 #[derive(Debug)]
 struct DeleteAsyncResult {
     request_id: u64,
+    action_history_id: u64,
     context_generation: u64,
     origin_view: AppView,
     resource: ResourceRef,
@@ -349,6 +371,7 @@ struct DeleteAsyncResult {
 
 #[derive(Debug)]
 struct ScaleAsyncResult {
+    action_history_id: u64,
     context_generation: u64,
     origin_view: AppView,
     resource: ResourceRef,
@@ -359,6 +382,7 @@ struct ScaleAsyncResult {
 
 #[derive(Debug)]
 struct RolloutRestartAsyncResult {
+    action_history_id: u64,
     context_generation: u64,
     origin_view: AppView,
     resource_label: String,
@@ -367,6 +391,7 @@ struct RolloutRestartAsyncResult {
 
 #[derive(Debug)]
 struct FluxReconcileAsyncResult {
+    action_history_id: u64,
     context_generation: u64,
     origin_view: AppView,
     resource_label: String,
@@ -734,6 +759,7 @@ fn spawn_delete_task(
     client: K8sClient,
     resource: ResourceRef,
     request_id: u64,
+    action_history_id: u64,
     context_generation: u64,
     origin_view: AppView,
 ) {
@@ -780,6 +806,7 @@ fn spawn_delete_task(
         let _ = delete_tx
             .send(DeleteAsyncResult {
                 request_id,
+                action_history_id,
                 context_generation,
                 origin_view,
                 resource,
@@ -1193,6 +1220,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     if result.context_generation != refresh_state.context_generation
                         || delete_in_flight_id != Some(result.request_id)
                     {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            "Delete verification was cancelled because the active context changed.",
+                            true,
+                        );
                         continue;
                     }
 
@@ -1203,6 +1236,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         Ok(()) => {
                             global_state.apply_optimistic_delete(&result.resource);
                             snapshot_dirty = true;
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!(
+                                    "Deleted {} '{}'.",
+                                    result.resource.kind(),
+                                    result.resource.name()
+                                ),
+                                false,
+                            );
                             finish_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
@@ -1226,6 +1269,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             );
                         }
                         Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("Delete failed: {err}"),
+                                true,
+                            );
                             status_message_clear_at = None;
                             app.set_error(format!("Delete failed: {err}"));
                         }
@@ -1236,6 +1285,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             result = scale_rx.recv() => {
                 if let Some(result) = result {
                     if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            "Scale verification was cancelled because the active context changed.",
+                            true,
+                        );
                         continue;
                     }
                     needs_redraw = true;
@@ -1244,6 +1299,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             global_state
                                 .apply_optimistic_scale(&result.resource, result.target_replicas);
                             snapshot_dirty = true;
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!("Scaled {}.", result.resource_label),
+                                true,
+                            );
                             finish_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
@@ -1263,6 +1324,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             );
                         }
                         Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("Scale failed: {err}"),
+                                true,
+                            );
                             status_message_clear_at = None;
                             app.set_error(format!("Scale failed: {err}"));
                         }
@@ -1273,11 +1340,23 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             result = rollout_rx.recv() => {
                 if let Some(result) = result {
                     if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            "Restart verification was cancelled because the active context changed.",
+                            true,
+                        );
                         continue;
                     }
                     needs_redraw = true;
                     match result.result {
                         Ok(()) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!("Restart requested for {}.", result.resource_label),
+                                true,
+                            );
                             finish_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
@@ -1300,6 +1379,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             );
                         }
                         Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("Restart failed: {err}"),
+                                true,
+                            );
                             status_message_clear_at = None;
                             app.set_error(format!("Restart failed: {err}"));
                         }
@@ -1310,12 +1395,24 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             result = flux_reconcile_rx.recv() => {
                 if let Some(result) = result {
                     if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            "Reconcile verification was cancelled because the active context changed.",
+                            true,
+                        );
                         continue;
                     }
 
                     needs_redraw = true;
                     match result.result {
                         Ok(()) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!("Reconcile requested for {}.", result.resource_label),
+                                true,
+                            );
                             finish_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
@@ -1338,6 +1435,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             );
                         }
                         Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("Flux reconcile failed: {err}"),
+                                true,
+                            );
                             status_message_clear_at = None;
                             app.set_error(format!("Flux reconcile failed: {err}"));
                         }
@@ -1499,6 +1602,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             reconcile_resource.name()
                         );
                         let origin_view = app.view();
+                        let action_history_id = app.record_action_pending(
+                            ActionKind::FluxReconcile,
+                            origin_view,
+                            Some(reconcile_resource.clone()),
+                            resource_label.clone(),
+                            format!("Requesting reconcile for {resource_label}..."),
+                        );
                         begin_detail_mutation(
                             &mut app,
                             &mut status_message_clear_at,
@@ -1532,6 +1642,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             };
                             let _ = tx
                                 .send(FluxReconcileAsyncResult {
+                                    action_history_id,
                                     context_generation,
                                     origin_view,
                                     resource_label,
@@ -1683,22 +1794,33 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         );
                     }
                     AppAction::OpenDetail(resource) => {
-                        // Show loading state immediately — fetch happens in a background task
-                        app.detail_view = Some(initial_loading_state(resource.clone(), &cached_snapshot));
-                        let client_clone = client.clone();
-                        let snapshot_clone = cached_snapshot.clone();
-                        let tx = detail_tx.clone();
-                        let requested_resource = resource.clone();
-                        tokio::spawn(async move {
-                            let result = fetch_detail_view(
-                                &client_clone,
-                                &snapshot_clone,
-                                requested_resource.clone(),
-                            )
-                            .await
-                            .map_err(|err| err.to_string());
-                            let _ = tx.send((requested_resource, result)).await;
-                        });
+                        open_detail_for_resource(
+                            &mut app,
+                            &cached_snapshot,
+                            &client,
+                            &detail_tx,
+                            resource,
+                        );
+                    }
+                    AppAction::ActionHistoryOpenSelected => {
+                        let Some(target) = app.selected_action_history_target().cloned() else {
+                            app.set_error(
+                                "Selected history entry does not have a jumpable resource."
+                                    .to_string(),
+                            );
+                            continue;
+                        };
+                        app.view = target.view;
+                        app.selected_idx = 0;
+                        app.focus = kubectui::app::Focus::Content;
+                        app.extension_in_instances = false;
+                        open_detail_for_resource(
+                            &mut app,
+                            &cached_snapshot,
+                            &client,
+                            &detail_tx,
+                            target.resource,
+                        );
                     }
                     AppAction::CloseDetail => {
                         app.detail_view = None;
@@ -1962,6 +2084,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             let resource_label =
                                 format!("{kind_label} '{name}' in namespace '{namespace}'");
                             let origin_view = app.view();
+                            let action_history_id = app.record_action_pending(
+                                ActionKind::Scale,
+                                origin_view,
+                                Some(resource.clone()),
+                                resource_label.clone(),
+                                format!("Scaling {resource_label} to {replicas}..."),
+                            );
                             begin_detail_mutation(
                                 &mut app,
                                 &mut status_message_clear_at,
@@ -1983,6 +2112,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 .map_err(|e| format!("{e:#}"));
                                 let _ = tx
                                     .send(ScaleAsyncResult {
+                                        action_history_id,
                                         context_generation,
                                         origin_view,
                                         resource,
@@ -2015,6 +2145,25 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             let resource_label =
                                 format!("{} '{}' in namespace '{}'", kind, name, namespace);
                             let origin_view = app.view();
+                            let resource = match kind.as_str() {
+                                "deployment" => {
+                                    ResourceRef::Deployment(name.clone(), namespace.clone())
+                                }
+                                "statefulset" => {
+                                    ResourceRef::StatefulSet(name.clone(), namespace.clone())
+                                }
+                                "daemonset" => {
+                                    ResourceRef::DaemonSet(name.clone(), namespace.clone())
+                                }
+                                _ => unreachable!("validated restartable resource"),
+                            };
+                            let action_history_id = app.record_action_pending(
+                                ActionKind::Restart,
+                                origin_view,
+                                Some(resource),
+                                resource_label.clone(),
+                                format!("Requesting restart for {resource_label}..."),
+                            );
                             begin_detail_mutation(
                                 &mut app,
                                 &mut status_message_clear_at,
@@ -2028,6 +2177,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     .map_err(|e| format!("{e:#}"));
                                 let _ = tx
                                     .send(RolloutRestartAsyncResult {
+                                        action_history_id,
                                         context_generation,
                                         origin_view,
                                         resource_label,
@@ -2064,6 +2214,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             let resource_label =
                                 format!("{} '{}'", resource.kind(), resource.name());
                             let origin_view = app.view();
+                            let action_history_id = app.record_action_pending(
+                                ActionKind::Delete,
+                                origin_view,
+                                Some(resource.clone()),
+                                resource_label.clone(),
+                                format!("Deleting {resource_label}..."),
+                            );
                             begin_detail_mutation(
                                 &mut app,
                                 &mut status_message_clear_at,
@@ -2074,6 +2231,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 client.clone(),
                                 resource,
                                 request_id,
+                                action_history_id,
                                 refresh_state.context_generation,
                                 origin_view,
                             );
@@ -2146,6 +2304,27 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                                 if edited_yaml.trim() == yaml_content.trim() {
                                                     // No changes — skip apply
                                                 } else {
+                                                    let origin_view = app.view();
+                                                    let resource_label = format!(
+                                                        "{} '{}'{}",
+                                                        kind,
+                                                        name,
+                                                        namespace
+                                                            .as_deref()
+                                                            .map(|ns| format!(" in namespace '{ns}'"))
+                                                            .unwrap_or_default()
+                                                    );
+                                                    let jump_resource = app
+                                                        .detail_view
+                                                        .as_ref()
+                                                        .and_then(|detail| detail.resource.clone());
+                                                    let action_history_id = app.record_action_pending(
+                                                        ActionKind::ApplyYaml,
+                                                        origin_view,
+                                                        jump_resource,
+                                                        resource_label.clone(),
+                                                        format!("Applying changes to {resource_label}..."),
+                                                    );
                                                     match client
                                                         .apply_resource_yaml(
                                                             &edited_yaml,
@@ -2156,7 +2335,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                                         .await
                                                     {
                                                         Ok(()) => {
-                                                            let origin_view = app.view();
+                                                            app.complete_action_history(
+                                                                action_history_id,
+                                                                ActionStatus::Succeeded,
+                                                                format!(
+                                                                    "Applied changes to {resource_label}."
+                                                                ),
+                                                                true,
+                                                            );
                                                             app.detail_view = None;
                                                             app.focus = kubectui::app::Focus::Content;
                                                             finish_mutation_success(
@@ -2182,6 +2368,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                                             );
                                                         }
                                                         Err(err) => {
+                                                            app.complete_action_history(
+                                                                action_history_id,
+                                                                ActionStatus::Failed,
+                                                                format!("Apply failed: {err:#}"),
+                                                                true,
+                                                            );
                                                             app.set_error(format!("Apply failed: {err:#}"));
                                                         }
                                                     }

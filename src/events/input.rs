@@ -171,6 +171,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         AppAction::LogsViewerSelectContainer(_) => true,
         AppAction::OpenResourceYaml => true,
         AppAction::OpenResourceEvents => true,
+        AppAction::OpenActionHistory => {
+            app_state.open_action_history_tab(true);
+            true
+        }
         AppAction::PortForwardOpen => {
             app_state.open_port_forward();
             true
@@ -302,6 +306,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         }
         AppAction::WorkbenchDecreaseHeight => {
             app_state.workbench_decrease_height();
+            true
+        }
+        AppAction::ActionHistoryOpenSelected => {
+            // Handled in main.rs event loop (needs resource jump / detail fetch)
             true
         }
     }
