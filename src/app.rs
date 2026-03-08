@@ -20,8 +20,9 @@ use crate::{
         scale_dialog::{ScaleDialogState, ScaleTargetKind},
     },
     workbench::{
-        ActionHistoryTabState, DEFAULT_WORKBENCH_HEIGHT, PodLogsTabState, PortForwardTabState,
-        ResourceEventsTabState, ResourceYamlTabState, WorkbenchState, WorkbenchTabState,
+        ActionHistoryTabState, DEFAULT_WORKBENCH_HEIGHT, ExecTabState, PodLogsTabState,
+        PortForwardTabState, ResourceEventsTabState, ResourceYamlTabState, WorkbenchState,
+        WorkbenchTabState, WorkloadLogsTabState,
     },
 };
 
@@ -1237,6 +1238,7 @@ pub enum AppAction {
     OpenResourceYaml,
     OpenResourceEvents,
     OpenActionHistory,
+    OpenExec,
     PortForwardOpen,
     PortForwardCreate(
         (
@@ -1265,6 +1267,8 @@ pub enum AppAction {
     WorkbenchIncreaseHeight,
     WorkbenchDecreaseHeight,
     ActionHistoryOpenSelected,
+    ExecSelectContainer(String),
+    ExecSendInput,
     RolloutRestart,
     EditYaml,
     DeleteResource,
@@ -1917,6 +1921,28 @@ impl AppState {
         self.focus = Focus::Workbench;
     }
 
+    pub fn open_workload_logs_tab(&mut self, resource: ResourceRef, session_id: u64) {
+        self.workbench
+            .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+                resource, session_id,
+            )));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_exec_tab(
+        &mut self,
+        resource: ResourceRef,
+        session_id: u64,
+        pod_name: String,
+        namespace: String,
+    ) {
+        self.workbench
+            .open_tab(WorkbenchTabState::Exec(ExecTabState::new(
+                resource, session_id, pod_name, namespace,
+            )));
+        self.focus = Focus::Workbench;
+    }
+
     pub fn open_port_forward_tab(
         &mut self,
         target: Option<ResourceRef>,
@@ -2126,6 +2152,141 @@ impl AppState {
                 KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
                 _ => AppAction::None,
             },
+            WorkbenchTabState::WorkloadLogs(tab) => {
+                let filtered_len = tab.lines.iter().filter(|line| tab.matches_filter(line)).count();
+                if tab.editing_text_filter {
+                    match key.code {
+                        KeyCode::Esc => {
+                            tab.editing_text_filter = false;
+                            tab.filter_input.clear();
+                            AppAction::None
+                        }
+                        KeyCode::Enter => {
+                            tab.text_filter = tab.filter_input.clone();
+                            tab.editing_text_filter = false;
+                            tab.scroll = 0;
+                            AppAction::None
+                        }
+                        KeyCode::Backspace => {
+                            tab.filter_input.pop();
+                            AppAction::None
+                        }
+                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.filter_input.push(c);
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            tab.scroll = (tab.scroll + 1).min(filtered_len.saturating_sub(1));
+                            tab.follow_mode = false;
+                            AppAction::None
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            tab.scroll = tab.scroll.saturating_sub(1);
+                            tab.follow_mode = false;
+                            AppAction::None
+                        }
+                        KeyCode::Char('g') => {
+                            tab.scroll = 0;
+                            tab.follow_mode = false;
+                            AppAction::None
+                        }
+                        KeyCode::Char('G') => {
+                            tab.scroll = filtered_len.saturating_sub(1);
+                            tab.follow_mode = false;
+                            AppAction::None
+                        }
+                        KeyCode::PageDown => {
+                            tab.scroll = (tab.scroll + 10).min(filtered_len.saturating_sub(1));
+                            tab.follow_mode = false;
+                            AppAction::None
+                        }
+                        KeyCode::PageUp => {
+                            tab.scroll = tab.scroll.saturating_sub(10);
+                            tab.follow_mode = false;
+                            AppAction::None
+                        }
+                        KeyCode::Char('f') => {
+                            tab.follow_mode = !tab.follow_mode;
+                            if tab.follow_mode {
+                                tab.scroll = filtered_len.saturating_sub(1);
+                            }
+                            AppAction::None
+                        }
+                        KeyCode::Char('/') => {
+                            tab.editing_text_filter = true;
+                            tab.filter_input = tab.text_filter.clone();
+                            AppAction::None
+                        }
+                        KeyCode::Char('p') => {
+                            tab.cycle_pod_filter();
+                            AppAction::None
+                        }
+                        KeyCode::Char('c') => {
+                            tab.cycle_container_filter();
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    }
+                }
+            }
+            WorkbenchTabState::Exec(tab) => {
+                if tab.picking_container {
+                    match key.code {
+                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            tab.container_cursor = tab.container_cursor.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            let max = tab.containers.len().saturating_sub(1);
+                            tab.container_cursor = (tab.container_cursor + 1).min(max);
+                            AppAction::None
+                        }
+                        KeyCode::Enter => tab
+                            .containers
+                            .get(tab.container_cursor)
+                            .cloned()
+                            .map(AppAction::ExecSelectContainer)
+                            .unwrap_or(AppAction::None),
+                        _ => AppAction::None,
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Enter => AppAction::ExecSendInput,
+                        KeyCode::Backspace => {
+                            tab.input.pop();
+                            AppAction::None
+                        }
+                        KeyCode::Up => {
+                            tab.scroll = tab.scroll.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Down => {
+                            tab.scroll = (tab.scroll + 1).min(tab.lines.len().saturating_sub(1));
+                            AppAction::None
+                        }
+                        KeyCode::PageUp => {
+                            tab.scroll = tab.scroll.saturating_sub(10);
+                            AppAction::None
+                        }
+                        KeyCode::PageDown => {
+                            tab.scroll = (tab.scroll + 10).min(tab.lines.len().saturating_sub(1));
+                            AppAction::None
+                        }
+                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.input.push(c);
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    }
+                }
+            }
             WorkbenchTabState::PortForward(tab) => match tab.dialog.handle_key(key) {
                 PortForwardAction::None => AppAction::None,
                 PortForwardAction::Refresh => AppAction::PortForwardRefresh,
@@ -2318,6 +2479,15 @@ impl AppState {
                 AppAction::OpenResourceEvents
             }
             KeyCode::Char('H') => AppAction::OpenActionHistory,
+            KeyCode::Char('x')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Exec))
+                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
+            {
+                AppAction::OpenExec
+            }
             KeyCode::Char('f')
                 if self
                     .detail_view

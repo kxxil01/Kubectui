@@ -9,6 +9,8 @@ use crate::{
 pub const DEFAULT_WORKBENCH_HEIGHT: u16 = 12;
 pub const MIN_WORKBENCH_HEIGHT: u16 = 8;
 pub const MAX_WORKBENCH_HEIGHT: u16 = 20;
+pub const MAX_WORKLOAD_LOG_LINES: usize = 5_000;
+pub const MAX_EXEC_OUTPUT_LINES: usize = 5_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkbenchTabKind {
@@ -16,6 +18,8 @@ pub enum WorkbenchTabKind {
     ResourceYaml,
     ResourceEvents,
     PodLogs,
+    WorkloadLogs,
+    Exec,
     PortForward,
 }
 
@@ -26,6 +30,8 @@ impl WorkbenchTabKind {
             WorkbenchTabKind::ResourceYaml => "YAML",
             WorkbenchTabKind::ResourceEvents => "Events",
             WorkbenchTabKind::PodLogs => "Logs",
+            WorkbenchTabKind::WorkloadLogs => "Workload Logs",
+            WorkbenchTabKind::Exec => "Exec",
             WorkbenchTabKind::PortForward => "Port-Forward",
         }
     }
@@ -37,6 +43,8 @@ pub enum WorkbenchTabKey {
     ResourceYaml(ResourceRef),
     ResourceEvents(ResourceRef),
     PodLogs(ResourceRef),
+    WorkloadLogs(ResourceRef),
+    Exec(ResourceRef),
     PortForward,
 }
 
@@ -124,6 +132,183 @@ impl PodLogsTabState {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkloadLogLine {
+    pub pod_name: String,
+    pub container_name: String,
+    pub content: String,
+    pub is_stderr: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkloadLogsTabState {
+    pub resource: ResourceRef,
+    pub session_id: u64,
+    pub sources: Vec<(String, String, String)>,
+    pub lines: Vec<WorkloadLogLine>,
+    pub scroll: usize,
+    pub follow_mode: bool,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub notice: Option<String>,
+    pub text_filter: String,
+    pub filter_input: String,
+    pub editing_text_filter: bool,
+    pub pod_filter: Option<String>,
+    pub container_filter: Option<String>,
+    pub available_pods: Vec<String>,
+    pub available_containers: Vec<String>,
+}
+
+impl WorkloadLogsTabState {
+    pub fn new(resource: ResourceRef, session_id: u64) -> Self {
+        Self {
+            resource,
+            session_id,
+            sources: Vec::new(),
+            lines: Vec::new(),
+            scroll: 0,
+            follow_mode: true,
+            loading: true,
+            error: None,
+            notice: None,
+            text_filter: String::new(),
+            filter_input: String::new(),
+            editing_text_filter: false,
+            pod_filter: None,
+            container_filter: None,
+            available_pods: Vec::new(),
+            available_containers: Vec::new(),
+        }
+    }
+
+    pub fn push_line(&mut self, line: WorkloadLogLine) {
+        if !self.available_pods.iter().any(|pod| pod == &line.pod_name) {
+            self.available_pods.push(line.pod_name.clone());
+            self.available_pods.sort();
+        }
+        if !self
+            .available_containers
+            .iter()
+            .any(|container| container == &line.container_name)
+        {
+            self.available_containers.push(line.container_name.clone());
+            self.available_containers.sort();
+        }
+
+        self.lines.push(line);
+        if self.lines.len() > MAX_WORKLOAD_LOG_LINES {
+            let excess = self.lines.len() - MAX_WORKLOAD_LOG_LINES;
+            self.lines.drain(..excess);
+            self.scroll = self.scroll.saturating_sub(excess);
+        }
+        if self.follow_mode {
+            self.scroll = self.lines.len().saturating_sub(1);
+        }
+    }
+
+    pub fn cycle_pod_filter(&mut self) {
+        self.pod_filter = cycle_filter_value(&self.available_pods, self.pod_filter.as_deref());
+        self.scroll = 0;
+    }
+
+    pub fn cycle_container_filter(&mut self) {
+        self.container_filter = cycle_filter_value(
+            &self.available_containers,
+            self.container_filter.as_deref(),
+        );
+        self.scroll = 0;
+    }
+
+    pub fn matches_filter(&self, line: &WorkloadLogLine) -> bool {
+        self.pod_filter
+            .as_ref()
+            .is_none_or(|pod| pod == &line.pod_name)
+            && self
+                .container_filter
+                .as_ref()
+                .is_none_or(|container| container == &line.container_name)
+            && (self.text_filter.is_empty()
+                || line
+                    .content
+                    .to_ascii_lowercase()
+                    .contains(&self.text_filter.to_ascii_lowercase()))
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecTabState {
+    pub resource: ResourceRef,
+    pub session_id: u64,
+    pub pod_name: String,
+    pub namespace: String,
+    pub container_name: String,
+    pub containers: Vec<String>,
+    pub picking_container: bool,
+    pub container_cursor: usize,
+    pub input: String,
+    pub lines: Vec<String>,
+    pub scroll: usize,
+    pub loading: bool,
+    pub shell_name: Option<String>,
+    pub error: Option<String>,
+    pub exited: bool,
+    pub pending_fragment: String,
+}
+
+impl ExecTabState {
+    pub fn new(resource: ResourceRef, session_id: u64, pod_name: String, namespace: String) -> Self {
+        Self {
+            resource,
+            session_id,
+            pod_name,
+            namespace,
+            container_name: String::new(),
+            containers: Vec::new(),
+            picking_container: false,
+            container_cursor: 0,
+            input: String::new(),
+            lines: Vec::new(),
+            scroll: 0,
+            loading: true,
+            shell_name: None,
+            error: None,
+            exited: false,
+            pending_fragment: String::new(),
+        }
+    }
+
+    pub fn set_containers(&mut self, containers: Vec<String>) {
+        self.containers = containers;
+        self.container_cursor = 0;
+        if self.containers.len() > 1 {
+            self.picking_container = true;
+            self.loading = false;
+        } else if let Some(container) = self.containers.first() {
+            self.container_name = container.clone();
+            self.picking_container = false;
+        }
+    }
+
+    pub fn append_output(&mut self, chunk: &str) {
+        for segment in chunk.split_inclusive('\n') {
+            if segment.ends_with('\n') {
+                self.pending_fragment.push_str(segment.trim_end_matches('\n'));
+                self.lines
+                    .push(std::mem::take(&mut self.pending_fragment));
+            } else {
+                self.pending_fragment.push_str(segment);
+            }
+        }
+        if self.lines.len() > MAX_EXEC_OUTPUT_LINES {
+            let excess = self.lines.len() - MAX_EXEC_OUTPUT_LINES;
+            self.lines.drain(..excess);
+            self.scroll = self.scroll.saturating_sub(excess);
+        }
+        self.scroll = self.lines.len().saturating_sub(1);
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PortForwardTabState {
     pub target: Option<ResourceRef>,
@@ -142,6 +327,8 @@ pub enum WorkbenchTabState {
     ResourceYaml(ResourceYamlTabState),
     ResourceEvents(ResourceEventsTabState),
     PodLogs(PodLogsTabState),
+    WorkloadLogs(WorkloadLogsTabState),
+    Exec(ExecTabState),
     PortForward(PortForwardTabState),
 }
 
@@ -152,6 +339,8 @@ impl WorkbenchTabState {
             Self::ResourceYaml(_) => WorkbenchTabKind::ResourceYaml,
             Self::ResourceEvents(_) => WorkbenchTabKind::ResourceEvents,
             Self::PodLogs(_) => WorkbenchTabKind::PodLogs,
+            Self::WorkloadLogs(_) => WorkbenchTabKind::WorkloadLogs,
+            Self::Exec(_) => WorkbenchTabKind::Exec,
             Self::PortForward(_) => WorkbenchTabKind::PortForward,
         }
     }
@@ -162,6 +351,8 @@ impl WorkbenchTabState {
             Self::ResourceYaml(tab) => WorkbenchTabKey::ResourceYaml(tab.resource.clone()),
             Self::ResourceEvents(tab) => WorkbenchTabKey::ResourceEvents(tab.resource.clone()),
             Self::PodLogs(tab) => WorkbenchTabKey::PodLogs(tab.resource.clone()),
+            Self::WorkloadLogs(tab) => WorkbenchTabKey::WorkloadLogs(tab.resource.clone()),
+            Self::Exec(tab) => WorkbenchTabKey::Exec(tab.resource.clone()),
             Self::PortForward(_) => WorkbenchTabKey::PortForward,
         }
     }
@@ -172,6 +363,8 @@ impl WorkbenchTabState {
             Self::ResourceYaml(tab) => format!("YAML {}", resource_title(&tab.resource)),
             Self::ResourceEvents(tab) => format!("Events {}", resource_title(&tab.resource)),
             Self::PodLogs(tab) => format!("Logs {}", resource_title(&tab.resource)),
+            Self::WorkloadLogs(tab) => format!("Logs {}", resource_title(&tab.resource)),
+            Self::Exec(tab) => format!("Exec {}", resource_title(&tab.resource)),
             Self::PortForward(tab) => match &tab.target {
                 Some(resource) => format!("Port-Forward {}", resource_title(resource)),
                 None => "Port-Forward Sessions".to_string(),
@@ -347,6 +540,21 @@ fn resource_title(resource: &ResourceRef) -> String {
     match resource.namespace() {
         Some(namespace) => format!("{}/{}", namespace, resource.name()),
         None => resource.name().to_string(),
+    }
+}
+
+fn cycle_filter_value(values: &[String], current: Option<&str>) -> Option<String> {
+    if values.is_empty() {
+        return None;
+    }
+    match current {
+        None => values.first().cloned(),
+        Some(current) => values
+            .iter()
+            .position(|value| value == current)
+            .and_then(|idx| values.get(idx + 1))
+            .cloned(),
+        // Wrap back to "All"
     }
 }
 

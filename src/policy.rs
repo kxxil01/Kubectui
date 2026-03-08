@@ -38,6 +38,7 @@ pub enum DetailAction {
     ViewYaml,
     ViewEvents,
     Logs,
+    Exec,
     PortForward,
     Probes,
     Scale,
@@ -48,10 +49,11 @@ pub enum DetailAction {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 10] = [
+    pub const ORDER: [DetailAction; 11] = [
         DetailAction::ViewYaml,
         DetailAction::ViewEvents,
         DetailAction::Logs,
+        DetailAction::Exec,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -66,6 +68,7 @@ impl DetailAction {
             DetailAction::ViewYaml => "[y]",
             DetailAction::ViewEvents => "[v]",
             DetailAction::Logs => "[l]",
+            DetailAction::Exec => "[x]",
             DetailAction::PortForward => "[f]",
             DetailAction::Probes => "[p]",
             DetailAction::Scale => "[s]",
@@ -80,6 +83,7 @@ impl DetailAction {
             DetailAction::ViewYaml => "YAML",
             DetailAction::ViewEvents => "Events",
             DetailAction::Logs => "Logs",
+            DetailAction::Exec => "Exec",
             DetailAction::PortForward => "Port-Fwd",
             DetailAction::Probes => "Probes",
             DetailAction::Scale => "Scale",
@@ -324,7 +328,17 @@ impl ResourceRef {
     pub fn supports_detail_action(&self, action: DetailAction) -> bool {
         match action {
             DetailAction::ViewYaml | DetailAction::ViewEvents => true,
-            DetailAction::Logs | DetailAction::PortForward | DetailAction::Probes => {
+            DetailAction::Logs => matches!(
+                self,
+                ResourceRef::Pod(_, _)
+                    | ResourceRef::Deployment(_, _)
+                    | ResourceRef::StatefulSet(_, _)
+                    | ResourceRef::DaemonSet(_, _)
+                    | ResourceRef::ReplicaSet(_, _)
+                    | ResourceRef::ReplicationController(_, _)
+                    | ResourceRef::Job(_, _)
+            ),
+            DetailAction::Exec | DetailAction::PortForward | DetailAction::Probes => {
                 matches!(self, ResourceRef::Pod(_, _))
             }
             DetailAction::Scale => {
@@ -360,6 +374,7 @@ impl DetailViewState {
             DetailAction::ViewYaml
                 | DetailAction::ViewEvents
                 | DetailAction::Logs
+                | DetailAction::Exec
                 | DetailAction::PortForward
                 | DetailAction::Probes
                 | DetailAction::Scale
