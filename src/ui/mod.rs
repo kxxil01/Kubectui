@@ -25,6 +25,7 @@ use crate::{
         AppState, AppView, PodSortColumn, PodSortState, WorkloadSortColumn, WorkloadSortState,
         filtered_pod_indices,
     },
+    policy::ViewAction,
     state::{ClusterSnapshot, ViewLoadState},
     ui::components::{active_block, default_block, default_theme},
 };
@@ -193,6 +194,15 @@ pub(crate) fn loading_or_empty_message_no_search(
     }
 }
 
+fn effective_workbench_height(total_body_height: u16, requested_height: u16, open: bool) -> u16 {
+    if !open || total_body_height <= 12 {
+        return 0;
+    }
+
+    let max_height = total_body_height.saturating_sub(8);
+    requested_height.min(max_height).max(6)
+}
+
 fn current_view_activity(snapshot: &ClusterSnapshot, view: AppView) -> Option<String> {
     match snapshot.view_load_state(view) {
         ViewLoadState::Loading => Some(format!("{} loading...", view.label())),
@@ -316,12 +326,27 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         components::render_header(frame, root[0], "KubecTUI v0.1.0", cluster.cluster_summary());
     }
 
+    let body_root = {
+        let _body_layout_scope = profiling::span_scope("body_layout");
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(8),
+                Constraint::Length(effective_workbench_height(
+                    root[1].height,
+                    app.workbench().height,
+                    app.workbench().open,
+                )),
+            ])
+            .split(root[1])
+    };
+
     let body = {
         let _body_layout_scope = profiling::span_scope("body_layout");
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Length(26), Constraint::Min(0)])
-            .split(root[1])
+            .split(body_root[0])
     };
 
     {
@@ -334,6 +359,11 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             &app.collapsed_groups,
             app.focus,
         );
+    }
+
+    if app.workbench().open && body_root[1].height > 0 {
+        let _workbench_scope = profiling::span_scope("workbench");
+        components::render_workbench(frame, body_root[1], app, cluster);
     }
 
     let content = body[1];
@@ -662,17 +692,21 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             }
         };
         let flux_reconcile_hint = if app.detail_view.is_none()
-            && app.view().is_fluxcd()
-            && !matches!(
-                app.view(),
-                AppView::FluxCDAlertProviders | AppView::FluxCDAlerts
-            ) {
+            && app
+                .view()
+                .supports_view_action(ViewAction::SelectedFluxReconcile)
+        {
             " • [R] reconcile"
         } else {
             ""
         };
+        let workbench_hint = if app.workbench().open {
+            " • [b] workbench • [[]/]] tabs • [Ctrl+Up/Down] wb-size • [Ctrl+w] close-tab"
+        } else {
+            " • [b] workbench"
+        };
         format!(
-            "[{}]{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint} • [r] refresh • [q] quit",
+            "[{}]{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [q] quit",
             app.get_namespace(),
             current_activity
         )
@@ -1276,6 +1310,22 @@ mod tests {
         });
 
         draw_with_size(&app, &snapshot, 96, 20);
+    }
+
+    #[test]
+    fn effective_workbench_height_preserves_main_content_budget() {
+        assert_eq!(effective_workbench_height(10, 12, true), 0);
+        assert_eq!(effective_workbench_height(20, 12, true), 12);
+        assert_eq!(effective_workbench_height(20, 16, true), 12);
+        assert_eq!(effective_workbench_height(20, 12, false), 0);
+    }
+
+    #[test]
+    fn render_with_open_workbench_smoke() {
+        let mut app = app_with_view(AppView::Dashboard);
+        app.workbench.toggle_open();
+        let snapshot = ClusterSnapshot::default();
+        draw_with_size(&app, &snapshot, 120, 40);
     }
 
     /// Verifies services view renders without panic for mixed service types.

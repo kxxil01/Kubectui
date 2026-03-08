@@ -6,5 +6,7 @@ pub mod app;
 pub mod coordinator;
 pub mod events;
 pub mod k8s;
+pub mod policy;
 pub mod state;
 pub mod ui;
+pub mod workbench;

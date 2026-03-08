@@ -9,14 +9,18 @@ use crate::{
     k8s::{
         client::EventInfo,
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodInfo, PodMetricsInfo},
-        flux::flux_reconcile_support,
     },
+    policy::{DetailAction, ViewAction},
     ui::components::{
         CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction, NamespacePicker,
         NamespacePickerAction,
         port_forward_dialog::PortForwardDialog,
         probe_panel::ProbePanelState as ProbePanelComponentState,
         scale_dialog::{ScaleDialogState, ScaleTargetKind},
+    },
+    workbench::{
+        DEFAULT_WORKBENCH_HEIGHT, PodLogsTabState, PortForwardTabState, ResourceEventsTabState,
+        ResourceYamlTabState, WorkbenchState, WorkbenchTabState,
     },
 };
 
@@ -483,46 +487,6 @@ impl AppView {
         )
     }
 
-    pub const fn shared_sort_capabilities(self) -> &'static [WorkloadSortColumn] {
-        match self {
-            AppView::Nodes
-            | AppView::Services
-            | AppView::Deployments
-            | AppView::StatefulSets
-            | AppView::DaemonSets
-            | AppView::ReplicaSets
-            | AppView::ReplicationControllers
-            | AppView::Jobs
-            | AppView::CronJobs
-            | AppView::ResourceQuotas
-            | AppView::LimitRanges
-            | AppView::PodDisruptionBudgets
-            | AppView::FluxCDAlertProviders
-            | AppView::FluxCDAlerts
-            | AppView::FluxCDAll
-            | AppView::FluxCDArtifacts
-            | AppView::FluxCDHelmReleases
-            | AppView::FluxCDHelmRepositories
-            | AppView::FluxCDImages
-            | AppView::FluxCDKustomizations
-            | AppView::FluxCDReceivers
-            | AppView::FluxCDSources
-            | AppView::ServiceAccounts
-            | AppView::ClusterRoles
-            | AppView::Roles
-            | AppView::ClusterRoleBindings
-            | AppView::RoleBindings => SHARED_SORT_NAME_AGE,
-            AppView::PersistentVolumeClaims
-            | AppView::PersistentVolumes
-            | AppView::StorageClasses => SHARED_SORT_NAME_ONLY,
-            _ => SHARED_SORT_NONE,
-        }
-    }
-
-    pub fn supports_shared_sort(self, column: WorkloadSortColumn) -> bool {
-        self.shared_sort_capabilities().contains(&column)
-    }
-
     pub(crate) fn index(self) -> usize {
         Self::ORDER
             .iter()
@@ -569,11 +533,6 @@ impl WorkloadSortColumn {
         }
     }
 }
-
-const SHARED_SORT_NONE: &[WorkloadSortColumn] = &[];
-const SHARED_SORT_NAME_ONLY: &[WorkloadSortColumn] = &[WorkloadSortColumn::Name];
-const SHARED_SORT_NAME_AGE: &[WorkloadSortColumn] =
-    &[WorkloadSortColumn::Name, WorkloadSortColumn::Age];
 
 /// Active shared sort configuration for cross-view list sorting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -974,26 +933,6 @@ impl ResourceRef {
             ResourceRef::CustomResource { namespace, .. } => namespace.as_deref(),
         }
     }
-
-    /// Returns true when this resource is a Flux custom resource that supports
-    /// the direct reconcile action.
-    pub fn supports_flux_reconcile(&self) -> bool {
-        matches!(
-            self,
-            ResourceRef::CustomResource { group, kind, .. }
-                if flux_reconcile_support(group, kind).is_supported()
-        )
-    }
-
-    /// Returns the disabled reason for Flux reconcile when not supported.
-    pub fn flux_reconcile_disabled_reason(&self) -> Option<&'static str> {
-        match self {
-            ResourceRef::CustomResource { group, kind, .. } => {
-                flux_reconcile_support(group, kind).unsupported_reason()
-            }
-            _ => Some("Flux reconcile is only available for Flux toolkit resources."),
-        }
-    }
 }
 
 /// Human-readable metadata displayed in the detail modal.
@@ -1113,7 +1052,6 @@ pub struct DetailViewState {
     pub resource: Option<ResourceRef>,
     pub metadata: DetailMetadata,
     pub yaml: Option<String>,
-    pub yaml_scroll: usize,
     pub events: Vec<EventInfo>,
     pub sections: Vec<String>,
     pub pod_metrics: Option<PodMetricsInfo>,
@@ -1121,8 +1059,6 @@ pub struct DetailViewState {
     pub metrics_unavailable_message: Option<String>,
     pub loading: bool,
     pub error: Option<String>,
-    pub logs_viewer: Option<LogsViewerState>,
-    pub port_forward_dialog: Option<PortForwardDialog>,
     pub scale_dialog: Option<ScaleDialogState>,
     pub probe_panel: Option<ProbePanelComponentState>,
     /// When true, a delete confirmation prompt is shown in the detail view.
@@ -1297,14 +1233,17 @@ pub enum AppAction {
     LogsViewerSelectContainer(String),
     LogsViewerPickerUp,
     LogsViewerPickerDown,
+    OpenResourceYaml,
+    OpenResourceEvents,
     PortForwardOpen,
-    PortForwardClose,
     PortForwardCreate(
         (
             crate::k8s::portforward::PortForwardTarget,
             crate::k8s::portforward::PortForwardConfig,
         ),
     ),
+    PortForwardRefresh,
+    PortForwardStop(String),
     ScaleDialogOpen,
     ScaleDialogClose,
     ScaleDialogUpdateInput(char),
@@ -1317,6 +1256,12 @@ pub enum AppAction {
     ProbeToggleExpand,
     ProbeSelectNext,
     ProbeSelectPrev,
+    ToggleWorkbench,
+    WorkbenchNextTab,
+    WorkbenchPreviousTab,
+    WorkbenchCloseActiveTab,
+    WorkbenchIncreaseHeight,
+    WorkbenchDecreaseHeight,
     RolloutRestart,
     EditYaml,
     DeleteResource,
@@ -1347,6 +1292,11 @@ pub enum Focus {
     /// `j`/`k` scroll `selected_idx` through the resource list. `Enter` opens
     /// the detail view for the highlighted row. `Esc` returns focus to the sidebar.
     Content,
+    /// Bottom workbench owns keyboard input.
+    ///
+    /// `j`/`k` and related keys are delegated to the active workbench tab while
+    /// the main list remains visible in the background.
+    Workbench,
 }
 
 /// Runtime state for UI interaction and navigation.
@@ -1407,6 +1357,8 @@ pub struct AppState {
     pub pod_sort: Option<PodSortState>,
     /// Active port-forward tunnels displayed in the PortForwarding view.
     pub tunnel_registry: crate::state::port_forward::TunnelRegistry,
+    /// Persistent bottom workbench state.
+    pub workbench: WorkbenchState,
 }
 
 impl Default for AppState {
@@ -1437,6 +1389,7 @@ impl Default for AppState {
             workload_sort: None,
             pod_sort: None,
             tunnel_registry: crate::state::port_forward::TunnelRegistry::new(),
+            workbench: WorkbenchState::default(),
         }
     }
 }
@@ -1449,10 +1402,18 @@ struct AppConfig {
     /// Auto-refresh interval in seconds (0 = disabled, default = 30).
     #[serde(default = "default_refresh_interval")]
     refresh_interval_secs: u64,
+    #[serde(default)]
+    workbench_open: bool,
+    #[serde(default = "default_workbench_height")]
+    workbench_height: u16,
 }
 
 fn default_refresh_interval() -> u64 {
     30
+}
+
+fn default_workbench_height() -> u16 {
+    DEFAULT_WORKBENCH_HEIGHT
 }
 
 impl AppState {
@@ -1492,6 +1453,15 @@ impl AppState {
         self.is_search_mode
     }
 
+    /// Returns the current workbench state.
+    pub fn workbench(&self) -> &WorkbenchState {
+        &self.workbench
+    }
+
+    pub fn workbench_mut(&mut self) -> &mut WorkbenchState {
+        &mut self.workbench
+    }
+
     /// Returns whether the event loop should terminate.
     pub fn should_quit(&self) -> bool {
         self.should_quit
@@ -1527,6 +1497,36 @@ impl AppState {
     /// Clears any active non-error status message.
     pub fn clear_status(&mut self) {
         self.status_message = None;
+    }
+
+    pub fn toggle_workbench(&mut self) {
+        self.workbench.toggle_open();
+        if !self.workbench.open && self.focus == Focus::Workbench {
+            self.focus = Focus::Content;
+        }
+    }
+
+    pub fn workbench_next_tab(&mut self) {
+        self.workbench.next_tab();
+    }
+
+    pub fn workbench_previous_tab(&mut self) {
+        self.workbench.previous_tab();
+    }
+
+    pub fn workbench_close_active_tab(&mut self) {
+        self.workbench.close_active_tab();
+        if self.workbench.tabs.is_empty() && self.focus == Focus::Workbench {
+            self.focus = Focus::Content;
+        }
+    }
+
+    pub fn workbench_increase_height(&mut self) {
+        self.workbench.resize_larger();
+    }
+
+    pub fn workbench_decrease_height(&mut self) {
+        self.workbench.resize_smaller();
     }
 
     /// Sets active namespace for namespaced resource fetches.
@@ -1735,15 +1735,23 @@ impl AppState {
 
     /// Returns which detail sub-component is currently active.
     pub fn active_component(&self) -> ActiveComponent {
+        if let Some(tab) = self.workbench.active_tab() {
+            match tab.state {
+                WorkbenchTabState::PodLogs(_) if self.focus == Focus::Workbench => {
+                    return ActiveComponent::LogsViewer;
+                }
+                WorkbenchTabState::PortForward(_) if self.focus == Focus::Workbench => {
+                    return ActiveComponent::PortForward;
+                }
+                _ => {}
+            }
+        }
+
         let Some(detail) = &self.detail_view else {
             return ActiveComponent::None;
         };
 
-        if detail.logs_viewer.is_some() {
-            ActiveComponent::LogsViewer
-        } else if detail.port_forward_dialog.is_some() {
-            ActiveComponent::PortForward
-        } else if detail.scale_dialog.is_some() {
+        if detail.scale_dialog.is_some() {
             ActiveComponent::Scale
         } else if detail.probe_panel.is_some() {
             ActiveComponent::ProbePanel
@@ -1752,47 +1760,116 @@ impl AppState {
         }
     }
 
+    /// Compatibility helper for tests and callers that previously opened the
+    /// in-detail logs overlay. This now opens the canonical workbench tab.
     pub fn open_logs_viewer(&mut self) {
-        if let Some(detail) = &mut self.detail_view {
-            detail.logs_viewer = Some(LogsViewerState::default());
+        if let Some(detail) = &self.detail_view
+            && let Some(resource @ ResourceRef::Pod(_, _)) = detail.resource.clone()
+        {
+            self.open_pod_logs_tab(resource);
         }
     }
 
     pub fn close_logs_viewer(&mut self) {
-        if let Some(detail) = &mut self.detail_view {
-            detail.logs_viewer = None;
+        if matches!(
+            self.workbench.active_tab().map(|tab| &tab.state),
+            Some(WorkbenchTabState::PodLogs(_))
+        ) {
+            self.workbench_close_active_tab();
         }
+        self.blur_workbench();
     }
 
+    /// Compatibility helper for tests and callers that previously opened the
+    /// in-detail port-forward overlay. This now opens the canonical workbench tab.
     pub fn open_port_forward(&mut self) {
-        if let Some(detail) = &mut self.detail_view {
-            // Extract pod name/namespace from the current resource
-            let (namespace, pod_name, remote_port) = detail
-                .resource
-                .as_ref()
-                .and_then(|r| match r {
-                    ResourceRef::Pod(name, ns) => Some((ns.clone(), name.clone(), 0u16)),
-                    _ => None,
-                })
-                .unwrap_or_else(|| ("default".to_string(), String::new(), 0));
-            detail.port_forward_dialog = Some(PortForwardDialog::with_target(
-                &namespace,
-                &pod_name,
-                remote_port,
-            ));
+        if let Some(detail) = &self.detail_view
+            && let Some(ResourceRef::Pod(name, namespace)) = detail.resource.as_ref()
+        {
+            self.open_port_forward_tab(
+                Some(ResourceRef::Pod(name.clone(), namespace.clone())),
+                PortForwardDialog::with_target(namespace, name, 0),
+            );
         }
     }
 
     pub fn close_port_forward(&mut self) {
-        if let Some(detail) = &mut self.detail_view {
-            detail.port_forward_dialog = None;
+        if matches!(
+            self.workbench.active_tab().map(|tab| &tab.state),
+            Some(WorkbenchTabState::PortForward(_))
+        ) {
+            self.workbench_close_active_tab();
         }
+        self.blur_workbench();
+    }
+
+    pub fn focus_workbench(&mut self) {
+        if self.workbench.open && !self.workbench.tabs.is_empty() {
+            self.focus = Focus::Workbench;
+        }
+    }
+
+    pub fn blur_workbench(&mut self) {
+        if self.focus == Focus::Workbench {
+            self.focus = Focus::Content;
+        }
+    }
+
+    pub fn open_resource_yaml_tab(
+        &mut self,
+        resource: ResourceRef,
+        yaml: Option<String>,
+        error: Option<String>,
+    ) {
+        let mut tab = ResourceYamlTabState::new(resource);
+        tab.yaml = yaml;
+        tab.loading = tab.yaml.is_none() && error.is_none();
+        tab.error = error;
+        self.workbench
+            .open_tab(WorkbenchTabState::ResourceYaml(tab));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_resource_events_tab(
+        &mut self,
+        resource: ResourceRef,
+        events: Vec<EventInfo>,
+        loading: bool,
+        error: Option<String>,
+    ) {
+        let mut tab = ResourceEventsTabState::new(resource);
+        tab.events = events;
+        tab.loading = loading;
+        tab.error = error;
+        self.workbench
+            .open_tab(WorkbenchTabState::ResourceEvents(tab));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_pod_logs_tab(&mut self, resource: ResourceRef) {
+        self.workbench
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(resource)));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_port_forward_tab(
+        &mut self,
+        target: Option<ResourceRef>,
+        dialog: PortForwardDialog,
+    ) {
+        self.workbench
+            .open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
+                target, dialog,
+            )));
+        self.focus = Focus::Workbench;
     }
 
     /// Convenience initializer used by tests and non-runtime callers.
     /// The runtime path in `main.rs` overrides this with snapshot-derived replicas.
     pub fn open_scale_dialog(&mut self) {
-        if let Some(detail) = &mut self.detail_view {
+        if let Some(detail) = &mut self.detail_view
+            && detail.supports_action(DetailAction::Scale)
+        {
             let (target_kind, name, namespace, current_replicas) = detail
                 .resource
                 .as_ref()
@@ -1827,7 +1904,9 @@ impl AppState {
     }
 
     pub fn open_probe_panel(&mut self) {
-        if let Some(detail) = &mut self.detail_view {
+        if let Some(detail) = &mut self.detail_view
+            && detail.supports_action(DetailAction::Probes)
+        {
             let (pod_name, namespace) = detail
                 .resource
                 .as_ref()
@@ -1847,6 +1926,114 @@ impl AppState {
     pub fn close_probe_panel(&mut self) {
         if let Some(detail) = &mut self.detail_view {
             detail.probe_panel = None;
+        }
+    }
+
+    fn handle_workbench_key_event(&mut self, key: KeyEvent) -> AppAction {
+        use crate::ui::components::port_forward_dialog::PortForwardAction;
+
+        let Some(tab) = self.workbench.active_tab_mut() else {
+            return AppAction::None;
+        };
+
+        match &mut tab.state {
+            WorkbenchTabState::ResourceYaml(tab) => match key.code {
+                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    tab.scroll = tab.scroll.saturating_add(1);
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.scroll = tab.scroll.saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.scroll = 0;
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    let total = tab
+                        .yaml
+                        .as_ref()
+                        .map(|yaml| yaml.lines().count())
+                        .unwrap_or(0);
+                    tab.scroll = total.saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::PageDown => {
+                    tab.scroll = tab.scroll.saturating_add(10);
+                    AppAction::None
+                }
+                KeyCode::PageUp => {
+                    tab.scroll = tab.scroll.saturating_sub(10);
+                    AppAction::None
+                }
+                _ => AppAction::None,
+            },
+            WorkbenchTabState::ResourceEvents(tab) => match key.code {
+                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    tab.scroll = tab.scroll.saturating_add(1);
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.scroll = tab.scroll.saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.scroll = 0;
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    tab.scroll = tab.events.len().saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::PageDown => {
+                    tab.scroll = tab.scroll.saturating_add(10);
+                    AppAction::None
+                }
+                KeyCode::PageUp => {
+                    tab.scroll = tab.scroll.saturating_sub(10);
+                    AppAction::None
+                }
+                _ => AppAction::None,
+            },
+            WorkbenchTabState::PodLogs(tab) => match key.code {
+                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('k') | KeyCode::Up => {
+                    if tab.viewer.picking_container {
+                        AppAction::LogsViewerPickerUp
+                    } else {
+                        AppAction::LogsViewerScrollUp
+                    }
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    if tab.viewer.picking_container {
+                        AppAction::LogsViewerPickerDown
+                    } else {
+                        AppAction::LogsViewerScrollDown
+                    }
+                }
+                KeyCode::Enter => tab
+                    .viewer
+                    .containers
+                    .get(tab.viewer.container_cursor)
+                    .cloned()
+                    .filter(|_| tab.viewer.picking_container)
+                    .map(AppAction::LogsViewerSelectContainer)
+                    .unwrap_or(AppAction::None),
+                KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
+                KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
+                KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
+                _ => AppAction::None,
+            },
+            WorkbenchTabState::PortForward(tab) => match tab.dialog.handle_key(key) {
+                PortForwardAction::None => AppAction::None,
+                PortForwardAction::Refresh => AppAction::PortForwardRefresh,
+                PortForwardAction::Close => AppAction::EscapePressed,
+                PortForwardAction::Create(args) => AppAction::PortForwardCreate(args),
+                PortForwardAction::Stop(tunnel_id) => AppAction::PortForwardStop(tunnel_id),
+            },
         }
     }
 
@@ -1924,78 +2111,15 @@ impl AppState {
             return self.handle_search_input(key);
         }
 
+        if self.focus == Focus::Workbench && self.workbench.open {
+            return self.handle_workbench_key_event(key);
+        }
+
         // Component-level routing priority:
-        // LogsViewer > PortForward > Scale > ProbePanel > DetailView > MainView
+        // Scale > ProbePanel > DetailView > MainView
         match self.active_component() {
-            ActiveComponent::LogsViewer => {
-                return match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        // If picking container, move cursor up; else scroll logs
-                        let picking = self
-                            .detail_view
-                            .as_ref()
-                            .and_then(|d| d.logs_viewer.as_ref())
-                            .map(|v| v.picking_container)
-                            .unwrap_or(false);
-                        if picking {
-                            AppAction::LogsViewerPickerUp
-                        } else {
-                            AppAction::LogsViewerScrollUp
-                        }
-                    }
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        let picking = self
-                            .detail_view
-                            .as_ref()
-                            .and_then(|d| d.logs_viewer.as_ref())
-                            .map(|v| v.picking_container)
-                            .unwrap_or(false);
-                        if picking {
-                            AppAction::LogsViewerPickerDown
-                        } else {
-                            AppAction::LogsViewerScrollDown
-                        }
-                    }
-                    KeyCode::Enter => {
-                        // Confirm container selection
-                        let selection = self
-                            .detail_view
-                            .as_ref()
-                            .and_then(|d| d.logs_viewer.as_ref())
-                            .filter(|v| v.picking_container)
-                            .and_then(|v| v.containers.get(v.container_cursor))
-                            .cloned();
-                        if let Some(name) = selection {
-                            AppAction::LogsViewerSelectContainer(name)
-                        } else {
-                            AppAction::None
-                        }
-                    }
-                    KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
-                    KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
-                    KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
-                    _ => AppAction::None,
-                };
-            }
-            ActiveComponent::PortForward => {
-                return match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
-                    _ => {
-                        // Delegate all key handling to the PortForwardDialog component
-                        if let Some(detail) = &mut self.detail_view
-                            && let Some(dialog) = &mut detail.port_forward_dialog
-                        {
-                            let pf_action = dialog.handle_key(key);
-                            return match pf_action {
-                                    crate::ui::components::port_forward_dialog::PortForwardAction::Close => AppAction::PortForwardClose,
-                                    crate::ui::components::port_forward_dialog::PortForwardAction::Create(args) => AppAction::PortForwardCreate(args),
-                                    _ => AppAction::None,
-                                };
-                        }
-                        AppAction::None
-                    }
-                };
+            ActiveComponent::LogsViewer | ActiveComponent::PortForward => {
+                return self.handle_workbench_key_event(key);
             }
             ActiveComponent::Scale => {
                 return match key.code {
@@ -2059,147 +2183,95 @@ impl AppState {
                 self.focus = Focus::Sidebar;
                 AppAction::None
             }
+            KeyCode::Esc if self.focus == Focus::Workbench => {
+                self.focus = Focus::Content;
+                AppAction::None
+            }
             KeyCode::Esc => {
                 self.confirm_quit = true;
                 AppAction::None
             }
-            // YAML scroll in detail view (j/k/g/G/PgUp/PgDn)
-            KeyCode::Char('j') | KeyCode::Down
-                if self.detail_view.is_some()
-                    && self
-                        .detail_view
-                        .as_ref()
-                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
-                        .unwrap_or(false) =>
+            KeyCode::Char('l') | KeyCode::Char('L')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Logs))
+                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
             {
-                if let Some(detail) = &mut self.detail_view {
-                    detail.yaml_scroll = detail.yaml_scroll.saturating_add(1);
-                }
-                AppAction::None
-            }
-            KeyCode::Char('k') | KeyCode::Up
-                if self.detail_view.is_some()
-                    && self
-                        .detail_view
-                        .as_ref()
-                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
-                        .unwrap_or(false) =>
-            {
-                if let Some(detail) = &mut self.detail_view {
-                    detail.yaml_scroll = detail.yaml_scroll.saturating_sub(1);
-                }
-                AppAction::None
-            }
-            KeyCode::Char('g')
-                if self.detail_view.is_some()
-                    && self
-                        .detail_view
-                        .as_ref()
-                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
-                        .unwrap_or(false) =>
-            {
-                if let Some(detail) = &mut self.detail_view {
-                    detail.yaml_scroll = 0;
-                }
-                AppAction::None
-            }
-            KeyCode::Char('G')
-                if self.detail_view.is_some()
-                    && self
-                        .detail_view
-                        .as_ref()
-                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
-                        .unwrap_or(false) =>
-            {
-                if let Some(detail) = &mut self.detail_view {
-                    let total = detail.yaml.as_ref().map(|y| y.lines().count()).unwrap_or(0);
-                    detail.yaml_scroll = total.saturating_sub(1);
-                }
-                AppAction::None
-            }
-            KeyCode::PageDown
-                if self.detail_view.is_some()
-                    && self
-                        .detail_view
-                        .as_ref()
-                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
-                        .unwrap_or(false) =>
-            {
-                if let Some(detail) = &mut self.detail_view {
-                    detail.yaml_scroll = detail.yaml_scroll.saturating_add(10);
-                }
-                AppAction::None
-            }
-            KeyCode::PageUp
-                if self.detail_view.is_some()
-                    && self
-                        .detail_view
-                        .as_ref()
-                        .map(|d| d.logs_viewer.is_none() && d.probe_panel.is_none())
-                        .unwrap_or(false) =>
-            {
-                if let Some(detail) = &mut self.detail_view {
-                    detail.yaml_scroll = detail.yaml_scroll.saturating_sub(10);
-                }
-                AppAction::None
-            }
-            KeyCode::Char('l') | KeyCode::Char('L') if self.detail_view.is_some() => {
                 AppAction::LogsViewerOpen
             }
-            KeyCode::Char('f') if self.detail_view.is_some() => AppAction::PortForwardOpen,
-            KeyCode::Char('s') if self.detail_view.is_some() => AppAction::ScaleDialogOpen,
-            KeyCode::Char('p') if self.detail_view.is_some() => AppAction::ProbePanelOpen,
+            KeyCode::Char('y')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::ViewYaml))
+                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
+            {
+                AppAction::OpenResourceYaml
+            }
+            KeyCode::Char('v')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::ViewEvents))
+                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
+            {
+                AppAction::OpenResourceEvents
+            }
+            KeyCode::Char('f')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::PortForward))
+                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
+            {
+                AppAction::PortForwardOpen
+            }
+            KeyCode::Char('s')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Scale)) =>
+            {
+                AppAction::ScaleDialogOpen
+            }
+            KeyCode::Char('p')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Probes)) =>
+            {
+                AppAction::ProbePanelOpen
+            }
             KeyCode::Char('R')
                 if self.detail_view.is_some() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
-                match self.detail_view.as_ref().and_then(|d| d.resource.as_ref()) {
-                    Some(
-                        ResourceRef::Deployment(_, _)
-                        | ResourceRef::StatefulSet(_, _)
-                        | ResourceRef::DaemonSet(_, _),
-                    ) => AppAction::RolloutRestart,
-                    Some(resource) if resource.supports_flux_reconcile() => {
+                match self.detail_view.as_ref() {
+                    Some(detail) if detail.supports_action(DetailAction::Restart) => {
+                        AppAction::RolloutRestart
+                    }
+                    Some(detail) if detail.supports_action(DetailAction::FluxReconcile) => {
                         AppAction::FluxReconcile
                     }
                     _ => AppAction::None,
                 }
             }
-            KeyCode::Char('e') if self.detail_view.is_some() => {
-                // Only allow editing when YAML is loaded and no sub-panel is open
-                let can_edit = self
+            KeyCode::Char('e')
+                if self
                     .detail_view
                     .as_ref()
-                    .map(|d| {
-                        d.yaml.is_some()
-                            && d.logs_viewer.is_none()
-                            && d.port_forward_dialog.is_none()
-                            && d.scale_dialog.is_none()
-                            && d.probe_panel.is_none()
-                            && !d.loading
-                    })
-                    .unwrap_or(false);
-                if can_edit {
-                    AppAction::EditYaml
-                } else {
-                    AppAction::None
-                }
+                    .is_some_and(|detail| detail.supports_action(DetailAction::EditYaml)) =>
+            {
+                AppAction::EditYaml
             }
-            KeyCode::Char('d') if self.detail_view.is_some() => {
-                // Toggle delete confirmation prompt
-                let can_delete = self
+            KeyCode::Char('d')
+                if self
                     .detail_view
                     .as_ref()
-                    .map(|d| {
-                        d.resource.is_some()
-                            && d.logs_viewer.is_none()
-                            && d.port_forward_dialog.is_none()
-                            && d.scale_dialog.is_none()
-                            && d.probe_panel.is_none()
-                            && !d.loading
-                            && !d.confirm_delete
-                    })
-                    .unwrap_or(false);
-                if can_delete && let Some(detail) = &mut self.detail_view {
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Delete)) =>
+            {
+                // Toggle delete confirmation prompt
+                if let Some(detail) = &mut self.detail_view {
                     detail.confirm_delete = true;
                 }
                 AppAction::None
@@ -2240,7 +2312,9 @@ impl AppState {
                 self.previous_view();
                 AppAction::None
             }
-            KeyCode::Char('j') | KeyCode::Down if self.detail_view.is_none() => {
+            KeyCode::Char('j') | KeyCode::Down
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 match self.focus {
                     Focus::Sidebar => self.sidebar_cursor_down(),
                     Focus::Content
@@ -2252,10 +2326,13 @@ impl AppState {
                         }
                     }
                     Focus::Content => self.select_next(),
+                    Focus::Workbench => {}
                 }
                 AppAction::None
             }
-            KeyCode::Char('k') | KeyCode::Up if self.detail_view.is_none() => {
+            KeyCode::Char('k') | KeyCode::Up
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 match self.focus {
                     Focus::Sidebar => self.sidebar_cursor_up(),
                     Focus::Content
@@ -2271,14 +2348,15 @@ impl AppState {
                         }
                     }
                     Focus::Content => self.select_previous(),
+                    Focus::Workbench => {}
                 }
                 AppAction::None
             }
-            KeyCode::Down => {
+            KeyCode::Down if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.select_next();
                 AppAction::None
             }
-            KeyCode::Up => {
+            KeyCode::Up if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.select_previous();
                 AppAction::None
             }
@@ -2332,11 +2410,41 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('~') => AppAction::OpenNamespacePicker,
+            KeyCode::Char('b') if self.detail_view.is_none() => AppAction::ToggleWorkbench,
+            KeyCode::Char('[') if self.detail_view.is_none() && self.workbench.open => {
+                AppAction::WorkbenchPreviousTab
+            }
+            KeyCode::Char(']') if self.detail_view.is_none() && self.workbench.open => {
+                AppAction::WorkbenchNextTab
+            }
+            KeyCode::Char('w')
+                if self.detail_view.is_none()
+                    && self.workbench.open
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::WorkbenchCloseActiveTab
+            }
+            KeyCode::Up
+                if self.detail_view.is_none()
+                    && self.workbench.open
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::WorkbenchIncreaseHeight
+            }
+            KeyCode::Down
+                if self.detail_view.is_none()
+                    && self.workbench.open
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::WorkbenchDecreaseHeight
+            }
             KeyCode::Char('c') if self.detail_view.is_none() => AppAction::OpenContextPicker,
             KeyCode::Char(':') if self.detail_view.is_none() => AppAction::OpenCommandPalette,
             KeyCode::Char('R')
                 if self.detail_view.is_none()
-                    && self.view.is_fluxcd()
+                    && self
+                        .view
+                        .supports_view_action(ViewAction::SelectedFluxReconcile)
                     && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 AppAction::FluxReconcile
@@ -2395,6 +2503,8 @@ pub fn load_config_from_path(path: &Path) -> AppState {
             crate::ui::theme::set_active_theme(idx);
         }
         app.refresh_interval_secs = cfg.refresh_interval_secs;
+        app.workbench
+            .set_open_and_height(cfg.workbench_open, cfg.workbench_height);
     }
 
     app
@@ -2407,6 +2517,8 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
         namespace: app.current_namespace.clone(),
         theme: Some(theme_name.to_string()),
         refresh_interval_secs: app.refresh_interval_secs,
+        workbench_open: app.workbench.open,
+        workbench_height: app.workbench.height,
     };
 
     if let Some(parent) = path.parent() {
@@ -2736,6 +2848,38 @@ mod tests {
     }
 
     #[test]
+    fn workbench_keybindings_emit_expected_actions() {
+        let mut app = AppState::default();
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
+            AppAction::ToggleWorkbench
+        );
+
+        app.toggle_workbench();
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char(']'))),
+            AppAction::WorkbenchNextTab
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+            AppAction::WorkbenchPreviousTab
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+            AppAction::WorkbenchCloseActiveTab
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)),
+            AppAction::WorkbenchIncreaseHeight
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)),
+            AppAction::WorkbenchDecreaseHeight
+        );
+    }
+
+    #[test]
     fn filtered_pod_indices_apply_restarts_sort_with_stable_tie_breakers() {
         let mut pods = vec![
             PodInfo {
@@ -2823,10 +2967,14 @@ mod tests {
 
         let mut app = AppState::default();
         app.set_namespace("demo".to_string());
+        app.toggle_workbench();
+        app.workbench.height = 15;
         save_config_to_path(&app, &path);
 
         let loaded = load_config_from_path(&path);
         assert_eq!(loaded.get_namespace(), "demo");
+        assert!(loaded.workbench.open);
+        assert_eq!(loaded.workbench.height, 15);
 
         let _ = std::fs::remove_file(path);
     }

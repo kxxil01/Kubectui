@@ -304,9 +304,23 @@ impl PortForwardDialog {
         }
     }
 
+    /// Render inside an existing surface without centering a popup.
+    pub fn render_embedded(&self, frame: &mut Frame, area: Rect) {
+        match self.mode {
+            PortForwardMode::Create => self.render_create_mode_in(frame, area, false),
+            PortForwardMode::List => self.render_list_mode_in(frame, area, false),
+        }
+    }
+
     fn render_create_mode(&self, frame: &mut Frame, area: Rect) {
         let popup = centered_rect(60, 70, area);
-        frame.render_widget(Clear, popup);
+        self.render_create_mode_in(frame, popup, true);
+    }
+
+    fn render_create_mode_in(&self, frame: &mut Frame, popup: Rect, clear: bool) {
+        if clear {
+            frame.render_widget(Clear, popup);
+        }
 
         let block = Block::default()
             .title(" Port Forward: Create ")
@@ -405,7 +419,13 @@ impl PortForwardDialog {
 
     fn render_list_mode(&self, frame: &mut Frame, area: Rect) {
         let popup = centered_rect(60, 70, area);
-        frame.render_widget(Clear, popup);
+        self.render_list_mode_in(frame, popup, true);
+    }
+
+    fn render_list_mode_in(&self, frame: &mut Frame, popup: Rect, clear: bool) {
+        if clear {
+            frame.render_widget(Clear, popup);
+        }
 
         let block = Block::default()
             .title(format!(

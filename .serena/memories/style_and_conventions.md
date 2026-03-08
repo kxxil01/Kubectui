@@ -1,0 +1,1 @@
+Follow AGENTS.md: production-grade canonical implementations only, no duplicate UI paths, prefer safe Rust and panic-safe APIs, keep clippy clean with -D warnings, optimize render-path performance without UI regressions. Use concise symbol-focused changes, maintain single source of truth for business rules/state, and keep UI/markup structure maintainable.

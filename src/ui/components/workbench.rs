@@ -1,0 +1,344 @@
+//! Bottom workbench renderer.
+
+use ratatui::{
+    layout::{Constraint, Direction, Layout, Margin, Rect},
+    prelude::{Frame, Modifier, Style},
+    text::{Line, Span},
+    widgets::{
+        Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Tabs, Wrap,
+    },
+};
+
+use crate::{
+    app::AppState,
+    state::ClusterSnapshot,
+    ui::components::default_theme,
+    workbench::{WorkbenchTab, WorkbenchTabState},
+};
+
+pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster: &ClusterSnapshot) {
+    let theme = default_theme();
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    let titles: Vec<Line> = if app.workbench().tabs.is_empty() {
+        vec![Line::from(Span::raw(" Empty "))]
+    } else {
+        app.workbench()
+            .tabs
+            .iter()
+            .map(|tab| Line::from(Span::raw(format!(" {} ", tab.state.title()))))
+            .collect()
+    };
+    let selected = app
+        .workbench()
+        .active_tab
+        .min(titles.len().saturating_sub(1));
+
+    let tabs = Tabs::new(titles)
+        .block(
+            Block::default()
+                .title(Span::styled(" Workbench ", theme.section_title_style()))
+                .borders(Borders::ALL)
+                .border_type(theme.border_type())
+                .border_style(theme.border_style())
+                .style(Style::default().bg(theme.bg_surface)),
+        )
+        .select(selected)
+        .style(Style::default().fg(theme.tab_inactive_fg))
+        .highlight_style(
+            Style::default()
+                .fg(theme.tab_active_fg)
+                .bg(theme.tab_active_bg)
+                .add_modifier(Modifier::BOLD),
+        )
+        .divider(Span::styled("│", theme.muted_style()));
+    frame.render_widget(tabs, sections[0]);
+
+    let block = Block::default()
+        .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+        .border_type(theme.border_type())
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.bg));
+    let inner = block.inner(sections[1]);
+    frame.render_widget(block, sections[1]);
+
+    let Some(active_tab) = app.workbench().active_tab() else {
+        render_empty_state(frame, inner);
+        return;
+    };
+
+    match &active_tab.state {
+        WorkbenchTabState::ResourceYaml(tab) => {
+            render_yaml_tab(frame, inner, tab.scroll, active_tab)
+        }
+        WorkbenchTabState::ResourceEvents(tab) => {
+            render_events_tab(frame, inner, tab.scroll, active_tab)
+        }
+        WorkbenchTabState::PodLogs(tab) => {
+            render_logs_tab(frame, inner, active_tab, tab.viewer.scroll_offset)
+        }
+        WorkbenchTabState::PortForward(tab) => tab.dialog.render_embedded(frame, inner),
+    }
+}
+
+fn render_empty_state(frame: &mut Frame, area: Rect) {
+    let theme = default_theme();
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![Span::styled(
+                " No workbench tabs open",
+                theme.section_title_style(),
+            )]),
+            Line::from(""),
+            Line::from("  Open a resource tab with:"),
+            Line::from("  [y] YAML  [v] Events  [l] Logs  [f] Port-Forward"),
+            Line::from(""),
+            Line::from("  [b] closes the workbench, [Ctrl+W] closes the active tab."),
+        ])
+        .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &WorkbenchTab) {
+    let theme = default_theme();
+    let WorkbenchTabState::ResourceYaml(tab_state) = &tab.state else {
+        return;
+    };
+
+    if tab_state.loading {
+        frame.render_widget(
+            Paragraph::new(Span::styled(" Loading YAML...", theme.inactive_style())),
+            area,
+        );
+        return;
+    }
+
+    if let Some(error) = &tab_state.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Error: {error}"),
+                theme.badge_error_style(),
+            )),
+            area,
+        );
+        return;
+    }
+
+    let Some(yaml) = &tab_state.yaml else {
+        frame.render_widget(
+            Paragraph::new(Span::styled(" YAML not available", theme.inactive_style())),
+            area,
+        );
+        return;
+    };
+
+    let lines: Vec<Line> = yaml
+        .lines()
+        .enumerate()
+        .map(|(idx, line)| {
+            Line::from(vec![
+                Span::styled(format!("{:>4} ", idx + 1), theme.muted_style()),
+                Span::raw(line.to_string()),
+            ])
+        })
+        .collect();
+
+    let visible_height = area.height.saturating_sub(1) as usize;
+    let start = scroll.min(lines.len().saturating_sub(1));
+    let end = (start + visible_height).min(lines.len());
+    let body = if start < end {
+        lines[start..end].to_vec()
+    } else {
+        vec![Line::from("")]
+    };
+
+    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), area);
+    render_scrollbar(frame, area, lines.len(), start);
+}
+
+fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &WorkbenchTab) {
+    let theme = default_theme();
+    let WorkbenchTabState::ResourceEvents(tab_state) = &tab.state else {
+        return;
+    };
+
+    if tab_state.loading {
+        frame.render_widget(
+            Paragraph::new(Span::styled(" Loading events...", theme.inactive_style())),
+            area,
+        );
+        return;
+    }
+
+    if let Some(error) = &tab_state.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Error: {error}"),
+                theme.badge_error_style(),
+            )),
+            area,
+        );
+        return;
+    }
+
+    if tab_state.events.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " No events for this resource",
+                theme.inactive_style(),
+            )),
+            area,
+        );
+        return;
+    }
+
+    let lines: Vec<Line> = tab_state
+        .events
+        .iter()
+        .map(|event| {
+            let badge = if event.event_type.eq_ignore_ascii_case("warning") {
+                Span::styled(" WARN ", theme.badge_warning_style())
+            } else {
+                Span::styled(" OK ", theme.badge_success_style())
+            };
+            Line::from(vec![
+                badge,
+                Span::raw(" "),
+                Span::styled(
+                    format!("{} (x{}) ", event.reason, event.count),
+                    Style::default().add_modifier(Modifier::BOLD).fg(theme.fg),
+                ),
+                Span::styled(event.message.clone(), Style::default().fg(theme.fg_dim)),
+            ])
+        })
+        .collect();
+
+    let visible_height = area.height.saturating_sub(1) as usize;
+    let start = scroll.min(lines.len().saturating_sub(1));
+    let end = (start + visible_height).min(lines.len());
+    frame.render_widget(
+        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+        area,
+    );
+    render_scrollbar(frame, area, lines.len(), start);
+}
+
+fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: usize) {
+    let theme = default_theme();
+    let WorkbenchTabState::PodLogs(tab_state) = &tab.state else {
+        return;
+    };
+    let viewer = &tab_state.viewer;
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(area);
+
+    let status = if viewer.loading {
+        "loading"
+    } else if viewer.picking_container {
+        "select container"
+    } else if viewer.follow_mode {
+        "following"
+    } else {
+        "paused"
+    };
+
+    let container = if viewer.container_name.is_empty() {
+        "container: pending".to_string()
+    } else {
+        format!("container: {}", viewer.container_name)
+    };
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!(" {status} "), theme.badge_warning_style()),
+            Span::raw(" "),
+            Span::styled(container, theme.keybind_desc_style()),
+            Span::raw("  "),
+            Span::styled("[Esc] back  [f] follow", theme.keybind_desc_style()),
+        ])),
+        sections[0],
+    );
+
+    if let Some(error) = &viewer.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Error: {error}"),
+                theme.badge_error_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if viewer.picking_container {
+        let lines: Vec<Line> = viewer
+            .containers
+            .iter()
+            .enumerate()
+            .map(|(idx, container)| {
+                let prefix = if idx == viewer.container_cursor {
+                    ">"
+                } else {
+                    " "
+                };
+                Line::from(format!("{prefix} {container}"))
+            })
+            .collect();
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            sections[1],
+        );
+        return;
+    }
+
+    if viewer.lines.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(" No log lines yet", theme.inactive_style())),
+            sections[1],
+        );
+        return;
+    }
+
+    let lines: Vec<Line> = viewer
+        .lines
+        .iter()
+        .map(|line| Line::from(line.clone()))
+        .collect();
+    let visible_height = sections[1].height.saturating_sub(1) as usize;
+    let start = scroll.min(lines.len().saturating_sub(1));
+    let end = (start + visible_height).min(lines.len());
+    frame.render_widget(
+        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+        sections[1],
+    );
+    render_scrollbar(frame, sections[1], lines.len(), start);
+}
+
+fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize) {
+    if total <= area.height as usize || area.width == 0 {
+        return;
+    }
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+    let mut state = ScrollbarState::new(total).position(position);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin {
+            vertical: 0,
+            horizontal: 0,
+        }),
+        &mut state,
+    );
+}

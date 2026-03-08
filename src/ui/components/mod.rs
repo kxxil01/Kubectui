@@ -12,6 +12,7 @@ pub mod namespace_picker;
 pub mod port_forward_dialog;
 pub mod probe_panel;
 pub mod scale_dialog;
+pub mod workbench;
 
 pub use command_palette::{CommandPalette, CommandPaletteAction};
 pub use context_picker::{ContextPicker, ContextPickerAction};
@@ -22,6 +23,7 @@ pub use probe_panel::ProbePanelState;
 pub use scale_dialog::{
     ScaleAction, ScaleDialogState, ScaleField, ScaleTargetKind, render_scale_dialog,
 };
+pub use workbench::render_workbench;
 
 use ratatui::{
     layout::{Alignment, Rect},
