@@ -8,10 +8,13 @@
 //! - Priority ordering (LogsViewer > PortForward > Scale > ProbePanel > DetailView > MainView)
 
 use crossterm::event::{KeyCode, KeyEvent};
-use kubectui::app::{ActiveComponent, AppAction, AppState, DetailViewState, ResourceRef};
 use kubectui::events::{apply_action, route_keyboard_input};
 use kubectui::ui::components::port_forward_dialog::PortForwardMode;
 use kubectui::workbench::WorkbenchTabState;
+use kubectui::{
+    action_history::{ActionKind, ActionStatus},
+    app::{ActiveComponent, AppAction, AppState, DetailViewState, ResourceRef},
+};
 
 fn pod_detail() -> DetailViewState {
     DetailViewState {
@@ -120,6 +123,40 @@ fn test_port_forward_list_refresh_emits_refresh_action() {
 
     let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('r')), &mut app);
     assert_eq!(action, AppAction::PortForwardRefresh);
+}
+
+#[test]
+fn test_history_shortcut_opens_action_history_tab() {
+    let mut app = AppState::default();
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('H')), &mut app);
+    apply_action(action, &mut app);
+
+    assert!(app.workbench().open);
+    assert!(matches!(
+        app.workbench().active_tab().map(|tab| &tab.state),
+        Some(WorkbenchTabState::ActionHistory(_))
+    ));
+}
+
+#[test]
+fn test_action_history_enter_opens_selected_entry() {
+    let mut app = AppState::default();
+    let entry_id = app.record_action_pending(
+        ActionKind::Restart,
+        kubectui::app::AppView::Deployments,
+        Some(ResourceRef::Deployment(
+            "api".to_string(),
+            "default".to_string(),
+        )),
+        "deployment 'api'".to_string(),
+        "Requesting restart".to_string(),
+    );
+    app.complete_action_history(entry_id, ActionStatus::Succeeded, "Restart requested", true);
+    app.open_action_history_tab(true);
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Enter), &mut app);
+    assert_eq!(action, AppAction::ActionHistoryOpenSelected);
 }
 
 #[test]

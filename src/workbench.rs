@@ -12,6 +12,7 @@ pub const MAX_WORKBENCH_HEIGHT: u16 = 20;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkbenchTabKind {
+    ActionHistory,
     ResourceYaml,
     ResourceEvents,
     PodLogs,
@@ -21,6 +22,7 @@ pub enum WorkbenchTabKind {
 impl WorkbenchTabKind {
     pub const fn title(self) -> &'static str {
         match self {
+            WorkbenchTabKind::ActionHistory => "History",
             WorkbenchTabKind::ResourceYaml => "YAML",
             WorkbenchTabKind::ResourceEvents => "Events",
             WorkbenchTabKind::PodLogs => "Logs",
@@ -31,10 +33,38 @@ impl WorkbenchTabKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WorkbenchTabKey {
+    ActionHistory,
     ResourceYaml(ResourceRef),
     ResourceEvents(ResourceRef),
     PodLogs(ResourceRef),
     PortForward,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ActionHistoryTabState {
+    pub selected: usize,
+}
+
+impl ActionHistoryTabState {
+    pub fn select_next(&mut self, total: usize) {
+        if total == 0 {
+            self.selected = 0;
+            return;
+        }
+        self.selected = (self.selected + 1).min(total.saturating_sub(1));
+    }
+
+    pub fn select_previous(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    pub fn select_top(&mut self) {
+        self.selected = 0;
+    }
+
+    pub fn select_bottom(&mut self, total: usize) {
+        self.selected = total.saturating_sub(1);
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -108,6 +138,7 @@ impl PortForwardTabState {
 
 #[derive(Debug, Clone)]
 pub enum WorkbenchTabState {
+    ActionHistory(ActionHistoryTabState),
     ResourceYaml(ResourceYamlTabState),
     ResourceEvents(ResourceEventsTabState),
     PodLogs(PodLogsTabState),
@@ -117,6 +148,7 @@ pub enum WorkbenchTabState {
 impl WorkbenchTabState {
     pub const fn kind(&self) -> WorkbenchTabKind {
         match self {
+            Self::ActionHistory(_) => WorkbenchTabKind::ActionHistory,
             Self::ResourceYaml(_) => WorkbenchTabKind::ResourceYaml,
             Self::ResourceEvents(_) => WorkbenchTabKind::ResourceEvents,
             Self::PodLogs(_) => WorkbenchTabKind::PodLogs,
@@ -126,6 +158,7 @@ impl WorkbenchTabState {
 
     pub fn key(&self) -> WorkbenchTabKey {
         match self {
+            Self::ActionHistory(_) => WorkbenchTabKey::ActionHistory,
             Self::ResourceYaml(tab) => WorkbenchTabKey::ResourceYaml(tab.resource.clone()),
             Self::ResourceEvents(tab) => WorkbenchTabKey::ResourceEvents(tab.resource.clone()),
             Self::PodLogs(tab) => WorkbenchTabKey::PodLogs(tab.resource.clone()),
@@ -135,6 +168,7 @@ impl WorkbenchTabState {
 
     pub fn title(&self) -> String {
         match self {
+            Self::ActionHistory(_) => "History".to_string(),
             Self::ResourceYaml(tab) => format!("YAML {}", resource_title(&tab.resource)),
             Self::ResourceEvents(tab) => format!("Events {}", resource_title(&tab.resource)),
             Self::PodLogs(tab) => format!("Logs {}", resource_title(&tab.resource)),
@@ -181,20 +215,41 @@ impl Default for WorkbenchState {
 
 impl WorkbenchState {
     pub fn open_tab(&mut self, state: WorkbenchTabState) -> usize {
+        self.ensure_tab(state, true)
+    }
+
+    pub fn ensure_background_tab(&mut self, state: WorkbenchTabState) -> usize {
+        self.ensure_tab(state, false)
+    }
+
+    fn ensure_tab(&mut self, state: WorkbenchTabState, focus: bool) -> usize {
         let key = state.key();
+        let was_open = self.open;
+        let previous_active = self.active_tab;
         if let Some(idx) = self.tabs.iter().position(|tab| tab.state.key() == key) {
             self.tabs[idx].state = state;
-            self.active_tab = idx;
-            self.open = true;
+            if focus {
+                self.active_tab = idx;
+                self.open = true;
+            } else {
+                self.active_tab = previous_active.min(self.tabs.len().saturating_sub(1));
+                self.open = was_open;
+            }
             return idx;
         }
 
         let id = self.next_tab_id;
         self.next_tab_id = self.next_tab_id.saturating_add(1);
         self.tabs.push(WorkbenchTab::new(id, state));
-        self.active_tab = self.tabs.len().saturating_sub(1);
-        self.open = true;
-        self.active_tab
+        let idx = self.tabs.len().saturating_sub(1);
+        if focus {
+            self.active_tab = idx;
+            self.open = true;
+        } else {
+            self.active_tab = previous_active.min(self.tabs.len().saturating_sub(1));
+            self.open = was_open;
+        }
+        idx
     }
 
     pub fn toggle_open(&mut self) {
@@ -269,6 +324,19 @@ impl WorkbenchState {
         self.tabs.iter_mut().find(|tab| tab.state.key() == *key)
     }
 
+    pub fn has_tab(&self, key: &WorkbenchTabKey) -> bool {
+        self.tabs.iter().any(|tab| tab.state.key() == *key)
+    }
+
+    pub fn activate_tab(&mut self, key: &WorkbenchTabKey) -> bool {
+        if let Some(idx) = self.tabs.iter().position(|tab| tab.state.key() == *key) {
+            self.active_tab = idx;
+            self.open = true;
+            return true;
+        }
+        false
+    }
+
     pub fn set_open_and_height(&mut self, open: bool, height: u16) {
         self.height = height.clamp(MIN_WORKBENCH_HEIGHT, MAX_WORKBENCH_HEIGHT);
         self.open = open;
@@ -316,6 +384,9 @@ mod tests {
     #[test]
     fn tab_navigation_wraps() {
         let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
         state.open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState::new(
             pod("pod-0"),
         )));
@@ -326,7 +397,7 @@ mod tests {
         state.next_tab();
         assert_eq!(
             state.active_tab().map(|tab| tab.state.kind()),
-            Some(WorkbenchTabKind::ResourceYaml)
+            Some(WorkbenchTabKind::ActionHistory)
         );
 
         state.previous_tab();
@@ -359,5 +430,24 @@ mod tests {
         state.height = MAX_WORKBENCH_HEIGHT;
         state.resize_larger();
         assert_eq!(state.height, MAX_WORKBENCH_HEIGHT);
+    }
+
+    #[test]
+    fn background_tab_preserves_focus_and_open_state() {
+        let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState::new(
+            pod("pod-0"),
+        )));
+
+        state.ensure_background_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
+
+        assert_eq!(
+            state.active_tab().map(|tab| tab.state.kind()),
+            Some(WorkbenchTabKind::ResourceYaml)
+        );
+        assert!(state.open);
+        assert_eq!(state.tabs.len(), 2);
     }
 }

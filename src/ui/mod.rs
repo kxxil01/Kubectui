@@ -701,9 +701,9 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             ""
         };
         let workbench_hint = if app.workbench().open {
-            " • [b] workbench • [[]/]] tabs • [Ctrl+Up/Down] wb-size • [Ctrl+w] close-tab"
+            " • [H] history • [b] workbench • [[]/]] tabs • [Ctrl+Up/Down] wb-size • [Ctrl+w] close-tab"
         } else {
-            " • [b] workbench"
+            " • [H] history • [b] workbench"
         };
         format!(
             "[{}]{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [q] quit",

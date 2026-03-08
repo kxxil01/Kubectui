@@ -15,13 +15,15 @@ Current milestone status:
 - Milestone 0: completed
 - Milestone 1: completed
 - Milestone 2: completed
-- Milestone 3: next
+- Milestone 3: completed
+- Milestone 4: next
 
 Completion notes:
 
 - Milestone 0 shipped the canonical policy layer and aligned UI hints, keybindings, and runtime action guards.
 - Milestone 1 shipped the bottom workbench foundation with persisted open state, persisted height, tab management, focus handling, and layout integration.
 - Milestone 2 moved YAML, events, logs, and port-forward sessions onto the workbench-backed path and removed the old duplicate detail-only inspection path.
+- Milestone 3 added a canonical action history model, recorded pending/success/error mutation state centrally, and exposed the verification surface in the workbench with jump-back to affected resources where possible.
 
 Verification status for completed milestones:
 
@@ -130,6 +132,7 @@ KubecTUI already has:
 - Flux reconcile
 - standardized mutation lifecycle
 - optimistic updates for safe operations
+- action history and recent mutation verification
 - command palette
 - context and namespace switching
 - CRD browsing
@@ -142,18 +145,18 @@ This means the next phase should focus on workflow depth, discoverability, and o
 
 These are the main gaps between the current app and a strong operator workspace.
 
-## Gap A: No post-action verification surface
+## Gap A: No timeline and correlation surface
 
 Current issue:
 
-- users can trigger actions, but the durable verification path is still thin
-- current feedback is good for immediate status, but weak for recent action history
+- users can verify recent actions, but not yet in a timeline-oriented or correlated way
+- action history exists, but it is still separate from event chronology
 
 Needed:
 
-- action history
-- recent result visibility
-- easy jump-back to the affected resource
+- event/action correlation
+- timeline-oriented verification
+- faster understanding of what changed after an action
 
 ## Gap B: Weak multi-resource workflows
 
@@ -465,7 +468,7 @@ Move existing high-value inspection tools into the workbench so the app stops re
 
 ### Status
 
-Next
+Completed
 
 ### Goal
 
@@ -1026,15 +1029,15 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-Start with Milestone 3.
+Start with Milestone 4.
 
 That means the next real implementation work should be:
 
-1. add the canonical `ActionHistoryEntry` model
-2. record all mutating actions through one central path
-3. render action history in the workbench
-4. support jump-back to the affected resource
-5. define retention, noise control, and lifecycle rules for recent history
+1. add the canonical exec/session state model
+2. host pod/container shell sessions in the workbench
+3. define focus and input routing for live terminal sessions
+4. handle shell fallback, permission errors, and unsupported pod/container states
+5. keep session buffers bounded and isolated from the normal render path
 
 Do not start next with:
 
@@ -1044,7 +1047,7 @@ Do not start next with:
 - new one-off resource views
 - visual graph experiments
 - node drain first
-- milestone 4+ before milestone 3 is complete
+- milestone 5+ before milestone 4 is complete
 
 Those are later priorities.
 
