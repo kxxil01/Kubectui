@@ -83,6 +83,8 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
         WorkbenchTabState::PodLogs(tab) => {
             render_logs_tab(frame, inner, active_tab, tab.viewer.scroll_offset)
         }
+        WorkbenchTabState::WorkloadLogs(tab) => render_workload_logs_tab(frame, inner, tab),
+        WorkbenchTabState::Exec(tab) => render_exec_tab(frame, inner, tab),
         WorkbenchTabState::PortForward(tab) => tab.dialog.render_embedded(frame, inner),
     }
 }
@@ -97,7 +99,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             )]),
             Line::from(""),
             Line::from("  Open a resource tab with:"),
-            Line::from("  [y] YAML  [v] Events  [l] Logs  [f] Port-Forward"),
+            Line::from("  [y] YAML  [v] Events  [l] Logs  [x] Exec  [f] Port-Forward"),
             Line::from(""),
             Line::from("  [H] opens action history."),
             Line::from("  [b] closes the workbench, [Ctrl+W] closes the active tab."),
@@ -413,6 +415,209 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
         sections[1],
     );
     render_scrollbar(frame, sections[1], lines.len(), start);
+}
+
+fn render_workload_logs_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab: &crate::workbench::WorkloadLogsTabState,
+) {
+    let theme = default_theme();
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    let header = Line::from(vec![
+        Span::styled(
+            format!(
+                " {} ",
+                if tab.loading {
+                    "loading"
+                } else if tab.follow_mode {
+                    "following"
+                } else {
+                    "paused"
+                }
+            ),
+            theme.badge_warning_style(),
+        ),
+        Span::raw(" "),
+        Span::styled(
+            format!(
+                "pod:{}  container:{}  text:{}",
+                tab.pod_filter.as_deref().unwrap_or("all"),
+                tab.container_filter.as_deref().unwrap_or("all"),
+                if tab.text_filter.is_empty() {
+                    "all"
+                } else {
+                    tab.text_filter.as_str()
+                }
+            ),
+            theme.keybind_desc_style(),
+        ),
+    ]);
+    let hint = if tab.editing_text_filter {
+        Line::from(Span::styled(
+            format!(" Editing text filter: {}", tab.filter_input),
+            theme.keybind_desc_style(),
+        ))
+    } else {
+        Line::from(Span::styled(
+            "[/] text  [p] pod  [c] container  [f] follow  [Esc] back",
+            theme.keybind_desc_style(),
+        ))
+    };
+    frame.render_widget(Paragraph::new(vec![header, hint]), sections[0]);
+
+    if let Some(error) = &tab.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Error: {error}"),
+                theme.badge_error_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    let filtered: Vec<&crate::workbench::WorkloadLogLine> =
+        tab.lines.iter().filter(|line| tab.matches_filter(line)).collect();
+    if filtered.is_empty() {
+        let message = tab.notice.as_deref().unwrap_or(if tab.loading {
+            " Loading workload logs..."
+        } else {
+            " No workload log lines match the current filters"
+        });
+        frame.render_widget(
+            Paragraph::new(Span::styled(message, theme.inactive_style())),
+            sections[1],
+        );
+        return;
+    }
+
+    let lines: Vec<Line> = filtered
+        .iter()
+        .map(|line| {
+            let badge = if line.is_stderr {
+                theme.badge_warning_style()
+            } else {
+                theme.badge_success_style()
+            };
+            Line::from(vec![
+                Span::styled(
+                    format!(" {}:{} ", line.pod_name, line.container_name),
+                    badge,
+                ),
+                Span::styled(line.content.clone(), Style::default().fg(theme.fg_dim)),
+            ])
+        })
+        .collect();
+    let visible_height = sections[1].height.saturating_sub(1) as usize;
+    let start = tab.scroll.min(lines.len().saturating_sub(1));
+    let end = (start + visible_height).min(lines.len());
+    frame.render_widget(
+        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+        sections[1],
+    );
+    render_scrollbar(frame, sections[1], lines.len(), start);
+}
+
+fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTabState) {
+    let theme = default_theme();
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(2)])
+        .split(area);
+
+    let status = if tab.loading {
+        "loading"
+    } else if tab.picking_container {
+        "select container"
+    } else if tab.exited {
+        "exited"
+    } else {
+        "connected"
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(format!(" {status} "), theme.badge_warning_style()),
+                Span::raw(" "),
+                Span::styled(
+                    format!(
+                        "{} / {}",
+                        tab.pod_name,
+                        if tab.container_name.is_empty() {
+                            "container: pending"
+                        } else {
+                            tab.container_name.as_str()
+                        }
+                    ),
+                    theme.keybind_desc_style(),
+                ),
+            ]),
+            Line::from(Span::styled(
+                "[Enter] send  [Backspace] edit  [Esc] back",
+                theme.keybind_desc_style(),
+            )),
+        ]),
+        sections[0],
+    );
+
+    if let Some(error) = &tab.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Error: {error}"),
+                theme.badge_error_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if tab.picking_container {
+        let lines: Vec<Line> = tab
+            .containers
+            .iter()
+            .enumerate()
+            .map(|(idx, container)| {
+                let prefix = if idx == tab.container_cursor { ">" } else { " " };
+                Line::from(format!("{prefix} {container}"))
+            })
+            .collect();
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            sections[1],
+        );
+    } else {
+        let mut lines: Vec<Line> = tab.lines.iter().map(|line| Line::from(line.clone())).collect();
+        if !tab.pending_fragment.is_empty() {
+            lines.push(Line::from(tab.pending_fragment.clone()));
+        }
+        if lines.is_empty() {
+            lines.push(Line::from(Span::styled(
+                " Waiting for shell output...",
+                theme.inactive_style(),
+            )));
+        }
+        let visible_height = sections[1].height.saturating_sub(1) as usize;
+        let start = tab.scroll.min(lines.len().saturating_sub(1));
+        let end = (start + visible_height).min(lines.len());
+        frame.render_widget(
+            Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+            sections[1],
+        );
+        render_scrollbar(frame, sections[1], lines.len(), start);
+    }
+
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(" $ ", theme.section_title_style()),
+            Span::styled(tab.input.clone(), Style::default().fg(theme.fg)),
+        ])),
+        sections[2],
+    );
 }
 
 fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize) {

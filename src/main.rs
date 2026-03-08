@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 
 use std::{
+    collections::HashMap,
     io,
     path::PathBuf,
     time::{Duration, Instant},
@@ -33,9 +34,11 @@ use kubectui::{
     events::apply_action,
     k8s::{
         client::K8sClient,
+        exec::{ExecEvent, ExecSessionHandle, fetch_pod_containers, spawn_exec_session},
         logs::{LogsClient, PodRef},
         portforward::PortForwarderService,
         probes::extract_probes_from_pod,
+        workload_logs::{MAX_WORKLOAD_LOG_STREAMS, resolve_workload_log_targets},
     },
     policy::DetailAction,
     state::{ClusterSnapshot, GlobalState, RefreshOptions},
@@ -121,17 +124,32 @@ fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
             line,
         } => {
             for tab in &mut app.workbench.tabs {
-                if let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
-                    let viewer = &mut logs_tab.viewer;
-                    if viewer.pod_name == pod_name
-                        && viewer.pod_namespace == namespace
-                        && viewer.container_name == container_name
-                    {
-                        viewer.push_line(line.clone());
-                        if viewer.follow_mode {
-                            viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        let viewer = &mut logs_tab.viewer;
+                        if viewer.pod_name == pod_name
+                            && viewer.pod_namespace == namespace
+                            && viewer.container_name == container_name
+                        {
+                            viewer.push_line(line.clone());
+                            if viewer.follow_mode {
+                                viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
+                            }
                         }
                     }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        if logs_tab.sources.iter().any(|(pod, ns, container)| {
+                            pod == &pod_name && ns == &namespace && container == &container_name
+                        }) {
+                            logs_tab.push_line(kubectui::workbench::WorkloadLogLine {
+                                pod_name: pod_name.clone(),
+                                container_name: container_name.clone(),
+                                content: line.clone(),
+                                is_stderr: false,
+                            });
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -155,23 +173,38 @@ fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
             status,
         } => {
             for tab in &mut app.workbench.tabs {
-                if let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
-                    let viewer = &mut logs_tab.viewer;
-                    if viewer.pod_name == pod_name
-                        && viewer.pod_namespace == namespace
-                        && viewer.container_name == container_name
-                    {
-                        match &status {
-                            LogStreamStatus::Error(err) => {
-                                viewer.error = Some(err.clone());
-                                viewer.loading = false;
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        let viewer = &mut logs_tab.viewer;
+                        if viewer.pod_name == pod_name
+                            && viewer.pod_namespace == namespace
+                            && viewer.container_name == container_name
+                        {
+                            match &status {
+                                LogStreamStatus::Error(err) => {
+                                    viewer.error = Some(err.clone());
+                                    viewer.loading = false;
+                                }
+                                LogStreamStatus::Ended | LogStreamStatus::Cancelled => {
+                                    viewer.follow_mode = false;
+                                }
+                                LogStreamStatus::Started => {}
                             }
-                            LogStreamStatus::Ended | LogStreamStatus::Cancelled => {
-                                viewer.follow_mode = false;
-                            }
-                            LogStreamStatus::Started => {}
                         }
                     }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        if logs_tab.sources.iter().any(|(pod, ns, container)| {
+                            pod == &pod_name && ns == &namespace && container == &container_name
+                        }) {
+                            logs_tab.loading = false;
+                            if let LogStreamStatus::Error(err) = &status {
+                                logs_tab.notice = Some(format!(
+                                    "{pod_name}/{container_name}: {err}"
+                                ));
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -269,6 +302,48 @@ fn workbench_follow_streams_to_stop(
                     )
                 })
             }
+            _ => None,
+        })
+        .collect()
+}
+
+fn workbench_workload_log_sessions_to_stop(app: &AppState, action: AppAction) -> Vec<u64> {
+    let tabs: Vec<&WorkbenchTabState> = match action {
+        AppAction::ToggleWorkbench if app.workbench().open => {
+            app.workbench().tabs.iter().map(|tab| &tab.state).collect()
+        }
+        AppAction::WorkbenchCloseActiveTab => app
+            .workbench()
+            .active_tab()
+            .map(|tab| vec![&tab.state])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    tabs.into_iter()
+        .filter_map(|state| match state {
+            WorkbenchTabState::WorkloadLogs(tab) => Some(tab.session_id),
+            _ => None,
+        })
+        .collect()
+}
+
+fn workbench_exec_sessions_to_stop(app: &AppState, action: AppAction) -> Vec<u64> {
+    let tabs: Vec<&WorkbenchTabState> = match action {
+        AppAction::ToggleWorkbench if app.workbench().open => {
+            app.workbench().tabs.iter().map(|tab| &tab.state).collect()
+        }
+        AppAction::WorkbenchCloseActiveTab => app
+            .workbench()
+            .active_tab()
+            .map(|tab| vec![&tab.state])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    tabs.into_iter()
+        .filter_map(|state| match state {
+            WorkbenchTabState::Exec(tab) => Some(tab.session_id),
             _ => None,
         })
         .collect()
@@ -403,6 +478,22 @@ struct ProbeAsyncResult {
     pod_name: String,
     namespace: String,
     probes: Vec<(String, kubectui::k8s::probes::ContainerProbes)>,
+}
+
+#[derive(Debug)]
+struct ExecBootstrapResult {
+    session_id: u64,
+    resource: ResourceRef,
+    pod_name: String,
+    namespace: String,
+    result: Result<Vec<String>, String>,
+}
+
+#[derive(Debug)]
+struct WorkloadLogsBootstrapResult {
+    session_id: u64,
+    resource: ResourceRef,
+    result: Result<Vec<kubectui::k8s::workload_logs::WorkloadLogTarget>, String>,
 }
 
 #[derive(Debug, Clone)]
@@ -872,6 +963,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (flux_reconcile_tx, mut flux_reconcile_rx) =
         tokio::sync::mpsc::channel::<FluxReconcileAsyncResult>(16);
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
+    let (exec_bootstrap_tx, mut exec_bootstrap_rx) =
+        tokio::sync::mpsc::channel::<ExecBootstrapResult>(16);
+    let (exec_update_tx, mut exec_update_rx) = tokio::sync::mpsc::channel::<ExecEvent>(128);
+    let mut next_exec_session_id: u64 = 1;
+    let mut exec_sessions: HashMap<u64, ExecSessionHandle> = HashMap::new();
+    let (workload_logs_bootstrap_tx, mut workload_logs_bootstrap_rx) =
+        tokio::sync::mpsc::channel::<WorkloadLogsBootstrapResult>(16);
+    let mut next_workload_logs_session_id: u64 = 1;
+    let mut workload_log_sessions: HashMap<u64, Vec<(String, String, String)>> = HashMap::new();
 
     // Channel for background data refreshes — namespace switches, manual refresh, auto-refresh
     // all go through here so the UI stays responsive during API calls.
@@ -1448,6 +1548,171 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
+            result = exec_bootstrap_rx.recv() => {
+                if let Some(result) = result {
+                    let mut start_session: Option<(u64, String, String, String)> = None;
+                    if let Some(tab) = app
+                        .workbench_mut()
+                        .find_tab_mut(&WorkbenchTabKey::Exec(result.resource.clone()))
+                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                        && exec_tab.session_id == result.session_id
+                    {
+                        match result.result {
+                            Ok(containers) => {
+                                exec_tab.set_containers(containers.clone());
+                                exec_tab.loading = exec_tab.picking_container;
+                                exec_tab.error = None;
+                                if containers.len() == 1 {
+                                    start_session = Some((
+                                        result.session_id,
+                                        exec_tab.pod_name.clone(),
+                                        exec_tab.namespace.clone(),
+                                        containers[0].clone(),
+                                    ));
+                                }
+                            }
+                            Err(err) => {
+                                exec_tab.loading = false;
+                                exec_tab.error = Some(err);
+                            }
+                        }
+                    }
+
+                    if let Some((session_id, pod_name, namespace, container_name)) = start_session {
+                        match spawn_exec_session(
+                            client.clone(),
+                            session_id,
+                            pod_name,
+                            namespace,
+                            container_name.clone(),
+                            exec_update_tx.clone(),
+                        )
+                        .await
+                        {
+                            Ok(handle) => {
+                                exec_sessions.insert(session_id, handle);
+                                if let Some(tab) = app
+                                    .workbench_mut()
+                                    .find_tab_mut(&WorkbenchTabKey::Exec(result.resource.clone()))
+                                    && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                {
+                                    exec_tab.container_name = container_name;
+                                    exec_tab.loading = true;
+                                }
+                            }
+                            Err(err) => {
+                                if let Some(tab) = app
+                                    .workbench_mut()
+                                    .find_tab_mut(&WorkbenchTabKey::Exec(result.resource.clone()))
+                                    && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                {
+                                    exec_tab.loading = false;
+                                    exec_tab.error = Some(format!("{err:#}"));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            result = exec_update_rx.recv() => {
+                if let Some(result) = result {
+                    for tab in &mut app.workbench.tabs {
+                        if let WorkbenchTabState::Exec(exec_tab) = &mut tab.state {
+                            if exec_tab.session_id != match &result {
+                                ExecEvent::Opened { session_id, .. }
+                                | ExecEvent::Output { session_id, .. }
+                                | ExecEvent::Exited { session_id, .. }
+                                | ExecEvent::Error { session_id, .. } => *session_id,
+                            } {
+                                continue;
+                            }
+
+                            match result {
+                                ExecEvent::Opened { shell, .. } => {
+                                    exec_tab.shell_name = Some(shell);
+                                    exec_tab.loading = false;
+                                    exec_tab.exited = false;
+                                    exec_tab.error = None;
+                                }
+                                ExecEvent::Output { chunk, is_stderr, .. } => {
+                                    if is_stderr {
+                                        exec_tab.append_output(&format!("[stderr] {chunk}"));
+                                    } else {
+                                        exec_tab.append_output(&chunk);
+                                    }
+                                }
+                                ExecEvent::Exited { success, message, session_id } => {
+                                    exec_tab.loading = false;
+                                    exec_tab.exited = true;
+                                    exec_tab.error = (!success).then_some(message.clone());
+                                    exec_tab.append_output(&format!("{message}\n"));
+                                    exec_sessions.remove(&session_id);
+                                }
+                                ExecEvent::Error { error, session_id } => {
+                                    exec_tab.loading = false;
+                                    exec_tab.error = Some(error.clone());
+                                    exec_tab.exited = true;
+                                    exec_sessions.remove(&session_id);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            result = workload_logs_bootstrap_rx.recv() => {
+                if let Some(result) = result {
+                    let mut sources_to_start = Vec::new();
+                    if let Some(tab) = app
+                        .workbench_mut()
+                        .find_tab_mut(&WorkbenchTabKey::WorkloadLogs(result.resource.clone()))
+                        && let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state
+                        && logs_tab.session_id == result.session_id
+                    {
+                        match result.result {
+                            Ok(targets) => {
+                                let mut sources = Vec::new();
+                                for target in targets {
+                                    for container in target.containers {
+                                        if sources.len() >= MAX_WORKLOAD_LOG_STREAMS {
+                                            logs_tab.notice = Some(format!(
+                                                "Stream cap reached at {MAX_WORKLOAD_LOG_STREAMS} pod/container streams."
+                                            ));
+                                            break;
+                                        }
+                                        sources.push((
+                                            target.pod_name.clone(),
+                                            target.namespace.clone(),
+                                            container,
+                                        ));
+                                    }
+                                }
+                                if sources.is_empty() {
+                                    logs_tab.loading = false;
+                                    logs_tab.error = Some("No pod/container streams were resolved.".to_string());
+                                } else {
+                                    logs_tab.sources = sources.clone();
+                                    logs_tab.loading = false;
+                                    workload_log_sessions.insert(result.session_id, sources.clone());
+                                    sources_to_start = sources;
+                                }
+                            }
+                            Err(err) => {
+                                logs_tab.loading = false;
+                                logs_tab.error = Some(err);
+                            }
+                        }
+                    }
+
+                    for (pod_name, namespace, container_name) in sources_to_start {
+                        let _ = coordinator
+                            .start_log_streaming(pod_name, namespace, container_name, true)
+                            .await;
+                    }
+                }
+            }
+
             result = probe_rx.recv() => {
                 if let Some(result) = result {
                     needs_redraw = true;
@@ -1658,10 +1923,28 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     | AppAction::WorkbenchIncreaseHeight
                     | AppAction::WorkbenchDecreaseHeight => {
                         let streams_to_stop = workbench_follow_streams_to_stop(&app, action.clone());
+                        let workload_sessions_to_stop =
+                            workbench_workload_log_sessions_to_stop(&app, action.clone());
+                        let exec_sessions_to_stop =
+                            workbench_exec_sessions_to_stop(&app, action.clone());
                         for (pod_name, namespace, container_name) in streams_to_stop {
                             let _ = coordinator
                                 .stop_log_streaming(&pod_name, &namespace, &container_name)
                                 .await;
+                        }
+                        for session_id in workload_sessions_to_stop {
+                            if let Some(streams) = workload_log_sessions.remove(&session_id) {
+                                for (pod_name, namespace, container_name) in streams {
+                                    let _ = coordinator
+                                        .stop_log_streaming(&pod_name, &namespace, &container_name)
+                                        .await;
+                                }
+                            }
+                        }
+                        for session_id in exec_sessions_to_stop {
+                            if let Some(handle) = exec_sessions.remove(&session_id) {
+                                let _ = handle.cancel_tx.send(());
+                            }
                         }
                         apply_action(action, &mut app);
                         save_config(&app);
@@ -1721,6 +2004,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 // Context-bound long-lived services must be rebuilt to avoid
                                 // continuing background work against the previous cluster.
                                 let _ = coordinator.shutdown().await;
+                                for (_, handle) in exec_sessions.drain() {
+                                    let _ = handle.cancel_tx.send(());
+                                }
+                                workload_log_sessions.clear();
                                 port_forwarder.stop_all().await;
                                 app.tunnel_registry.update_tunnels(Vec::new());
 
@@ -1771,6 +2058,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         abort_in_flight_refresh(&mut refresh_state);
                         refresh_state.queued_refresh = None;
                         delete_in_flight_id = None;
+                        for (_, handle) in exec_sessions.drain() {
+                            let _ = handle.cancel_tx.send(());
+                        }
+                        for (_, streams) in workload_log_sessions.drain() {
+                            for (pod_name, namespace, container_name) in streams {
+                                let _ = coordinator
+                                    .stop_log_streaming(&pod_name, &namespace, &container_name)
+                                    .await;
+                            }
+                        }
                         status_message_clear_at = None;
                         app.clear_status();
                         // Drop old namespace data immediately to prevent inconsistent mixed views.
@@ -1888,15 +2185,55 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             .as_ref()
                             .and_then(|detail| detail.resource.clone())
                             .or_else(|| selected_resource(&app, &cached_snapshot));
-                        let Some(ResourceRef::Pod(pod_name, pod_ns)) = resource else {
-                            app.set_error(
-                                "Logs viewer is only available for Pod resources.".to_string(),
-                            );
+                        let Some(resource) = resource else {
+                            app.set_error("No resource selected for logs.".to_string());
+                            continue;
+                        };
+                        let Some((pod_name, pod_ns, pod_resource)) = (match &resource {
+                            ResourceRef::Pod(pod_name, pod_ns) => {
+                                Some((pod_name.clone(), pod_ns.clone(), resource.clone()))
+                            }
+                            _ => None,
+                        }) else {
+                            if !matches!(
+                                resource,
+                                ResourceRef::Deployment(_, _)
+                                    | ResourceRef::StatefulSet(_, _)
+                                    | ResourceRef::DaemonSet(_, _)
+                                    | ResourceRef::ReplicaSet(_, _)
+                                    | ResourceRef::ReplicationController(_, _)
+                                    | ResourceRef::Job(_, _)
+                            ) {
+                                app.set_error(
+                                    "Logs are only available for Pods and supported workload resources."
+                                        .to_string(),
+                                );
+                                continue;
+                            }
+                            let session_id = next_workload_logs_session_id;
+                            next_workload_logs_session_id =
+                                next_workload_logs_session_id.wrapping_add(1).max(1);
+                            app.detail_view = None;
+                            app.open_workload_logs_tab(resource.clone(), session_id);
+                            let tx = workload_logs_bootstrap_tx.clone();
+                            let client_clone = client.get_client();
+                            tokio::spawn(async move {
+                                let result = resolve_workload_log_targets(client_clone, &resource)
+                                    .await
+                                    .map_err(|err| format!("{err:#}"));
+                                let _ = tx
+                                    .send(WorkloadLogsBootstrapResult {
+                                        session_id,
+                                        resource,
+                                        result,
+                                    })
+                                    .await;
+                            });
                             continue;
                         };
                         let mut container_request: Option<(u64, String, String)> = None;
                         app.detail_view = None;
-                        app.open_pod_logs_tab(ResourceRef::Pod(pod_name.clone(), pod_ns.clone()));
+                        app.open_pod_logs_tab(pod_resource);
                         if let Some(tab) = app.workbench_mut().find_tab_mut(
                             &WorkbenchTabKey::PodLogs(ResourceRef::Pod(pod_name.clone(), pod_ns.clone())),
                         ) && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
@@ -1944,6 +2281,112 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     result,
                                 }).await;
                             });
+                        }
+                    }
+                    AppAction::OpenExec => {
+                        let resource = app
+                            .detail_view
+                            .as_ref()
+                            .and_then(|detail| detail.resource.clone())
+                            .or_else(|| selected_resource(&app, &cached_snapshot));
+                        let Some(ResourceRef::Pod(pod_name, pod_ns)) = resource else {
+                            app.set_error("Exec is only available for Pod resources.".to_string());
+                            continue;
+                        };
+
+                        let session_id = next_exec_session_id;
+                        next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
+                        let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
+                        app.detail_view = None;
+                        app.open_exec_tab(
+                            resource.clone(),
+                            session_id,
+                            pod_name.clone(),
+                            pod_ns.clone(),
+                        );
+                        let tx = exec_bootstrap_tx.clone();
+                        let client_clone = client.clone();
+                        tokio::spawn(async move {
+                            let result = fetch_pod_containers(&client_clone, &pod_name, &pod_ns)
+                                .await
+                                .map_err(|err| format!("{err:#}"));
+                            let _ = tx
+                                .send(ExecBootstrapResult {
+                                    session_id,
+                                    resource,
+                                    pod_name,
+                                    namespace: pod_ns,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                    AppAction::ExecSelectContainer(container_name) => {
+                        let mut start_session: Option<(u64, ResourceRef, String, String, String)> = None;
+                        if let Some(tab) = app.workbench_mut().active_tab_mut()
+                            && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state {
+                                exec_tab.picking_container = false;
+                                exec_tab.container_name = container_name.clone();
+                                exec_tab.loading = true;
+                                exec_tab.error = None;
+                                start_session = Some((
+                                    exec_tab.session_id,
+                                    exec_tab.resource.clone(),
+                                    exec_tab.pod_name.clone(),
+                                    exec_tab.namespace.clone(),
+                                    container_name,
+                                ));
+                            }
+                        if let Some((session_id, resource, pod_name, namespace, container_name)) =
+                            start_session
+                        {
+                            match spawn_exec_session(
+                                client.clone(),
+                                session_id,
+                                pod_name,
+                                namespace,
+                                container_name.clone(),
+                                exec_update_tx.clone(),
+                            )
+                            .await
+                            {
+                                Ok(handle) => {
+                                    exec_sessions.insert(session_id, handle);
+                                }
+                                Err(err) => {
+                                    if let Some(tab) = app
+                                        .workbench_mut()
+                                        .find_tab_mut(&WorkbenchTabKey::Exec(resource))
+                                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                    {
+                                        exec_tab.loading = false;
+                                        exec_tab.error = Some(format!("{err:#}"));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    AppAction::ExecSendInput => {
+                        if let Some(tab) = app.workbench_mut().active_tab_mut()
+                            && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                        {
+                            if exec_tab.input.is_empty() {
+                                continue;
+                            }
+                            let mut bytes = exec_tab.input.clone().into_bytes();
+                            bytes.push(b'\n');
+                            let session_id = exec_tab.session_id;
+                            exec_tab.input.clear();
+                            if let Some(handle) = exec_sessions.get(&session_id) {
+                                if let Err(err) = handle.input_tx.send(bytes).await {
+                                    exec_tab.error =
+                                        Some(format!("failed to send exec input: {err}"));
+                                }
+                            } else {
+                                exec_tab.error = Some(
+                                    "exec session is not running for the selected tab.".to_string(),
+                                );
+                            }
                         }
                     }
                     AppAction::LogsViewerSelectContainer(container) => {
@@ -2536,6 +2979,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         }
     }
 
+    for (_, handle) in exec_sessions.drain() {
+        let _ = handle.cancel_tx.send(());
+    }
     let _ = coordinator.shutdown().await;
     port_forwarder.stop_all().await;
 

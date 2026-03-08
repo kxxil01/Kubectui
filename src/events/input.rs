@@ -175,6 +175,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.open_action_history_tab(true);
             true
         }
+        AppAction::OpenExec => true,
         AppAction::PortForwardOpen => {
             app_state.open_port_forward();
             true
@@ -310,6 +311,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         }
         AppAction::ActionHistoryOpenSelected => {
             // Handled in main.rs event loop (needs resource jump / detail fetch)
+            true
+        }
+        AppAction::ExecSelectContainer(_) | AppAction::ExecSendInput => {
+            // Handled in main.rs event loop (needs async exec session runtime)
             true
         }
     }

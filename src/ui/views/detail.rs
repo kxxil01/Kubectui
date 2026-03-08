@@ -286,6 +286,14 @@ fn render_inspection_panel(frame: &mut Frame, area: Rect, detail_state: &DetailV
         } else {
             Line::from("")
         },
+        if detail_state.supports_action(crate::policy::DetailAction::Exec) {
+            Line::from(vec![
+                Span::styled(" [x] ", theme.keybind_key_style()),
+                Span::styled("Open exec shell in workbench", theme.keybind_desc_style()),
+            ])
+        } else {
+            Line::from("")
+        },
         if detail_state.supports_action(crate::policy::DetailAction::PortForward) {
             Line::from(vec![
                 Span::styled(" [f] ", theme.keybind_key_style()),
