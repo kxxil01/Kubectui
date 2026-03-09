@@ -1351,6 +1351,10 @@ pub enum AppAction {
     CopyResourceFullName,
     CopyLogContent,
     ExportLogs,
+    PaletteAction {
+        action: crate::policy::DetailAction,
+        resource: ResourceRef,
+    },
 }
 
 /// Which panel currently owns keyboard focus.
@@ -2500,7 +2504,9 @@ impl AppState {
             return match self.command_palette.handle_key(key) {
                 CommandPaletteAction::None => AppAction::None,
                 CommandPaletteAction::Navigate(view) => AppAction::NavigateTo(view),
-                CommandPaletteAction::Execute(_, _) => AppAction::None,
+                CommandPaletteAction::Execute(action, resource) => {
+                    AppAction::PaletteAction { action, resource }
+                }
                 CommandPaletteAction::Close => AppAction::CloseCommandPalette,
             };
         }
