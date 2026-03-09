@@ -16,7 +16,11 @@ Current milestone status:
 - Milestone 1: completed
 - Milestone 2: completed
 - Milestone 3: completed
-- Milestone 4: next
+- Milestone 4: completed
+- Milestone 5: completed
+- Milestone 6: completed
+- Milestone 7: completed
+- Milestone 8: next
 
 Completion notes:
 
@@ -24,10 +28,20 @@ Completion notes:
 - Milestone 1 shipped the bottom workbench foundation with persisted open state, persisted height, tab management, focus handling, and layout integration.
 - Milestone 2 moved YAML, events, logs, and port-forward sessions onto the workbench-backed path and removed the old duplicate detail-only inspection path.
 - Milestone 3 added a canonical action history model, recorded pending/success/error mutation state centrally, and exposed the verification surface in the workbench with jump-back to affected resources where possible.
+- Milestone 4 added pod exec/shell sessions hosted in the workbench with container selection, shell fallback order, bounded scrollback, and error handling.
+- Milestone 5 added multi-pod and workload-level logs with per-pod/container/text filtering, follow mode, "All Containers" picker in pod logs, and workload log aggregation from deployments/statefulsets/daemonsets.
+
+Post-milestone fixes and improvements (shipped after M5):
+
+- Deep audit: 23 fixes across 35 files (UTF-8 safe truncation, time-based backoff, TOCTOU race fix, non-blocking extension fetch, temp file security, magic number cleanup)
+- Age sorting fix: None values always sort last regardless of sort direction
+- Delete confirmation UX: accepts D/y/Enter (not just Shift+D), widened dialog, updated footer hints
+- Workbench maximize: `z` toggles fullscreen mode, Esc restores, MAX_WORKBENCH_HEIGHT bumped from 20 to 40
+- All Containers: pod logs picker shows "All Containers" when 2+ containers, opens WorkloadLogs tab
 
 Verification status for completed milestones:
 
-- local build/test/performance gates are passing
+- 460+ tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -65,6 +79,7 @@ Good translations:
 - command palette -> action palette
 - resource graph -> text/tree relationship explorer
 - issues panel -> issue center
+- right-panel detail -> modal detail overlay
 
 Bad translations:
 
@@ -121,36 +136,172 @@ After a mutation, the user must be able to tell:
 
 KubecTUI already has:
 
-- broad resource coverage
+- 46 resource views across 9 sidebar groups (Overview, Workloads, Network, Config, Storage, Helm, FluxCD, Access Control, Custom Resources)
 - workload-first loading and background hydration
-- per-view loading state
-- responsive layouts
-- shared sorting across workloads and more non-workload views
-- bottom workbench with persistent tabs
-- workbench-backed YAML, events, logs, and port-forward sessions
-- logs, port-forwarding, scaling, restart, YAML apply, delete
+- per-view loading state with explicit loading/refreshing/ready/empty/error states
+- responsive layouts with sidebar + content + workbench split
+- shared sorting across workloads and pods with ascending/descending toggle
+- bottom workbench with 7 persistent tab types (ActionHistory, YAML, Events, PodLogs, WorkloadLogs, Exec, PortForward)
+- workbench maximize (`z` to fullscreen, Esc to restore), resizable height (8-40 lines)
+- pod logs with container picker, "All Containers" option, follow mode
+- workload-level log aggregation with pod/container/text filtering
+- pod exec/shell sessions with container selection and shell fallback
+- port-forwarding with session management
+- scaling dialog (deployments/statefulsets)
+- rollout restart
+- delete with multi-key confirmation (D/y/Enter)
+- YAML edit (opens in $EDITOR, applies on save)
 - Flux reconcile
-- standardized mutation lifecycle
-- optimistic updates for safe operations
-- action history and recent mutation verification
-- command palette
+- action history with pending/success/error tracking and resource jump-back
+- command palette (`:`) for navigating to any of 46 views
 - context and namespace switching
-- CRD browsing
+- CRD browsing with dynamic instance viewing
+- search mode (`/`) with case-insensitive substring matching
+- 5 themes (Dark, Nord, Dracula, Catppuccin, Light)
+- probe panel (liveness, readiness, startup probe inspection)
+- dashboard with cluster health gauges, alerts, and workload summaries
+- configuration persistence (namespace, theme, workbench state, refresh interval)
 
-This means the next phase should focus on workflow depth, discoverability, and operator quality of life.
+This means the next phase should focus on discoverability, operator quality of life, and closing the UX gaps that Lens/Freelens users expect.
+
+---
+
+## Lens/Freelens UX Research
+
+This section documents the key UX patterns from Lens and Freelens that inform our gap analysis and milestone priorities. These are workflow references, not UI templates.
+
+### What Lens Gets Right
+
+**Discoverability**: Users can discover all features without reading docs. Every action is visible in context menus, keyboard shortcuts are listed, and a help system exists.
+
+**Log viewing**: Previous logs for crashed containers, search/highlight within logs, timestamp toggle, log level filtering, line count limits, download/export to file.
+
+**Resource information density**: Pod tables show IP and Node columns. Detail views show labels, annotations, environment variables, owner references, and container resource limits.
+
+**Status communication**: Color-coded pod status, ready fraction indicators (1/2), node condition badges, deployment health inference (healthy/degraded/failed).
+
+**Sidebar context**: Resource counts next to categories (e.g., "Pods (47)"), always-visible cluster context and namespace.
+
+**Node operations**: Cordon, uncordon, drain — critical for cluster operators.
+
+**Relationship navigation**: Owner references link resources. Service -> Endpoints -> Pod chains are navigable.
+
+**Data operations**: Copy to clipboard, CSV export, inline editing of replica counts.
+
+### What We Should NOT Copy
+
+- Resizable/reorderable columns via mouse drag
+- Right-click context menus (no mouse in TUI)
+- Desktop-style tab management (Cmd+number)
+- Integrated Prometheus metric graphs (too complex for TUI; sparklines possible later)
+- Hotbar/catalog model (desktop-specific)
+- Extension marketplace
+- Monaco YAML editor
 
 ---
 
 ## Gaps To Close
 
-These are the main gaps between the current app and a strong operator workspace.
+These are the main gaps between the current app and a strong operator workspace, updated with Lens/Freelens research findings.
 
-## Gap A: No timeline and correlation surface
+## Gap A: Weak discoverability
 
 Current issue:
 
-- users can verify recent actions, but not yet in a timeline-oriented or correlated way
-- action history exists, but it is still separate from event chronology
+- no help screen or keybinding reference
+- users from Lens cannot discover shortcuts without reading source code
+- inline footer hints only cover detail view actions, not global keys
+
+Needed:
+
+- `?` help overlay listing all keybindings organized by context
+- searchable keybinding reference
+- contextual hints that adapt to current focus mode
+
+## Gap B: Incomplete log workflow
+
+Current issue:
+
+- no previous logs for crashed/restarted containers
+- no search/highlight within pod logs
+- no timestamp toggle
+- no log export to file
+- pod logs lack the text filter that workload logs have
+
+Needed:
+
+- previous logs toggle (`--previous` flag)
+- search with highlight in all log views
+- timestamp prefix toggle
+- export/save to file
+
+## Gap C: Missing resource information
+
+Current issue:
+
+- pod table lacks IP and Node columns
+- detail view does not show labels, annotations, or environment variables
+- no owner reference links between resources
+
+Needed:
+
+- Pod IP and Node columns in pods table
+- labels/annotations section in detail view
+- owner reference display with jump-to navigation
+
+## Gap D: No clipboard integration
+
+Current issue:
+
+- no way to copy pod names, IPs, YAML snippets, or log lines
+
+Needed:
+
+- yank/copy to system clipboard for selected values
+
+## Gap E: Missing node operations
+
+Current issue:
+
+- node inspection exists but no operational actions
+
+Needed:
+
+- cordon / uncordon
+- drain with strong confirmation and progress feedback
+
+## Gap F: Missing resource actions
+
+Current issue:
+
+- no force delete for stuck resources (finalizers)
+- no manual CronJob trigger
+- no inline replica editing (currently modal only)
+
+Needed:
+
+- force delete option
+- CronJob manual trigger
+- streamlined scaling UX
+
+## Gap G: Weak sidebar context
+
+Current issue:
+
+- sidebar shows group names but no resource counts
+- current context/namespace is in header but not prominently actionable
+
+Needed:
+
+- resource counts per sidebar group or view
+- clear context/namespace indicator at all times
+
+## Gap H: No timeline and correlation surface
+
+Current issue:
+
+- action history exists but is separate from event chronology
+- no timeline-oriented verification
 
 Needed:
 
@@ -158,34 +309,11 @@ Needed:
 - timeline-oriented verification
 - faster understanding of what changed after an action
 
-## Gap B: Weak multi-resource workflows
+## Gap I: Weak relationship navigation
 
 Current issue:
 
-- many operations are single-resource only
-
-Needed:
-
-- multi-pod logs
-- workload-level debugging flows
-- relationship-driven navigation
-
-## Gap C: No integrated exec / shell workflow
-
-Current issue:
-
-- users still need to leave the app for common pod shell operations
-
-Needed:
-
-- pod exec/session support
-- terminal-like workbench surface
-
-## Gap D: Weak relationship navigation
-
-Current issue:
-
-- resources are browsable by kind, but not by dependency chain
+- resources are browsable by kind, not by dependency chain
 
 Needed:
 
@@ -195,7 +323,7 @@ Needed:
 - PVC -> PV -> StorageClass
 - Flux source -> downstream resource chain
 
-## Gap E: Weak issue-centered workflow
+## Gap J: Weak issue-centered workflow
 
 Current issue:
 
@@ -203,11 +331,10 @@ Current issue:
 
 Needed:
 
-- issue center
-- grouped problem categories
+- issue center with grouped problem categories
 - action-oriented issue drilldown
 
-## Gap F: Weak persistent personalization
+## Gap K: Weak persistent personalization
 
 Current issue:
 
@@ -217,32 +344,7 @@ Needed:
 
 - per-view saved sort
 - per-view columns
-- persisted workbench state
 - context-aware preferences
-
-## Gap G: Missing high-value node operations
-
-Current issue:
-
-- inspection exists, operations do not
-
-Needed:
-
-- cordon
-- uncordon
-- drain
-
-## Gap H: Weak action verification timeline
-
-Current issue:
-
-- users can trigger actions and inspect resources, but there is no timeline-oriented verification surface yet
-
-Needed:
-
-- events near the action
-- action history
-- resource-level verification surfaces
 
 ---
 
@@ -267,50 +369,6 @@ Completed
 
 Stabilize the core interaction and policy model before adding major new workflows.
 
-### Why this exists
-
-The app has already grown quickly. Before adding a workbench and more operational features, the app should have one clear source of truth for shared policies.
-
-### Scope
-
-- audit current cross-view behavior
-- identify legacy or duplicate state paths
-- centralize capability policies where needed
-- document and normalize existing global behaviors
-
-### Tasks
-
-1. Audit current canonical policies:
-   - shared sort capabilities
-   - loading behavior
-   - mutation lifecycle
-   - detail open/close behavior
-2. Add missing capability tables where needed:
-   - action capability table
-   - persistence capability table
-   - relationship capability table
-3. Remove or mark duplicate flows that would conflict with workbench migration.
-4. Make footer hints and action availability fully consistent with centralized policies.
-
-### Deliverables
-
-- centralized policy helpers
-- reduced ad hoc branching
-- documented constraints for future milestones
-
-### Risks
-
-- widening scope too much into refactoring with no visible user value
-
-### Guardrail
-
-Keep this milestone tightly scoped to policy cleanup, not feature invention.
-
-### Acceptance Criteria
-
-- one canonical policy path exists for core cross-view behavior
-- no obvious conflicting UI paths remain for the features being migrated next
-
 ---
 
 ## Milestone 1: Workbench Foundation
@@ -322,87 +380,6 @@ Completed
 ### Goal
 
 Create a persistent bottom workbench that becomes the home for long-lived operational surfaces.
-
-### Why this comes first
-
-Workbench is the enabling layer for:
-
-- logs without losing list context
-- YAML without losing list context
-- events per resource
-- action history
-- pod exec
-- future long-lived operational tabs
-
-Without this, later features will create more modal and overlay duplication.
-
-### Scope
-
-- bottom workbench layout
-- open/close behavior
-- tab strip
-- active tab switching
-- persisted height/open state
-- canonical state model
-
-### Tasks
-
-1. Add `WorkbenchState` to canonical app state.
-2. Add `WorkbenchTabKind`.
-3. Add `WorkbenchTab`.
-4. Add reducer/input flows for:
-   - open tab
-   - close tab
-   - focus next/previous tab
-   - resize workbench
-   - toggle workbench open/closed
-5. Add `ratatui` layout support for:
-   - sidebar
-   - main content
-   - bottom workbench
-   - footer
-6. Add canonical workbench rendering with a real empty state and dynamic tab content.
-7. Persist:
-   - workbench open state
-   - workbench height
-8. Add tests for:
-   - tab creation
-   - tab close
-   - tab focus
-   - layout behavior
-   - persistence restore
-
-### Out of Scope
-
-- pod exec
-- multi-pod logs
-- relationship explorer
-- issue center
-
-### Deliverables
-
-- visible bottom workbench
-- reusable tab state model
-- no performance regression in standard list views
-
-### Risks
-
-- introducing render churn across the whole app
-- adding duplicate focus models
-- making keyboard navigation confusing
-
-### Guardrails
-
-- inactive tabs must be cheap
-- workbench open/close must not rebuild unrelated state
-- focus behavior must be explicit and testable
-
-### Acceptance Criteria
-
-- users can open and close the workbench reliably
-- workbench height is adjustable and persisted
-- switching tabs is immediate
-- no visible lag is introduced in core list navigation
 
 ---
 
@@ -416,52 +393,6 @@ Completed
 
 Move existing high-value inspection tools into the workbench so the app stops relying on scattered blocking experiences.
 
-### Scope
-
-- logs
-- YAML
-- events
-- port-forward sessions
-
-### Tasks
-
-1. Move single-pod logs into a workbench tab.
-2. Move YAML inspection into a workbench tab.
-3. Add resource-scoped events tab support.
-4. Add a port-forward session tab or session list tab.
-5. Make open-from-detail and open-from-list flow into the same workbench-backed path.
-6. Reduce or remove duplicate long-term overlay behavior where appropriate.
-7. Add tests for:
-   - opening from list
-   - opening from detail
-   - reopening existing tab vs spawning duplicate tab
-   - closing tab while list remains interactive
-
-### Deliverables
-
-- logs in workbench
-- YAML in workbench
-- events in workbench
-- port-forward session visibility in workbench
-
-### Risks
-
-- duplicated code paths between modal and workbench implementations
-- log buffering affecting render performance
-- too many tabs creating memory pressure
-
-### Guardrails
-
-- bounded buffers only
-- tab reuse policy must be explicit
-- expensive content should be cached or isolated from frame-by-frame rebuilds
-
-### Acceptance Criteria
-
-- users can keep browsing while logs or YAML remain visible
-- events are accessible near the selected resource
-- the workbench becomes the canonical place for ongoing operational inspection
-
 ---
 
 ## Milestone 3: Action History and Verification Surface
@@ -474,161 +405,241 @@ Completed
 
 Give users a first-class place to understand what happened after they triggered an action.
 
-### Scope
-
-- action history tab
-- pending/success/error status
-- timestamps
-- resource jump-back
-
-### Tasks
-
-1. Add `ActionHistoryEntry` model.
-2. Record all mutating actions centrally:
-   - delete
-   - scale
-   - restart
-   - reconcile
-   - YAML apply
-3. Render action history in workbench.
-4. Link history entries back to resources where possible.
-5. Show progress transitions where the action model supports them.
-6. Add tests for:
-   - entry recording
-   - entry lifecycle transitions
-   - clearing stale entries policy
-
-### Deliverables
-
-- workbench action history tab
-- visible mutation verification path
-
-### Risks
-
-- action history becoming noisy or spammy
-- duplicate status reporting between footer and history
-
-### Guardrails
-
-- footer is for current status
-- workbench history is for recent history
-- do not overload one mechanism with both roles
-
-### Acceptance Criteria
-
-- after a mutation, users can see a durable record of what happened
-- users can jump from a recent action back to the affected resource
-
 ---
 
 ## Milestone 4: Pod Exec / Shell
+
+### Status
+
+Completed
 
 ### Goal
 
 Add a terminal-native exec workflow for pods and containers.
 
-### Scope
+### What shipped
 
-- exec into selected pod
-- container selection
-- shell fallback order
-- shell session hosted in workbench
-
-### Tasks
-
-1. Add exec session state model.
-2. Support container selection for multi-container pods.
-3. Attempt shells in order:
-   - `/bin/bash`
-   - `/bin/sh`
-   - `/busybox/sh`
-4. Render exec session in a terminal-oriented workbench tab.
-5. Handle errors clearly:
-   - pod not running
-   - container not ready
-   - exec forbidden
-   - shell missing
-6. Add tests for:
-   - state transitions
-   - unsupported pod state
-   - failure messaging
-
-### Deliverables
-
-- exec workflow available from pods
-- shell sessions live in workbench
-
-### Risks
-
-- terminal emulation complexity
-- input routing conflicts with app navigation
-
-### Guardrails
-
-- isolate session I/O from the main render path
-- keep scrollback bounded
-- make focus rules explicit
-
-### Acceptance Criteria
-
-- users can open a pod shell without leaving KubecTUI
-- failure states are obvious and actionable
+- exec session state model with container selection
+- shell fallback order (/bin/bash -> /bin/sh -> /busybox/sh)
+- workbench-hosted exec tab with input routing
+- bounded scrollback (5,000 lines)
+- error handling for pod not running, container not ready, exec forbidden, shell missing
 
 ---
 
 ## Milestone 5: Multi-Pod and Workload-Level Logs
 
+### Status
+
+Completed
+
 ### Goal
 
 Make workload debugging first-class.
 
-### Scope
+### What shipped
 
-- aggregate logs by workload
-- label lines by pod and container
-- filters and follow mode
-
-### Tasks
-
-1. Add workload log session model.
-2. Resolve workload -> pod set reliably.
-3. Stream logs concurrently from selected pods.
-4. Prefix lines with source identity.
-5. Add filters:
-   - pod
-   - container
-   - text
-6. Add follow/pause controls.
-7. Handle partial failure gracefully.
-8. Add tests for:
-   - multiplex ordering policy
-   - partial stream failure
-   - session stop/cleanup
-
-### Deliverables
-
-- workload-level logs for deployments, statefulsets, daemonsets, and similar selectors where safe
-
-### Risks
-
-- high memory use
-- line flood overwhelming render path
-- pod churn while streaming
-
-### Guardrails
-
-- bounded line buffers
-- capped active streams if needed
-- explicit refresh/re-resolve behavior when pod membership changes
-
-### Acceptance Criteria
-
-- users can inspect workload logs without opening each pod individually
-- partial failures do not kill the entire experience
+- workload log session model with concurrent pod streaming
+- per-pod, per-container, and text filtering
+- follow/pause controls
+- "All Containers" picker in pod logs (switches to WorkloadLogs tab)
+- bounded line buffer (5,000 lines)
+- partial failure handling
 
 ---
 
-## Milestone 6: Action Palette v2
+## Milestone 6: Discoverability and Operator Quality of Life
+
+### Status
+
+Completed
+
+### What shipped
+
+- `?` help overlay with keybinding reference (6 sections, scrollable)
+- Previous logs toggle (`P` key, `--previous` flag for crashed containers)
+- Log search and highlight (`/` to search, `n`/`N` for next/prev match, highlighted matches)
+- Timestamp toggle (`t` key, re-fetches with `--timestamps`)
+- Sidebar resource counts (e.g., "Pods (12)")
+- Pod IP column in pods table
+
+### Goal
+
+Close the most impactful UX gaps that Lens/Freelens users expect. Make the app learnable without docs and improve day-2 debugging workflows.
+
+### Why this comes next
+
+Users from Lens will evaluate the app in the first 5 minutes. If they cannot discover shortcuts, view previous logs for crashed pods, or search within logs, they will leave. These are table-stakes features, not advanced workflows.
+
+### Scope
+
+- help overlay
+- previous logs
+- log search and highlight
+- timestamp toggle in logs
+- sidebar resource counts
+- Pod IP and Node columns
+
+### Tasks
+
+1. Add `?` help overlay that shows all keybindings organized by context (Global, Detail, Workbench, Logs, Exec, Port-Forward). Dismissible with `?` or `Esc`.
+2. Add previous logs toggle in pod logs tab:
+   - `P` key to toggle `--previous` flag
+   - status line shows "previous" indicator
+   - re-fetches log stream with previous flag
+3. Add search within logs:
+   - `/` in pod logs tab enters search mode (workload logs already have text filter)
+   - highlight matching text in log lines
+   - `n`/`N` for next/previous match
+4. Add timestamp toggle:
+   - `t` in log tabs to toggle timestamp prefix
+   - fetch logs with `--timestamps` flag
+5. Add resource counts to sidebar groups:
+   - show count of loaded resources next to each view name (e.g., "Pods 47")
+   - counts update on data refresh
+   - do not count resources that have not been loaded yet (show nothing, not 0)
+6. Add Pod IP and Node columns to pods table:
+   - IP column shows pod IP
+   - Node column shows node name (truncated if needed)
+7. Add tests for:
+   - help overlay state toggle
+   - previous logs flag propagation
+   - log search matching and cursor movement
+   - timestamp toggle state
+   - sidebar count rendering
+   - pod table column additions
+
+### Deliverables
+
+- discoverable help system
+- previous logs for crashed container debugging
+- searchable log output
+- timestamp-aware log viewing
+- sidebar with resource counts
+- richer pod table
+
+### Risks
+
+- help overlay becoming stale if shortcuts change
+- previous logs re-fetch causing brief flash
+- log search performance on large buffers
+
+### Guardrails
+
+- help overlay should be auto-generated from a keybinding registry, not hand-maintained
+- previous logs uses same bounded buffer
+- log search uses simple substring match, not regex (keep it fast)
+
+### Acceptance Criteria
+
+- a new user can press `?` and learn all shortcuts within 30 seconds
+- a user debugging a CrashLoopBackOff pod can view previous logs without leaving the app
+- a user can search for an error string within logs and jump between matches
+- sidebar shows at-a-glance resource counts
+
+---
+
+## Milestone 7: Clipboard and Data Export
+
+### Status
+
+Completed
+
+### What shipped
+
+- OSC 52 clipboard module (terminal-native, no platform-specific code)
+- `Ctrl+y` copies resource name, `Y` copies namespace/name
+- `y` in log tabs copies all log content to clipboard
+- `S` in log tabs exports log buffer to file (`/tmp/kubectui-logs-{label}-{timestamp}.log`)
+- Status bar feedback on copy/export success
+- Help overlay updated with all new keybindings
+
+### Goal
+
+Let users get data out of the TUI without manual transcription.
+
+### Scope
+
+- copy to system clipboard
+- log export to file
+
+### Tasks
+
+1. Add yank/copy to clipboard:
+   - `y` on a selected resource row copies resource name
+   - `Y` copies full resource identifier (namespace/name)
+   - in log views, yank copies visible log content
+   - uses OSC 52 escape sequence for terminal clipboard access
+2. Add log export:
+   - `S` in log tabs saves current buffer to file
+   - default path: `/tmp/kubectui-logs-{resource}-{timestamp}.log`
+   - status message confirms save path
+3. Add tests for clipboard content generation and file write
+
+### Deliverables
+
+- clipboard integration
+- log file export
+
+### Acceptance Criteria
+
+- users can paste resource names and log content into other tools
+
+---
+
+## Milestone 8: Enhanced Resource Detail
+
+### Status
+
+Planned
+
+### Goal
+
+Bring detail view information density closer to Lens without visual clutter.
+
+### Scope
+
+- labels and annotations display
+- environment variables for containers
+- owner reference links
+- force delete option
+
+### Tasks
+
+1. Add labels/annotations section to detail view:
+   - collapsible, hidden by default if many labels
+   - `l` key toggles label display
+2. Add container environment variables:
+   - shown in container section of pod detail
+   - secrets masked by default, toggle to reveal
+3. Add owner reference display:
+   - shows "Owner: Deployment/foo-bar" with jump-to shortcut
+4. Add force delete option:
+   - `F` in delete confirmation triggers force delete (removes finalizers)
+   - stronger warning text than normal delete
+   - recorded in action history
+5. Add CronJob manual trigger:
+   - `T` on CronJob detail creates a Job from the CronJob spec
+   - recorded in action history
+
+### Deliverables
+
+- richer detail views
+- force delete for stuck resources
+- CronJob trigger
+
+### Acceptance Criteria
+
+- users can inspect labels, env vars, and ownership without kubectl
+- stuck resources can be force-deleted from the TUI
+
+---
+
+## Milestone 9: Action Palette v2
+
+### Status
+
+Planned
 
 ### Goal
 
@@ -682,7 +693,11 @@ Turn the command palette into the main discoverability and action surface.
 
 ---
 
-## Milestone 7: Relationship Explorer
+## Milestone 10: Relationship Explorer
+
+### Status
+
+Planned
 
 ### Goal
 
@@ -732,7 +747,62 @@ Let users move through the cluster by dependency and ownership, not just by reso
 
 ---
 
-## Milestone 8: Issue Center
+## Milestone 11: Node Operations
+
+### Status
+
+Planned
+
+### Goal
+
+Support high-value node lifecycle actions safely.
+
+### Scope
+
+- cordon
+- uncordon
+- drain
+
+### Tasks
+
+1. Add node action capability policies.
+2. Implement cordon.
+3. Implement uncordon.
+4. Implement drain with:
+   - clear confirmation
+   - strong warning text
+   - visible progress/error feedback
+5. Record actions in action history.
+6. Add tests for:
+   - action availability
+   - mutation lifecycle
+   - error handling
+
+### Deliverables
+
+- safe node operations from inside KubecTUI
+
+### Risks
+
+- accidental destructive operations
+- insufficiently clear UX around drain consequences
+
+### Guardrails
+
+- drain must be treated as a high-risk action
+- confirmation must be stronger than ordinary mutations
+
+### Acceptance Criteria
+
+- node operations are powerful but deliberate and safe
+
+---
+
+## Milestone 12: Issue Center
+
+### Status
+
+Planned
 
 ### Goal
 
@@ -788,7 +858,52 @@ Make problem-centered operations first-class.
 
 ---
 
-## Milestone 9: View Personalization and Workspace Persistence
+## Milestone 13: Timeline and Event Correlation
+
+### Status
+
+Planned
+
+### Goal
+
+Show users what happened over time around a resource or action.
+
+### Scope
+
+- resource event timeline
+- recent mutation result timeline
+- correlation between actions and events where possible
+
+### Tasks
+
+1. Extend workbench events/history model for timeline use.
+2. Correlate actions with recent events when possible.
+3. Improve event rendering around selected resources.
+4. Add tests for ordering and correlation behavior.
+
+### Deliverables
+
+- stronger post-action verification workflow
+
+### Risks
+
+- weak correlation producing misleading timelines
+
+### Guardrails
+
+- prefer explicit event ordering over speculative correlation
+
+### Acceptance Criteria
+
+- users can understand what changed after an action with less guesswork
+
+---
+
+## Milestone 14: View Personalization and Workspace Persistence
+
+### Status
+
+Planned
 
 ### Goal
 
@@ -840,91 +955,11 @@ Make the app remember how each user works.
 
 ---
 
-## Milestone 10: Node Operations
+## Milestone 15: Performance and Scale Track
 
-### Goal
+### Status
 
-Support high-value node lifecycle actions safely.
-
-### Scope
-
-- cordon
-- uncordon
-- drain
-
-### Tasks
-
-1. Add node action capability policies.
-2. Implement cordon.
-3. Implement uncordon.
-4. Implement drain with:
-   - clear confirmation
-   - strong warning text
-   - visible progress/error feedback
-5. Record actions in action history.
-6. Add tests for:
-   - action availability
-   - mutation lifecycle
-   - error handling
-
-### Deliverables
-
-- safe node operations from inside KubecTUI
-
-### Risks
-
-- accidental destructive operations
-- insufficiently clear UX around drain consequences
-
-### Guardrails
-
-- drain must be treated as a high-risk action
-- confirmation must be stronger than ordinary mutations
-
-### Acceptance Criteria
-
-- node operations are powerful but deliberate and safe
-
----
-
-## Milestone 11: Timeline and Event Correlation
-
-### Goal
-
-Show users what happened over time around a resource or action.
-
-### Scope
-
-- resource event timeline
-- recent mutation result timeline
-- correlation between actions and events where possible
-
-### Tasks
-
-1. Extend workbench events/history model for timeline use.
-2. Correlate actions with recent events when possible.
-3. Improve event rendering around selected resources.
-4. Add tests for ordering and correlation behavior.
-
-### Deliverables
-
-- stronger post-action verification workflow
-
-### Risks
-
-- weak correlation producing misleading timelines
-
-### Guardrails
-
-- prefer explicit event ordering over speculative correlation
-
-### Acceptance Criteria
-
-- users can understand what changed after an action with less guesswork
-
----
-
-## Milestone 12: Performance and Scale Track
+Continuous (parallel to all milestones)
 
 ### Goal
 
@@ -986,13 +1021,16 @@ These dependencies are strict unless there is a compelling reason to revise the 
 | 3 Action History | 1, 2 | depends on workbench and canonical action flow |
 | 4 Pod Exec | 1, 2 | needs workbench terminal/session surface |
 | 5 Multi-Pod Logs | 1, 2 | needs workbench and log session model |
-| 6 Action Palette v2 | 0 | needs capability tables and stable action model |
-| 7 Relationship Explorer | 0, 1 | benefits from centralized capability policy and workbench |
-| 8 Issue Center | 0 | needs canonical issue model |
-| 9 Persistence | 1, 2, 6 | should persist stable user workflows, not temporary ones |
-| 10 Node Operations | 0, 3 | depends on action lifecycle and verification surfaces |
-| 11 Timeline | 2, 3 | depends on workbench events/history |
-| 12 Performance Track | all | parallel quality track across all milestones |
+| 6 Discoverability & QoL | 0-5 | builds on complete operational surface |
+| 7 Clipboard & Export | 6 | extends data accessibility |
+| 8 Enhanced Detail | 0 | needs canonical policy model |
+| 9 Action Palette v2 | 0, 6 | needs capability tables and help system |
+| 10 Relationship Explorer | 0, 1 | benefits from centralized capability policy and workbench |
+| 11 Node Operations | 0, 3 | depends on action lifecycle and verification surfaces |
+| 12 Issue Center | 0 | needs canonical issue model |
+| 13 Timeline | 2, 3 | depends on workbench events/history |
+| 14 Persistence | 1, 2, 9 | should persist stable user workflows, not temporary ones |
+| 15 Performance Track | all | parallel quality track across all milestones |
 
 ---
 
@@ -1000,44 +1038,51 @@ These dependencies are strict unless there is a compelling reason to revise the 
 
 This is the execution order.
 
-## P0
+## P0 (Completed)
 
-- Milestone 0
-- Milestone 1
-- Milestone 2
-- Milestone 3
+- Milestone 0: Foundation Audit
+- Milestone 1: Workbench Foundation
+- Milestone 2: Workbench Migration
+- Milestone 3: Action History
+- Milestone 4: Pod Exec
+- Milestone 5: Multi-Pod Logs
 
-## P1
+## P1 (Current)
 
-- Milestone 4
-- Milestone 5
-- Milestone 6
-- Milestone 7
+- Milestone 6: Discoverability & Operator QoL
+- Milestone 7: Clipboard & Export
+- Milestone 8: Enhanced Detail
 
 ## P2
 
-- Milestone 8
-- Milestone 9
-- Milestone 10
-- Milestone 11
+- Milestone 9: Action Palette v2
+- Milestone 10: Relationship Explorer
+- Milestone 11: Node Operations
 
 ## P3
 
-- Milestone 12 remains continuous and parallel, not deferred
+- Milestone 12: Issue Center
+- Milestone 13: Timeline & Correlation
+- Milestone 14: View Personalization
+
+## P4
+
+- Milestone 15: Performance Track remains continuous and parallel, not deferred
 
 ---
 
 ## What We Should Start Right Now
 
-Start with Milestone 4.
+Start with Milestone 6: Discoverability and Operator Quality of Life.
 
 That means the next real implementation work should be:
 
-1. add the canonical exec/session state model
-2. host pod/container shell sessions in the workbench
-3. define focus and input routing for live terminal sessions
-4. handle shell fallback, permission errors, and unsupported pod/container states
-5. keep session buffers bounded and isolated from the normal render path
+1. add a `?` help overlay showing all keybindings by context
+2. add previous logs toggle for pod logs (`P` key, `--previous` flag)
+3. add search/highlight within pod logs (`/` to search, `n`/`N` for next/prev match)
+4. add timestamp toggle for log tabs (`t` key, `--timestamps` flag)
+5. add resource counts to sidebar views
+6. add Pod IP and Node columns to the pods table
 
 Do not start next with:
 
@@ -1046,8 +1091,8 @@ Do not start next with:
 - batch actions
 - new one-off resource views
 - visual graph experiments
-- node drain first
-- milestone 5+ before milestone 4 is complete
+- node operations before discoverability is solid
+- milestone 7+ before milestone 6 is complete
 
 Those are later priorities.
 
@@ -1068,6 +1113,7 @@ Examples:
 - issue model
 - capability tables
 - persistence model
+- keybinding registry
 
 Rules:
 
@@ -1083,8 +1129,10 @@ Examples:
 
 - workbench bottom pane
 - tab strip
+- help overlay
 - timeline view
 - issue center rendering
+- sidebar resource counts
 
 Rules:
 
@@ -1102,6 +1150,7 @@ Examples:
 - workbench focus
 - action palette behavior
 - exec input routing
+- log search navigation
 
 Rules:
 
@@ -1114,7 +1163,7 @@ These involve background tasks or streaming data.
 
 Examples:
 
-- logs
+- logs (including previous logs)
 - exec
 - reconcile/status follow-up
 - event correlation
@@ -1178,6 +1227,10 @@ These are valid ideas, but they are not current milestone priorities:
 - desktop-like window choreography
 - advanced diff/merge editor beyond practical YAML workflows
 - visually complex graph canvases
+- integrated Prometheus metric graphs (sparklines possible in later milestone)
+- Helm chart installation workflow
+- CSV export of table views
+- customizable columns per view
 
 They should not distract from the milestone order above.
 
@@ -1190,7 +1243,6 @@ These are workflow references, not UI templates:
 - Lens docs: [https://docs.k8slens.dev/](https://docs.k8slens.dev/)
 - Lens repo: [https://github.com/lensapp/lens](https://github.com/lensapp/lens)
 - Freelens repo: [https://github.com/freelensapp/freelens](https://github.com/freelensapp/freelens)
-- Lens extensions repo: [https://github.com/lensapp/lens-extensions](https://github.com/lensapp/lens-extensions)
 
 Use them to learn:
 
@@ -1214,10 +1266,14 @@ into:
 
 The correct path is:
 
-- build the workbench
-- migrate long-lived operational flows into it
-- strengthen action verification
-- add exec, workload logs, relationships, and issues
+- build the workbench (done)
+- migrate long-lived operational flows into it (done)
+- strengthen action verification (done)
+- add exec, workload logs (done)
+- close discoverability and QoL gaps (done)
+- add clipboard and export (done)
+- add enhanced detail, action palette
+- add relationships, node operations, issues
 - preserve speed at every step
 
 This milestone plan is now the canonical implementation roadmap.
