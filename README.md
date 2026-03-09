@@ -1,6 +1,6 @@
 # KubecTUI
 
-A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream logs, port-forward, scale workloads, inspect probes, and trigger rolling restarts — all without leaving your terminal.
+A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream logs, exec into pods, port-forward, scale workloads, inspect probes, and trigger rolling restarts — all without leaving your terminal.
 
 ![Rust](https://img.shields.io/badge/rust-1.93.1+-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -9,22 +9,33 @@ A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream log
 
 ## Features
 
-- **35 resource views** — Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Services, Endpoints, Ingresses, ConfigMaps, Secrets, HPAs, PVCs, PVs, StorageClasses, RBAC, Events, Namespaces, and more
+- **46 resource views** across 9 sidebar groups — Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Services, Endpoints, Ingresses, ConfigMaps, Secrets, HPAs, PVCs, PVs, StorageClasses, RBAC, Events, Namespaces, FluxCD resources, and more
 - **Custom Resource Definitions** — browse CRDs, drill into instances, view full YAML via dynamic API
-- **Real-time log streaming** with follow mode, line-number display, and multi-container picker
+- **Bottom workbench** with 7 persistent tab types — YAML, Events, Pod Logs, Workload Logs, Exec, Port-Forward, Action History
+- **Action palette** (`:`) — unified fuzzy search for navigation and context-aware resource actions (logs, exec, scale, restart, delete, etc.)
+- **Pod exec/shell** — terminal sessions with container picker and shell fallback order (bash → sh → busybox)
+- **Real-time log streaming** with follow mode, previous logs, timestamp toggle, search/highlight, and multi-container picker
+- **Workload-level logs** — aggregate logs across all pods of a Deployment, StatefulSet, or DaemonSet with per-pod/container/text filtering
 - **Port-forwarding** via kube-rs — no `kubectl` binary required
-- **Scale deployments** directly from the detail view
+- **Scale deployments** and StatefulSets directly from the detail view or action palette
 - **Rollout restart** for Deployments, StatefulSets, and DaemonSets
 - **YAML editing** — press `e` to open resource YAML in `$EDITOR`, apply changes on save
-- **Resource deletion** — press `d` to delete any resource with a confirmation prompt
-- **Health probe inspector** — view liveness/readiness configs per container
+- **Resource deletion** — press `d` to delete with confirmation, `F` for force delete (stuck finalizers)
+- **CronJob manual trigger** — press `T` to create a Job from CronJob spec
+- **Health probe inspector** — view liveness, readiness, and startup probe configs per container
+- **Clipboard integration** — `Ctrl+y` copies resource name, `Y` copies namespace/name, `y` in logs copies content
+- **Log export** — `S` in log tabs saves buffer to file
+- **Action history** with pending/success/error tracking and resource jump-back
+- **Help overlay** (`?`) — discoverable keybinding reference organized by context
+- **Sidebar resource counts** — at-a-glance counts next to each view (e.g., "Pods (12)")
 - **Helm release browser** — reads Helm v3 releases from cluster secrets
-- **Helm repository viewer** — reads local Helm repo config from filesystem
+- **FluxCD support** — browse all Flux resources, trigger reconcile from detail or palette
 - **5 color themes** — Dark (default), Nord, Dracula, Catppuccin Mocha, Light — cycle with `T`, persist in config
 - **Multi-context switching** at startup and runtime
 - **Namespace filtering** across all views
-- **Fuzzy search** on every resource list
-- **Command palette** for quick navigation
+- **Fuzzy search** (`/`) on every resource list
+- **Dashboard** with cluster health gauges, alerts, and workload summaries
+- **Configuration persistence** — namespace, theme, workbench state, refresh interval
 
 ---
 
@@ -59,60 +70,69 @@ cargo build --release
 | `Shift+Tab` | Previous resource view |
 | `Esc` | Close overlay → close detail → return to sidebar |
 
-### Sidebar
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Move sidebar cursor |
-| `Enter` | Expand/collapse group or navigate to view |
-
-> Tip: focus switches automatically to the content list when you select a view. Press `Esc` to return focus to the sidebar.
-
-### Content list
-
-| Key | Action |
-|-----|--------|
-| `j` / `k` | Select next/previous row |
-| `Enter` | Open detail view for selected resource |
-| `/` | Enter search mode — type to filter the list |
-| `Esc` (in search) | Clear search and exit search mode |
-| `r` | Refresh all resource data |
-
 ### Global
 
 | Key | Action |
 |-----|--------|
+| `?` | Open help overlay (all keybindings) |
 | `~` | Open namespace picker |
 | `c` | Open context switcher |
-| `:` | Open command palette |
-| `T` | Cycle color theme (dark → nord → dracula → catppuccin) |
+| `:` | Open action palette (navigate + resource actions) |
+| `/` | Enter search mode — type to filter the list |
+| `r` | Refresh all resource data |
+| `Ctrl+y` | Copy resource name to clipboard |
+| `Y` | Copy namespace/name to clipboard |
+| `T` | Cycle color theme |
+| `b` | Toggle workbench |
+| `H` | Open action history |
 | `q` | Quit (asks for confirmation) |
-| `Esc` | Cancel quit confirmation / close overlays |
 
----
+### Detail View
 
-## Detail View
-
-Press `Enter` on any resource to open its detail view. The detail view shows metadata, status, resource-specific info, metrics (where available), and a YAML preview.
-
-### Detail view keybindings
+Press `Enter` on any resource to open its detail view.
 
 | Key | Action | Applies to |
 |-----|--------|------------|
-| `l` / `L` | Open log viewer | Pods |
+| `y` | Open YAML viewer | All |
+| `v` | Open events viewer | All |
+| `l` / `L` | Open log viewer | Pods, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs |
+| `x` | Open exec/shell session | Pods |
 | `f` | Open port-forward dialog | Pods |
-| `s` | Open scale dialog | Deployments, StatefulSets |
 | `p` | Open probe inspector | Pods |
+| `s` | Open scale dialog | Deployments, StatefulSets |
 | `R` | Rollout restart | Deployments, StatefulSets, DaemonSets |
+| `R` | Flux reconcile | FluxCD resources |
 | `e` | Edit YAML in `$EDITOR` | All (when YAML is loaded) |
 | `d` | Delete resource (with confirmation) | All |
+| `F` | Force delete (in delete confirmation) | All |
+| `T` | Trigger CronJob as a new Job | CronJobs |
+| `:` | Open action palette | All |
 | `Esc` | Close detail view | All |
 
----
+### Action Palette
 
-## Log Viewer
+Press `:` from anywhere to open. Shows context-aware resource actions when a resource is selected or detail is open.
 
-Open with `l` from a Pod detail view.
+| Key | Action |
+|-----|--------|
+| Type | Filter by action name or view name |
+| `↑` / `↓` | Navigate results |
+| `Enter` | Execute action or navigate to view |
+| `Esc` | Close |
+
+> Tip: type `scl` to find Scale, `lg` for Logs, `dep` for Deployments, etc. Actions are filtered by what the current resource supports.
+
+### Workbench
+
+| Key | Action |
+|-----|--------|
+| `b` | Toggle workbench open/close |
+| `[` / `]` | Previous / next workbench tab |
+| `Ctrl+W` | Close active workbench tab |
+| `z` | Toggle maximize workbench |
+| `Ctrl+↑` / `Ctrl+↓` | Resize workbench |
+
+### Log Viewer
 
 | Key | Action |
 |-----|--------|
@@ -120,60 +140,35 @@ Open with `l` from a Pod detail view.
 | `k` / `↑` | Scroll up one line |
 | `g` | Jump to top |
 | `G` | Jump to bottom |
-| `f` | Toggle follow mode (auto-scroll to new lines) |
+| `f` | Toggle follow mode |
+| `P` | Toggle previous logs (crashed containers) |
+| `t` | Toggle timestamps |
+| `/` | Search within logs |
+| `n` / `N` | Next / previous search match |
+| `y` | Copy log content to clipboard |
+| `S` | Export logs to file |
 | `Esc` | Close log viewer |
 
-> Tip: follow mode streams new log lines in real time. Toggle it off with `f` to freely scroll history.
-
----
-
-## Port-Forward Dialog
-
-Open with `f` from a Pod detail view. Pre-fills namespace and pod name automatically.
+### Port-Forward Dialog
 
 | Key | Action |
 |-----|--------|
-| `Tab` | Move to next field |
-| `Shift+Tab` | Move to previous field |
+| `Tab` / `Shift+Tab` | Move between fields |
 | `Enter` | Create tunnel |
 | `F2` | Switch to tunnel list view |
 | `Esc` | Close dialog |
 
-**In tunnel list view:**
-
-| Key | Action |
-|-----|--------|
-| `j` / `↓` | Select next tunnel |
-| `k` / `↑` | Select previous tunnel |
-| `d` | Stop selected tunnel |
-| `r` | Refresh tunnel list |
-| `F1` | Switch back to create form |
-| `Esc` | Close dialog |
-
-> Tip: set local port to `0` to auto-assign a free port.
-
----
-
-## Scale Dialog
-
-Open with `s` from a Deployment or StatefulSet detail view.
+### Scale Dialog
 
 | Key | Action |
 |-----|--------|
 | `0`–`9` | Type desired replica count |
-| `+` | Increment by 1 |
-| `-` | Decrement by 1 |
+| `+` / `-` | Increment / decrement by 1 |
 | `Backspace` | Delete last digit |
 | `Enter` | Apply scale |
 | `Esc` | Cancel |
 
-> Tip: a warning appears if you change replicas by more than 10 at once. Valid range is 0–100.
-
----
-
-## Probe Inspector
-
-Open with `p` from a Pod detail view. Shows liveness and readiness probe configs for each container.
+### Probe Inspector
 
 | Key | Action |
 |-----|--------|
@@ -184,87 +179,19 @@ Open with `p` from a Pod detail view. Shows liveness and readiness probe configs
 
 ---
 
-## Rollout Restart
-
-Press `R` (shift+r) from a Deployment, StatefulSet, or DaemonSet detail view. Triggers a rolling restart by patching the pod template annotation — equivalent to `kubectl rollout restart`. No confirmation prompt; takes effect immediately.
-
----
-
-## Namespace Picker
-
-Press `~` from anywhere to open the namespace picker.
-
-| Key | Action |
-|-----|--------|
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
-| `Enter` | Select namespace |
-| `Esc` | Cancel |
-
-Select `all` to show resources across all namespaces.
-
----
-
-## Context Switcher
-
-Press `c` from the main view (or select at startup if multiple contexts exist).
-
-| Key | Action |
-|-----|--------|
-| `j` / `↓` | Move down |
-| `k` / `↑` | Move up |
-| `Enter` | Switch to selected context |
-| `Esc` | Cancel |
-
----
-
-## Command Palette
-
-Press `:` to open. Type any resource name to jump directly to that view.
-
-| Key | Action |
-|-----|--------|
-| Type | Filter views by name |
-| `↑` / `↓` | Navigate results |
-| `Enter` | Navigate to selected view |
-| `Esc` | Close |
-
----
-
-## Themes
-
-KubecTUI ships with 5 color themes. Press `T` (shift+t) from the main view to cycle through them. The current theme is shown in the status bar.
-
-| Theme | Description |
-|-------|-------------|
-| `dark` | GitHub-inspired deep dark (default) |
-| `nord` | Arctic, north-bluish color palette |
-| `dracula` | Dark with vibrant purple/pink accents |
-| `catppuccin` | Warm dark with pastel accents (Mocha variant) |
-| `light` | Clean, high-contrast light background |
-
-Your theme choice is saved automatically to `~/.config/kubectui/config.json` and restored on next launch.
-
-### CLI flag
-
-```bash
-kubectui --theme nord
-```
-
-Valid values: `dark`, `nord`, `dracula`, `catppuccin`, `mocha`, `light`.
-
----
-
 ## Tips
 
-- **Quick jump**: use `:` + type `dep` to jump straight to Deployments, `pod` for Pods, etc.
-- **Search is live**: `/` filters the current list as you type — no need to press Enter.
-- **Ctrl+U** clears the search query while in search mode.
-- **Helm releases**: navigate to Helm → Releases to see all Helm v3 releases in the cluster. No Helm CLI needed.
-- **Metrics**: CPU/memory metrics in the detail view require `metrics-server` to be installed in the cluster. If unavailable, a note is shown instead of an error.
-- **YAML view**: every resource detail view includes a YAML preview at the bottom — useful for quick inspection without switching to a terminal.
-- **Restart vs Scale**: use `R` for a rolling restart (zero-downtime pod replacement), use `s` to change the replica count.
-- **Auto-refresh**: cluster data refreshes automatically every 30 seconds. Customize via `refresh_interval_secs` in `~/.kube/kubectui-config.json` (set to `0` to disable).
+- **Action palette**: use `:` to discover all available actions for the current resource — no need to memorize shortcuts
+- **Quick jump**: `:` + type `dep` to jump to Deployments, `pod` for Pods, `svc` for Services
+- **Search is live**: `/` filters the current list as you type — no need to press Enter
+- **Ctrl+U** clears the search query while in search mode
+- **Previous logs**: press `P` in a pod log tab to view logs from crashed/restarted containers
+- **Workload logs**: press `l` on a Deployment/StatefulSet to aggregate logs from all its pods
+- **All Containers**: in pod logs picker, select "All Containers" to stream all container logs together
+- **Helm releases**: navigate to Helm → Releases to see all Helm v3 releases in the cluster
+- **Metrics**: CPU/memory metrics require `metrics-server` to be installed in the cluster
+- **Restart vs Scale**: use `R` for a rolling restart (zero-downtime), use `s` to change replica count
+- **Auto-refresh**: cluster data refreshes every 30 seconds. Customize via `refresh_interval_secs` in config
 
 ---
 

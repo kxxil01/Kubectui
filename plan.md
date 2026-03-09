@@ -21,6 +21,7 @@ Current milestone status:
 - Milestone 6: completed
 - Milestone 7: completed
 - Milestone 8: completed
+- Milestone 9: completed
 
 Completion notes:
 
@@ -41,7 +42,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 460+ tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 480+ tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -153,7 +154,7 @@ KubecTUI already has:
 - YAML edit (opens in $EDITOR, applies on save)
 - Flux reconcile
 - action history with pending/success/error tracking and resource jump-back
-- command palette (`:`) for navigating to any of 46 views
+- action palette (`:`) for navigating to any of 46 views AND executing context-aware resource actions (logs, exec, scale, restart, delete, etc.)
 - context and namespace switching
 - CRD browsing with dynamic instance viewing
 - search mode (`/`) with case-insensitive substring matching
@@ -626,57 +627,28 @@ Bring detail view information density closer to Lens without visual clutter.
 
 ### Status
 
-Shipped
+Completed
+
+### What shipped
+
+- Unified action palette (`:`) mixing navigation and context-aware resource actions
+- `PaletteEntry` enum with `Navigate(AppView)` and `Action(DetailAction)` variants
+- 12 action aliases filtered by `ResourceRef::supports_detail_action()` — unavailable actions hidden
+- Section headers (`── Actions ──` / `── Navigate ──`) with fuzzy matching across both
+- Context resolution from detail view or highlighted list row at palette open time
+- `AppAction::PaletteAction` with detail-open-then-act pattern for actions needing detail view
+- Deferred action dispatch with cleanup on Esc/error (no stale action race)
+- Palette opens from both list view and detail view
+- 21 palette-specific tests covering action availability, ordering, filtering, execute dispatch
 
 ### Goal
 
 Turn the command palette into the main discoverability and action surface.
 
-### Scope
-
-- verb-driven actions
-- context-aware availability
-- fuzzy search over actions and targets
-
-### Tasks
-
-1. Expand command palette into action palette.
-2. Add action catalog:
-   - logs
-   - exec
-   - scale
-   - restart
-   - reconcile
-   - delete
-   - YAML
-   - related resources
-   - switch namespace/context
-   - toggle columns
-3. Show disabled actions with reasons where useful.
-4. Make action palette aware of current selection and current view.
-5. Add tests for:
-   - action availability
-   - disabled reasoning
-   - fuzzy action matching
-
-### Deliverables
-
-- action palette as a primary user-facing control surface
-
-### Risks
-
-- action list becoming too noisy
-- conflicting shortcuts and palette actions
-
-### Guardrails
-
-- palette should enhance discoverability, not duplicate random internal actions
-- every direct action shortcut should also map to a palette entry
-
 ### Acceptance Criteria
 
 - users can find most core workflows from the palette
-- disabled actions explain why they are unavailable
+- unavailable actions are hidden based on resource type
 
 ---
 
@@ -1034,14 +1006,14 @@ This is the execution order.
 - Milestone 4: Pod Exec
 - Milestone 5: Multi-Pod Logs
 
-## P1 (Current)
+## P1 (Completed)
 
 - Milestone 6: Discoverability & Operator QoL
 - Milestone 7: Clipboard & Export
 - Milestone 8: Enhanced Detail
 - Milestone 9: Action Palette v2
 
-## P2
+## P2 (Current)
 - Milestone 10: Relationship Explorer
 - Milestone 11: Node Operations
 
@@ -1059,28 +1031,23 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-Start with Milestone 6: Discoverability and Operator Quality of Life.
+Start with Milestone 10: Relationship Explorer.
 
-That means the next real implementation work should be:
+P0 and P1 are complete (M0-M9). The next real implementation work should be:
 
-1. add a `?` help overlay showing all keybindings by context
-2. add previous logs toggle for pod logs (`P` key, `--previous` flag)
-3. add search/highlight within pod logs (`/` to search, `n`/`N` for next/prev match)
-4. add timestamp toggle for log tabs (`t` key, `--timestamps` flag)
-5. add resource counts to sidebar views
-6. add Pod IP and Node columns to the pods table
+1. Add relationship capability policy per view/resource
+2. Add relationship node and edge model
+3. Implement first relation sets (deployment→replicaset→pod, service→endpoints→pod, etc.)
+4. Render relationships as expandable tree/list
+5. Add jump-to-related-resource behavior
 
 Do not start next with:
 
 - AI features
 - plugin systems
 - batch actions
-- new one-off resource views
-- visual graph experiments
-- node operations before discoverability is solid
-- milestone 7+ before milestone 6 is complete
-
-Those are later priorities.
+- visual graph experiments that don't fit TUI constraints
+- desktop-style interaction patterns
 
 ---
 
@@ -1258,7 +1225,7 @@ The correct path is:
 - add exec, workload logs (done)
 - close discoverability and QoL gaps (done)
 - add clipboard and export (done)
-- add enhanced detail, action palette
+- add enhanced detail, action palette (done)
 - add relationships, node operations, issues
 - preserve speed at every step
 
