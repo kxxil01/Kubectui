@@ -1042,6 +1042,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let mut backoff_until: Option<Instant> = None;
     let mut auto_refresh_count: u64 = 0;
     let mut status_message_clear_at: Option<Instant> = None;
+    let mut pending_palette_action: Option<AppAction> = None;
 
     let mut event_stream = EventStream::new();
 
@@ -1063,6 +1064,26 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         if app.should_quit() {
             break;
         }
+
+        // Check if a deferred palette action is ready to dispatch.
+        let pending_action_ready = pending_palette_action.as_ref().is_some_and(|a| {
+            let needs_loaded_detail = matches!(
+                a,
+                AppAction::ScaleDialogOpen
+                    | AppAction::RolloutRestart
+                    | AppAction::ProbePanelOpen
+                    | AppAction::DeleteResource
+                    | AppAction::EditYaml
+                    | AppAction::TriggerCronJob
+            );
+            !needs_loaded_detail
+                || app
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|d| !d.loading && d.error.is_none())
+        });
+
+        let mut action_to_process: Option<AppAction> = None;
 
         // Wait concurrently on: tick, input event, coordinator update, detail fetch, or auto-refresh.
         // `biased` ensures coordinator messages and detail results are drained before blocking on input.
@@ -1880,6 +1901,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
+            // Deferred palette action — fires immediately when detail view is loaded
+            _ = std::future::ready(()), if pending_action_ready => {
+                action_to_process = pending_palette_action.take();
+                needs_redraw = true;
+            }
+
             // Keyboard / terminal input — lowest priority so messages are drained first
             maybe_event = event_stream.next() => {
                 let key = match maybe_event {
@@ -1930,80 +1957,1089 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.handle_key_event(key)
                 };
 
-                match action {
-                    AppAction::None => {
-                        // No-op — don't call sync_extensions_instances on every unrecognized key
+                action_to_process = Some(action);
+            }
+        }
+
+        // --- Action dispatch (shared between keyboard input and deferred palette actions) ---
+        if let Some(action) = action_to_process {
+            match action {
+                AppAction::None => {
+                    // No-op — don't call sync_extensions_instances on every unrecognized key
+                }
+                AppAction::Quit => break,
+                AppAction::RefreshData => {
+                    request_refresh(
+                        &refresh_tx,
+                        &mut global_state,
+                        &client,
+                        namespace_scope(app.get_namespace()).map(str::to_string),
+                        full_refresh_options(true, true, true),
+                        &mut refresh_state,
+                        &mut snapshot_dirty,
+                    );
+                    // Reset auto-refresh timer after manual refresh
+                    auto_refresh.reset();
+                }
+                AppAction::FluxReconcile => {
+                    let reconcile_resource =
+                        match selected_flux_reconcile_resource(&app, &cached_snapshot) {
+                            Ok(resource) => resource,
+                            Err(err) => {
+                                app.set_error(err);
+                                continue;
+                            }
+                        };
+
+                    let resource_label = format!(
+                        "{} '{}'",
+                        reconcile_resource.kind(),
+                        reconcile_resource.name()
+                    );
+                    let origin_view = app.view();
+                    let action_history_id = app.record_action_pending(
+                        ActionKind::FluxReconcile,
+                        origin_view,
+                        Some(reconcile_resource.clone()),
+                        resource_label.clone(),
+                        format!("Requesting reconcile for {resource_label}..."),
+                    );
+                    begin_detail_mutation(
+                        &mut app,
+                        &mut status_message_clear_at,
+                        format!("Requesting reconcile for {resource_label}..."),
+                    );
+                    let tx = flux_reconcile_tx.clone();
+                    let c = client.clone();
+                    let context_generation = refresh_state.context_generation;
+                    tokio::spawn(async move {
+                        let result = match reconcile_resource {
+                            ResourceRef::CustomResource {
+                                name,
+                                namespace,
+                                group,
+                                version,
+                                kind,
+                                plural,
+                            } => c
+                                .request_flux_reconcile(
+                                    &group,
+                                    &version,
+                                    &kind,
+                                    &plural,
+                                    &name,
+                                    namespace.as_deref(),
+                                )
+                                .await
+                                .map_err(|err| format!("{err:#}")),
+                            _ => Err("Flux reconcile is only available for custom resources."
+                                .to_string()),
+                        };
+                        let _ = tx
+                            .send(FluxReconcileAsyncResult {
+                                action_history_id,
+                                context_generation,
+                                origin_view,
+                                resource_label,
+                                result,
+                            })
+                            .await;
+                    });
+                }
+                AppAction::ToggleWorkbench
+                | AppAction::WorkbenchNextTab
+                | AppAction::WorkbenchPreviousTab
+                | AppAction::WorkbenchCloseActiveTab
+                | AppAction::WorkbenchIncreaseHeight
+                | AppAction::WorkbenchDecreaseHeight => {
+                    let streams_to_stop = workbench_follow_streams_to_stop(&app, action.clone());
+                    let workload_sessions_to_stop =
+                        workbench_workload_log_sessions_to_stop(&app, action.clone());
+                    let exec_sessions_to_stop =
+                        workbench_exec_sessions_to_stop(&app, action.clone());
+                    for (pod_name, namespace, container_name) in streams_to_stop {
+                        let _ = coordinator
+                            .stop_log_streaming(&pod_name, &namespace, &container_name)
+                            .await;
                     }
-                    AppAction::Quit => break,
-                    AppAction::RefreshData => {
+                    for session_id in workload_sessions_to_stop {
+                        if let Some(streams) = workload_log_sessions.remove(&session_id) {
+                            for (pod_name, namespace, container_name) in streams {
+                                let _ = coordinator
+                                    .stop_log_streaming(&pod_name, &namespace, &container_name)
+                                    .await;
+                            }
+                        }
+                    }
+                    for session_id in exec_sessions_to_stop {
+                        if let Some(handle) = exec_sessions.remove(&session_id) {
+                            let _ = handle.cancel_tx.send(());
+                        }
+                    }
+                    apply_action(action, &mut app);
+                    save_config(&app);
+                }
+                AppAction::OpenNamespacePicker => {
+                    app.set_available_namespaces(global_state.namespaces().to_vec());
+                    app.open_namespace_picker();
+                }
+                AppAction::CloseNamespacePicker => {
+                    app.close_namespace_picker();
+                }
+                AppAction::OpenCommandPalette => {
+                    let resource_ctx = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|d| d.resource.clone())
+                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                    app.command_palette.open_with_context(resource_ctx);
+                }
+                AppAction::CloseCommandPalette => {
+                    app.command_palette.close();
+                }
+                AppAction::PaletteAction { action, resource } => {
+                    app.command_palette.close();
+
+                    let mapped = match action {
+                        DetailAction::ViewYaml => AppAction::OpenResourceYaml,
+                        DetailAction::ViewEvents => AppAction::OpenResourceEvents,
+                        DetailAction::Logs => AppAction::LogsViewerOpen,
+                        DetailAction::Exec => AppAction::OpenExec,
+                        DetailAction::PortForward => AppAction::PortForwardOpen,
+                        DetailAction::Probes => AppAction::ProbePanelOpen,
+                        DetailAction::Scale => AppAction::ScaleDialogOpen,
+                        DetailAction::Restart => AppAction::RolloutRestart,
+                        DetailAction::FluxReconcile => AppAction::FluxReconcile,
+                        DetailAction::EditYaml => AppAction::EditYaml,
+                        DetailAction::Delete => AppAction::DeleteResource,
+                        DetailAction::Trigger => AppAction::TriggerCronJob,
+                    };
+
+                    let needs_detail = matches!(
+                        action,
+                        DetailAction::Scale
+                            | DetailAction::Restart
+                            | DetailAction::Probes
+                            | DetailAction::Delete
+                            | DetailAction::EditYaml
+                            | DetailAction::Trigger
+                    );
+
+                    if needs_detail && app.detail_view.is_none() {
+                        open_detail_for_resource(
+                            &mut app,
+                            &cached_snapshot,
+                            &client,
+                            &detail_tx,
+                            resource,
+                        );
+                    }
+
+                    pending_palette_action = Some(mapped);
+                }
+                AppAction::NavigateTo(view) => {
+                    app.command_palette.close();
+                    app.view = view;
+                    app.selected_idx = 0;
+                    app.focus = kubectui::app::Focus::Content;
+                    app.extension_in_instances = false;
+                    if !matches!(
+                        view,
+                        kubectui::app::AppView::PortForwarding | kubectui::app::AppView::HelmCharts
+                    ) {
                         request_refresh(
                             &refresh_tx,
                             &mut global_state,
                             &client,
                             namespace_scope(app.get_namespace()).map(str::to_string),
-                            full_refresh_options(true, true, true),
+                            refresh_options_for_view(view, view.is_fluxcd(), false),
                             &mut refresh_state,
                             &mut snapshot_dirty,
                         );
-                        // Reset auto-refresh timer after manual refresh
-                        auto_refresh.reset();
                     }
-                    AppAction::FluxReconcile => {
-                        let reconcile_resource =
-                            match selected_flux_reconcile_resource(&app, &cached_snapshot) {
-                                Ok(resource) => resource,
-                                Err(err) => {
-                                    app.set_error(err);
-                                    continue;
-                                }
-                            };
-
-                        let resource_label = format!(
-                            "{} '{}'",
-                            reconcile_resource.kind(),
-                            reconcile_resource.name()
+                    // Trigger extensions sync when navigating to Extensions view
+                    if view == kubectui::app::AppView::Extensions {
+                        spawn_extensions_fetch(
+                            &client,
+                            &mut app,
+                            &cached_snapshot,
+                            &extension_fetch_tx,
                         );
+                    }
+                }
+                AppAction::OpenContextPicker => {
+                    let contexts = K8sClient::list_contexts();
+                    let current = kube::config::Kubeconfig::read()
+                        .ok()
+                        .and_then(|cfg| cfg.current_context);
+                    app.open_context_picker(contexts, current);
+                }
+                AppAction::CloseContextPicker => {
+                    app.close_context_picker();
+                }
+                AppAction::SelectContext(ctx) => {
+                    app.close_context_picker();
+                    match K8sClient::connect_with_context(&ctx).await {
+                        Ok(new_client) => {
+                            // Context-bound long-lived services must be rebuilt to avoid
+                            // continuing background work against the previous cluster.
+                            let _ = coordinator.shutdown().await;
+                            for (_, handle) in exec_sessions.drain() {
+                                let _ = handle.cancel_tx.send(());
+                            }
+                            workload_log_sessions.clear();
+                            port_forwarder.stop_all().await;
+                            app.tunnel_registry.update_tunnels(Vec::new());
+
+                            client = new_client;
+                            coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
+                            port_forwarder =
+                                PortForwarderService::new(std::sync::Arc::new(client.clone()));
+                            global_state.begin_loading_transition(true);
+                            app.selected_idx = 0;
+                            // Invalidate stale async results from the previous client/context.
+                            refresh_state.context_generation =
+                                refresh_state.context_generation.wrapping_add(1);
+                            abort_in_flight_refresh(&mut refresh_state);
+                            refresh_state.queued_refresh = None;
+                            delete_in_flight_id = None;
+                            status_message_clear_at = None;
+                            app.clear_status();
+                            snapshot_dirty = true;
+                            app.detail_view = None;
+                            app.workbench.close_resource_tabs();
+
+                            request_refresh(
+                                &refresh_tx,
+                                &mut global_state,
+                                &client,
+                                namespace_scope(app.get_namespace()).map(str::to_string),
+                                refresh_options_for_view(app.view(), app.view().is_fluxcd(), true),
+                                &mut refresh_state,
+                                &mut snapshot_dirty,
+                            );
+                        }
+                        Err(err) => {
+                            app.set_error(format!("Failed to connect to context '{ctx}': {err:#}"));
+                        }
+                    }
+                }
+                AppAction::SelectNamespace(namespace) => {
+                    app.set_namespace(namespace);
+                    app.selected_idx = 0;
+                    app.close_namespace_picker();
+                    save_config(&app);
+                    // Invalidate stale async results from previous namespace selections.
+                    refresh_state.context_generation =
+                        refresh_state.context_generation.wrapping_add(1);
+                    abort_in_flight_refresh(&mut refresh_state);
+                    refresh_state.queued_refresh = None;
+                    delete_in_flight_id = None;
+                    for (_, handle) in exec_sessions.drain() {
+                        let _ = handle.cancel_tx.send(());
+                    }
+                    for (_, streams) in workload_log_sessions.drain() {
+                        for (pod_name, namespace, container_name) in streams {
+                            let _ = coordinator
+                                .stop_log_streaming(&pod_name, &namespace, &container_name)
+                                .await;
+                        }
+                    }
+                    status_message_clear_at = None;
+                    app.clear_status();
+                    // Drop old namespace data immediately to prevent inconsistent mixed views.
+                    global_state.begin_loading_transition(false);
+                    snapshot_dirty = true;
+                    app.detail_view = None;
+                    app.workbench.close_resource_tabs();
+
+                    // Queue newest namespace refresh; if one is in flight it gets coalesced.
+                    request_refresh(
+                        &refresh_tx,
+                        &mut global_state,
+                        &client,
+                        namespace_scope(app.get_namespace()).map(str::to_string),
+                        refresh_options_for_view(app.view(), app.view().is_fluxcd(), false),
+                        &mut refresh_state,
+                        &mut snapshot_dirty,
+                    );
+                }
+                AppAction::OpenDetail(resource) => {
+                    open_detail_for_resource(
+                        &mut app,
+                        &cached_snapshot,
+                        &client,
+                        &detail_tx,
+                        resource,
+                    );
+                }
+                AppAction::ActionHistoryOpenSelected => {
+                    let Some(target) = app.selected_action_history_target().cloned() else {
+                        app.set_error(
+                            "Selected history entry does not have a jumpable resource.".to_string(),
+                        );
+                        continue;
+                    };
+                    app.view = target.view;
+                    app.selected_idx = 0;
+                    app.focus = kubectui::app::Focus::Content;
+                    app.extension_in_instances = false;
+                    open_detail_for_resource(
+                        &mut app,
+                        &cached_snapshot,
+                        &client,
+                        &detail_tx,
+                        target.resource,
+                    );
+                }
+                AppAction::CloseDetail => {
+                    app.detail_view = None;
+                }
+                AppAction::OpenResourceYaml => {
+                    let resource = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.clone())
+                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                    let Some(resource) = resource else {
+                        app.set_error("No resource selected for YAML inspection.".to_string());
+                        continue;
+                    };
+                    let cached_yaml = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| {
+                            (detail.resource.as_ref() == Some(&resource))
+                                .then(|| detail.yaml.clone())
+                        })
+                        .flatten();
+                    app.detail_view = None;
+                    app.open_resource_yaml_tab(resource.clone(), cached_yaml.clone(), None);
+                    if cached_yaml.is_none() {
+                        let client_clone = client.clone();
+                        let snapshot_clone = cached_snapshot.clone();
+                        let tx = detail_tx.clone();
+                        let requested_resource = resource.clone();
+                        tokio::spawn(async move {
+                            let result = fetch_detail_view(
+                                &client_clone,
+                                &snapshot_clone,
+                                requested_resource.clone(),
+                            )
+                            .await
+                            .map_err(|err| err.to_string());
+                            let _ = tx.send((requested_resource, result)).await;
+                        });
+                    }
+                }
+                AppAction::OpenResourceEvents => {
+                    let resource = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.clone())
+                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                    let Some(resource) = resource else {
+                        app.set_error("No resource selected for event inspection.".to_string());
+                        continue;
+                    };
+                    let cached_events = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| {
+                            (detail.resource.as_ref() == Some(&resource))
+                                .then(|| detail.events.clone())
+                        })
+                        .unwrap_or_default();
+                    let loading = cached_events.is_empty();
+                    app.detail_view = None;
+                    app.open_resource_events_tab(resource.clone(), cached_events, loading, None);
+                    if loading {
+                        let client_clone = client.clone();
+                        let snapshot_clone = cached_snapshot.clone();
+                        let tx = detail_tx.clone();
+                        let requested_resource = resource.clone();
+                        tokio::spawn(async move {
+                            let result = fetch_detail_view(
+                                &client_clone,
+                                &snapshot_clone,
+                                requested_resource.clone(),
+                            )
+                            .await
+                            .map_err(|err| err.to_string());
+                            let _ = tx.send((requested_resource, result)).await;
+                        });
+                    }
+                }
+                AppAction::LogsViewerOpen => {
+                    let resource = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.clone())
+                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                    let Some(resource) = resource else {
+                        app.set_error("No resource selected for logs.".to_string());
+                        continue;
+                    };
+                    let Some((pod_name, pod_ns, pod_resource)) = (match &resource {
+                        ResourceRef::Pod(pod_name, pod_ns) => {
+                            Some((pod_name.clone(), pod_ns.clone(), resource.clone()))
+                        }
+                        _ => None,
+                    }) else {
+                        if !matches!(
+                            resource,
+                            ResourceRef::Deployment(_, _)
+                                | ResourceRef::StatefulSet(_, _)
+                                | ResourceRef::DaemonSet(_, _)
+                                | ResourceRef::ReplicaSet(_, _)
+                                | ResourceRef::ReplicationController(_, _)
+                                | ResourceRef::Job(_, _)
+                        ) {
+                            app.set_error(
+                                    "Logs are only available for Pods and supported workload resources."
+                                        .to_string(),
+                                );
+                            continue;
+                        }
+                        let session_id = next_workload_logs_session_id;
+                        next_workload_logs_session_id =
+                            next_workload_logs_session_id.wrapping_add(1).max(1);
+                        app.detail_view = None;
+                        app.open_workload_logs_tab(resource.clone(), session_id);
+                        let tx = workload_logs_bootstrap_tx.clone();
+                        let client_clone = client.get_client();
+                        tokio::spawn(async move {
+                            let result = resolve_workload_log_targets(client_clone, &resource)
+                                .await
+                                .map_err(|err| format!("{err:#}"));
+                            let _ = tx
+                                .send(WorkloadLogsBootstrapResult {
+                                    session_id,
+                                    resource,
+                                    result,
+                                })
+                                .await;
+                        });
+                        continue;
+                    };
+                    let mut container_request: Option<(u64, String, String)> = None;
+                    app.detail_view = None;
+                    app.open_pod_logs_tab(pod_resource);
+                    if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PodLogs(
+                        ResourceRef::Pod(pod_name.clone(), pod_ns.clone()),
+                    )) && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                    {
+                        logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
+                        let request_id = logs_viewer_request_seq;
+                        logs_tab.viewer = LogsViewerState {
+                            pod_name: pod_name.clone(),
+                            pod_namespace: pod_ns.clone(),
+                            loading: true,
+                            pending_container_request_id: Some(request_id),
+                            pending_logs_request_id: None,
+                            container_cursor: 0,
+                            container_name: String::new(),
+                            containers: Vec::new(),
+                            picking_container: false,
+                            ..Default::default()
+                        };
+                        container_request = Some((request_id, pod_name, pod_ns));
+                    }
+
+                    if let Some((request_id, pod_name, pod_ns)) = container_request {
+                        let client_clone = client.clone();
+                        let tx = logs_viewer_tx.clone();
+                        tokio::spawn(async move {
+                            let pods_api: Api<Pod> =
+                                Api::namespaced(client_clone.get_client(), &pod_ns);
+                            let result = pods_api
+                                .get(&pod_name)
+                                .await
+                                .map_err(|err| err.to_string())
+                                .map(|pod| {
+                                    pod.spec
+                                        .map(|spec| {
+                                            spec.containers
+                                                .into_iter()
+                                                .map(|container| container.name)
+                                                .collect::<Vec<_>>()
+                                        })
+                                        .unwrap_or_default()
+                                });
+                            let _ = tx
+                                .send(LogsViewerAsyncResult::Containers {
+                                    request_id,
+                                    pod_name,
+                                    namespace: pod_ns,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                }
+                AppAction::OpenExec => {
+                    let resource = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.clone())
+                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                    let Some(ResourceRef::Pod(pod_name, pod_ns)) = resource else {
+                        app.set_error("Exec is only available for Pod resources.".to_string());
+                        continue;
+                    };
+
+                    let session_id = next_exec_session_id;
+                    next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
+                    let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
+                    app.detail_view = None;
+                    app.open_exec_tab(
+                        resource.clone(),
+                        session_id,
+                        pod_name.clone(),
+                        pod_ns.clone(),
+                    );
+                    let tx = exec_bootstrap_tx.clone();
+                    let client_clone = client.clone();
+                    tokio::spawn(async move {
+                        let result = fetch_pod_containers(&client_clone, &pod_name, &pod_ns)
+                            .await
+                            .map_err(|err| format!("{err:#}"));
+                        let _ = tx
+                            .send(ExecBootstrapResult {
+                                session_id,
+                                resource,
+                                result,
+                            })
+                            .await;
+                    });
+                }
+                AppAction::ExecSelectContainer(container_name) => {
+                    let mut start_session: Option<(u64, ResourceRef, String, String, String)> =
+                        None;
+                    if let Some(tab) = app.workbench_mut().active_tab_mut()
+                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                    {
+                        exec_tab.picking_container = false;
+                        exec_tab.container_name = container_name.clone();
+                        exec_tab.loading = true;
+                        exec_tab.error = None;
+                        start_session = Some((
+                            exec_tab.session_id,
+                            exec_tab.resource.clone(),
+                            exec_tab.pod_name.clone(),
+                            exec_tab.namespace.clone(),
+                            container_name,
+                        ));
+                    }
+                    if let Some((session_id, resource, pod_name, namespace, container_name)) =
+                        start_session
+                    {
+                        match spawn_exec_session(
+                            client.clone(),
+                            session_id,
+                            pod_name,
+                            namespace,
+                            container_name.clone(),
+                            exec_update_tx.clone(),
+                        )
+                        .await
+                        {
+                            Ok(handle) => {
+                                exec_sessions.insert(session_id, handle);
+                            }
+                            Err(err) => {
+                                if let Some(tab) = app
+                                    .workbench_mut()
+                                    .find_tab_mut(&WorkbenchTabKey::Exec(resource))
+                                    && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                {
+                                    exec_tab.loading = false;
+                                    exec_tab.error = Some(format!("{err:#}"));
+                                }
+                            }
+                        }
+                    }
+                }
+                AppAction::ExecSendInput => {
+                    if let Some(tab) = app.workbench_mut().active_tab_mut()
+                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                    {
+                        if exec_tab.input.is_empty() {
+                            continue;
+                        }
+                        let mut bytes = exec_tab.input.clone().into_bytes();
+                        bytes.push(b'\n');
+                        let session_id = exec_tab.session_id;
+                        exec_tab.input.clear();
+                        if let Some(handle) = exec_sessions.get(&session_id) {
+                            if let Err(err) = handle.input_tx.send(bytes).await {
+                                exec_tab.error = Some(format!("failed to send exec input: {err}"));
+                            }
+                        } else {
+                            exec_tab.error = Some(
+                                "exec session is not running for the selected tab.".to_string(),
+                            );
+                        }
+                    }
+                }
+                AppAction::LogsViewerSelectContainer(container) => {
+                    let mut logs_request: Option<(u64, String, String, String)> = None;
+                    if let Some(tab) = app.workbench_mut().active_tab_mut()
+                        && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                    {
+                        let viewer = &mut logs_tab.viewer;
+                        logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
+                        let request_id = logs_viewer_request_seq;
+                        viewer.picking_container = false;
+                        viewer.container_name = container.clone();
+                        viewer.loading = true;
+                        viewer.lines.clear();
+                        viewer.scroll_offset = 0;
+                        viewer.error = None;
+                        viewer.pending_logs_request_id = Some(request_id);
+                        logs_request = Some((
+                            request_id,
+                            viewer.pod_name.clone(),
+                            viewer.pod_namespace.clone(),
+                            container,
+                        ));
+                    }
+
+                    if let Some((request_id, pod_name, pod_ns, container_name)) = logs_request {
+                        let client_clone = client.clone();
+                        let tx = logs_viewer_tx.clone();
+                        tokio::spawn(async move {
+                            let logs_client = LogsClient::new(client_clone.get_client());
+                            let pod_ref = PodRef::new(pod_name.clone(), pod_ns.clone());
+                            let result = logs_client
+                                .tail_logs(&pod_ref, Some(500), Some(container_name.as_str()))
+                                .await
+                                .map_err(|err| err.to_string());
+                            let _ = tx
+                                .send(LogsViewerAsyncResult::Tail {
+                                    request_id,
+                                    pod_name,
+                                    namespace: pod_ns,
+                                    container_name,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                }
+                AppAction::LogsViewerSelectAllContainers => {
+                    // Gather pod info from the current PodLogs tab, then replace
+                    // it with a WorkloadLogs tab streaming all containers.
+                    let all_info: Option<(String, String, Vec<String>, ResourceRef)> =
+                        app.workbench().active_tab().and_then(|tab| {
+                            if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
+                                let v = &logs_tab.viewer;
+                                Some((
+                                    v.pod_name.clone(),
+                                    v.pod_namespace.clone(),
+                                    v.containers.clone(),
+                                    logs_tab.resource.clone(),
+                                ))
+                            } else {
+                                None
+                            }
+                        });
+
+                    if let Some((pod_name, pod_ns, containers, resource)) = all_info {
+                        // Close the single-container PodLogs tab
+                        app.workbench.close_active_tab();
+
+                        // Open a WorkloadLogs tab for the same pod
+                        let session_id = next_workload_logs_session_id;
+                        next_workload_logs_session_id =
+                            next_workload_logs_session_id.wrapping_add(1).max(1);
+                        app.open_workload_logs_tab(resource, session_id);
+
+                        // Build sources: all containers from this single pod
+                        let sources: Vec<(String, String, String)> = containers
+                            .iter()
+                            .map(|c| (pod_name.clone(), pod_ns.clone(), c.clone()))
+                            .collect();
+
+                        // Configure the tab directly
+                        if let Some(tab) = app.workbench_mut().active_tab_mut()
+                            && let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state
+                            && logs_tab.session_id == session_id
+                        {
+                            logs_tab.sources = sources.clone();
+                            logs_tab.loading = false;
+                            workload_log_sessions.insert(session_id, sources.clone());
+                        }
+
+                        // Start streaming each container
+                        for (pod, ns, container) in sources {
+                            let _ = coordinator
+                                .start_log_streaming(pod, ns, container, true, false, false)
+                                .await;
+                        }
+                    }
+                }
+                AppAction::LogsViewerToggleFollow => {
+                    let follow_info = app.workbench().active_tab().and_then(|tab| {
+                        if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
+                            let v = &logs_tab.viewer;
+                            Some((
+                                v.pod_name.clone(),
+                                v.pod_namespace.clone(),
+                                v.container_name.clone(),
+                                v.follow_mode,
+                                v.picking_container,
+                                v.show_timestamps,
+                            ))
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some((
+                        pod_name,
+                        pod_ns,
+                        container_name,
+                        was_following,
+                        picking_container,
+                        timestamps,
+                    )) = follow_info
+                    {
+                        if !was_following
+                            && (pod_name.is_empty()
+                                || container_name.is_empty()
+                                || picking_container)
+                        {
+                            if let Some(tab) = app.workbench_mut().active_tab_mut()
+                                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                            {
+                                let viewer = &mut logs_tab.viewer;
+                                viewer.error = Some(
+                                    "Select a container before enabling follow mode.".to_string(),
+                                );
+                            }
+                        } else {
+                            apply_action(AppAction::LogsViewerToggleFollow, &mut app);
+                            if !was_following {
+                                let _ = coordinator
+                                    .start_log_streaming(
+                                        pod_name,
+                                        pod_ns,
+                                        container_name,
+                                        true,
+                                        false,
+                                        timestamps,
+                                    )
+                                    .await;
+                            } else if !pod_name.is_empty() && !container_name.is_empty() {
+                                let _ = coordinator
+                                    .stop_log_streaming(&pod_name, &pod_ns, &container_name)
+                                    .await;
+                            }
+                        }
+                    }
+                }
+                AppAction::LogsViewerTogglePrevious => {
+                    let prev_info = app.workbench().active_tab().and_then(|tab| {
+                        if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
+                            let v = &logs_tab.viewer;
+                            if v.picking_container || v.container_name.is_empty() {
+                                return None;
+                            }
+                            Some((
+                                v.pod_name.clone(),
+                                v.pod_namespace.clone(),
+                                v.container_name.clone(),
+                                v.previous_logs,
+                                v.follow_mode,
+                            ))
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some((pod_name, pod_ns, container_name, was_previous, was_following)) =
+                        prev_info
+                    {
+                        // Cancel any current log stream
+                        if was_following || was_previous {
+                            let _ = coordinator
+                                .stop_log_streaming(&pod_name, &pod_ns, &container_name)
+                                .await;
+                        }
+
+                        // Toggle previous_logs and reset viewer state
+                        if let Some(tab) = app.workbench_mut().active_tab_mut()
+                            && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                        {
+                            let viewer = &mut logs_tab.viewer;
+                            viewer.previous_logs = !was_previous;
+                            viewer.follow_mode = false;
+                            viewer.lines.clear();
+                            viewer.scroll_offset = 0;
+                            viewer.loading = true;
+                            viewer.error = None;
+
+                            logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
+                            let request_id = logs_viewer_request_seq;
+                            viewer.pending_logs_request_id = Some(request_id);
+
+                            let new_previous = viewer.previous_logs;
+                            let tx = logs_viewer_tx.clone();
+                            let client_clone = client.clone();
+                            let pn = pod_name.clone();
+                            let pns = pod_ns.clone();
+                            let cn = container_name.clone();
+                            tokio::spawn(async move {
+                                let logs_client = LogsClient::new(client_clone.get_client());
+                                let pod_ref = PodRef::new(pn.clone(), pns.clone());
+                                let tail = Some(500);
+                                let result = if new_previous {
+                                    logs_client
+                                        .tail_previous_logs(&pod_ref, tail, Some(cn.as_str()))
+                                        .await
+                                        .map_err(|err| err.to_string())
+                                } else {
+                                    logs_client
+                                        .tail_logs(&pod_ref, tail, Some(cn.as_str()))
+                                        .await
+                                        .map_err(|err| err.to_string())
+                                };
+                                let _ = tx
+                                    .send(LogsViewerAsyncResult::Tail {
+                                        request_id,
+                                        pod_name: pn,
+                                        namespace: pns,
+                                        container_name: cn,
+                                        result,
+                                    })
+                                    .await;
+                            });
+                        }
+                    }
+                }
+                AppAction::LogsViewerToggleTimestamps => {
+                    let ts_info = app.workbench().active_tab().and_then(|tab| {
+                        if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
+                            let v = &logs_tab.viewer;
+                            if v.picking_container || v.container_name.is_empty() {
+                                return None;
+                            }
+                            Some((
+                                v.pod_name.clone(),
+                                v.pod_namespace.clone(),
+                                v.container_name.clone(),
+                                v.show_timestamps,
+                                v.follow_mode,
+                                v.previous_logs,
+                            ))
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some((
+                        pod_name,
+                        pod_ns,
+                        container_name,
+                        was_timestamps,
+                        was_following,
+                        is_previous,
+                    )) = ts_info
+                    {
+                        if was_following || was_timestamps {
+                            let _ = coordinator
+                                .stop_log_streaming(&pod_name, &pod_ns, &container_name)
+                                .await;
+                        }
+                        if let Some(tab) = app.workbench_mut().active_tab_mut()
+                            && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                        {
+                            let viewer = &mut logs_tab.viewer;
+                            viewer.show_timestamps = !viewer.show_timestamps;
+                            viewer.lines.clear();
+                            viewer.scroll_offset = 0;
+                            viewer.loading = true;
+                            viewer.error = None;
+                        }
+                        let new_timestamps = !was_timestamps;
+                        let follow = !is_previous;
+                        let _ = coordinator
+                            .start_log_streaming(
+                                pod_name,
+                                pod_ns,
+                                container_name,
+                                follow,
+                                is_previous,
+                                new_timestamps,
+                            )
+                            .await;
+                    }
+                }
+                AppAction::PortForwardOpen => {
+                    let resource = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.clone())
+                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                    let dialog = match &resource {
+                        Some(ResourceRef::Pod(name, ns)) => {
+                            PortForwardDialog::with_target(ns, name, 0)
+                        }
+                        _ => {
+                            app.set_error(
+                                "Port forwarding is only available for Pod resources.".to_string(),
+                            );
+                            continue;
+                        }
+                    };
+                    app.detail_view = None;
+                    app.open_port_forward_tab(resource, dialog);
+                    let tunnels = port_forwarder.list_tunnels();
+                    app.tunnel_registry.update_tunnels(tunnels.clone());
+                    if let Some(tab) = app
+                        .workbench_mut()
+                        .find_tab_mut(&WorkbenchTabKey::PortForward)
+                        && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
+                    {
+                        let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
+                        registry.update_tunnels(tunnels);
+                        port_tab.dialog.update_registry(registry);
+                    }
+                }
+                AppAction::ScaleDialogSubmit => {
+                    if !app
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
+                    {
+                        app.set_error(
+                            "Scale is unavailable for the selected resource.".to_string(),
+                        );
+                        continue;
+                    }
+                    let scale_info = app.detail_view.as_ref().and_then(|d| {
+                        let replicas = d.scale_dialog.as_ref()?.desired_replicas_as_int()?;
+                        match d.resource.as_ref()? {
+                            ResourceRef::Deployment(name, namespace) => Some((
+                                ResourceRef::Deployment(name.clone(), namespace.clone()),
+                                name.clone(),
+                                namespace.clone(),
+                                "Deployment",
+                                replicas,
+                            )),
+                            ResourceRef::StatefulSet(name, namespace) => Some((
+                                ResourceRef::StatefulSet(name.clone(), namespace.clone()),
+                                name.clone(),
+                                namespace.clone(),
+                                "StatefulSet",
+                                replicas,
+                            )),
+                            _ => None,
+                        }
+                    });
+                    if let Some((resource, name, namespace, kind_label, replicas)) = scale_info {
+                        let resource_label =
+                            format!("{kind_label} '{name}' in namespace '{namespace}'");
                         let origin_view = app.view();
                         let action_history_id = app.record_action_pending(
-                            ActionKind::FluxReconcile,
+                            ActionKind::Scale,
                             origin_view,
-                            Some(reconcile_resource.clone()),
+                            Some(resource.clone()),
                             resource_label.clone(),
-                            format!("Requesting reconcile for {resource_label}..."),
+                            format!("Scaling {resource_label} to {replicas}..."),
                         );
                         begin_detail_mutation(
                             &mut app,
                             &mut status_message_clear_at,
-                            format!("Requesting reconcile for {resource_label}..."),
+                            format!("Scaling {resource_label} to {replicas}..."),
                         );
-                        let tx = flux_reconcile_tx.clone();
+                        let tx = scale_tx.clone();
                         let c = client.clone();
                         let context_generation = refresh_state.context_generation;
                         tokio::spawn(async move {
-                            let result = match reconcile_resource {
-                                ResourceRef::CustomResource {
-                                    name,
-                                    namespace,
-                                    group,
-                                    version,
-                                    kind,
-                                    plural,
-                                } => c
-                                    .request_flux_reconcile(
-                                        &group,
-                                        &version,
-                                        &kind,
-                                        &plural,
-                                        &name,
-                                        namespace.as_deref(),
-                                    )
-                                    .await
-                                    .map_err(|err| format!("{err:#}")),
-                                _ => Err("Flux reconcile is only available for custom resources."
-                                    .to_string()),
-                            };
+                            let result = match &resource {
+                                ResourceRef::Deployment(..) => {
+                                    c.scale_deployment(&name, &namespace, replicas).await
+                                }
+                                ResourceRef::StatefulSet(..) => {
+                                    c.scale_statefulset(&name, &namespace, replicas).await
+                                }
+                                _ => unreachable!("validated scalable resource"),
+                            }
+                            .map_err(|e| format!("{e:#}"));
                             let _ = tx
-                                .send(FluxReconcileAsyncResult {
+                                .send(ScaleAsyncResult {
+                                    action_history_id,
+                                    context_generation,
+                                    origin_view,
+                                    resource,
+                                    target_replicas: replicas,
+                                    resource_label,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                }
+                AppAction::RolloutRestart => {
+                    if !app
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Restart))
+                    {
+                        app.set_error(
+                            "Restart is unavailable for the selected resource.".to_string(),
+                        );
+                        continue;
+                    }
+                    let restart_info = app.detail_view.as_ref().and_then(|d| {
+                        d.resource.as_ref().and_then(|r| match r {
+                            ResourceRef::Deployment(name, ns) => {
+                                Some(("deployment".to_string(), name.clone(), ns.clone()))
+                            }
+                            ResourceRef::StatefulSet(name, ns) => {
+                                Some(("statefulset".to_string(), name.clone(), ns.clone()))
+                            }
+                            ResourceRef::DaemonSet(name, ns) => {
+                                Some(("daemonset".to_string(), name.clone(), ns.clone()))
+                            }
+                            _ => None,
+                        })
+                    });
+                    if let Some((kind, name, namespace)) = restart_info {
+                        let resource_label =
+                            format!("{} '{}' in namespace '{}'", kind, name, namespace);
+                        let origin_view = app.view();
+                        let resource = match kind.as_str() {
+                            "deployment" => {
+                                ResourceRef::Deployment(name.clone(), namespace.clone())
+                            }
+                            "statefulset" => {
+                                ResourceRef::StatefulSet(name.clone(), namespace.clone())
+                            }
+                            "daemonset" => ResourceRef::DaemonSet(name.clone(), namespace.clone()),
+                            _ => unreachable!("validated restartable resource"),
+                        };
+                        let action_history_id = app.record_action_pending(
+                            ActionKind::Restart,
+                            origin_view,
+                            Some(resource),
+                            resource_label.clone(),
+                            format!("Requesting restart for {resource_label}..."),
+                        );
+                        begin_detail_mutation(
+                            &mut app,
+                            &mut status_message_clear_at,
+                            format!("Requesting restart for {resource_label}..."),
+                        );
+                        let tx = rollout_tx.clone();
+                        let c = client.clone();
+                        let context_generation = refresh_state.context_generation;
+                        tokio::spawn(async move {
+                            let result = c
+                                .rollout_restart(&kind, &name, &namespace)
+                                .await
+                                .map_err(|e| format!("{e:#}"));
+                            let _ = tx
+                                .send(RolloutRestartAsyncResult {
                                     action_history_id,
                                     context_generation,
                                     origin_view,
@@ -2013,1126 +3049,241 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 .await;
                         });
                     }
-                    AppAction::ToggleWorkbench
-                    | AppAction::WorkbenchNextTab
-                    | AppAction::WorkbenchPreviousTab
-                    | AppAction::WorkbenchCloseActiveTab
-                    | AppAction::WorkbenchIncreaseHeight
-                    | AppAction::WorkbenchDecreaseHeight => {
-                        let streams_to_stop = workbench_follow_streams_to_stop(&app, action.clone());
-                        let workload_sessions_to_stop =
-                            workbench_workload_log_sessions_to_stop(&app, action.clone());
-                        let exec_sessions_to_stop =
-                            workbench_exec_sessions_to_stop(&app, action.clone());
-                        for (pod_name, namespace, container_name) in streams_to_stop {
-                            let _ = coordinator
-                                .stop_log_streaming(&pod_name, &namespace, &container_name)
-                                .await;
-                        }
-                        for session_id in workload_sessions_to_stop {
-                            if let Some(streams) = workload_log_sessions.remove(&session_id) {
-                                for (pod_name, namespace, container_name) in streams {
-                                    let _ = coordinator
-                                        .stop_log_streaming(&pod_name, &namespace, &container_name)
-                                        .await;
-                                }
-                            }
-                        }
-                        for session_id in exec_sessions_to_stop {
-                            if let Some(handle) = exec_sessions.remove(&session_id) {
-                                let _ = handle.cancel_tx.send(());
-                            }
-                        }
-                        apply_action(action, &mut app);
-                        save_config(&app);
-                    }
-                    AppAction::OpenNamespacePicker => {
-                        app.set_available_namespaces(global_state.namespaces().to_vec());
-                        app.open_namespace_picker();
-                    }
-                    AppAction::CloseNamespacePicker => {
-                        app.close_namespace_picker();
-                    }
-                    AppAction::OpenCommandPalette => {
-                        let resource_ctx = app
-                            .detail_view
-                            .as_ref()
-                            .and_then(|d| d.resource.clone())
-                            .or_else(|| selected_resource(&app, &cached_snapshot));
-                        app.command_palette.open_with_context(resource_ctx);
-                    }
-                    AppAction::CloseCommandPalette => {
-                        app.command_palette.close();
-                    }
-                    AppAction::NavigateTo(view) => {
-                        app.command_palette.close();
-                        app.view = view;
-                        app.selected_idx = 0;
-                        app.focus = kubectui::app::Focus::Content;
-                        app.extension_in_instances = false;
-                        if !matches!(
-                            view,
-                            kubectui::app::AppView::PortForwarding | kubectui::app::AppView::HelmCharts
-                        ) {
-                            request_refresh(
-                                &refresh_tx,
-                                &mut global_state,
-                                &client,
-                                namespace_scope(app.get_namespace()).map(str::to_string),
-                                refresh_options_for_view(view, view.is_fluxcd(), false),
-                                &mut refresh_state,
-                                &mut snapshot_dirty,
-                            );
-                        }
-                        // Trigger extensions sync when navigating to Extensions view
-                        if view == kubectui::app::AppView::Extensions {
-                            spawn_extensions_fetch(&client, &mut app, &cached_snapshot, &extension_fetch_tx);
-                        }
-                    }
-                    AppAction::OpenContextPicker => {
-                        let contexts = K8sClient::list_contexts();
-                        let current = kube::config::Kubeconfig::read()
-                            .ok()
-                            .and_then(|cfg| cfg.current_context);
-                        app.open_context_picker(contexts, current);
-                    }
-                    AppAction::CloseContextPicker => {
-                        app.close_context_picker();
-                    }
-                    AppAction::SelectContext(ctx) => {
-                        app.close_context_picker();
-                        match K8sClient::connect_with_context(&ctx).await {
-                            Ok(new_client) => {
-                                // Context-bound long-lived services must be rebuilt to avoid
-                                // continuing background work against the previous cluster.
-                                let _ = coordinator.shutdown().await;
-                                for (_, handle) in exec_sessions.drain() {
-                                    let _ = handle.cancel_tx.send(());
-                                }
-                                workload_log_sessions.clear();
-                                port_forwarder.stop_all().await;
-                                app.tunnel_registry.update_tunnels(Vec::new());
-
-                                client = new_client;
-                                coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
-                                port_forwarder =
-                                    PortForwarderService::new(std::sync::Arc::new(client.clone()));
-                                global_state.begin_loading_transition(true);
-                                app.selected_idx = 0;
-                                // Invalidate stale async results from the previous client/context.
-                                refresh_state.context_generation =
-                                    refresh_state.context_generation.wrapping_add(1);
-                                abort_in_flight_refresh(&mut refresh_state);
-                                refresh_state.queued_refresh = None;
-                                delete_in_flight_id = None;
-                                status_message_clear_at = None;
-                                app.clear_status();
-                                snapshot_dirty = true;
-                                app.detail_view = None;
-                                app.workbench.close_resource_tabs();
-
-                                request_refresh(
-                                    &refresh_tx,
-                                    &mut global_state,
-                                    &client,
-                                    namespace_scope(app.get_namespace()).map(str::to_string),
-                                    refresh_options_for_view(
-                                        app.view(),
-                                        app.view().is_fluxcd(),
-                                        true,
-                                    ),
-                                    &mut refresh_state,
-                                    &mut snapshot_dirty,
-                                );
-                            }
-                            Err(err) => {
-                                app.set_error(format!("Failed to connect to context '{ctx}': {err:#}"));
-                            }
-                        }
-                    }
-                    AppAction::SelectNamespace(namespace) => {
-                        app.set_namespace(namespace);
-                        app.selected_idx = 0;
-                        app.close_namespace_picker();
-                        save_config(&app);
-                        // Invalidate stale async results from previous namespace selections.
-                        refresh_state.context_generation =
-                            refresh_state.context_generation.wrapping_add(1);
-                        abort_in_flight_refresh(&mut refresh_state);
-                        refresh_state.queued_refresh = None;
-                        delete_in_flight_id = None;
-                        for (_, handle) in exec_sessions.drain() {
-                            let _ = handle.cancel_tx.send(());
-                        }
-                        for (_, streams) in workload_log_sessions.drain() {
-                            for (pod_name, namespace, container_name) in streams {
-                                let _ = coordinator
-                                    .stop_log_streaming(&pod_name, &namespace, &container_name)
-                                    .await;
-                            }
-                        }
-                        status_message_clear_at = None;
-                        app.clear_status();
-                        // Drop old namespace data immediately to prevent inconsistent mixed views.
-                        global_state.begin_loading_transition(false);
-                        snapshot_dirty = true;
-                        app.detail_view = None;
-                        app.workbench.close_resource_tabs();
-
-                        // Queue newest namespace refresh; if one is in flight it gets coalesced.
-                        request_refresh(
-                            &refresh_tx,
-                            &mut global_state,
-                            &client,
-                            namespace_scope(app.get_namespace()).map(str::to_string),
-                            refresh_options_for_view(
-                                app.view(),
-                                app.view().is_fluxcd(),
-                                false,
-                            ),
-                            &mut refresh_state,
-                            &mut snapshot_dirty,
+                }
+                AppAction::DeleteResource => {
+                    if !app
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
+                    {
+                        app.set_error(
+                            "Delete is unavailable for the selected resource.".to_string(),
                         );
+                        continue;
                     }
-                    AppAction::OpenDetail(resource) => {
-                        open_detail_for_resource(
+                    let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
+                    if let Some(resource) = delete_resource {
+                        if delete_in_flight_id.is_some() {
+                            app.set_error("Delete already in progress".to_string());
+                            continue;
+                        }
+
+                        if let Some(detail) = &mut app.detail_view {
+                            detail.confirm_delete = false;
+                            detail.loading = true;
+                        }
+
+                        delete_request_seq = delete_request_seq.wrapping_add(1);
+                        let request_id = delete_request_seq;
+                        delete_in_flight_id = Some(request_id);
+                        let resource_label = format!("{} '{}'", resource.kind(), resource.name());
+                        let origin_view = app.view();
+                        let action_history_id = app.record_action_pending(
+                            ActionKind::Delete,
+                            origin_view,
+                            Some(resource.clone()),
+                            resource_label.clone(),
+                            format!("Deleting {resource_label}..."),
+                        );
+                        begin_detail_mutation(
                             &mut app,
-                            &cached_snapshot,
-                            &client,
-                            &detail_tx,
+                            &mut status_message_clear_at,
+                            format!("Deleting {resource_label}..."),
+                        );
+                        spawn_delete_task(
+                            delete_tx.clone(),
+                            client.clone(),
                             resource,
+                            request_id,
+                            action_history_id,
+                            refresh_state.context_generation,
+                            origin_view,
+                            false,
                         );
                     }
-                    AppAction::ActionHistoryOpenSelected => {
-                        let Some(target) = app.selected_action_history_target().cloned() else {
-                            app.set_error(
-                                "Selected history entry does not have a jumpable resource."
-                                    .to_string(),
-                            );
+                }
+                AppAction::ForceDeleteResource => {
+                    if !app
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
+                    {
+                        app.set_error(
+                            "Delete is unavailable for the selected resource.".to_string(),
+                        );
+                        continue;
+                    }
+                    let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
+                    if let Some(resource) = delete_resource {
+                        if delete_in_flight_id.is_some() {
+                            app.set_error("Delete already in progress".to_string());
                             continue;
-                        };
-                        app.view = target.view;
-                        app.selected_idx = 0;
-                        app.focus = kubectui::app::Focus::Content;
-                        app.extension_in_instances = false;
-                        open_detail_for_resource(
+                        }
+
+                        if let Some(detail) = &mut app.detail_view {
+                            detail.confirm_delete = false;
+                            detail.loading = true;
+                        }
+
+                        delete_request_seq = delete_request_seq.wrapping_add(1);
+                        let request_id = delete_request_seq;
+                        delete_in_flight_id = Some(request_id);
+                        let resource_label = format!("{} '{}'", resource.kind(), resource.name());
+                        let origin_view = app.view();
+                        let action_history_id = app.record_action_pending(
+                            ActionKind::Delete,
+                            origin_view,
+                            Some(resource.clone()),
+                            resource_label.clone(),
+                            format!("Force deleting {resource_label}..."),
+                        );
+                        begin_detail_mutation(
                             &mut app,
-                            &cached_snapshot,
-                            &client,
-                            &detail_tx,
-                            target.resource,
+                            &mut status_message_clear_at,
+                            format!("Force deleting {resource_label}..."),
+                        );
+                        spawn_delete_task(
+                            delete_tx.clone(),
+                            client.clone(),
+                            resource,
+                            request_id,
+                            action_history_id,
+                            refresh_state.context_generation,
+                            origin_view,
+                            true,
                         );
                     }
-                    AppAction::CloseDetail => {
-                        app.detail_view = None;
-                    }
-                    AppAction::OpenResourceYaml => {
-                        let resource = app
-                            .detail_view
-                            .as_ref()
-                            .and_then(|detail| detail.resource.clone())
-                            .or_else(|| selected_resource(&app, &cached_snapshot));
-                        let Some(resource) = resource else {
-                            app.set_error("No resource selected for YAML inspection.".to_string());
-                            continue;
-                        };
-                        let cached_yaml = app.detail_view.as_ref().and_then(|detail| {
-                            (detail.resource.as_ref() == Some(&resource)).then(|| detail.yaml.clone())
-                        }).flatten();
-                        app.detail_view = None;
-                        app.open_resource_yaml_tab(resource.clone(), cached_yaml.clone(), None);
-                        if cached_yaml.is_none() {
-                            let client_clone = client.clone();
-                            let snapshot_clone = cached_snapshot.clone();
-                            let tx = detail_tx.clone();
-                            let requested_resource = resource.clone();
-                            tokio::spawn(async move {
-                                let result = fetch_detail_view(&client_clone, &snapshot_clone, requested_resource.clone())
-                                    .await
-                                    .map_err(|err| err.to_string());
-                                let _ = tx.send((requested_resource, result)).await;
-                            });
+                }
+                AppAction::TriggerCronJob => {
+                    let cronjob_info = app.detail_view.as_ref().and_then(|d| {
+                        if let Some(ResourceRef::CronJob(name, ns)) = &d.resource {
+                            Some((name.clone(), ns.clone()))
+                        } else {
+                            None
                         }
-                    }
-                    AppAction::OpenResourceEvents => {
-                        let resource = app
-                            .detail_view
-                            .as_ref()
-                            .and_then(|detail| detail.resource.clone())
-                            .or_else(|| selected_resource(&app, &cached_snapshot));
-                        let Some(resource) = resource else {
-                            app.set_error("No resource selected for event inspection.".to_string());
-                            continue;
-                        };
-                        let cached_events = app.detail_view.as_ref().and_then(|detail| {
-                            (detail.resource.as_ref() == Some(&resource)).then(|| detail.events.clone())
-                        }).unwrap_or_default();
-                        let loading = cached_events.is_empty();
-                        app.detail_view = None;
-                        app.open_resource_events_tab(resource.clone(), cached_events, loading, None);
-                        if loading {
-                            let client_clone = client.clone();
-                            let snapshot_clone = cached_snapshot.clone();
-                            let tx = detail_tx.clone();
-                            let requested_resource = resource.clone();
-                            tokio::spawn(async move {
-                                let result = fetch_detail_view(&client_clone, &snapshot_clone, requested_resource.clone())
-                                    .await
-                                    .map_err(|err| err.to_string());
-                                let _ = tx.send((requested_resource, result)).await;
-                            });
-                        }
-                    }
-                    AppAction::LogsViewerOpen => {
-                        let resource = app
-                            .detail_view
-                            .as_ref()
-                            .and_then(|detail| detail.resource.clone())
-                            .or_else(|| selected_resource(&app, &cached_snapshot));
-                        let Some(resource) = resource else {
-                            app.set_error("No resource selected for logs.".to_string());
-                            continue;
-                        };
-                        let Some((pod_name, pod_ns, pod_resource)) = (match &resource {
-                            ResourceRef::Pod(pod_name, pod_ns) => {
-                                Some((pod_name.clone(), pod_ns.clone(), resource.clone()))
-                            }
-                            _ => None,
-                        }) else {
-                            if !matches!(
-                                resource,
-                                ResourceRef::Deployment(_, _)
-                                    | ResourceRef::StatefulSet(_, _)
-                                    | ResourceRef::DaemonSet(_, _)
-                                    | ResourceRef::ReplicaSet(_, _)
-                                    | ResourceRef::ReplicationController(_, _)
-                                    | ResourceRef::Job(_, _)
-                            ) {
-                                app.set_error(
-                                    "Logs are only available for Pods and supported workload resources."
-                                        .to_string(),
-                                );
-                                continue;
-                            }
-                            let session_id = next_workload_logs_session_id;
-                            next_workload_logs_session_id =
-                                next_workload_logs_session_id.wrapping_add(1).max(1);
-                            app.detail_view = None;
-                            app.open_workload_logs_tab(resource.clone(), session_id);
-                            let tx = workload_logs_bootstrap_tx.clone();
-                            let client_clone = client.get_client();
-                            tokio::spawn(async move {
-                                let result = resolve_workload_log_targets(client_clone, &resource)
-                                    .await
-                                    .map_err(|err| format!("{err:#}"));
-                                let _ = tx
-                                    .send(WorkloadLogsBootstrapResult {
-                                        session_id,
-                                        resource,
-                                        result,
-                                    })
-                                    .await;
-                            });
-                            continue;
-                        };
-                        let mut container_request: Option<(u64, String, String)> = None;
-                        app.detail_view = None;
-                        app.open_pod_logs_tab(pod_resource);
-                        if let Some(tab) = app.workbench_mut().find_tab_mut(
-                            &WorkbenchTabKey::PodLogs(ResourceRef::Pod(pod_name.clone(), pod_ns.clone())),
-                        ) && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
-                            logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
-                            let request_id = logs_viewer_request_seq;
-                            logs_tab.viewer = LogsViewerState {
-                                pod_name: pod_name.clone(),
-                                pod_namespace: pod_ns.clone(),
-                                loading: true,
-                                pending_container_request_id: Some(request_id),
-                                pending_logs_request_id: None,
-                                container_cursor: 0,
-                                container_name: String::new(),
-                                containers: Vec::new(),
-                                picking_container: false,
-                                ..Default::default()
-                            };
-                            container_request = Some((request_id, pod_name, pod_ns));
-                        }
-
-                        if let Some((request_id, pod_name, pod_ns)) = container_request {
-                            let client_clone = client.clone();
-                            let tx = logs_viewer_tx.clone();
-                            tokio::spawn(async move {
-                                let pods_api: Api<Pod> =
-                                    Api::namespaced(client_clone.get_client(), &pod_ns);
-                                let result = pods_api
-                                    .get(&pod_name)
-                                    .await
-                                    .map_err(|err| err.to_string())
-                                    .map(|pod| {
-                                        pod.spec
-                                            .map(|spec| {
-                                                spec.containers
-                                                    .into_iter()
-                                                    .map(|container| container.name)
-                                                    .collect::<Vec<_>>()
-                                            })
-                                            .unwrap_or_default()
-                                    });
-                                let _ = tx.send(LogsViewerAsyncResult::Containers {
-                                    request_id,
-                                    pod_name,
-                                    namespace: pod_ns,
-                                    result,
-                                }).await;
-                            });
-                        }
-                    }
-                    AppAction::OpenExec => {
-                        let resource = app
-                            .detail_view
-                            .as_ref()
-                            .and_then(|detail| detail.resource.clone())
-                            .or_else(|| selected_resource(&app, &cached_snapshot));
-                        let Some(ResourceRef::Pod(pod_name, pod_ns)) = resource else {
-                            app.set_error("Exec is only available for Pod resources.".to_string());
-                            continue;
-                        };
-
-                        let session_id = next_exec_session_id;
-                        next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
-                        let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
-                        app.detail_view = None;
-                        app.open_exec_tab(
-                            resource.clone(),
-                            session_id,
-                            pod_name.clone(),
-                            pod_ns.clone(),
+                    });
+                    if let Some((name, namespace)) = cronjob_info {
+                        let resource_label = format!("CronJob '{name}'");
+                        let origin_view = app.view();
+                        let action_history_id = app.record_action_pending(
+                            ActionKind::Trigger,
+                            origin_view,
+                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
+                            resource_label.clone(),
+                            format!("Triggering {resource_label}..."),
                         );
-                        let tx = exec_bootstrap_tx.clone();
-                        let client_clone = client.clone();
+                        begin_detail_mutation(
+                            &mut app,
+                            &mut status_message_clear_at,
+                            format!("Triggering {resource_label}..."),
+                        );
+                        let tx = trigger_cronjob_tx.clone();
+                        let c = client.clone();
+                        let context_generation = refresh_state.context_generation;
                         tokio::spawn(async move {
-                            let result = fetch_pod_containers(&client_clone, &pod_name, &pod_ns)
+                            let result = c
+                                .trigger_cronjob(&name, &namespace)
                                 .await
-                                .map_err(|err| format!("{err:#}"));
+                                .map_err(|e| format!("{e:#}"));
                             let _ = tx
-                                .send(ExecBootstrapResult {
-                                    session_id,
-                                    resource,
+                                .send(TriggerCronJobAsyncResult {
+                                    action_history_id,
+                                    context_generation,
+                                    origin_view,
+                                    resource_label,
                                     result,
                                 })
                                 .await;
                         });
                     }
-                    AppAction::ExecSelectContainer(container_name) => {
-                        let mut start_session: Option<(u64, ResourceRef, String, String, String)> = None;
-                        if let Some(tab) = app.workbench_mut().active_tab_mut()
-                            && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state {
-                                exec_tab.picking_container = false;
-                                exec_tab.container_name = container_name.clone();
-                                exec_tab.loading = true;
-                                exec_tab.error = None;
-                                start_session = Some((
-                                    exec_tab.session_id,
-                                    exec_tab.resource.clone(),
-                                    exec_tab.pod_name.clone(),
-                                    exec_tab.namespace.clone(),
-                                    container_name,
-                                ));
-                            }
-                        if let Some((session_id, resource, pod_name, namespace, container_name)) =
-                            start_session
-                        {
-                            match spawn_exec_session(
-                                client.clone(),
-                                session_id,
-                                pod_name,
-                                namespace,
-                                container_name.clone(),
-                                exec_update_tx.clone(),
-                            )
-                            .await
-                            {
-                                Ok(handle) => {
-                                    exec_sessions.insert(session_id, handle);
-                                }
-                                Err(err) => {
-                                    if let Some(tab) = app
-                                        .workbench_mut()
-                                        .find_tab_mut(&WorkbenchTabKey::Exec(resource))
-                                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
-                                    {
-                                        exec_tab.loading = false;
-                                        exec_tab.error = Some(format!("{err:#}"));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    AppAction::ExecSendInput => {
-                        if let Some(tab) = app.workbench_mut().active_tab_mut()
-                            && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
-                        {
-                            if exec_tab.input.is_empty() {
-                                continue;
-                            }
-                            let mut bytes = exec_tab.input.clone().into_bytes();
-                            bytes.push(b'\n');
-                            let session_id = exec_tab.session_id;
-                            exec_tab.input.clear();
-                            if let Some(handle) = exec_sessions.get(&session_id) {
-                                if let Err(err) = handle.input_tx.send(bytes).await {
-                                    exec_tab.error =
-                                        Some(format!("failed to send exec input: {err}"));
-                                }
-                            } else {
-                                exec_tab.error = Some(
-                                    "exec session is not running for the selected tab.".to_string(),
-                                );
-                            }
-                        }
-                    }
-                    AppAction::LogsViewerSelectContainer(container) => {
-                        let mut logs_request: Option<(u64, String, String, String)> = None;
-                        if let Some(tab) = app.workbench_mut().active_tab_mut()
-                            && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
-                                let viewer = &mut logs_tab.viewer;
-                                logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
-                                let request_id = logs_viewer_request_seq;
-                                viewer.picking_container = false;
-                                viewer.container_name = container.clone();
-                                viewer.loading = true;
-                                viewer.lines.clear();
-                                viewer.scroll_offset = 0;
-                                viewer.error = None;
-                                viewer.pending_logs_request_id = Some(request_id);
-                                logs_request = Some((
-                                    request_id,
-                                    viewer.pod_name.clone(),
-                                    viewer.pod_namespace.clone(),
-                                    container,
-                                ));
-                            }
-
-                        if let Some((request_id, pod_name, pod_ns, container_name)) = logs_request {
-                            let client_clone = client.clone();
-                            let tx = logs_viewer_tx.clone();
-                            tokio::spawn(async move {
-                                let logs_client = LogsClient::new(client_clone.get_client());
-                                let pod_ref = PodRef::new(pod_name.clone(), pod_ns.clone());
-                                let result = logs_client
-                                    .tail_logs(&pod_ref, Some(500), Some(container_name.as_str()))
-                                    .await
-                                    .map_err(|err| err.to_string());
-                                let _ = tx.send(LogsViewerAsyncResult::Tail {
-                                    request_id,
-                                    pod_name,
-                                    namespace: pod_ns,
-                                    container_name,
-                                    result,
-                                }).await;
-                            });
-                        }
-                    }
-                    AppAction::LogsViewerSelectAllContainers => {
-                        // Gather pod info from the current PodLogs tab, then replace
-                        // it with a WorkloadLogs tab streaming all containers.
-                        let all_info: Option<(String, String, Vec<String>, ResourceRef)> =
-                            app.workbench().active_tab().and_then(|tab| {
-                                if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
-                                    let v = &logs_tab.viewer;
-                                    Some((
-                                        v.pod_name.clone(),
-                                        v.pod_namespace.clone(),
-                                        v.containers.clone(),
-                                        logs_tab.resource.clone(),
-                                    ))
-                                } else {
-                                    None
-                                }
-                            });
-
-                        if let Some((pod_name, pod_ns, containers, resource)) = all_info {
-                            // Close the single-container PodLogs tab
-                            app.workbench.close_active_tab();
-
-                            // Open a WorkloadLogs tab for the same pod
-                            let session_id = next_workload_logs_session_id;
-                            next_workload_logs_session_id =
-                                next_workload_logs_session_id.wrapping_add(1).max(1);
-                            app.open_workload_logs_tab(resource, session_id);
-
-                            // Build sources: all containers from this single pod
-                            let sources: Vec<(String, String, String)> = containers
-                                .iter()
-                                .map(|c| (pod_name.clone(), pod_ns.clone(), c.clone()))
-                                .collect();
-
-                            // Configure the tab directly
-                            if let Some(tab) = app.workbench_mut().active_tab_mut()
-                                && let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state
-                                && logs_tab.session_id == session_id
-                            {
-                                logs_tab.sources = sources.clone();
-                                logs_tab.loading = false;
-                                workload_log_sessions
-                                    .insert(session_id, sources.clone());
-                            }
-
-                            // Start streaming each container
-                            for (pod, ns, container) in sources {
-                                let _ = coordinator
-                                    .start_log_streaming(pod, ns, container, true, false, false)
-                                    .await;
-                            }
-                        }
-                    }
-                    AppAction::LogsViewerToggleFollow => {
-                        let follow_info = app.workbench().active_tab().and_then(|tab| {
-                            if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
-                                let v = &logs_tab.viewer;
-                                Some((
-                                    v.pod_name.clone(),
-                                    v.pod_namespace.clone(),
-                                    v.container_name.clone(),
-                                    v.follow_mode,
-                                    v.picking_container,
-                                    v.show_timestamps,
-                                ))
-                            } else {
-                                None
-                            }
+                }
+                AppAction::CopyResourceName => {
+                    let name = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|d| d.resource.as_ref())
+                        .map(|r| r.name().to_string())
+                        .or_else(|| {
+                            selected_resource(&app, &cached_snapshot).map(|r| r.name().to_string())
                         });
-                        if let Some((pod_name, pod_ns, container_name, was_following, picking_container, timestamps)) = follow_info {
-                            if !was_following && (pod_name.is_empty() || container_name.is_empty() || picking_container) {
-                                if let Some(tab) = app.workbench_mut().active_tab_mut()
-                                    && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
-                                        let viewer = &mut logs_tab.viewer;
-                                        viewer.error = Some("Select a container before enabling follow mode.".to_string());
-                                    }
-                            } else {
-                                apply_action(AppAction::LogsViewerToggleFollow, &mut app);
-                                if !was_following {
-                                    let _ = coordinator
-                                        .start_log_streaming(pod_name, pod_ns, container_name, true, false, timestamps)
-                                        .await;
-                                } else if !pod_name.is_empty() && !container_name.is_empty() {
-                                    let _ = coordinator
-                                        .stop_log_streaming(&pod_name, &pod_ns, &container_name)
-                                        .await;
-                                }
-                            }
+                    if let Some(name) = name {
+                        if let Err(e) = kubectui::clipboard::copy_to_clipboard(&name) {
+                            app.set_error(format!("Clipboard error: {e}"));
+                        } else {
+                            app.status_message = Some(format!("Copied: {name}"));
                         }
                     }
-                    AppAction::LogsViewerTogglePrevious => {
-                        let prev_info = app.workbench().active_tab().and_then(|tab| {
-                            if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
-                                let v = &logs_tab.viewer;
-                                if v.picking_container || v.container_name.is_empty() {
-                                    return None;
-                                }
-                                Some((
-                                    v.pod_name.clone(),
-                                    v.pod_namespace.clone(),
-                                    v.container_name.clone(),
-                                    v.previous_logs,
-                                    v.follow_mode,
-                                ))
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some((pod_name, pod_ns, container_name, was_previous, was_following)) = prev_info {
-                            // Cancel any current log stream
-                            if was_following || was_previous {
-                                let _ = coordinator
-                                    .stop_log_streaming(&pod_name, &pod_ns, &container_name)
-                                    .await;
-                            }
-
-                            // Toggle previous_logs and reset viewer state
-                            if let Some(tab) = app.workbench_mut().active_tab_mut()
-                                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
-                            {
-                                let viewer = &mut logs_tab.viewer;
-                                viewer.previous_logs = !was_previous;
-                                viewer.follow_mode = false;
-                                viewer.lines.clear();
-                                viewer.scroll_offset = 0;
-                                viewer.loading = true;
-                                viewer.error = None;
-
-                                logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
-                                let request_id = logs_viewer_request_seq;
-                                viewer.pending_logs_request_id = Some(request_id);
-
-                                let new_previous = viewer.previous_logs;
-                                let tx = logs_viewer_tx.clone();
-                                let client_clone = client.clone();
-                                let pn = pod_name.clone();
-                                let pns = pod_ns.clone();
-                                let cn = container_name.clone();
-                                tokio::spawn(async move {
-                                    let logs_client = LogsClient::new(client_clone.get_client());
-                                    let pod_ref = PodRef::new(pn.clone(), pns.clone());
-                                    let tail = Some(500);
-                                    let result = if new_previous {
-                                        logs_client
-                                            .tail_previous_logs(&pod_ref, tail, Some(cn.as_str()))
-                                            .await
-                                            .map_err(|err| err.to_string())
-                                    } else {
-                                        logs_client
-                                            .tail_logs(&pod_ref, tail, Some(cn.as_str()))
-                                            .await
-                                            .map_err(|err| err.to_string())
-                                    };
-                                    let _ = tx.send(LogsViewerAsyncResult::Tail {
-                                        request_id,
-                                        pod_name: pn,
-                                        namespace: pns,
-                                        container_name: cn,
-                                        result,
-                                    }).await;
-                                });
-                            }
-                        }
-                    }
-                    AppAction::LogsViewerToggleTimestamps => {
-                        let ts_info = app.workbench().active_tab().and_then(|tab| {
-                            if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
-                                let v = &logs_tab.viewer;
-                                if v.picking_container || v.container_name.is_empty() {
-                                    return None;
-                                }
-                                Some((
-                                    v.pod_name.clone(),
-                                    v.pod_namespace.clone(),
-                                    v.container_name.clone(),
-                                    v.show_timestamps,
-                                    v.follow_mode,
-                                    v.previous_logs,
-                                ))
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some((pod_name, pod_ns, container_name, was_timestamps, was_following, is_previous)) = ts_info {
-                            if was_following || was_timestamps {
-                                let _ = coordinator
-                                    .stop_log_streaming(&pod_name, &pod_ns, &container_name)
-                                    .await;
-                            }
-                            if let Some(tab) = app.workbench_mut().active_tab_mut()
-                                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
-                            {
-                                let viewer = &mut logs_tab.viewer;
-                                viewer.show_timestamps = !viewer.show_timestamps;
-                                viewer.lines.clear();
-                                viewer.scroll_offset = 0;
-                                viewer.loading = true;
-                                viewer.error = None;
-                            }
-                            let new_timestamps = !was_timestamps;
-                            let follow = !is_previous;
-                            let _ = coordinator
-                                .start_log_streaming(
-                                    pod_name, pod_ns, container_name, follow, is_previous, new_timestamps,
-                                )
-                                .await;
-                        }
-                    }
-                    AppAction::PortForwardOpen => {
-                        let resource = app
-                            .detail_view
-                            .as_ref()
-                            .and_then(|detail| detail.resource.clone())
-                            .or_else(|| selected_resource(&app, &cached_snapshot));
-                        let dialog = match &resource {
-                            Some(ResourceRef::Pod(name, ns)) => {
-                                PortForwardDialog::with_target(ns, name, 0)
-                            }
-                            _ => {
-                                app.set_error("Port forwarding is only available for Pod resources.".to_string());
-                                continue;
-                            }
-                        };
-                        app.detail_view = None;
-                        app.open_port_forward_tab(resource, dialog);
-                        let tunnels = port_forwarder.list_tunnels();
-                        app.tunnel_registry.update_tunnels(tunnels.clone());
-                        if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
-                            && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
-                                let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
-                                registry.update_tunnels(tunnels);
-                                port_tab.dialog.update_registry(registry);
-                            }
-                    }
-                    AppAction::ScaleDialogSubmit => {
-                        if !app
-                            .detail_view
-                            .as_ref()
-                            .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
-                        {
-                            app.set_error("Scale is unavailable for the selected resource.".to_string());
-                            continue;
-                        }
-                        let scale_info = app.detail_view.as_ref().and_then(|d| {
-                            let replicas =
-                                d.scale_dialog.as_ref()?.desired_replicas_as_int()?;
-                            match d.resource.as_ref()? {
-                                ResourceRef::Deployment(name, namespace) => Some((
-                                    ResourceRef::Deployment(name.clone(), namespace.clone()),
-                                    name.clone(),
-                                    namespace.clone(),
-                                    "Deployment",
-                                    replicas,
-                                )),
-                                ResourceRef::StatefulSet(name, namespace) => Some((
-                                    ResourceRef::StatefulSet(name.clone(), namespace.clone()),
-                                    name.clone(),
-                                    namespace.clone(),
-                                    "StatefulSet",
-                                    replicas,
-                                )),
-                                _ => None,
-                            }
-                        });
-                        if let Some((resource, name, namespace, kind_label, replicas)) = scale_info {
-                            let resource_label =
-                                format!("{kind_label} '{name}' in namespace '{namespace}'");
-                            let origin_view = app.view();
-                            let action_history_id = app.record_action_pending(
-                                ActionKind::Scale,
-                                origin_view,
-                                Some(resource.clone()),
-                                resource_label.clone(),
-                                format!("Scaling {resource_label} to {replicas}..."),
-                            );
-                            begin_detail_mutation(
-                                &mut app,
-                                &mut status_message_clear_at,
-                                format!("Scaling {resource_label} to {replicas}..."),
-                            );
-                            let tx = scale_tx.clone();
-                            let c = client.clone();
-                            let context_generation = refresh_state.context_generation;
-                            tokio::spawn(async move {
-                                let result = match &resource {
-                                    ResourceRef::Deployment(..) => {
-                                        c.scale_deployment(&name, &namespace, replicas).await
-                                    }
-                                    ResourceRef::StatefulSet(..) => {
-                                        c.scale_statefulset(&name, &namespace, replicas).await
-                                    }
-                                    _ => unreachable!("validated scalable resource"),
-                                }
-                                .map_err(|e| format!("{e:#}"));
-                                let _ = tx
-                                    .send(ScaleAsyncResult {
-                                        action_history_id,
-                                        context_generation,
-                                        origin_view,
-                                        resource,
-                                        target_replicas: replicas,
-                                        resource_label,
-                                        result,
-                                    })
-                                    .await;
-                            });
-                        }
-                    }
-                    AppAction::RolloutRestart => {
-                        if !app
-                            .detail_view
-                            .as_ref()
-                            .is_some_and(|detail| detail.supports_action(DetailAction::Restart))
-                        {
-                            app.set_error("Restart is unavailable for the selected resource.".to_string());
-                            continue;
-                        }
-                        let restart_info = app.detail_view.as_ref().and_then(|d| {
-                            d.resource.as_ref().and_then(|r| match r {
-                                ResourceRef::Deployment(name, ns) => Some(("deployment".to_string(), name.clone(), ns.clone())),
-                                ResourceRef::StatefulSet(name, ns) => Some(("statefulset".to_string(), name.clone(), ns.clone())),
-                                ResourceRef::DaemonSet(name, ns) => Some(("daemonset".to_string(), name.clone(), ns.clone())),
-                                _ => None,
-                            })
-                        });
-                        if let Some((kind, name, namespace)) = restart_info {
-                            let resource_label =
-                                format!("{} '{}' in namespace '{}'", kind, name, namespace);
-                            let origin_view = app.view();
-                            let resource = match kind.as_str() {
-                                "deployment" => {
-                                    ResourceRef::Deployment(name.clone(), namespace.clone())
-                                }
-                                "statefulset" => {
-                                    ResourceRef::StatefulSet(name.clone(), namespace.clone())
-                                }
-                                "daemonset" => {
-                                    ResourceRef::DaemonSet(name.clone(), namespace.clone())
-                                }
-                                _ => unreachable!("validated restartable resource"),
-                            };
-                            let action_history_id = app.record_action_pending(
-                                ActionKind::Restart,
-                                origin_view,
-                                Some(resource),
-                                resource_label.clone(),
-                                format!("Requesting restart for {resource_label}..."),
-                            );
-                            begin_detail_mutation(
-                                &mut app,
-                                &mut status_message_clear_at,
-                                format!("Requesting restart for {resource_label}..."),
-                            );
-                            let tx = rollout_tx.clone();
-                            let c = client.clone();
-                            let context_generation = refresh_state.context_generation;
-                            tokio::spawn(async move {
-                                let result = c.rollout_restart(&kind, &name, &namespace).await
-                                    .map_err(|e| format!("{e:#}"));
-                                let _ = tx
-                                    .send(RolloutRestartAsyncResult {
-                                        action_history_id,
-                                        context_generation,
-                                        origin_view,
-                                        resource_label,
-                                        result,
-                                    })
-                                    .await;
-                            });
-                        }
-                    }
-                    AppAction::DeleteResource => {
-                        if !app
-                            .detail_view
-                            .as_ref()
-                            .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
-                        {
-                            app.set_error("Delete is unavailable for the selected resource.".to_string());
-                            continue;
-                        }
-                        let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
-                        if let Some(resource) = delete_resource {
-                            if delete_in_flight_id.is_some() {
-                                app.set_error("Delete already in progress".to_string());
-                                continue;
-                            }
-
-                            if let Some(detail) = &mut app.detail_view {
-                                detail.confirm_delete = false;
-                                detail.loading = true;
-                            }
-
-                            delete_request_seq = delete_request_seq.wrapping_add(1);
-                            let request_id = delete_request_seq;
-                            delete_in_flight_id = Some(request_id);
-                            let resource_label =
-                                format!("{} '{}'", resource.kind(), resource.name());
-                            let origin_view = app.view();
-                            let action_history_id = app.record_action_pending(
-                                ActionKind::Delete,
-                                origin_view,
-                                Some(resource.clone()),
-                                resource_label.clone(),
-                                format!("Deleting {resource_label}..."),
-                            );
-                            begin_detail_mutation(
-                                &mut app,
-                                &mut status_message_clear_at,
-                                format!("Deleting {resource_label}..."),
-                            );
-                            spawn_delete_task(
-                                delete_tx.clone(),
-                                client.clone(),
-                                resource,
-                                request_id,
-                                action_history_id,
-                                refresh_state.context_generation,
-                                origin_view,
-                                false,
-                            );
-                        }
-                    }
-                    AppAction::ForceDeleteResource => {
-                        if !app
-                            .detail_view
-                            .as_ref()
-                            .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
-                        {
-                            app.set_error("Delete is unavailable for the selected resource.".to_string());
-                            continue;
-                        }
-                        let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
-                        if let Some(resource) = delete_resource {
-                            if delete_in_flight_id.is_some() {
-                                app.set_error("Delete already in progress".to_string());
-                                continue;
-                            }
-
-                            if let Some(detail) = &mut app.detail_view {
-                                detail.confirm_delete = false;
-                                detail.loading = true;
-                            }
-
-                            delete_request_seq = delete_request_seq.wrapping_add(1);
-                            let request_id = delete_request_seq;
-                            delete_in_flight_id = Some(request_id);
-                            let resource_label =
-                                format!("{} '{}'", resource.kind(), resource.name());
-                            let origin_view = app.view();
-                            let action_history_id = app.record_action_pending(
-                                ActionKind::Delete,
-                                origin_view,
-                                Some(resource.clone()),
-                                resource_label.clone(),
-                                format!("Force deleting {resource_label}..."),
-                            );
-                            begin_detail_mutation(
-                                &mut app,
-                                &mut status_message_clear_at,
-                                format!("Force deleting {resource_label}..."),
-                            );
-                            spawn_delete_task(
-                                delete_tx.clone(),
-                                client.clone(),
-                                resource,
-                                request_id,
-                                action_history_id,
-                                refresh_state.context_generation,
-                                origin_view,
-                                true,
-                            );
-                        }
-                    }
-                    AppAction::TriggerCronJob => {
-                        let cronjob_info = app.detail_view.as_ref().and_then(|d| {
-                            if let Some(ResourceRef::CronJob(name, ns)) = &d.resource {
-                                Some((name.clone(), ns.clone()))
-                            } else {
-                                None
-                            }
-                        });
-                        if let Some((name, namespace)) = cronjob_info {
-                            let resource_label = format!("CronJob '{name}'");
-                            let origin_view = app.view();
-                            let action_history_id = app.record_action_pending(
-                                ActionKind::Trigger,
-                                origin_view,
-                                app.detail_view
-                                    .as_ref()
-                                    .and_then(|d| d.resource.clone()),
-                                resource_label.clone(),
-                                format!("Triggering {resource_label}..."),
-                            );
-                            begin_detail_mutation(
-                                &mut app,
-                                &mut status_message_clear_at,
-                                format!("Triggering {resource_label}..."),
-                            );
-                            let tx = trigger_cronjob_tx.clone();
-                            let c = client.clone();
-                            let context_generation = refresh_state.context_generation;
-                            tokio::spawn(async move {
-                                let result = c
-                                    .trigger_cronjob(&name, &namespace)
-                                    .await
-                                    .map_err(|e| format!("{e:#}"));
-                                let _ = tx
-                                    .send(TriggerCronJobAsyncResult {
-                                        action_history_id,
-                                        context_generation,
-                                        origin_view,
-                                        resource_label,
-                                        result,
-                                    })
-                                    .await;
-                            });
-                        }
-                    }
-                    AppAction::CopyResourceName => {
-                        let name = app
-                            .detail_view
-                            .as_ref()
-                            .and_then(|d| d.resource.as_ref())
-                            .map(|r| r.name().to_string())
-                            .or_else(|| {
-                                selected_resource(&app, &cached_snapshot)
-                                    .map(|r| r.name().to_string())
-                            });
-                        if let Some(name) = name {
-                            if let Err(e) = kubectui::clipboard::copy_to_clipboard(&name) {
-                                app.set_error(format!("Clipboard error: {e}"));
-                            } else {
-                                app.status_message = Some(format!("Copied: {name}"));
-                            }
-                        }
-                    }
-                    AppAction::CopyResourceFullName => {
-                        let full = app
-                            .detail_view
-                            .as_ref()
-                            .and_then(|d| d.resource.as_ref())
-                            .map(|r| match r.namespace() {
+                }
+                AppAction::CopyResourceFullName => {
+                    let full = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|d| d.resource.as_ref())
+                        .map(|r| match r.namespace() {
+                            Some(ns) => format!("{ns}/{}", r.name()),
+                            None => r.name().to_string(),
+                        })
+                        .or_else(|| {
+                            selected_resource(&app, &cached_snapshot).map(|r| match r.namespace() {
                                 Some(ns) => format!("{ns}/{}", r.name()),
                                 None => r.name().to_string(),
                             })
-                            .or_else(|| {
-                                selected_resource(&app, &cached_snapshot).map(|r| {
-                                    match r.namespace() {
-                                        Some(ns) => format!("{ns}/{}", r.name()),
-                                        None => r.name().to_string(),
-                                    }
-                                })
-                            });
-                        if let Some(full) = full {
-                            if let Err(e) = kubectui::clipboard::copy_to_clipboard(&full) {
-                                app.set_error(format!("Clipboard error: {e}"));
-                            } else {
-                                app.status_message = Some(format!("Copied: {full}"));
-                            }
-                        }
-                    }
-                    AppAction::CopyLogContent => {
-                        let content = app.workbench().active_tab().and_then(|tab| {
-                            match &tab.state {
-                                WorkbenchTabState::PodLogs(logs_tab) => {
-                                    if logs_tab.viewer.lines.is_empty() {
-                                        None
-                                    } else {
-                                        Some(logs_tab.viewer.lines.join("\n"))
-                                    }
-                                }
-                                WorkbenchTabState::WorkloadLogs(wl_tab) => {
-                                    if wl_tab.lines.is_empty() {
-                                        None
-                                    } else {
-                                        Some(
-                                            wl_tab
-                                                .lines
-                                                .iter()
-                                                .map(|l| format!("{}:{} {}", l.pod_name, l.container_name, l.content))
-                                                .collect::<Vec<_>>()
-                                                .join("\n"),
-                                        )
-                                    }
-                                }
-                                _ => None,
-                            }
                         });
-                        if let Some(content) = content {
-                            let line_count = content.lines().count();
-                            if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
-                                app.set_error(format!("Clipboard error: {e}"));
-                            } else {
-                                app.status_message = Some(format!("Copied {line_count} log lines"));
-                            }
+                    if let Some(full) = full {
+                        if let Err(e) = kubectui::clipboard::copy_to_clipboard(&full) {
+                            app.set_error(format!("Clipboard error: {e}"));
+                        } else {
+                            app.status_message = Some(format!("Copied: {full}"));
                         }
                     }
-                    AppAction::ExportLogs => {
-                        let export_data = app.workbench().active_tab().and_then(|tab| {
-                            match &tab.state {
+                }
+                AppAction::CopyLogContent => {
+                    let content = app
+                        .workbench()
+                        .active_tab()
+                        .and_then(|tab| match &tab.state {
+                            WorkbenchTabState::PodLogs(logs_tab) => {
+                                if logs_tab.viewer.lines.is_empty() {
+                                    None
+                                } else {
+                                    Some(logs_tab.viewer.lines.join("\n"))
+                                }
+                            }
+                            WorkbenchTabState::WorkloadLogs(wl_tab) => {
+                                if wl_tab.lines.is_empty() {
+                                    None
+                                } else {
+                                    Some(
+                                        wl_tab
+                                            .lines
+                                            .iter()
+                                            .map(|l| {
+                                                format!(
+                                                    "{}:{} {}",
+                                                    l.pod_name, l.container_name, l.content
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n"),
+                                    )
+                                }
+                            }
+                            _ => None,
+                        });
+                    if let Some(content) = content {
+                        let line_count = content.lines().count();
+                        if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
+                            app.set_error(format!("Clipboard error: {e}"));
+                        } else {
+                            app.status_message = Some(format!("Copied {line_count} log lines"));
+                        }
+                    }
+                }
+                AppAction::ExportLogs => {
+                    let export_data =
+                        app.workbench()
+                            .active_tab()
+                            .and_then(|tab| match &tab.state {
                                 WorkbenchTabState::PodLogs(logs_tab) => {
                                     if logs_tab.viewer.lines.is_empty() {
                                         None
@@ -3165,124 +3316,129 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     }
                                 }
                                 _ => None,
+                            });
+                    if let Some((label, content)) = export_data {
+                        match kubectui::export::save_logs_to_file(&label, &content) {
+                            Ok(path) => {
+                                app.status_message = Some(format!("Saved to {}", path.display()));
                             }
-                        });
-                        if let Some((label, content)) = export_data {
-                            match kubectui::export::save_logs_to_file(&label, &content) {
-                                Ok(path) => {
-                                    app.status_message =
-                                        Some(format!("Saved to {}", path.display()));
-                                }
-                                Err(e) => {
-                                    app.set_error(format!("Export error: {e}"));
-                                }
+                            Err(e) => {
+                                app.set_error(format!("Export error: {e}"));
                             }
                         }
                     }
-                    AppAction::EditYaml => {
-                        if !app
-                            .detail_view
-                            .as_ref()
-                            .is_some_and(|detail| detail.supports_action(DetailAction::EditYaml))
-                        {
-                            app.set_error("YAML editing is unavailable for the selected resource.".to_string());
-                            continue;
-                        }
-                        // Gather what we need before suspending the TUI
-                        let edit_info = app.detail_view.as_ref().and_then(|d| {
-                            d.resource.as_ref().zip(d.yaml.as_ref()).map(|(r, y)| {
-                                (
-                                    r.kind().to_ascii_lowercase(),
-                                    r.name().to_string(),
-                                    r.namespace().map(str::to_owned),
-                                    y.clone(),
-                                )
-                            })
-                        });
+                }
+                AppAction::EditYaml => {
+                    if !app
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::EditYaml))
+                    {
+                        app.set_error(
+                            "YAML editing is unavailable for the selected resource.".to_string(),
+                        );
+                        continue;
+                    }
+                    // Gather what we need before suspending the TUI
+                    let edit_info = app.detail_view.as_ref().and_then(|d| {
+                        d.resource.as_ref().zip(d.yaml.as_ref()).map(|(r, y)| {
+                            (
+                                r.kind().to_ascii_lowercase(),
+                                r.name().to_string(),
+                                r.namespace().map(str::to_owned),
+                                y.clone(),
+                            )
+                        })
+                    });
 
-                        if let Some((kind, name, namespace, yaml_content)) = edit_info {
-                            // Write YAML to a temp file with unique suffix to prevent
-                            // symlink attacks from predictable paths.
-                            let nonce = std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map_or(0u64, |d| d.as_nanos() as u64)
-                                ^ std::process::id() as u64;
-                            let tmp_path = std::env::temp_dir()
-                                .join(format!("kubectui-{kind}-{name}-{nonce:016x}.yaml"));
-                            if let Err(err) = std::fs::write(&tmp_path, &yaml_content) {
-                                app.set_error(format!("Failed to write temp file: {err}"));
-                            } else {
-                                // Suspend TUI — restore terminal to canonical mode
-                                let _ = restore_terminal(terminal);
+                    if let Some((kind, name, namespace, yaml_content)) = edit_info {
+                        // Write YAML to a temp file with unique suffix to prevent
+                        // symlink attacks from predictable paths.
+                        let nonce = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map_or(0u64, |d| d.as_nanos() as u64)
+                            ^ std::process::id() as u64;
+                        let tmp_path = std::env::temp_dir()
+                            .join(format!("kubectui-{kind}-{name}-{nonce:016x}.yaml"));
+                        if let Err(err) = std::fs::write(&tmp_path, &yaml_content) {
+                            app.set_error(format!("Failed to write temp file: {err}"));
+                        } else {
+                            // Suspend TUI — restore terminal to canonical mode
+                            let _ = restore_terminal(terminal);
 
-                                // Spawn $EDITOR (fallback: vi)
-                                let editor = std::env::var("EDITOR")
-                                    .or_else(|_| std::env::var("VISUAL"))
-                                    .unwrap_or_else(|_| "vi".to_string());
+                            // Spawn $EDITOR (fallback: vi)
+                            let editor = std::env::var("EDITOR")
+                                .or_else(|_| std::env::var("VISUAL"))
+                                .unwrap_or_else(|_| "vi".to_string());
 
-                                let status = std::process::Command::new(&editor)
-                                    .arg(&tmp_path)
-                                    .status();
+                            let status =
+                                std::process::Command::new(&editor).arg(&tmp_path).status();
 
-                                // Re-init TUI regardless of editor outcome
-                                match setup_terminal() {
-                                    Ok(new_terminal) => *terminal = new_terminal,
-                                    Err(err) => {
-                                        eprintln!("Failed to restore terminal: {err:#}");
-                                        app.should_quit = true;
-                                        continue;
-                                    }
+                            // Re-init TUI regardless of editor outcome
+                            match setup_terminal() {
+                                Ok(new_terminal) => *terminal = new_terminal,
+                                Err(err) => {
+                                    eprintln!("Failed to restore terminal: {err:#}");
+                                    app.should_quit = true;
+                                    continue;
                                 }
+                            }
 
-                                match status {
-                                    Err(err) => {
-                                        app.set_error(format!("Failed to launch editor '{editor}': {err}"));
-                                    }
-                                    Ok(exit) if !exit.success() => {
-                                        // Editor exited non-zero (e.g. :cq in vim) — treat as cancel
-                                    }
-                                    Ok(_) => {
-                                        // Read back the edited file
-                                        match std::fs::read_to_string(&tmp_path) {
-                                            Err(err) => {
-                                                app.set_error(format!("Failed to read edited file: {err}"));
-                                            }
-                                            Ok(edited_yaml) => {
-                                                if edited_yaml.trim() == yaml_content.trim() {
-                                                    // No changes — skip apply
-                                                } else {
-                                                    let origin_view = app.view();
-                                                    let resource_label = format!(
-                                                        "{} '{}'{}",
-                                                        kind,
-                                                        name,
-                                                        namespace
-                                                            .as_deref()
-                                                            .map(|ns| format!(" in namespace '{ns}'"))
-                                                            .unwrap_or_default()
-                                                    );
-                                                    let jump_resource = app
-                                                        .detail_view
-                                                        .as_ref()
-                                                        .and_then(|detail| detail.resource.clone());
-                                                    let action_history_id = app.record_action_pending(
-                                                        ActionKind::ApplyYaml,
-                                                        origin_view,
-                                                        jump_resource,
-                                                        resource_label.clone(),
-                                                        format!("Applying changes to {resource_label}..."),
-                                                    );
-                                                    match client
-                                                        .apply_resource_yaml(
-                                                            &edited_yaml,
-                                                            &kind,
-                                                            &name,
-                                                            namespace.as_deref(),
-                                                        )
-                                                        .await
-                                                    {
-                                                        Ok(()) => {
-                                                            app.complete_action_history(
+                            match status {
+                                Err(err) => {
+                                    app.set_error(format!(
+                                        "Failed to launch editor '{editor}': {err}"
+                                    ));
+                                }
+                                Ok(exit) if !exit.success() => {
+                                    // Editor exited non-zero (e.g. :cq in vim) — treat as cancel
+                                }
+                                Ok(_) => {
+                                    // Read back the edited file
+                                    match std::fs::read_to_string(&tmp_path) {
+                                        Err(err) => {
+                                            app.set_error(format!(
+                                                "Failed to read edited file: {err}"
+                                            ));
+                                        }
+                                        Ok(edited_yaml) => {
+                                            if edited_yaml.trim() == yaml_content.trim() {
+                                                // No changes — skip apply
+                                            } else {
+                                                let origin_view = app.view();
+                                                let resource_label = format!(
+                                                    "{} '{}'{}",
+                                                    kind,
+                                                    name,
+                                                    namespace
+                                                        .as_deref()
+                                                        .map(|ns| format!(" in namespace '{ns}'"))
+                                                        .unwrap_or_default()
+                                                );
+                                                let jump_resource = app
+                                                    .detail_view
+                                                    .as_ref()
+                                                    .and_then(|detail| detail.resource.clone());
+                                                let action_history_id = app.record_action_pending(
+                                                    ActionKind::ApplyYaml,
+                                                    origin_view,
+                                                    jump_resource,
+                                                    resource_label.clone(),
+                                                    format!(
+                                                        "Applying changes to {resource_label}..."
+                                                    ),
+                                                );
+                                                match client
+                                                    .apply_resource_yaml(
+                                                        &edited_yaml,
+                                                        &kind,
+                                                        &name,
+                                                        namespace.as_deref(),
+                                                    )
+                                                    .await
+                                                {
+                                                    Ok(()) => {
+                                                        app.complete_action_history(
                                                                 action_history_id,
                                                                 ActionStatus::Succeeded,
                                                                 format!(
@@ -3290,132 +3446,158 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                                                 ),
                                                                 true,
                                                             );
-                                                            app.detail_view = None;
-                                                            app.focus = kubectui::app::Focus::Content;
-                                                            finish_mutation_success(
-                                                                &mut app,
-                                                                &mut MutationRuntime {
-                                                                    global_state: &mut global_state,
-                                                                    client: &client,
-                                                                    refresh_tx: &refresh_tx,
-                                                                    deferred_refresh_tx: &deferred_refresh_tx,
-                                                                    refresh_state: &mut refresh_state,
-                                                                    snapshot_dirty: &mut snapshot_dirty,
-                                                                    auto_refresh: &mut auto_refresh,
-                                                                    status_message_clear_at: &mut status_message_clear_at,
-                                                                },
-                                                                origin_view,
-                                                                format!(
-                                                                    "Applied changes to {} '{}'. Refreshing view...",
-                                                                    kind,
-                                                                    name
-                                                                ),
-                                                                false,
-                                                                MUTATION_REFRESH_DELAYS_SECS,
-                                                            );
-                                                        }
-                                                        Err(err) => {
-                                                            app.complete_action_history(
-                                                                action_history_id,
-                                                                ActionStatus::Failed,
-                                                                format!("Apply failed: {err:#}"),
-                                                                true,
-                                                            );
-                                                            app.set_error(format!("Apply failed: {err:#}"));
-                                                        }
+                                                        app.detail_view = None;
+                                                        app.focus = kubectui::app::Focus::Content;
+                                                        finish_mutation_success(
+                                                            &mut app,
+                                                            &mut MutationRuntime {
+                                                                global_state: &mut global_state,
+                                                                client: &client,
+                                                                refresh_tx: &refresh_tx,
+                                                                deferred_refresh_tx:
+                                                                    &deferred_refresh_tx,
+                                                                refresh_state: &mut refresh_state,
+                                                                snapshot_dirty: &mut snapshot_dirty,
+                                                                auto_refresh: &mut auto_refresh,
+                                                                status_message_clear_at:
+                                                                    &mut status_message_clear_at,
+                                                            },
+                                                            origin_view,
+                                                            format!(
+                                                                "Applied changes to {} '{}'. Refreshing view...",
+                                                                kind, name
+                                                            ),
+                                                            false,
+                                                            MUTATION_REFRESH_DELAYS_SECS,
+                                                        );
+                                                    }
+                                                    Err(err) => {
+                                                        app.complete_action_history(
+                                                            action_history_id,
+                                                            ActionStatus::Failed,
+                                                            format!("Apply failed: {err:#}"),
+                                                            true,
+                                                        );
+                                                        app.set_error(format!(
+                                                            "Apply failed: {err:#}"
+                                                        ));
                                                     }
                                                 }
                                             }
                                         }
                                     }
                                 }
-                                // Clean up temp file
-                                let _ = std::fs::remove_file(&tmp_path);
+                            }
+                            // Clean up temp file
+                            let _ = std::fs::remove_file(&tmp_path);
+                        }
+                    }
+                }
+                AppAction::PortForwardCreate((target, config)) => {
+                    match port_forwarder.create_tunnel_async(target, config).await {
+                        Ok(tunnel_id) => {
+                            app.clear_error();
+                            let tunnels = port_forwarder.list_tunnels();
+                            app.tunnel_registry.update_tunnels(tunnels.clone());
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::PortForward)
+                                && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
+                            {
+                                port_tab.dialog.success =
+                                    Some(format!("Tunnel created: {tunnel_id}"));
+                                let mut registry =
+                                    kubectui::state::port_forward::TunnelRegistry::new();
+                                registry.update_tunnels(tunnels);
+                                port_tab.dialog.update_registry(registry);
+                            }
+                        }
+                        Err(err) => {
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::PortForward)
+                                && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
+                            {
+                                port_tab.dialog.error = Some(format!("{err}"));
                             }
                         }
                     }
-                    AppAction::PortForwardCreate((target, config)) => {
-                        match port_forwarder.create_tunnel_async(target, config).await {
-                            Ok(tunnel_id) => {
-                                app.clear_error();
-                                let tunnels = port_forwarder.list_tunnels();
-                                app.tunnel_registry.update_tunnels(tunnels.clone());
-                                if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
-                                    && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
-                                        port_tab.dialog.success = Some(format!("Tunnel created: {tunnel_id}"));
-                                        let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
-                                        registry.update_tunnels(tunnels);
-                                        port_tab.dialog.update_registry(registry);
-                                    }
+                }
+                AppAction::PortForwardRefresh => {
+                    refresh_port_forward_workbench(
+                        &mut app,
+                        &port_forwarder,
+                        &mut status_message_clear_at,
+                    );
+                }
+                AppAction::PortForwardStop(tunnel_id) => {
+                    match port_forwarder.stop_forward(&tunnel_id).await {
+                        Ok(()) => {
+                            let tunnels = port_forwarder.list_tunnels();
+                            app.tunnel_registry.update_tunnels(tunnels.clone());
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::PortForward)
+                                && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
+                            {
+                                let mut registry =
+                                    kubectui::state::port_forward::TunnelRegistry::new();
+                                registry.update_tunnels(tunnels);
+                                port_tab.dialog.success =
+                                    Some(format!("Closed tunnel: {tunnel_id}"));
+                                port_tab.dialog.update_registry(registry);
                             }
-                            Err(err) => {
-                                if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
-                                    && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
-                                        port_tab.dialog.error = Some(format!("{err}"));
-                                    }
+                        }
+                        Err(err) => {
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::PortForward)
+                                && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
+                            {
+                                port_tab.dialog.error = Some(format!("{err:#}"));
                             }
                         }
                     }
-                    AppAction::PortForwardRefresh => {
-                        refresh_port_forward_workbench(
-                            &mut app,
-                            &port_forwarder,
-                            &mut status_message_clear_at,
+                }
+                AppAction::ScaleDialogOpen => {
+                    if !app
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
+                    {
+                        app.set_error(
+                            "Scale is unavailable for the selected resource.".to_string(),
                         );
+                        continue;
                     }
-                    AppAction::PortForwardStop(tunnel_id) => {
-                        match port_forwarder.stop_forward(&tunnel_id).await {
-                            Ok(()) => {
-                                let tunnels = port_forwarder.list_tunnels();
-                                app.tunnel_registry.update_tunnels(tunnels.clone());
-                                if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
-                                    && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
-                                        let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
-                                        registry.update_tunnels(tunnels);
-                                        port_tab.dialog.success = Some(format!("Closed tunnel: {tunnel_id}"));
-                                        port_tab.dialog.update_registry(registry);
-                                    }
+                    // Read actual replica count from snapshot before opening dialog
+                    let scale_info = app.detail_view.as_ref().and_then(|d| {
+                        d.resource.as_ref().and_then(|r| match r {
+                            ResourceRef::Deployment(name, ns) => {
+                                let replicas = cached_snapshot
+                                    .deployments
+                                    .iter()
+                                    .find(|d| &d.name == name && &d.namespace == ns)
+                                    .map(|d| d.desired_replicas)
+                                    .unwrap_or(1);
+                                Some((name.clone(), ns.clone(), replicas))
                             }
-                            Err(err) => {
-                                if let Some(tab) = app.workbench_mut().find_tab_mut(&WorkbenchTabKey::PortForward)
-                                    && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state {
-                                        port_tab.dialog.error = Some(format!("{err:#}"));
-                                    }
+                            ResourceRef::StatefulSet(name, ns) => {
+                                let replicas = cached_snapshot
+                                    .statefulsets
+                                    .iter()
+                                    .find(|ss| &ss.name == name && &ss.namespace == ns)
+                                    .map(|ss| ss.desired_replicas)
+                                    .unwrap_or(1);
+                                Some((name.clone(), ns.clone(), replicas))
                             }
-                        }
-                    }
-                    AppAction::ScaleDialogOpen => {
-                        if !app
-                            .detail_view
-                            .as_ref()
-                            .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
-                        {
-                            app.set_error("Scale is unavailable for the selected resource.".to_string());
-                            continue;
-                        }
-                        // Read actual replica count from snapshot before opening dialog
-                        let scale_info = app.detail_view.as_ref().and_then(|d| {
-                            d.resource.as_ref().and_then(|r| match r {
-                                ResourceRef::Deployment(name, ns) => {
-                                    let replicas = cached_snapshot.deployments.iter()
-                                        .find(|d| &d.name == name && &d.namespace == ns)
-                                        .map(|d| d.desired_replicas)
-                                        .unwrap_or(1);
-                                    Some((name.clone(), ns.clone(), replicas))
-                                }
-                                ResourceRef::StatefulSet(name, ns) => {
-                                    let replicas = cached_snapshot.statefulsets.iter()
-                                        .find(|ss| &ss.name == name && &ss.namespace == ns)
-                                        .map(|ss| ss.desired_replicas)
-                                        .unwrap_or(1);
-                                    Some((name.clone(), ns.clone(), replicas))
-                                }
-                                _ => None,
-                            })
-                        });
-                        if let Some((name, namespace, replicas)) = scale_info
-                            && let Some(detail) = &mut app.detail_view {
-                                detail.scale_dialog = Some(
+                            _ => None,
+                        })
+                    });
+                    if let Some((name, namespace, replicas)) = scale_info
+                        && let Some(detail) = &mut app.detail_view
+                    {
+                        detail.scale_dialog = Some(
                                     kubectui::ui::components::scale_dialog::ScaleDialogState::new(
                                         match detail.resource.as_ref() {
                                             Some(ResourceRef::Deployment(_, _)) => {
@@ -3433,51 +3615,54 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         replicas,
                                     ),
                                 );
-                            }
                     }
-                    AppAction::ProbePanelOpen => {
-                        if !app
-                            .detail_view
-                            .as_ref()
-                            .is_some_and(|detail| detail.supports_action(DetailAction::Probes))
-                        {
-                            app.set_error("Probe inspection is only available for Pod resources.".to_string());
-                            continue;
-                        }
-                        let pod_info = app.detail_view.as_ref().and_then(|d| {
-                            d.resource.as_ref().and_then(|r| match r {
-                                ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
-                                _ => None,
-                            })
-                        });
-                        if let Some((pod_name, pod_ns)) = pod_info {
-                            let tx = probe_tx.clone();
-                            let k = client.get_client();
-                            let pn = pod_name.clone();
-                            let ns = pod_ns.clone();
-                            tokio::spawn(async move {
-                                let pods_api: Api<Pod> = Api::namespaced(k, &ns);
-                                let probes = match pods_api.get(&pn).await {
-                                    Ok(pod) => extract_probes_from_pod(&pod).unwrap_or_default(),
-                                    Err(_) => Vec::new(),
-                                };
-                                let _ = tx.send(ProbeAsyncResult {
+                }
+                AppAction::ProbePanelOpen => {
+                    if !app
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Probes))
+                    {
+                        app.set_error(
+                            "Probe inspection is only available for Pod resources.".to_string(),
+                        );
+                        continue;
+                    }
+                    let pod_info = app.detail_view.as_ref().and_then(|d| {
+                        d.resource.as_ref().and_then(|r| match r {
+                            ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
+                            _ => None,
+                        })
+                    });
+                    if let Some((pod_name, pod_ns)) = pod_info {
+                        let tx = probe_tx.clone();
+                        let k = client.get_client();
+                        let pn = pod_name.clone();
+                        let ns = pod_ns.clone();
+                        tokio::spawn(async move {
+                            let pods_api: Api<Pod> = Api::namespaced(k, &ns);
+                            let probes = match pods_api.get(&pn).await {
+                                Ok(pod) => extract_probes_from_pod(&pod).unwrap_or_default(),
+                                Err(_) => Vec::new(),
+                            };
+                            let _ = tx
+                                .send(ProbeAsyncResult {
                                     pod_name: pn,
                                     namespace: ns,
                                     probes,
-                                }).await;
-                            });
-                        } else {
-                            apply_action(AppAction::ProbePanelOpen, &mut app);
-                        }
+                                })
+                                .await;
+                        });
+                    } else {
+                        apply_action(AppAction::ProbePanelOpen, &mut app);
                     }
-                    AppAction::CycleTheme => {
-                        apply_action(AppAction::CycleTheme, &mut app);
-                        save_config(&app);
-                    }
-                    other => {
-                        apply_action(other, &mut app);
-                    }
+                }
+                AppAction::CycleTheme => {
+                    apply_action(AppAction::CycleTheme, &mut app);
+                    save_config(&app);
+                }
+                other => {
+                    apply_action(other, &mut app);
                 }
             }
         }
