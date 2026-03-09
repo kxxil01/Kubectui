@@ -2920,6 +2920,42 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             }
                         }
                     }
+                    AppAction::CopyLogContent => {
+                        let content = app.workbench().active_tab().and_then(|tab| {
+                            match &tab.state {
+                                WorkbenchTabState::PodLogs(logs_tab) => {
+                                    if logs_tab.viewer.lines.is_empty() {
+                                        None
+                                    } else {
+                                        Some(logs_tab.viewer.lines.join("\n"))
+                                    }
+                                }
+                                WorkbenchTabState::WorkloadLogs(wl_tab) => {
+                                    if wl_tab.lines.is_empty() {
+                                        None
+                                    } else {
+                                        Some(
+                                            wl_tab
+                                                .lines
+                                                .iter()
+                                                .map(|l| format!("{}:{} {}", l.pod_name, l.container_name, l.content))
+                                                .collect::<Vec<_>>()
+                                                .join("\n"),
+                                        )
+                                    }
+                                }
+                                _ => None,
+                            }
+                        });
+                        if let Some(content) = content {
+                            let line_count = content.lines().count();
+                            if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
+                                app.set_error(format!("Clipboard error: {e}"));
+                            } else {
+                                app.status_message = Some(format!("Copied {line_count} log lines"));
+                            }
+                        }
+                    }
                     AppAction::EditYaml => {
                         if !app
                             .detail_view
