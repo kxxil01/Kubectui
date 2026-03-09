@@ -18,6 +18,7 @@ use crate::policy::DetailAction;
 pub enum CommandPaletteAction {
     None,
     Navigate(AppView),
+    Execute(DetailAction, ResourceRef),
     Close,
 }
 
@@ -226,22 +227,33 @@ pub struct CommandPalette {
     selected_index: usize,
     is_open: bool,
     cached_filtered: RefCell<Option<Vec<AppView>>>,
+    resource_context: Option<ResourceRef>,
 }
 
 impl CommandPalette {
     pub fn open(&mut self) {
-        self.is_open = true;
+        self.open_with_context(None);
+    }
+
+    pub fn open_with_context(&mut self, resource: Option<ResourceRef>) {
         self.query.clear();
         self.selected_index = 0;
+        self.is_open = true;
+        self.resource_context = resource;
         self.cached_filtered.borrow_mut().take();
     }
 
     pub fn close(&mut self) {
         self.is_open = false;
+        self.resource_context = None;
     }
 
     pub fn is_open(&self) -> bool {
         self.is_open
+    }
+
+    pub fn resource_context(&self) -> Option<&ResourceRef> {
+        self.resource_context.as_ref()
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> CommandPaletteAction {
@@ -563,5 +575,22 @@ mod tests {
         assert!(entries.iter().any(|e| e.action == DetailAction::Restart));
         assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
         assert!(!entries.iter().any(|e| e.action == DetailAction::Exec));
+    }
+
+    #[test]
+    fn palette_set_context_enables_actions() {
+        let mut palette = CommandPalette::default();
+        let resource = ResourceRef::Pod("test".into(), "default".into());
+        palette.open_with_context(Some(resource.clone()));
+        assert!(palette.is_open());
+        assert!(palette.resource_context().is_some());
+    }
+
+    #[test]
+    fn palette_open_without_context_has_no_actions() {
+        let mut palette = CommandPalette::default();
+        palette.open_with_context(None);
+        assert!(palette.is_open());
+        assert!(palette.resource_context().is_none());
     }
 }
