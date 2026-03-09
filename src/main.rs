@@ -848,6 +848,7 @@ fn request_refresh(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_delete_task(
     delete_tx: tokio::sync::mpsc::Sender<DeleteAsyncResult>,
     client: K8sClient,
@@ -856,6 +857,7 @@ fn spawn_delete_task(
     action_history_id: u64,
     context_generation: u64,
     origin_view: AppView,
+    force: bool,
 ) {
     tokio::spawn(async move {
         let outcome = tokio::time::timeout(Duration::from_secs(20), async {
@@ -883,9 +885,15 @@ fn spawn_delete_task(
                     let kind = resource.kind().to_ascii_lowercase();
                     let name = resource.name().to_string();
                     let namespace = resource.namespace().map(str::to_owned);
-                    client
-                        .delete_resource(&kind, &name, namespace.as_deref())
-                        .await
+                    if force {
+                        client
+                            .force_delete_resource(&kind, &name, namespace.as_deref())
+                            .await
+                    } else {
+                        client
+                            .delete_resource(&kind, &name, namespace.as_deref())
+                            .await
+                    }
                 }
             }
         })
@@ -2874,6 +2882,58 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 action_history_id,
                                 refresh_state.context_generation,
                                 origin_view,
+                                false,
+                            );
+                        }
+                    }
+                    AppAction::ForceDeleteResource => {
+                        if !app
+                            .detail_view
+                            .as_ref()
+                            .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
+                        {
+                            app.set_error("Delete is unavailable for the selected resource.".to_string());
+                            continue;
+                        }
+                        let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
+                        if let Some(resource) = delete_resource {
+                            if delete_in_flight_id.is_some() {
+                                app.set_error("Delete already in progress".to_string());
+                                continue;
+                            }
+
+                            if let Some(detail) = &mut app.detail_view {
+                                detail.confirm_delete = false;
+                                detail.loading = true;
+                            }
+
+                            delete_request_seq = delete_request_seq.wrapping_add(1);
+                            let request_id = delete_request_seq;
+                            delete_in_flight_id = Some(request_id);
+                            let resource_label =
+                                format!("{} '{}'", resource.kind(), resource.name());
+                            let origin_view = app.view();
+                            let action_history_id = app.record_action_pending(
+                                ActionKind::Delete,
+                                origin_view,
+                                Some(resource.clone()),
+                                resource_label.clone(),
+                                format!("Force deleting {resource_label}..."),
+                            );
+                            begin_detail_mutation(
+                                &mut app,
+                                &mut status_message_clear_at,
+                                format!("Force deleting {resource_label}..."),
+                            );
+                            spawn_delete_task(
+                                delete_tx.clone(),
+                                client.clone(),
+                                resource,
+                                request_id,
+                                action_history_id,
+                                refresh_state.context_generation,
+                                origin_view,
+                                true,
                             );
                         }
                     }

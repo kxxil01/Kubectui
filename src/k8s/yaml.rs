@@ -387,6 +387,41 @@ pub async fn delete_resource(
     Ok(())
 }
 
+/// Force-deletes a Kubernetes resource by setting grace period to 0.
+pub async fn force_delete_resource(
+    client: &Client,
+    kind: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> Result<()> {
+    let (api_resource, namespaced) = api_resource_for_kind(kind)
+        .with_context(|| format!("unsupported resource kind '{kind}'"))?;
+
+    let api: Api<DynamicObject> = if namespaced {
+        match namespace {
+            Some(ns) => Api::namespaced_with(client.clone(), ns, &api_resource),
+            None => return Err(anyhow!("resource kind '{kind}' requires a namespace")),
+        }
+    } else {
+        Api::all_with(client.clone(), &api_resource)
+    };
+
+    let dp = kube::api::DeleteParams {
+        grace_period_seconds: Some(0),
+        propagation_policy: Some(kube::api::PropagationPolicy::Background),
+        ..Default::default()
+    };
+
+    api.delete(name, &dp).await.with_context(|| {
+        format!(
+            "failed to force-delete {kind}/{name} in namespace '{}'",
+            namespace.unwrap_or("<cluster-scope>")
+        )
+    })?;
+
+    Ok(())
+}
+
 /// Deletes a custom resource using explicit API coordinates.
 pub async fn delete_custom_resource(
     client: &Client,

@@ -1938,6 +1938,16 @@ impl K8sClient {
         yaml::delete_resource(&self.client, kind, name, namespace).await
     }
 
+    /// Force-deletes a Kubernetes resource by setting grace period to 0.
+    pub async fn force_delete_resource(
+        &self,
+        kind: &str,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<()> {
+        yaml::force_delete_resource(&self.client, kind, name, namespace).await
+    }
+
     /// Deletes a custom resource using explicit CRD coordinates.
     pub async fn delete_custom_resource(
         &self,

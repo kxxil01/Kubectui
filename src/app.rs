@@ -1342,6 +1342,7 @@ pub enum AppAction {
     RolloutRestart,
     EditYaml,
     DeleteResource,
+    ForceDeleteResource,
     CycleTheme,
     OpenHelp,
     CloseHelp,
@@ -2700,6 +2701,15 @@ impl AppState {
                     detail.confirm_delete = true;
                 }
                 AppAction::None
+            }
+            KeyCode::Char('F')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| d.confirm_delete)
+                    .unwrap_or(false) =>
+            {
+                AppAction::ForceDeleteResource
             }
             KeyCode::Char('D') | KeyCode::Char('y') | KeyCode::Enter
                 if self

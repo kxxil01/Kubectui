@@ -317,6 +317,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs event loop (needs async K8s call)
             true
         }
+        AppAction::ForceDeleteResource => {
+            // Handled in main.rs (needs async K8s call)
+            true
+        }
         AppAction::CycleTheme => {
             crate::ui::theme::cycle_theme();
             true

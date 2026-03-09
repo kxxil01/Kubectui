@@ -557,6 +557,8 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
     let footer = Line::from(vec![
         Span::styled(" [D] / [y] / [Enter] ", theme.keybind_key_style()),
         Span::styled("Confirm  ", theme.keybind_desc_style()),
+        Span::styled("[F] ", theme.keybind_key_style()),
+        Span::styled("Force  ", theme.keybind_desc_style()),
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
     ]);
