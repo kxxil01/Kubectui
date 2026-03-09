@@ -10,7 +10,8 @@ use ratatui::{
 };
 use std::cell::RefCell;
 
-use crate::app::AppView;
+use crate::app::{AppView, ResourceRef};
+use crate::policy::DetailAction;
 
 /// Actions emitted by the command palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -18,6 +19,50 @@ pub enum CommandPaletteAction {
     None,
     Navigate(AppView),
     Close,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaletteEntry {
+    Navigate(AppView),
+    Action(DetailAction),
+}
+
+#[derive(Debug, Clone)]
+pub struct ActionEntry {
+    pub action: DetailAction,
+    pub aliases: &'static [&'static str],
+}
+
+const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
+    (DetailAction::ViewYaml, &["yaml", "manifest"]),
+    (DetailAction::ViewEvents, &["events", "event"]),
+    (DetailAction::Logs, &["logs", "log"]),
+    (DetailAction::Exec, &["exec", "shell", "terminal"]),
+    (
+        DetailAction::PortForward,
+        &["port-forward", "forward", "tunnel", "pf"],
+    ),
+    (DetailAction::Probes, &["probes", "health", "probe"]),
+    (DetailAction::Scale, &["scale", "replicas"]),
+    (DetailAction::Restart, &["restart", "rollout"]),
+    (DetailAction::FluxReconcile, &["reconcile", "flux"]),
+    (DetailAction::EditYaml, &["edit", "modify"]),
+    (DetailAction::Delete, &["delete", "remove"]),
+    (DetailAction::Trigger, &["trigger", "run"]),
+];
+
+pub fn action_entries_for_resource(resource: Option<&ResourceRef>) -> Vec<ActionEntry> {
+    let Some(resource) = resource else {
+        return Vec::new();
+    };
+    ACTION_ALIASES
+        .iter()
+        .filter(|(action, _)| resource.supports_detail_action(*action))
+        .map(|(action, aliases)| ActionEntry {
+            action: *action,
+            aliases,
+        })
+        .collect()
 }
 
 /// All navigable commands — each maps a set of aliases to a target view.
@@ -491,5 +536,32 @@ mod tests {
         p.open();
         p.handle_key(KeyEvent::from(KeyCode::Up));
         assert_eq!(p.selected_index, COMMANDS.len() - 1);
+    }
+
+    #[test]
+    fn palette_entry_action_aliases_match() {
+        let entries = action_entries_for_resource(None);
+        assert!(entries.is_empty(), "No actions without resource");
+    }
+
+    #[test]
+    fn palette_entry_action_aliases_pod() {
+        use crate::app::ResourceRef;
+        let resource = ResourceRef::Pod("test".into(), "default".into());
+        let entries = action_entries_for_resource(Some(&resource));
+        assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
+        assert!(entries.iter().any(|e| e.action == DetailAction::Exec));
+        assert!(!entries.iter().any(|e| e.action == DetailAction::Scale));
+    }
+
+    #[test]
+    fn palette_entry_action_aliases_deployment() {
+        use crate::app::ResourceRef;
+        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        let entries = action_entries_for_resource(Some(&resource));
+        assert!(entries.iter().any(|e| e.action == DetailAction::Scale));
+        assert!(entries.iter().any(|e| e.action == DetailAction::Restart));
+        assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
+        assert!(!entries.iter().any(|e| e.action == DetailAction::Exec));
     }
 }
