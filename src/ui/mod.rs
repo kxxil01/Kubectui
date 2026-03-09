@@ -194,9 +194,18 @@ pub(crate) fn loading_or_empty_message_no_search(
     }
 }
 
-fn effective_workbench_height(total_body_height: u16, requested_height: u16, open: bool) -> u16 {
+fn effective_workbench_height(
+    total_body_height: u16,
+    requested_height: u16,
+    open: bool,
+    maximized: bool,
+) -> u16 {
     if !open || total_body_height <= 12 {
         return 0;
+    }
+
+    if maximized {
+        return total_body_height;
     }
 
     let max_height = total_body_height.saturating_sub(8);
@@ -336,6 +345,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     root[1].height,
                     app.workbench().height,
                     app.workbench().open,
+                    app.workbench().maximized,
                 )),
             ])
             .split(root[1])
@@ -1380,10 +1390,15 @@ mod tests {
 
     #[test]
     fn effective_workbench_height_preserves_main_content_budget() {
-        assert_eq!(effective_workbench_height(10, 12, true), 0);
-        assert_eq!(effective_workbench_height(20, 12, true), 12);
-        assert_eq!(effective_workbench_height(20, 16, true), 12);
-        assert_eq!(effective_workbench_height(20, 12, false), 0);
+        assert_eq!(effective_workbench_height(10, 12, true, false), 0);
+        assert_eq!(effective_workbench_height(20, 12, true, false), 12);
+        assert_eq!(effective_workbench_height(20, 16, true, false), 12);
+        assert_eq!(effective_workbench_height(20, 12, false, false), 0);
+        // Maximized takes full height
+        assert_eq!(effective_workbench_height(40, 12, true, true), 40);
+        assert_eq!(effective_workbench_height(20, 12, true, true), 20);
+        // Maximized but closed still returns 0
+        assert_eq!(effective_workbench_height(20, 12, false, true), 0);
     }
 
     #[test]

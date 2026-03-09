@@ -39,10 +39,15 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
         .active_tab
         .min(titles.len().saturating_sub(1));
 
+    let title = if app.workbench().maximized {
+        " Workbench [maximized] "
+    } else {
+        " Workbench "
+    };
     let tabs = Tabs::new(titles)
         .block(
             Block::default()
-                .title(Span::styled(" Workbench ", theme.section_title_style()))
+                .title(Span::styled(title, theme.section_title_style()))
                 .borders(Borders::ALL)
                 .border_type(theme.border_type())
                 .border_style(theme.border_style())
@@ -374,19 +379,34 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
     }
 
     if viewer.picking_container {
-        let lines: Vec<Line> = viewer
-            .containers
-            .iter()
-            .enumerate()
-            .map(|(idx, container)| {
-                let prefix = if idx == viewer.container_cursor {
-                    ">"
-                } else {
-                    " "
-                };
-                Line::from(format!("{prefix} {container}"))
-            })
-            .collect();
+        let has_all = viewer.containers.len() > 1;
+        let mut lines: Vec<Line> = Vec::new();
+
+        if has_all {
+            let prefix = if viewer.container_cursor == 0 {
+                ">"
+            } else {
+                " "
+            };
+            lines.push(Line::from(vec![
+                Span::raw(format!("{prefix} ")),
+                Span::styled(
+                    " All Containers",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+            ]));
+        }
+
+        for (idx, container) in viewer.containers.iter().enumerate() {
+            let picker_idx = if has_all { idx + 1 } else { idx };
+            let prefix = if picker_idx == viewer.container_cursor {
+                ">"
+            } else {
+                " "
+            };
+            lines.push(Line::from(format!("{prefix} {container}")));
+        }
+
         frame.render_widget(
             Paragraph::new(lines).wrap(Wrap { trim: false }),
             sections[1],

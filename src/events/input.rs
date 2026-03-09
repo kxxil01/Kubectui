@@ -71,7 +71,9 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::EscapePressed => {
-            if app_state.focus == Focus::Workbench {
+            if app_state.focus == Focus::Workbench && app_state.workbench().maximized {
+                app_state.workbench_toggle_maximize();
+            } else if app_state.focus == Focus::Workbench {
                 app_state.blur_workbench();
             } else if app_state
                 .detail_view
@@ -161,14 +163,21 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
                 && logs_tab.viewer.picking_container
             {
-                let max = logs_tab.viewer.containers.len().saturating_sub(1);
+                // Extra "All Containers" entry when 2+ containers
+                let extra = if logs_tab.viewer.containers.len() > 1 {
+                    1
+                } else {
+                    0
+                };
+                let max = (logs_tab.viewer.containers.len() + extra).saturating_sub(1);
                 logs_tab.viewer.container_cursor = (logs_tab.viewer.container_cursor + 1).min(max);
                 return true;
             }
             false
         }
-        // LogsViewerSelectContainer is handled in main.rs (needs async log fetch)
+        // LogsViewerSelectContainer / SelectAll handled in main.rs (needs async log fetch)
         AppAction::LogsViewerSelectContainer(_) => true,
+        AppAction::LogsViewerSelectAllContainers => true,
         AppAction::OpenResourceYaml => true,
         AppAction::OpenResourceEvents => true,
         AppAction::OpenActionHistory => {
@@ -307,6 +316,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         }
         AppAction::WorkbenchDecreaseHeight => {
             app_state.workbench_decrease_height();
+            true
+        }
+        AppAction::WorkbenchToggleMaximize => {
+            app_state.workbench_toggle_maximize();
             true
         }
         AppAction::ActionHistoryOpenSelected => {

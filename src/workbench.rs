@@ -8,7 +8,7 @@ use crate::{
 
 pub const DEFAULT_WORKBENCH_HEIGHT: u16 = 12;
 pub const MIN_WORKBENCH_HEIGHT: u16 = 8;
-pub const MAX_WORKBENCH_HEIGHT: u16 = 20;
+pub const MAX_WORKBENCH_HEIGHT: u16 = 40;
 pub const MAX_WORKLOAD_LOG_LINES: usize = 5_000;
 pub const MAX_EXEC_OUTPUT_LINES: usize = 5_000;
 
@@ -392,6 +392,7 @@ impl WorkbenchTab {
 pub struct WorkbenchState {
     pub open: bool,
     pub height: u16,
+    pub maximized: bool,
     pub active_tab: usize,
     pub tabs: Vec<WorkbenchTab>,
     next_tab_id: u64,
@@ -402,6 +403,7 @@ impl Default for WorkbenchState {
         Self {
             open: false,
             height: DEFAULT_WORKBENCH_HEIGHT,
+            maximized: false,
             active_tab: 0,
             tabs: Vec::new(),
             next_tab_id: 1,
@@ -454,6 +456,11 @@ impl WorkbenchState {
 
     pub fn close(&mut self) {
         self.open = false;
+        self.maximized = false;
+    }
+
+    pub fn toggle_maximize(&mut self) {
+        self.maximized = !self.maximized;
     }
 
     pub fn close_active_tab(&mut self) {
@@ -678,5 +685,23 @@ mod tests {
         );
         assert!(state.open);
         assert_eq!(state.tabs.len(), 2);
+    }
+
+    #[test]
+    fn toggle_maximize() {
+        let mut state = WorkbenchState::default();
+        assert!(!state.maximized);
+        state.toggle_maximize();
+        assert!(state.maximized);
+        state.toggle_maximize();
+        assert!(!state.maximized);
+    }
+
+    #[test]
+    fn close_clears_maximized() {
+        let mut state = WorkbenchState::default();
+        state.maximized = true;
+        state.close();
+        assert!(!state.maximized);
     }
 }

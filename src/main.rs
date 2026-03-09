@@ -2456,6 +2456,59 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             });
                         }
                     }
+                    AppAction::LogsViewerSelectAllContainers => {
+                        // Gather pod info from the current PodLogs tab, then replace
+                        // it with a WorkloadLogs tab streaming all containers.
+                        let all_info: Option<(String, String, Vec<String>, ResourceRef)> =
+                            app.workbench().active_tab().and_then(|tab| {
+                                if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
+                                    let v = &logs_tab.viewer;
+                                    Some((
+                                        v.pod_name.clone(),
+                                        v.pod_namespace.clone(),
+                                        v.containers.clone(),
+                                        logs_tab.resource.clone(),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            });
+
+                        if let Some((pod_name, pod_ns, containers, resource)) = all_info {
+                            // Close the single-container PodLogs tab
+                            app.workbench.close_active_tab();
+
+                            // Open a WorkloadLogs tab for the same pod
+                            let session_id = next_workload_logs_session_id;
+                            next_workload_logs_session_id =
+                                next_workload_logs_session_id.wrapping_add(1).max(1);
+                            app.open_workload_logs_tab(resource, session_id);
+
+                            // Build sources: all containers from this single pod
+                            let sources: Vec<(String, String, String)> = containers
+                                .iter()
+                                .map(|c| (pod_name.clone(), pod_ns.clone(), c.clone()))
+                                .collect();
+
+                            // Configure the tab directly
+                            if let Some(tab) = app.workbench_mut().active_tab_mut()
+                                && let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state
+                                && logs_tab.session_id == session_id
+                            {
+                                logs_tab.sources = sources.clone();
+                                logs_tab.loading = false;
+                                workload_log_sessions
+                                    .insert(session_id, sources.clone());
+                            }
+
+                            // Start streaming each container
+                            for (pod, ns, container) in sources {
+                                let _ = coordinator
+                                    .start_log_streaming(pod, ns, container, true)
+                                    .await;
+                            }
+                        }
+                    }
                     AppAction::LogsViewerToggleFollow => {
                         let follow_info = app.workbench().active_tab().and_then(|tab| {
                             if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
