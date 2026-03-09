@@ -22,6 +22,13 @@ pub struct NodeInfo {
     pub network_unavailable: bool,
 }
 
+/// Lightweight owner reference for display in detail views.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct OwnerRefInfo {
+    pub kind: String,
+    pub name: String,
+}
+
 /// Lightweight pod view used by state management and rendering.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct PodInfo {
@@ -34,6 +41,7 @@ pub struct PodInfo {
     pub created_at: Option<DateTime<Utc>>,
     pub labels: Vec<(String, String)>,
     pub annotations: Vec<(String, String)>,
+    pub owner_references: Vec<OwnerRefInfo>,
     pub waiting_reasons: Vec<String>,
 }
 

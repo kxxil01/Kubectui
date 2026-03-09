@@ -268,6 +268,16 @@ impl K8sClient {
                         .unwrap_or_default()
                         .into_iter()
                         .collect(),
+                    owner_references: pod
+                        .metadata
+                        .owner_references
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|oref| crate::k8s::dtos::OwnerRefInfo {
+                            kind: oref.kind,
+                            name: oref.name,
+                        })
+                        .collect(),
                     waiting_reasons,
                 }
             })

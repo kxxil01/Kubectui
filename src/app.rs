@@ -996,6 +996,7 @@ pub struct DetailMetadata {
     pub created: Option<String>,
     pub labels: Vec<(String, String)>,
     pub annotations: Vec<(String, String)>,
+    pub owner_references: Vec<crate::k8s::dtos::OwnerRefInfo>,
     pub flux_reconcile_enabled: bool,
 }
 
