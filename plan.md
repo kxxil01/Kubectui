@@ -626,7 +626,7 @@ Bring detail view information density closer to Lens without visual clutter.
 
 ### Status
 
-Planned
+Shipped
 
 ### Goal
 
@@ -1039,10 +1039,9 @@ This is the execution order.
 - Milestone 6: Discoverability & Operator QoL
 - Milestone 7: Clipboard & Export
 - Milestone 8: Enhanced Detail
+- Milestone 9: Action Palette v2
 
 ## P2
-
-- Milestone 9: Action Palette v2
 - Milestone 10: Relationship Explorer
 - Milestone 11: Node Operations
 
