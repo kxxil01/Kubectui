@@ -68,6 +68,7 @@ struct SidebarCacheKey {
     sidebar_cursor: usize,
     collapsed_mask: u16,
     sidebar_active: bool,
+    counts_hash: u64,
 }
 
 type SidebarCacheValue = Arc<Vec<Line<'static>>>;
@@ -231,16 +232,22 @@ fn cached_sidebar_lines(
     collapsed: &HashSet<NavGroup>,
     focus: crate::app::Focus,
     theme: &Theme,
+    counts: &[(AppView, usize)],
 ) -> SidebarCacheValue {
     use crate::app::{SidebarItem, sidebar_rows};
+    use std::hash::{Hash, Hasher};
 
     let sidebar_active = focus == crate::app::Focus::Sidebar;
+    let mut hasher = std::hash::DefaultHasher::new();
+    counts.hash(&mut hasher);
+    let counts_hash = hasher.finish();
     let key = SidebarCacheKey {
         theme_index,
         active,
         sidebar_cursor,
         collapsed_mask: collapsed_mask(collapsed),
         sidebar_active,
+        counts_hash,
     };
 
     if let Ok(mut cache) = SIDEBAR_LINE_CACHE.lock()
@@ -281,7 +288,13 @@ fn cached_sidebar_lines(
                     }
                     SidebarItem::View(view) => {
                         let is_active = *view == active;
-                        let line = view.sidebar_text();
+                        let base = view.sidebar_text();
+                        let line: String =
+                            if let Some((_, count)) = counts.iter().find(|(v, _)| v == view) {
+                                format!("{base} ({count})")
+                            } else {
+                                base.to_string()
+                            };
                         if is_cursor && is_active && sidebar_active {
                             Line::from(vec![Span::styled(line, selected_active_style)])
                         } else if is_cursor && sidebar_active {
@@ -367,6 +380,7 @@ pub fn render_sidebar(
     sidebar_cursor: usize,
     collapsed: &HashSet<NavGroup>,
     focus: crate::app::Focus,
+    counts: &[(AppView, usize)],
 ) {
     use crate::app::Focus;
     use ratatui::layout::Margin;
@@ -399,6 +413,7 @@ pub fn render_sidebar(
         collapsed,
         focus,
         &theme,
+        counts,
     );
 
     frame.render_widget(Paragraph::new((*lines).clone()), inner);

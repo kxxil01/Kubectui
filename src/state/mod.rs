@@ -192,6 +192,108 @@ impl ClusterSnapshot {
     pub fn view_load_state(&self, view: AppView) -> ViewLoadState {
         self.view_load_states[view.index()]
     }
+
+    /// Returns the count of resources for a given view, or None if the view
+    /// doesn't map to a direct collection.
+    pub fn resource_count(&self, view: AppView) -> Option<usize> {
+        match view {
+            AppView::Nodes => Some(self.nodes.len()),
+            AppView::Pods => Some(self.pods.len()),
+            AppView::Deployments => Some(self.deployments.len()),
+            AppView::StatefulSets => Some(self.statefulsets.len()),
+            AppView::DaemonSets => Some(self.daemonsets.len()),
+            AppView::ReplicaSets => Some(self.replicasets.len()),
+            AppView::ReplicationControllers => Some(self.replication_controllers.len()),
+            AppView::Jobs => Some(self.jobs.len()),
+            AppView::CronJobs => Some(self.cronjobs.len()),
+            AppView::Services => Some(self.services.len()),
+            AppView::Endpoints => Some(self.endpoints.len()),
+            AppView::Ingresses => Some(self.ingresses.len()),
+            AppView::IngressClasses => Some(self.ingress_classes.len()),
+            AppView::NetworkPolicies => Some(self.network_policies.len()),
+            AppView::ConfigMaps => Some(self.config_maps.len()),
+            AppView::Secrets => Some(self.secrets.len()),
+            AppView::ResourceQuotas => Some(self.resource_quotas.len()),
+            AppView::LimitRanges => Some(self.limit_ranges.len()),
+            AppView::HPAs => Some(self.hpas.len()),
+            AppView::PodDisruptionBudgets => Some(self.pod_disruption_budgets.len()),
+            AppView::PriorityClasses => Some(self.priority_classes.len()),
+            AppView::PersistentVolumeClaims => Some(self.pvcs.len()),
+            AppView::PersistentVolumes => Some(self.pvs.len()),
+            AppView::StorageClasses => Some(self.storage_classes.len()),
+            AppView::Namespaces => Some(self.namespace_list.len()),
+            AppView::Events => Some(self.events.len()),
+            AppView::ServiceAccounts => Some(self.service_accounts.len()),
+            AppView::Roles => Some(self.roles.len()),
+            AppView::RoleBindings => Some(self.role_bindings.len()),
+            AppView::ClusterRoles => Some(self.cluster_roles.len()),
+            AppView::ClusterRoleBindings => Some(self.cluster_role_bindings.len()),
+            AppView::Extensions => Some(self.custom_resource_definitions.len()),
+            AppView::HelmReleases => Some(self.helm_releases.len()),
+            AppView::HelmCharts => Some(self.helm_repositories.len()),
+            AppView::FluxCDAll => Some(self.flux_resources.len()),
+            AppView::FluxCDKustomizations => Some(
+                self.flux_resources
+                    .iter()
+                    .filter(|r| {
+                        r.group == "kustomize.toolkit.fluxcd.io" && r.kind == "Kustomization"
+                    })
+                    .count(),
+            ),
+            AppView::FluxCDHelmReleases => Some(
+                self.flux_resources
+                    .iter()
+                    .filter(|r| r.group == "helm.toolkit.fluxcd.io" && r.kind == "HelmRelease")
+                    .count(),
+            ),
+            AppView::FluxCDHelmRepositories => Some(
+                self.flux_resources
+                    .iter()
+                    .filter(|r| r.group == "source.toolkit.fluxcd.io" && r.kind == "HelmRepository")
+                    .count(),
+            ),
+            AppView::FluxCDAlertProviders => Some(
+                self.flux_resources
+                    .iter()
+                    .filter(|r| {
+                        r.group == "notification.toolkit.fluxcd.io" && r.kind == "AlertProvider"
+                    })
+                    .count(),
+            ),
+            AppView::FluxCDAlerts => Some(
+                self.flux_resources
+                    .iter()
+                    .filter(|r| r.group == "notification.toolkit.fluxcd.io" && r.kind == "Alert")
+                    .count(),
+            ),
+            AppView::FluxCDArtifacts => Some(
+                self.flux_resources
+                    .iter()
+                    .filter(|r| r.artifact.is_some())
+                    .count(),
+            ),
+            AppView::FluxCDImages => Some(
+                self.flux_resources
+                    .iter()
+                    .filter(|r| r.group == "image.toolkit.fluxcd.io")
+                    .count(),
+            ),
+            AppView::FluxCDReceivers => Some(
+                self.flux_resources
+                    .iter()
+                    .filter(|r| r.group == "notification.toolkit.fluxcd.io" && r.kind == "Receiver")
+                    .count(),
+            ),
+            AppView::FluxCDSources => Some(
+                self.flux_resources
+                    .iter()
+                    .filter(|r| r.group == "source.toolkit.fluxcd.io")
+                    .count(),
+            ),
+            // Dashboard and PortForwarding don't have direct collections
+            AppView::Dashboard | AppView::PortForwarding => None,
+        }
+    }
 }
 
 /// Data source contract for retrieving Kubernetes snapshot inputs.
