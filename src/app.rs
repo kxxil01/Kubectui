@@ -1345,6 +1345,7 @@ pub enum AppAction {
     CloseHelp,
     CopyResourceName,
     CopyResourceFullName,
+    CopyLogContent,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -2270,6 +2271,9 @@ impl AppState {
                     tab.viewer.search_input.push(c);
                     AppAction::None
                 }
+                KeyCode::Char('y') if !tab.viewer.searching && !tab.viewer.picking_container => {
+                    AppAction::CopyLogContent
+                }
                 _ => AppAction::None,
             },
             WorkbenchTabState::WorkloadLogs(tab) => {
@@ -2354,6 +2358,7 @@ impl AppState {
                             tab.cycle_container_filter();
                             AppAction::None
                         }
+                        KeyCode::Char('y') if !tab.editing_text_filter => AppAction::CopyLogContent,
                         _ => AppAction::None,
                     }
                 }

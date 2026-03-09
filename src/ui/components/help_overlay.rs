@@ -82,6 +82,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("t", "Toggle timestamps"),
             ("/", "Search in logs"),
             ("n / N", "Next / previous match"),
+            ("y", "Copy log content"),
         ],
     ),
     (
@@ -91,6 +92,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("p", "Cycle pod filter"),
             ("c", "Cycle container filter"),
             ("/", "Text filter"),
+            ("y", "Copy log content"),
         ],
     ),
 ];

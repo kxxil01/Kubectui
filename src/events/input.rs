@@ -404,6 +404,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs (needs cluster snapshot to resolve selected resource)
             true
         }
+        AppAction::CopyLogContent => {
+            // Handled in main.rs (needs log buffer access)
+            true
+        }
     }
 }
 
