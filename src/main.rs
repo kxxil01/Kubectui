@@ -473,6 +473,15 @@ struct FluxReconcileAsyncResult {
 }
 
 #[derive(Debug)]
+struct TriggerCronJobAsyncResult {
+    action_history_id: u64,
+    context_generation: u64,
+    origin_view: AppView,
+    resource_label: String,
+    result: Result<String, String>,
+}
+
+#[derive(Debug)]
 struct ProbeAsyncResult {
     pod_name: String,
     namespace: String,
@@ -973,6 +982,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (rollout_tx, mut rollout_rx) = tokio::sync::mpsc::channel::<RolloutRestartAsyncResult>(16);
     let (flux_reconcile_tx, mut flux_reconcile_rx) =
         tokio::sync::mpsc::channel::<FluxReconcileAsyncResult>(16);
+    let (trigger_cronjob_tx, mut trigger_cronjob_rx) =
+        tokio::sync::mpsc::channel::<TriggerCronJobAsyncResult>(16);
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
     let (exec_bootstrap_tx, mut exec_bootstrap_rx) =
         tokio::sync::mpsc::channel::<ExecBootstrapResult>(16);
@@ -1564,6 +1575,59 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             );
                             status_message_clear_at = None;
                             app.set_error(format!("Flux reconcile failed: {err}"));
+                        }
+                    }
+                }
+            }
+
+            result = trigger_cronjob_rx.recv() => {
+                if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            "Trigger cancelled because the active context changed.",
+                            true,
+                        );
+                        continue;
+                    }
+
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(job_name) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!("Created Job '{job_name}' from {}.", result.resource_label),
+                                true,
+                            );
+                            finish_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                format!("Created Job '{job_name}'."),
+                                false,
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
+                        }
+                        Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("Trigger failed: {err}"),
+                                true,
+                            );
+                            status_message_clear_at = None;
+                            app.set_error(format!("Trigger failed: {err}"));
                         }
                     }
                 }
@@ -2935,6 +2999,51 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 origin_view,
                                 true,
                             );
+                        }
+                    }
+                    AppAction::TriggerCronJob => {
+                        let cronjob_info = app.detail_view.as_ref().and_then(|d| {
+                            if let Some(ResourceRef::CronJob(name, ns)) = &d.resource {
+                                Some((name.clone(), ns.clone()))
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some((name, namespace)) = cronjob_info {
+                            let resource_label = format!("CronJob '{name}'");
+                            let origin_view = app.view();
+                            let action_history_id = app.record_action_pending(
+                                ActionKind::Trigger,
+                                origin_view,
+                                app.detail_view
+                                    .as_ref()
+                                    .and_then(|d| d.resource.clone()),
+                                resource_label.clone(),
+                                format!("Triggering {resource_label}..."),
+                            );
+                            begin_detail_mutation(
+                                &mut app,
+                                &mut status_message_clear_at,
+                                format!("Triggering {resource_label}..."),
+                            );
+                            let tx = trigger_cronjob_tx.clone();
+                            let c = client.clone();
+                            let context_generation = refresh_state.context_generation;
+                            tokio::spawn(async move {
+                                let result = c
+                                    .trigger_cronjob(&name, &namespace)
+                                    .await
+                                    .map_err(|e| format!("{e:#}"));
+                                let _ = tx
+                                    .send(TriggerCronJobAsyncResult {
+                                        action_history_id,
+                                        context_generation,
+                                        origin_view,
+                                        resource_label,
+                                        result,
+                                    })
+                                    .await;
+                            });
                         }
                     }
                     AppAction::CopyResourceName => {

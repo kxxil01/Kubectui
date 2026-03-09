@@ -1977,6 +1977,55 @@ impl K8sClient {
             .await
     }
 
+    /// Creates a Job from a CronJob spec, effectively triggering a manual run.
+    pub async fn trigger_cronjob(&self, name: &str, namespace: &str) -> Result<String> {
+        use kube::api::PostParams;
+
+        let cronjobs: Api<CronJob> = Api::namespaced(self.client.clone(), namespace);
+        let cronjob = cronjobs
+            .get(name)
+            .await
+            .with_context(|| format!("failed to get CronJob '{name}' in '{namespace}'"))?;
+
+        let job_template = cronjob
+            .spec
+            .as_ref()
+            .map(|s| &s.job_template)
+            .context("CronJob has no spec")?;
+
+        let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let job_name = format!("{name}-manual-{timestamp}");
+
+        let job = Job {
+            metadata: kube::api::ObjectMeta {
+                name: Some(job_name.clone()),
+                namespace: Some(namespace.to_string()),
+                labels: job_template
+                    .metadata
+                    .as_ref()
+                    .and_then(|m| m.labels.clone()),
+                annotations: {
+                    let mut ann = BTreeMap::new();
+                    ann.insert(
+                        "cronjob.kubernetes.io/instantiate".to_string(),
+                        "manual".to_string(),
+                    );
+                    Some(ann)
+                },
+                ..Default::default()
+            },
+            spec: job_template.spec.clone(),
+            ..Default::default()
+        };
+
+        let jobs: Api<Job> = Api::namespaced(self.client.clone(), namespace);
+        jobs.create(&PostParams::default(), &job)
+            .await
+            .with_context(|| format!("failed to create Job from CronJob '{name}'"))?;
+
+        Ok(job_name)
+    }
+
     /// Fetches the Helm release secret as YAML.
     ///
     /// Helm v3 stores releases as Secrets named `sh.helm.release.v1.{name}.v{revision}`.

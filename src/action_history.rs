@@ -15,6 +15,7 @@ pub enum ActionKind {
     Restart,
     FluxReconcile,
     ApplyYaml,
+    Trigger,
 }
 
 impl ActionKind {
@@ -25,6 +26,7 @@ impl ActionKind {
             ActionKind::Restart => "Restart",
             ActionKind::FluxReconcile => "Reconcile",
             ActionKind::ApplyYaml => "Apply YAML",
+            ActionKind::Trigger => "Trigger",
         }
     }
 }

@@ -1343,6 +1343,7 @@ pub enum AppAction {
     EditYaml,
     DeleteResource,
     ForceDeleteResource,
+    TriggerCronJob,
     CycleTheme,
     OpenHelp,
     CloseHelp,
@@ -2872,6 +2873,14 @@ impl AppState {
             KeyCode::Char('r') => AppAction::RefreshData,
             KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 AppAction::RefreshData
+            }
+            KeyCode::Char('T')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Trigger)) =>
+            {
+                AppAction::TriggerCronJob
             }
             KeyCode::Char('T') if self.detail_view.is_none() => AppAction::CycleTheme,
             KeyCode::Char('?') => AppAction::OpenHelp,
