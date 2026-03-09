@@ -46,10 +46,11 @@ pub enum DetailAction {
     FluxReconcile,
     EditYaml,
     Delete,
+    Trigger,
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 11] = [
+    pub const ORDER: [DetailAction; 12] = [
         DetailAction::ViewYaml,
         DetailAction::ViewEvents,
         DetailAction::Logs,
@@ -61,6 +62,7 @@ impl DetailAction {
         DetailAction::FluxReconcile,
         DetailAction::EditYaml,
         DetailAction::Delete,
+        DetailAction::Trigger,
     ];
 
     pub const fn key_hint(self) -> &'static str {
@@ -75,6 +77,7 @@ impl DetailAction {
             DetailAction::Restart | DetailAction::FluxReconcile => "[R]",
             DetailAction::EditYaml => "[e]",
             DetailAction::Delete => "[d]",
+            DetailAction::Trigger => "[T]",
         }
     }
 
@@ -91,6 +94,7 @@ impl DetailAction {
             DetailAction::FluxReconcile => "Reconcile",
             DetailAction::EditYaml => "Edit",
             DetailAction::Delete => "Delete",
+            DetailAction::Trigger => "Trigger",
         }
     }
 }
@@ -355,6 +359,7 @@ impl ResourceRef {
             ),
             DetailAction::FluxReconcile => self.supports_flux_reconcile(),
             DetailAction::EditYaml | DetailAction::Delete => true,
+            DetailAction::Trigger => matches!(self, ResourceRef::CronJob(_, _)),
         }
     }
 }
@@ -382,6 +387,7 @@ impl DetailViewState {
                 | DetailAction::FluxReconcile
                 | DetailAction::EditYaml
                 | DetailAction::Delete
+                | DetailAction::Trigger
         );
 
         if self.loading {
