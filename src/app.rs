@@ -688,16 +688,47 @@ pub fn filtered_pod_indices(
         out.sort_by(|left_idx, right_idx| {
             let left = &pods[*left_idx];
             let right = &pods[*right_idx];
-            let base_order = match sort.column {
-                PodSortColumn::Name => cmp_ci_ascii(&left.name, &right.name),
-                PodSortColumn::Age => left.created_at.cmp(&right.created_at),
-                PodSortColumn::Status => cmp_ci_ascii(&left.status, &right.status),
-                PodSortColumn::Restarts => left.restarts.cmp(&right.restarts),
-            };
-            let ordered = if sort.descending {
-                base_order.reverse()
-            } else {
-                base_order
+            let ordered = match sort.column {
+                PodSortColumn::Name => {
+                    let base = cmp_ci_ascii(&left.name, &right.name);
+                    if sort.descending {
+                        base.reverse()
+                    } else {
+                        base
+                    }
+                }
+                PodSortColumn::Age => {
+                    // Sort None (unknown created_at) to the end regardless of direction.
+                    match (left.created_at, right.created_at) {
+                        (None, None) => std::cmp::Ordering::Equal,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (Some(l), Some(r)) => {
+                            let base = l.cmp(&r);
+                            if sort.descending {
+                                base.reverse()
+                            } else {
+                                base
+                            }
+                        }
+                    }
+                }
+                PodSortColumn::Status => {
+                    let base = cmp_ci_ascii(&left.status, &right.status);
+                    if sort.descending {
+                        base.reverse()
+                    } else {
+                        base
+                    }
+                }
+                PodSortColumn::Restarts => {
+                    let base = left.restarts.cmp(&right.restarts);
+                    if sort.descending {
+                        base.reverse()
+                    } else {
+                        base
+                    }
+                }
             };
             if ordered != std::cmp::Ordering::Equal {
                 return ordered;
@@ -744,14 +775,31 @@ where
         out.sort_by(|left_idx, right_idx| {
             let left = &items[*left_idx];
             let right = &items[*right_idx];
-            let base_order = match sort.column {
-                WorkloadSortColumn::Name => cmp_ci_ascii(name(left), name(right)),
-                WorkloadSortColumn::Age => age(left).cmp(&age(right)),
-            };
-            let ordered = if sort.descending {
-                base_order.reverse()
-            } else {
-                base_order
+            let ordered = match sort.column {
+                WorkloadSortColumn::Name => {
+                    let base = cmp_ci_ascii(name(left), name(right));
+                    if sort.descending {
+                        base.reverse()
+                    } else {
+                        base
+                    }
+                }
+                WorkloadSortColumn::Age => {
+                    // Sort None (unknown age) to the end regardless of direction.
+                    match (age(left), age(right)) {
+                        (None, None) => std::cmp::Ordering::Equal,
+                        (None, Some(_)) => std::cmp::Ordering::Greater,
+                        (Some(_), None) => std::cmp::Ordering::Less,
+                        (Some(l), Some(r)) => {
+                            let base = l.cmp(&r);
+                            if sort.descending {
+                                base.reverse()
+                            } else {
+                                base
+                            }
+                        }
+                    }
+                }
             };
             if ordered != std::cmp::Ordering::Equal {
                 return ordered;
@@ -1237,6 +1285,8 @@ pub enum AppAction {
     LogsViewerScrollBottom,
     LogsViewerToggleFollow,
     LogsViewerSelectContainer(String),
+    /// User chose "All Containers" in the pod logs picker.
+    LogsViewerSelectAllContainers,
     LogsViewerPickerUp,
     LogsViewerPickerDown,
     OpenResourceYaml,
@@ -1270,6 +1320,7 @@ pub enum AppAction {
     WorkbenchCloseActiveTab,
     WorkbenchIncreaseHeight,
     WorkbenchDecreaseHeight,
+    WorkbenchToggleMaximize,
     ActionHistoryOpenSelected,
     ExecSelectContainer(String),
     ExecSendInput,
@@ -1600,6 +1651,10 @@ impl AppState {
 
     pub fn workbench_decrease_height(&mut self) {
         self.workbench.resize_smaller();
+    }
+
+    pub fn workbench_toggle_maximize(&mut self) {
+        self.workbench.toggle_maximize();
     }
 
     /// Sets active namespace for namespaced resource fetches.
@@ -2028,6 +2083,11 @@ impl AppState {
     fn handle_workbench_key_event(&mut self, key: KeyEvent) -> AppAction {
         use crate::ui::components::port_forward_dialog::PortForwardAction;
 
+        // Common workbench keys (apply to all tab types)
+        if key.code == KeyCode::Char('z') {
+            return AppAction::WorkbenchToggleMaximize;
+        }
+
         let action_history_len = self.action_history.entries().len();
         let Some(tab) = self.workbench.active_tab_mut() else {
             return AppAction::None;
@@ -2144,14 +2204,25 @@ impl AppState {
                         AppAction::LogsViewerScrollDown
                     }
                 }
-                KeyCode::Enter => tab
-                    .viewer
-                    .containers
-                    .get(tab.viewer.container_cursor)
-                    .cloned()
-                    .filter(|_| tab.viewer.picking_container)
-                    .map(AppAction::LogsViewerSelectContainer)
-                    .unwrap_or(AppAction::None),
+                KeyCode::Enter if tab.viewer.picking_container => {
+                    if tab.viewer.container_cursor == 0 && tab.viewer.containers.len() > 1 {
+                        // "All Containers" entry at index 0
+                        AppAction::LogsViewerSelectAllContainers
+                    } else {
+                        // Single container: offset by 1 to skip the "All" entry
+                        let real_idx = if tab.viewer.containers.len() > 1 {
+                            tab.viewer.container_cursor.saturating_sub(1)
+                        } else {
+                            tab.viewer.container_cursor
+                        };
+                        tab.viewer
+                            .containers
+                            .get(real_idx)
+                            .cloned()
+                            .map(AppAction::LogsViewerSelectContainer)
+                            .unwrap_or(AppAction::None)
+                    }
+                }
                 KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
                 KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
                 KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
@@ -2553,26 +2624,7 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Char('D')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .map(|d| d.confirm_delete)
-                    .unwrap_or(false) =>
-            {
-                // Confirm delete
-                AppAction::DeleteResource
-            }
-            KeyCode::Char('y')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .map(|d| d.confirm_delete)
-                    .unwrap_or(false) =>
-            {
-                AppAction::DeleteResource
-            }
-            KeyCode::Enter
+            KeyCode::Char('D') | KeyCode::Char('y') | KeyCode::Enter
                 if self
                     .detail_view
                     .as_ref()

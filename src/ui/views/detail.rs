@@ -440,7 +440,7 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
 
 fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
-    let popup = centered_rect(44, 24, parent);
+    let popup = centered_rect(48, 24, parent);
     frame.render_widget(Clear, popup);
 
     let block = Block::default()
@@ -493,7 +493,7 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
     );
 
     let footer = Line::from(vec![
-        Span::styled(" [Shift+D] ", theme.keybind_key_style()),
+        Span::styled(" [D] / [y] / [Enter] ", theme.keybind_key_style()),
         Span::styled("Confirm  ", theme.keybind_desc_style()),
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
