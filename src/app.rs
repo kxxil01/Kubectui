@@ -2500,6 +2500,7 @@ impl AppState {
             return match self.command_palette.handle_key(key) {
                 CommandPaletteAction::None => AppAction::None,
                 CommandPaletteAction::Navigate(view) => AppAction::NavigateTo(view),
+                CommandPaletteAction::Execute(_, _) => AppAction::None,
                 CommandPaletteAction::Close => AppAction::CloseCommandPalette,
             };
         }
