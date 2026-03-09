@@ -400,6 +400,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.help_overlay.close();
             true
         }
+        AppAction::CopyResourceName | AppAction::CopyResourceFullName => {
+            // Handled in main.rs (needs cluster snapshot to resolve selected resource)
+            true
+        }
     }
 }
 

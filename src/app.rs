@@ -1343,6 +1343,8 @@ pub enum AppAction {
     CycleTheme,
     OpenHelp,
     CloseHelp,
+    CopyResourceName,
+    CopyResourceFullName,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -2597,12 +2599,18 @@ impl AppState {
             {
                 AppAction::LogsViewerOpen
             }
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                AppAction::CopyResourceName
+            }
             KeyCode::Char('y')
                 if (self.detail_view.as_ref().is_some_and(|detail| {
                     detail.supports_action(DetailAction::ViewYaml) && !detail.confirm_delete
                 }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::OpenResourceYaml
+            }
+            KeyCode::Char('Y') if self.detail_view.is_none() && self.focus == Focus::Content => {
+                AppAction::CopyResourceFullName
             }
             KeyCode::Char('v')
                 if self
@@ -3553,5 +3561,22 @@ mod tests {
         assert_eq!(cr_cluster.kind(), "ClusterWidget");
         assert_eq!(cr_cluster.name(), "global");
         assert_eq!(cr_cluster.namespace(), None);
+    }
+
+    #[test]
+    fn ctrl_y_returns_copy_resource_name() {
+        let mut app = AppState::default();
+        app.view = AppView::Pods;
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
+        assert_eq!(action, AppAction::CopyResourceName);
+    }
+
+    #[test]
+    fn shift_y_returns_copy_full_name() {
+        let mut app = AppState::default();
+        app.view = AppView::Pods;
+        app.focus = Focus::Content;
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::SHIFT));
+        assert_eq!(action, AppAction::CopyResourceFullName);
     }
 }

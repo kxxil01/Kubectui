@@ -30,6 +30,8 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("c", "Context picker"),
             (":", "Command palette"),
             ("r", "Refresh data"),
+            ("Ctrl+y", "Copy resource name"),
+            ("Y", "Copy namespace/name"),
             ("T", "Cycle theme"),
             ("b", "Toggle workbench"),
             ("[ / ]", "Previous / next workbench tab"),
