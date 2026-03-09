@@ -1033,6 +1033,8 @@ pub struct LogsViewerState {
     pub pending_logs_request_id: Option<u64>,
     pub loading: bool,
     pub error: Option<String>,
+    /// When true, fetch logs from the previous (crashed/restarted) container.
+    pub previous_logs: bool,
 }
 
 impl LogsViewerState {
@@ -1284,6 +1286,7 @@ pub enum AppAction {
     LogsViewerScrollTop,
     LogsViewerScrollBottom,
     LogsViewerToggleFollow,
+    LogsViewerTogglePrevious,
     LogsViewerSelectContainer(String),
     /// User chose "All Containers" in the pod logs picker.
     LogsViewerSelectAllContainers,
@@ -2230,6 +2233,9 @@ impl AppState {
                 KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
                 KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
                 KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
+                KeyCode::Char('P') if !tab.viewer.picking_container => {
+                    AppAction::LogsViewerTogglePrevious
+                }
                 _ => AppAction::None,
             },
             WorkbenchTabState::WorkloadLogs(tab) => {

@@ -342,6 +342,8 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
 
     let status = if viewer.loading {
         "loading"
+    } else if viewer.previous_logs {
+        "previous"
     } else if viewer.picking_container {
         "select container"
     } else if viewer.follow_mode {
@@ -362,7 +364,10 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
             Span::raw(" "),
             Span::styled(container, theme.keybind_desc_style()),
             Span::raw("  "),
-            Span::styled("[Esc] back  [f] follow", theme.keybind_desc_style()),
+            Span::styled(
+                "[Esc] back  [f] follow  [P] previous",
+                theme.keybind_desc_style(),
+            ),
         ])),
         sections[0],
     );

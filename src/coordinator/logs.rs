@@ -23,6 +23,7 @@ pub async fn stream_logs(
     pod_ref: PodRef,
     container_name: String,
     follow: bool,
+    previous: bool,
     update_tx: mpsc::Sender<UpdateMessage>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
@@ -40,6 +41,7 @@ pub async fn stream_logs(
         &pod_ref,
         &container_name,
         follow,
+        previous,
         &update_tx,
         &mut cancel_rx,
     )
@@ -84,15 +86,22 @@ async fn stream_logs_internal(
     pod_ref: &PodRef,
     container_name: &str,
     follow: bool,
+    previous: bool,
     update_tx: &mpsc::Sender<UpdateMessage>,
     cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<StreamOutcome> {
     let pods_api: Api<Pod> = Api::namespaced(client.get_client(), &pod_ref.namespace);
 
+    let follow = if previous { false } else { follow };
     let params = LogParams {
         container: Some(container_name.to_string()),
         follow,
-        tail_lines: if follow { Some(100) } else { Some(500) },
+        previous,
+        tail_lines: if follow && !previous {
+            Some(100)
+        } else {
+            Some(500)
+        },
         timestamps: false,
         ..Default::default()
     };
