@@ -2877,6 +2877,49 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             );
                         }
                     }
+                    AppAction::CopyResourceName => {
+                        let name = app
+                            .detail_view
+                            .as_ref()
+                            .and_then(|d| d.resource.as_ref())
+                            .map(|r| r.name().to_string())
+                            .or_else(|| {
+                                selected_resource(&app, &cached_snapshot)
+                                    .map(|r| r.name().to_string())
+                            });
+                        if let Some(name) = name {
+                            if let Err(e) = kubectui::clipboard::copy_to_clipboard(&name) {
+                                app.set_error(format!("Clipboard error: {e}"));
+                            } else {
+                                app.status_message = Some(format!("Copied: {name}"));
+                            }
+                        }
+                    }
+                    AppAction::CopyResourceFullName => {
+                        let full = app
+                            .detail_view
+                            .as_ref()
+                            .and_then(|d| d.resource.as_ref())
+                            .map(|r| match r.namespace() {
+                                Some(ns) => format!("{ns}/{}", r.name()),
+                                None => r.name().to_string(),
+                            })
+                            .or_else(|| {
+                                selected_resource(&app, &cached_snapshot).map(|r| {
+                                    match r.namespace() {
+                                        Some(ns) => format!("{ns}/{}", r.name()),
+                                        None => r.name().to_string(),
+                                    }
+                                })
+                            });
+                        if let Some(full) = full {
+                            if let Err(e) = kubectui::clipboard::copy_to_clipboard(&full) {
+                                app.set_error(format!("Clipboard error: {e}"));
+                            } else {
+                                app.status_message = Some(format!("Copied: {full}"));
+                            }
+                        }
+                    }
                     AppAction::EditYaml => {
                         if !app
                             .detail_view
