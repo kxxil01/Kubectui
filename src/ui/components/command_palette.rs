@@ -399,8 +399,8 @@ impl CommandPalette {
 
         let title = Line::from(vec![
             Span::styled(" ⌘ ", theme.title_style()),
-            Span::styled("Command Palette", theme.title_style()),
-            Span::styled("  · type to jump", theme.inactive_style()),
+            Span::styled("Action Palette", theme.title_style()),
+            Span::styled("  · type to filter", theme.inactive_style()),
         ]);
         let title_block = Block::default()
             .borders(Borders::BOTTOM)
@@ -411,7 +411,7 @@ impl CommandPalette {
         let search_content = if self.query.is_empty() {
             Line::from(vec![
                 Span::styled("  ", theme.inactive_style()),
-                Span::styled("pods, svc, deploy, sa, crd…", theme.inactive_style()),
+                Span::styled("scale, logs, pods, deploy…", theme.inactive_style()),
             ])
         } else {
             Line::from(vec![
@@ -435,46 +435,65 @@ impl CommandPalette {
         );
 
         let matches = self.filtered();
-        let items: Vec<ListItem> = if matches.is_empty() {
-            vec![ListItem::new(Line::from(Span::styled(
+        let mut items: Vec<ListItem> = Vec::new();
+
+        if matches.is_empty() {
+            items.push(ListItem::new(Line::from(Span::styled(
                 "  No matches",
                 theme.inactive_style(),
-            )))]
+            ))));
         } else {
-            matches
-                .iter()
-                .enumerate()
-                .map(|(idx, entry)| {
-                    let (name, right_label) = match entry {
-                        PaletteEntry::Navigate(view) => {
-                            (view.label(), view.group().label().to_string())
-                        }
-                        PaletteEntry::Action(action) => {
-                            (action.label(), action.key_hint().to_string())
-                        }
-                    };
-                    if idx == self.selected_index {
-                        ListItem::new(Line::from(vec![
-                            Span::styled(" ▶ ", theme.title_style()),
-                            Span::styled(
-                                name,
-                                Style::default()
-                                    .fg(theme.selection_fg)
-                                    .bg(theme.selection_bg)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(format!("  {right_label}"), theme.inactive_style()),
-                        ]))
-                    } else {
-                        ListItem::new(Line::from(vec![
-                            Span::styled("   ", theme.inactive_style()),
-                            Span::styled(name, Style::default().fg(theme.fg_dim)),
-                            Span::styled(format!("  {right_label}"), theme.inactive_style()),
-                        ]))
+            let mut seen_action = false;
+            let mut seen_nav = false;
+
+            for (selectable_idx, entry) in matches.iter().enumerate() {
+                match entry {
+                    PaletteEntry::Action(_) if !seen_action => {
+                        seen_action = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Actions ──",
+                            theme.muted_style(),
+                        ))));
                     }
-                })
-                .collect()
-        };
+                    PaletteEntry::Navigate(_) if !seen_nav => {
+                        seen_nav = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Navigate ──",
+                            theme.muted_style(),
+                        ))));
+                    }
+                    _ => {}
+                }
+
+                let (name, right_label) = match entry {
+                    PaletteEntry::Navigate(view) => {
+                        (view.label(), view.group().label().to_string())
+                    }
+                    PaletteEntry::Action(action) => (action.label(), action.key_hint().to_string()),
+                };
+
+                let is_selected = selectable_idx == self.selected_index;
+                if is_selected {
+                    items.push(ListItem::new(Line::from(vec![
+                        Span::styled(" ▶ ", theme.title_style()),
+                        Span::styled(
+                            name,
+                            Style::default()
+                                .fg(theme.selection_fg)
+                                .bg(theme.selection_bg)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!("  {right_label}"), theme.inactive_style()),
+                    ])));
+                } else {
+                    items.push(ListItem::new(Line::from(vec![
+                        Span::styled("   ", theme.inactive_style()),
+                        Span::styled(name, Style::default().fg(theme.fg_dim)),
+                        Span::styled(format!("  {right_label}"), theme.inactive_style()),
+                    ])));
+                }
+            }
+        }
 
         let count = matches.len();
         let list_block = Block::default()
@@ -492,7 +511,7 @@ impl CommandPalette {
             Span::styled(" [↑↓/jk] ", theme.keybind_key_style()),
             Span::styled("navigate  ", theme.keybind_desc_style()),
             Span::styled("[Enter] ", theme.keybind_key_style()),
-            Span::styled("jump  ", theme.keybind_desc_style()),
+            Span::styled("select  ", theme.keybind_desc_style()),
             Span::styled("[Esc] ", theme.keybind_key_style()),
             Span::styled("close", theme.keybind_desc_style()),
         ]);
