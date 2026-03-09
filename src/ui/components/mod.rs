@@ -6,6 +6,7 @@ use std::{
 
 pub mod command_palette;
 pub mod context_picker;
+pub mod help_overlay;
 pub mod input_field;
 pub mod namespace_picker;
 pub mod port_forward_dialog;

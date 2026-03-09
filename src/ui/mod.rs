@@ -751,6 +751,11 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         let _quit_scope = profiling::span_scope("overlay.quit_confirm");
         render_quit_confirm(frame, frame.area());
     }
+
+    if app.help_overlay.is_open() {
+        let _help_scope = profiling::span_scope("overlay.help");
+        app.help_overlay.render(frame, frame.area());
+    }
 }
 
 fn render_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {

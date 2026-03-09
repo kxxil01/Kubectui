@@ -1328,6 +1328,8 @@ pub enum AppAction {
     EditYaml,
     DeleteResource,
     CycleTheme,
+    OpenHelp,
+    CloseHelp,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -1397,6 +1399,7 @@ pub struct AppState {
     pub namespace_picker: NamespacePicker,
     pub context_picker: ContextPicker,
     pub command_palette: CommandPalette,
+    pub help_overlay: crate::ui::components::help_overlay::HelpOverlay,
     /// Set of [`NavGroup`]s that are currently collapsed in the sidebar.
     pub collapsed_groups: HashSet<NavGroup>,
     /// Zero-based index of the highlighted row in the sidebar nav tree.
@@ -1441,6 +1444,7 @@ impl Default for AppState {
             namespace_picker: NamespacePicker::new(vec!["all".to_string(), "default".to_string()]),
             context_picker: ContextPicker::default(),
             command_palette: CommandPalette::default(),
+            help_overlay: crate::ui::components::help_overlay::HelpOverlay::default(),
             collapsed_groups: HashSet::new(),
             sidebar_cursor: 0,
             focus: Focus::Sidebar,
@@ -2423,6 +2427,21 @@ impl AppState {
     /// `Enter` is **not** handled here — it is intercepted in `main.rs` before this method
     /// is called, because its behaviour depends on both `focus` and `detail_view`.
     pub fn handle_key_event(&mut self, key: KeyEvent) -> AppAction {
+        if self.help_overlay.is_open() {
+            return match key.code {
+                KeyCode::Esc | KeyCode::Char('?') => AppAction::CloseHelp,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.help_overlay.scroll_down();
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.help_overlay.scroll_up();
+                    AppAction::None
+                }
+                _ => AppAction::None,
+            };
+        }
+
         if self.command_palette.is_open() {
             return match self.command_palette.handle_key(key) {
                 CommandPaletteAction::None => AppAction::None,
@@ -2787,6 +2806,7 @@ impl AppState {
                 AppAction::RefreshData
             }
             KeyCode::Char('T') if self.detail_view.is_none() => AppAction::CycleTheme,
+            KeyCode::Char('?') => AppAction::OpenHelp,
             _ => AppAction::None,
         }
     }
