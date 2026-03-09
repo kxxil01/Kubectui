@@ -330,6 +330,14 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs event loop (needs async exec session runtime)
             true
         }
+        AppAction::OpenHelp => {
+            app_state.help_overlay.toggle();
+            true
+        }
+        AppAction::CloseHelp => {
+            app_state.help_overlay.close();
+            true
+        }
     }
 }
 
