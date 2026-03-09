@@ -358,19 +358,43 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
         format!("container: {}", viewer.container_name)
     };
 
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(format!(" {status} "), theme.badge_warning_style()),
-            Span::raw(" "),
-            Span::styled(container, theme.keybind_desc_style()),
-            Span::raw("  "),
-            Span::styled(
-                "[Esc] back  [f] follow  [P] previous",
-                theme.keybind_desc_style(),
-            ),
-        ])),
-        sections[0],
-    );
+    let mut status_spans = vec![
+        Span::styled(format!(" {status} "), theme.badge_warning_style()),
+        Span::raw(" "),
+        Span::styled(container, theme.keybind_desc_style()),
+    ];
+    if viewer.show_timestamps {
+        status_spans.push(Span::styled(
+            "  [timestamps ON]",
+            theme.keybind_desc_style(),
+        ));
+    }
+    status_spans.push(Span::raw("  "));
+    status_spans.push(Span::styled(
+        "[Esc] back  [f] follow  [P] previous  [t] timestamps  [/] search  [n/N] next/prev",
+        theme.keybind_desc_style(),
+    ));
+
+    frame.render_widget(Paragraph::new(Line::from(status_spans)), sections[0]);
+
+    // If searching, render search input bar and reduce log area
+    let log_area = if viewer.searching {
+        let search_split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
+            .split(sections[1]);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" /", theme.section_title_style()),
+                Span::styled(viewer.search_input.as_str(), Style::default().fg(theme.fg)),
+                Span::styled("_", Style::default().fg(theme.accent)),
+            ])),
+            search_split[1],
+        );
+        search_split[0]
+    } else {
+        sections[1]
+    };
 
     if let Some(error) = &viewer.error {
         frame.render_widget(
@@ -378,7 +402,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
                 format!(" Error: {error}"),
                 theme.badge_error_style(),
             )),
-            sections[1],
+            log_area,
         );
         return;
     }
@@ -412,17 +436,14 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
             lines.push(Line::from(format!("{prefix} {container}")));
         }
 
-        frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
-            sections[1],
-        );
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
         return;
     }
 
     if viewer.lines.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled(" No log lines yet", theme.inactive_style())),
-            sections[1],
+            log_area,
         );
         return;
     }
@@ -430,16 +451,47 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
     let lines: Vec<Line> = viewer
         .lines
         .iter()
-        .map(|line| Line::from(line.clone()))
+        .map(|line| {
+            if !viewer.search_query.is_empty() {
+                highlight_search(line, &viewer.search_query, &theme)
+            } else {
+                Line::from(line.clone())
+            }
+        })
         .collect();
-    let visible_height = sections[1].height.saturating_sub(1) as usize;
+    let visible_height = log_area.height.saturating_sub(1) as usize;
     let start = scroll.min(lines.len().saturating_sub(1));
     let end = (start + visible_height).min(lines.len());
     frame.render_widget(
         Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
-        sections[1],
+        log_area,
     );
-    render_scrollbar(frame, sections[1], lines.len(), start);
+    render_scrollbar(frame, log_area, lines.len(), start);
+}
+
+fn highlight_search<'a>(line: &str, query: &str, theme: &crate::ui::theme::Theme) -> Line<'a> {
+    let lower_line = line.to_ascii_lowercase();
+    let lower_query = query.to_ascii_lowercase();
+    let mut spans = Vec::new();
+    let mut last = 0;
+    for (start, _) in lower_line.match_indices(&lower_query) {
+        if start > last {
+            spans.push(Span::raw(line[last..start].to_string()));
+        }
+        spans.push(Span::styled(
+            line[start..start + query.len()].to_string(),
+            Style::default().bg(theme.accent).fg(theme.bg),
+        ));
+        last = start + query.len();
+    }
+    if last < line.len() {
+        spans.push(Span::raw(line[last..].to_string()));
+    }
+    if spans.is_empty() {
+        Line::from(line.to_string())
+    } else {
+        Line::from(spans)
+    }
 }
 
 fn render_workload_logs_tab(

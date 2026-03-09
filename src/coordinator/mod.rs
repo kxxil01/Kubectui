@@ -176,6 +176,7 @@ impl UpdateCoordinator {
         container_name: String,
         follow: bool,
         previous: bool,
+        timestamps: bool,
     ) -> Result<()> {
         let key = format!("{}/{}/{}", namespace, pod_name, container_name);
 
@@ -205,6 +206,7 @@ impl UpdateCoordinator {
                 container_name_clone.clone(),
                 follow,
                 previous,
+                timestamps,
                 coordinator.update_tx.clone(),
                 cancel_rx,
             ));

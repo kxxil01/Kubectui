@@ -175,10 +175,71 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             }
             false
         }
-        // LogsViewerSelectContainer / SelectAll / TogglePrevious handled in main.rs (needs async log fetch)
+        AppAction::LogsViewerSearchOpen => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+            {
+                logs_tab.viewer.searching = true;
+                logs_tab.viewer.search_input = logs_tab.viewer.search_query.clone();
+                return true;
+            }
+            false
+        }
+        AppAction::LogsViewerSearchClose => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+            {
+                logs_tab.viewer.search_query = logs_tab.viewer.search_input.clone();
+                logs_tab.viewer.searching = false;
+                return true;
+            }
+            false
+        }
+        AppAction::LogsViewerSearchNext => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                && !logs_tab.viewer.search_query.is_empty()
+            {
+                let query = logs_tab.viewer.search_query.to_ascii_lowercase();
+                let start = logs_tab.viewer.scroll_offset + 1;
+                if let Some(pos) = logs_tab
+                    .viewer
+                    .lines
+                    .iter()
+                    .skip(start)
+                    .position(|l| l.to_ascii_lowercase().contains(&query))
+                {
+                    logs_tab.viewer.scroll_offset = start + pos;
+                    logs_tab.viewer.follow_mode = false;
+                }
+                return true;
+            }
+            false
+        }
+        AppAction::LogsViewerSearchPrev => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                && !logs_tab.viewer.search_query.is_empty()
+            {
+                let query = logs_tab.viewer.search_query.to_ascii_lowercase();
+                let end = logs_tab.viewer.scroll_offset;
+                if let Some(pos) = logs_tab.viewer.lines[..end]
+                    .iter()
+                    .rev()
+                    .position(|l| l.to_ascii_lowercase().contains(&query))
+                {
+                    logs_tab.viewer.scroll_offset = end - 1 - pos;
+                    logs_tab.viewer.follow_mode = false;
+                }
+                return true;
+            }
+            false
+        }
+        // LogsViewerSelectContainer / SelectAll / TogglePrevious / ToggleTimestamps handled in main.rs (needs async log fetch)
         AppAction::LogsViewerTogglePrevious => true,
         AppAction::LogsViewerSelectContainer(_) => true,
         AppAction::LogsViewerSelectAllContainers => true,
+        AppAction::LogsViewerToggleTimestamps => true,
         AppAction::OpenResourceYaml => true,
         AppAction::OpenResourceEvents => true,
         AppAction::OpenActionHistory => {

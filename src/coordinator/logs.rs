@@ -18,12 +18,14 @@ enum StreamOutcome {
 }
 
 /// Stream logs for a pod container.
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_logs(
     client: Arc<K8sClient>,
     pod_ref: PodRef,
     container_name: String,
     follow: bool,
     previous: bool,
+    timestamps: bool,
     update_tx: mpsc::Sender<UpdateMessage>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
@@ -42,6 +44,7 @@ pub async fn stream_logs(
         &container_name,
         follow,
         previous,
+        timestamps,
         &update_tx,
         &mut cancel_rx,
     )
@@ -81,12 +84,14 @@ pub async fn stream_logs(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn stream_logs_internal(
     client: &Arc<K8sClient>,
     pod_ref: &PodRef,
     container_name: &str,
     follow: bool,
     previous: bool,
+    timestamps: bool,
     update_tx: &mpsc::Sender<UpdateMessage>,
     cancel_rx: &mut tokio::sync::oneshot::Receiver<()>,
 ) -> anyhow::Result<StreamOutcome> {
@@ -102,7 +107,7 @@ async fn stream_logs_internal(
         } else {
             Some(500)
         },
-        timestamps: false,
+        timestamps,
         ..Default::default()
     };
 
