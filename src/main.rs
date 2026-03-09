@@ -2054,7 +2054,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.close_namespace_picker();
                     }
                     AppAction::OpenCommandPalette => {
-                        app.command_palette.open();
+                        let resource_ctx = app
+                            .detail_view
+                            .as_ref()
+                            .and_then(|d| d.resource.clone())
+                            .or_else(|| selected_resource(&app, &cached_snapshot));
+                        app.command_palette.open_with_context(resource_ctx);
                     }
                     AppAction::CloseCommandPalette => {
                         app.command_palette.close();
