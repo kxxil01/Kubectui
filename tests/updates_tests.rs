@@ -124,6 +124,7 @@ mod coordinator_tests {
                 "container1".to_string(),
                 false,
                 false,
+                false,
             )
             .await;
         assert!(result.is_ok());
@@ -134,6 +135,7 @@ mod coordinator_tests {
                 "test-pod".to_string(),
                 "default".to_string(),
                 "container2".to_string(),
+                false,
                 false,
                 false,
             )
@@ -172,6 +174,7 @@ mod coordinator_tests {
                 "test-pod".to_string(),
                 "default".to_string(),
                 "container1".to_string(),
+                false,
                 false,
                 false,
             )

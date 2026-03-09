@@ -119,6 +119,7 @@ mod integration_tests {
                 "nginx".to_string(),
                 false, // Don't follow, just get recent logs
                 false,
+                false,
             )
             .await
             .ok();
@@ -207,6 +208,7 @@ mod integration_tests {
                     format!("pod-{}", i),
                     "default".to_string(),
                     format!("container-{}", i),
+                    false,
                     false,
                     false,
                 )

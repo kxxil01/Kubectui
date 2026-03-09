@@ -1723,7 +1723,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
                     for (pod_name, namespace, container_name) in sources_to_start {
                         let _ = coordinator
-                            .start_log_streaming(pod_name, namespace, container_name, true, false)
+                            .start_log_streaming(pod_name, namespace, container_name, true, false, false)
                             .await;
                     }
                 }
@@ -2504,7 +2504,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             // Start streaming each container
                             for (pod, ns, container) in sources {
                                 let _ = coordinator
-                                    .start_log_streaming(pod, ns, container, true, false)
+                                    .start_log_streaming(pod, ns, container, true, false, false)
                                     .await;
                             }
                         }
@@ -2519,12 +2519,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     v.container_name.clone(),
                                     v.follow_mode,
                                     v.picking_container,
+                                    v.show_timestamps,
                                 ))
                             } else {
                                 None
                             }
                         });
-                        if let Some((pod_name, pod_ns, container_name, was_following, picking_container)) = follow_info {
+                        if let Some((pod_name, pod_ns, container_name, was_following, picking_container, timestamps)) = follow_info {
                             if !was_following && (pod_name.is_empty() || container_name.is_empty() || picking_container) {
                                 if let Some(tab) = app.workbench_mut().active_tab_mut()
                                     && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
@@ -2535,7 +2536,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 apply_action(AppAction::LogsViewerToggleFollow, &mut app);
                                 if !was_following {
                                     let _ = coordinator
-                                        .start_log_streaming(pod_name, pod_ns, container_name, true, false)
+                                        .start_log_streaming(pod_name, pod_ns, container_name, true, false, timestamps)
                                         .await;
                                 } else if !pod_name.is_empty() && !container_name.is_empty() {
                                     let _ = coordinator
@@ -2617,6 +2618,50 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     }).await;
                                 });
                             }
+                        }
+                    }
+                    AppAction::LogsViewerToggleTimestamps => {
+                        let ts_info = app.workbench().active_tab().and_then(|tab| {
+                            if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
+                                let v = &logs_tab.viewer;
+                                if v.picking_container || v.container_name.is_empty() {
+                                    return None;
+                                }
+                                Some((
+                                    v.pod_name.clone(),
+                                    v.pod_namespace.clone(),
+                                    v.container_name.clone(),
+                                    v.show_timestamps,
+                                    v.follow_mode,
+                                    v.previous_logs,
+                                ))
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some((pod_name, pod_ns, container_name, was_timestamps, was_following, is_previous)) = ts_info {
+                            if was_following || was_timestamps {
+                                let _ = coordinator
+                                    .stop_log_streaming(&pod_name, &pod_ns, &container_name)
+                                    .await;
+                            }
+                            if let Some(tab) = app.workbench_mut().active_tab_mut()
+                                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                            {
+                                let viewer = &mut logs_tab.viewer;
+                                viewer.show_timestamps = !viewer.show_timestamps;
+                                viewer.lines.clear();
+                                viewer.scroll_offset = 0;
+                                viewer.loading = true;
+                                viewer.error = None;
+                            }
+                            let new_timestamps = !was_timestamps;
+                            let follow = !is_previous;
+                            let _ = coordinator
+                                .start_log_streaming(
+                                    pod_name, pod_ns, container_name, follow, is_previous, new_timestamps,
+                                )
+                                .await;
                         }
                     }
                     AppAction::PortForwardOpen => {

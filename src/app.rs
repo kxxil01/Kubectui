@@ -1035,6 +1035,11 @@ pub struct LogsViewerState {
     pub error: Option<String>,
     /// When true, fetch logs from the previous (crashed/restarted) container.
     pub previous_logs: bool,
+    /// When true, request timestamps from the Kubernetes API.
+    pub show_timestamps: bool,
+    pub search_query: String,
+    pub search_input: String,
+    pub searching: bool,
 }
 
 impl LogsViewerState {
@@ -1287,11 +1292,16 @@ pub enum AppAction {
     LogsViewerScrollBottom,
     LogsViewerToggleFollow,
     LogsViewerTogglePrevious,
+    LogsViewerToggleTimestamps,
     LogsViewerSelectContainer(String),
     /// User chose "All Containers" in the pod logs picker.
     LogsViewerSelectAllContainers,
     LogsViewerPickerUp,
     LogsViewerPickerDown,
+    LogsViewerSearchOpen,
+    LogsViewerSearchClose,
+    LogsViewerSearchNext,
+    LogsViewerSearchPrev,
     OpenResourceYaml,
     OpenResourceEvents,
     OpenActionHistory,
@@ -2196,7 +2206,7 @@ impl AppState {
                 _ => AppAction::None,
             },
             WorkbenchTabState::PodLogs(tab) => match key.code {
-                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Esc if !tab.viewer.searching => AppAction::EscapePressed,
                 KeyCode::Char('k') | KeyCode::Up => {
                     if tab.viewer.picking_container {
                         AppAction::LogsViewerPickerUp
@@ -2232,9 +2242,31 @@ impl AppState {
                 }
                 KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
                 KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
-                KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
+                KeyCode::Char('f') if !tab.viewer.searching => AppAction::LogsViewerToggleFollow,
                 KeyCode::Char('P') if !tab.viewer.picking_container => {
                     AppAction::LogsViewerTogglePrevious
+                }
+                KeyCode::Char('t') if !tab.viewer.picking_container && !tab.viewer.searching => {
+                    AppAction::LogsViewerToggleTimestamps
+                }
+                KeyCode::Char('/') if !tab.viewer.searching && !tab.viewer.picking_container => {
+                    AppAction::LogsViewerSearchOpen
+                }
+                KeyCode::Esc if tab.viewer.searching => AppAction::LogsViewerSearchClose,
+                KeyCode::Enter if tab.viewer.searching => AppAction::LogsViewerSearchClose,
+                KeyCode::Char('n') if !tab.viewer.searching && !tab.viewer.picking_container => {
+                    AppAction::LogsViewerSearchNext
+                }
+                KeyCode::Char('N') if !tab.viewer.searching && !tab.viewer.picking_container => {
+                    AppAction::LogsViewerSearchPrev
+                }
+                KeyCode::Backspace if tab.viewer.searching => {
+                    tab.viewer.search_input.pop();
+                    AppAction::None
+                }
+                KeyCode::Char(c) if tab.viewer.searching => {
+                    tab.viewer.search_input.push(c);
+                    AppAction::None
                 }
                 _ => AppAction::None,
             },
