@@ -7,6 +7,7 @@ use ratatui::{
 };
 
 use crate::k8s::dtos::CustomResourceInfo;
+use crate::ui::format_age;
 
 pub fn render_custom_resources(
     frame: &mut Frame,
@@ -34,8 +35,9 @@ pub fn render_custom_resources(
         return;
     }
 
+    let clamped_idx = selected_idx.min(resources.len().saturating_sub(1));
     let rows = resources.iter().enumerate().map(|(idx, item)| {
-        let style = if is_focused && idx == selected_idx {
+        let style = if is_focused && idx == clamped_idx {
             Style::default().bg(Color::DarkGray)
         } else {
             Style::default()
@@ -72,23 +74,4 @@ pub fn render_custom_resources(
     .block(crate::ui::components::default_block(&title));
 
     frame.render_widget(table, area);
-}
-
-fn format_age(age: Option<std::time::Duration>) -> String {
-    let Some(age) = age else {
-        return "-".to_string();
-    };
-
-    let secs = age.as_secs();
-    let days = secs / 86_400;
-    let hours = (secs % 86_400) / 3_600;
-    let mins = (secs % 3_600) / 60;
-
-    if days > 0 {
-        format!("{days}d {hours}h")
-    } else if hours > 0 {
-        format!("{hours}h {mins}m")
-    } else {
-        format!("{mins}m")
-    }
 }

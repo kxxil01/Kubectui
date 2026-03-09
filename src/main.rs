@@ -493,6 +493,12 @@ struct WorkloadLogsBootstrapResult {
     result: Result<Vec<kubectui::k8s::workload_logs::WorkloadLogTarget>, String>,
 }
 
+#[derive(Debug)]
+struct ExtensionFetchResult {
+    crd_name: String,
+    result: Result<Vec<kubectui::k8s::dtos::CustomResourceInfo>, String>,
+}
+
 #[derive(Debug, Clone)]
 struct DeferredRefreshTrigger {
     context_generation: u64,
@@ -969,6 +975,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         tokio::sync::mpsc::channel::<WorkloadLogsBootstrapResult>(16);
     let mut next_workload_logs_session_id: u64 = 1;
     let mut workload_log_sessions: HashMap<u64, Vec<(String, String, String)>> = HashMap::new();
+    let (extension_fetch_tx, mut extension_fetch_rx) =
+        tokio::sync::mpsc::channel::<ExtensionFetchResult>(16);
 
     // Channel for background data refreshes — namespace switches, manual refresh, auto-refresh
     // all go through here so the UI stays responsive during API calls.
@@ -1012,6 +1020,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
     // Track consecutive refresh failures for backoff
     let mut consecutive_refresh_failures: u32 = 0;
+    let mut backoff_until: Option<Instant> = None;
     let mut auto_refresh_count: u64 = 0;
     let mut status_message_clear_at: Option<Instant> = None;
 
@@ -1252,6 +1261,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             Ok(new_state) => {
                                 global_state = new_state;
                                 consecutive_refresh_failures = 0;
+                                backoff_until = None;
                                 let previously_selected_namespace = app.get_namespace().to_string();
                                 let namespace_still_exists = previously_selected_namespace == "all"
                                     || global_state
@@ -1282,10 +1292,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 }
                                 app.set_available_namespaces(global_state.namespaces().to_vec());
                                 snapshot_dirty = true;
-                                sync_extensions_instances(&client, &mut app, &global_state.snapshot()).await;
+                                spawn_extensions_fetch(&client, &mut app, &global_state.snapshot(), &extension_fetch_tx);
                             }
                             Err(err) => {
                                 consecutive_refresh_failures += 1;
+                                let delay = match consecutive_refresh_failures {
+                                    1 => 30,
+                                    2 => 60,
+                                    _ => 120,
+                                };
+                                backoff_until = Some(Instant::now() + Duration::from_secs(delay));
                                 app.set_error(format!("Refresh failed: {err}"));
                             }
                         }
@@ -1613,6 +1629,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             }
 
             result = exec_update_rx.recv() => {
+                needs_redraw = true;
                 if let Some(result) = result {
                     for tab in &mut app.workbench.tabs {
                         if let WorkbenchTabState::Exec(exec_tab) = &mut tab.state {
@@ -1660,6 +1677,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             }
 
             result = workload_logs_bootstrap_rx.recv() => {
+                needs_redraw = true;
                 if let Some(result) = result {
                     let mut sources_to_start = Vec::new();
                     if let Some(tab) = app
@@ -1725,6 +1743,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
+            result = extension_fetch_rx.recv() => {
+                if let Some(result) = result {
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(items) => app.set_extension_instances(result.crd_name, items, None),
+                        Err(err) => app.set_extension_instances(result.crd_name, Vec::new(), Some(err)),
+                    }
+                }
+            }
+
             trigger = deferred_refresh_rx.recv() => {
                 if let Some(trigger) = trigger {
                     if trigger.context_generation != refresh_state.context_generation {
@@ -1763,13 +1791,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 // Skip auto-refresh if a detail view is open (avoid disrupting user)
                 // or if we're in a backoff period from consecutive failures
                 // or if a refresh is already in flight
-                let backoff_secs = match consecutive_refresh_failures {
-                    0 => 0,
-                    1 => 30,
-                    2 => 60,
-                    _ => 120,
-                };
-                if app.detail_view.is_none() && backoff_secs == 0 {
+                let in_backoff = backoff_until.is_some_and(|t| Instant::now() < t);
+                if app.detail_view.is_none() && !in_backoff {
                     auto_refresh_count = auto_refresh_count.wrapping_add(1);
                     let include_flux = app.view().is_fluxcd()
                         || auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY);
@@ -1782,15 +1805,19 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &mut refresh_state,
                         &mut snapshot_dirty,
                     );
-                } else if backoff_secs > 0 {
-                    // Decrement backoff counter each tick
-                    consecutive_refresh_failures = consecutive_refresh_failures.saturating_sub(1);
                 }
             }
 
             // Keyboard / terminal input — lowest priority so messages are drained first
             maybe_event = event_stream.next() => {
-                let Some(Ok(Event::Key(key))) = maybe_event else { continue; };
+                let key = match maybe_event {
+                    Some(Ok(Event::Resize(_, _))) => {
+                        needs_redraw = true;
+                        continue;
+                    }
+                    Some(Ok(Event::Key(key))) => key,
+                    _ => continue,
+                };
                 needs_redraw = true;
 
                 let action = if key.code == KeyCode::Enter
@@ -1982,7 +2009,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                         // Trigger extensions sync when navigating to Extensions view
                         if view == kubectui::app::AppView::Extensions {
-                            sync_extensions_instances(&client, &mut app, &cached_snapshot).await;
+                            spawn_extensions_fetch(&client, &mut app, &cached_snapshot, &extension_fetch_tx);
                         }
                     }
                     AppAction::OpenContextPicker => {
@@ -2025,6 +2052,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 app.clear_status();
                                 snapshot_dirty = true;
                                 app.detail_view = None;
+                                app.workbench.close_resource_tabs();
 
                                 request_refresh(
                                     &refresh_tx,
@@ -2072,6 +2100,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         global_state.begin_loading_transition(false);
                         snapshot_dirty = true;
                         app.detail_view = None;
+                        app.workbench.close_resource_tabs();
 
                         // Queue newest namespace refresh; if one is in flight it gets coalesced.
                         request_refresh(
@@ -2698,9 +2727,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         });
 
                         if let Some((kind, name, namespace, yaml_content)) = edit_info {
-                            // Write YAML to a temp file
+                            // Write YAML to a temp file with unique suffix to prevent
+                            // symlink attacks from predictable paths.
+                            let nonce = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map_or(0u64, |d| d.as_nanos() as u64)
+                                ^ std::process::id() as u64;
                             let tmp_path = std::env::temp_dir()
-                                .join(format!("kubectui-{kind}-{name}.yaml"));
+                                .join(format!("kubectui-{kind}-{name}-{nonce:016x}.yaml"));
                             if let Err(err) = std::fs::write(&tmp_path, &yaml_content) {
                                 app.set_error(format!("Failed to write temp file: {err}"));
                             } else {
@@ -2984,10 +3018,11 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     Ok(())
 }
 
-async fn sync_extensions_instances(
+fn spawn_extensions_fetch(
     client: &K8sClient,
     app: &mut AppState,
     snapshot: &ClusterSnapshot,
+    tx: &tokio::sync::mpsc::Sender<ExtensionFetchResult>,
 ) {
     if app.view() != AppView::Extensions {
         return;
@@ -3013,15 +3048,21 @@ async fn sync_extensions_instances(
         None
     };
 
-    match client
-        .fetch_custom_resources(crd, namespace_owned.as_deref())
-        .await
-    {
-        Ok(items) => app.set_extension_instances(crd.name.clone(), items, None),
-        Err(err) => {
-            app.set_extension_instances(crd.name.clone(), Vec::new(), Some(err.to_string()))
-        }
-    }
+    let client = client.clone();
+    let crd = crd.clone();
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let result = client
+            .fetch_custom_resources(&crd, namespace_owned.as_deref())
+            .await
+            .map_err(|e| e.to_string());
+        let _ = tx
+            .send(ExtensionFetchResult {
+                crd_name: crd.name.clone(),
+                result,
+            })
+            .await;
+    });
 }
 
 fn namespace_scope(namespace: &str) -> Option<&str> {

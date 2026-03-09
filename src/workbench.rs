@@ -524,6 +524,24 @@ impl WorkbenchState {
         self.tabs.iter().any(|tab| tab.state.key() == *key)
     }
 
+    /// Remove all resource-bound tabs (YAML, Events, Logs, Exec) that become
+    /// stale after a context or namespace switch.  ActionHistory and PortForward
+    /// are retained since they are not resource-scoped.
+    pub fn close_resource_tabs(&mut self) {
+        self.tabs.retain(|tab| {
+            matches!(
+                tab.state.kind(),
+                WorkbenchTabKind::ActionHistory | WorkbenchTabKind::PortForward
+            )
+        });
+        if self.tabs.is_empty() {
+            self.open = false;
+            self.active_tab = 0;
+        } else {
+            self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        }
+    }
+
     pub fn activate_tab(&mut self, key: &WorkbenchTabKey) -> bool {
         if let Some(idx) = self.tabs.iter().position(|tab| tab.state.key() == *key) {
             self.active_tab = idx;

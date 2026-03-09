@@ -320,13 +320,15 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         Style::default().fg(Color::Red)
     };
 
-    let button_text = format!(
-        "  [ {} ]     [ {} ]  ",
+    let button_line = Line::from(vec![
+        Span::raw("  [ "),
         Span::styled("Apply", apply_style),
-        Span::styled("Cancel", cancel_style)
-    );
+        Span::raw(" ]     [ "),
+        Span::styled("Cancel", cancel_style),
+        Span::raw(" ]  "),
+    ]);
 
-    let buttons_widget = Paragraph::new(Line::from(button_text))
+    let buttons_widget = Paragraph::new(button_line)
         .block(Block::default().borders(Borders::ALL))
         .alignment(Alignment::Center);
     frame.render_widget(buttons_widget, chunks[4]);

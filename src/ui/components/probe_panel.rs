@@ -80,9 +80,12 @@ impl ProbePanelState {
         }
     }
 
-    /// Count healthy containers (those with probes).
+    /// Count containers that have at least one probe configured.
     pub fn healthy_count(&self) -> usize {
-        self.container_probes.len()
+        self.container_probes
+            .iter()
+            .filter(|(_, probes)| probes.has_probes())
+            .count()
     }
 
     /// Get status color for a given status.
@@ -308,14 +311,31 @@ mod tests {
 
     #[test]
     fn test_probe_panel_healthy_count() {
+        // Containers without probes should not count as healthy
         let probes = vec![
             ("container1".to_string(), ContainerProbes::default()),
             ("container2".to_string(), ContainerProbes::default()),
         ];
-
         let state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
+        assert_eq!(state.healthy_count(), 0);
 
-        assert_eq!(state.healthy_count(), 2);
+        // Container with a probe configured should count
+        let mut with_probe = ContainerProbes::default();
+        with_probe.liveness = Some(ProbeConfig {
+            probe_type: ProbeType::Liveness,
+            handler: ProbeHandler::Tcp { port: 8080 },
+            initial_delay_seconds: 0,
+            period_seconds: 10,
+            timeout_seconds: 1,
+            success_threshold: 1,
+            failure_threshold: 3,
+        });
+        let probes2 = vec![
+            ("container1".to_string(), with_probe),
+            ("container2".to_string(), ContainerProbes::default()),
+        ];
+        let state2 = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes2);
+        assert_eq!(state2.healthy_count(), 1);
     }
 
     #[test]

@@ -7,13 +7,6 @@ use crate::k8s::dtos::{
 };
 use std::cmp::Ordering;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeploymentHealth {
-    Healthy,
-    Degraded,
-    Failed,
-}
-
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeStatusFilter {
@@ -35,6 +28,13 @@ pub enum NodeSortBy {
     Name,
     Status,
     Capacity,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeploymentHealth {
+    Healthy,
+    Degraded,
+    Failed,
 }
 
 #[inline]
@@ -309,7 +309,9 @@ pub fn filter_pod_disruption_budgets(
 pub fn deployment_health_from_ready(ready: &str) -> DeploymentHealth {
     let (ready_count, desired_count) = parse_ready(ready).unwrap_or((0, 0));
 
-    if ready_count == 0 {
+    if desired_count == 0 && ready_count == 0 {
+        DeploymentHealth::Healthy
+    } else if ready_count == 0 {
         DeploymentHealth::Failed
     } else if ready_count >= desired_count {
         DeploymentHealth::Healthy

@@ -8,8 +8,9 @@ use ratatui::{
 };
 
 use crate::{
-    k8s::portforward::TunnelState, state::port_forward::TunnelRegistry,
-    ui::components::default_theme,
+    k8s::portforward::TunnelState,
+    state::port_forward::TunnelRegistry,
+    ui::{components::default_theme, contains_ci},
 };
 
 pub fn render_port_forwarding(
@@ -26,10 +27,16 @@ pub fn render_port_forwarding(
         .iter()
         .filter(|t| {
             search.is_empty()
-                || t.target.pod_name.contains(search)
-                || t.target.namespace.contains(search)
+                || contains_ci(&t.target.pod_name, search)
+                || contains_ci(&t.target.namespace, search)
         })
         .collect();
+
+    let clamped_selected = if items.is_empty() {
+        0
+    } else {
+        selected.min(items.len() - 1)
+    };
 
     if items.is_empty() {
         let msg = if search.is_empty() {
@@ -54,7 +61,7 @@ pub fn render_port_forwarding(
         .iter()
         .enumerate()
         .map(|(i, t)| {
-            let style = if i == selected {
+            let style = if i == clamped_selected {
                 theme.selection_style()
             } else {
                 Style::default()
