@@ -25,8 +25,9 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        format_image, format_small_int, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        format_age, format_image, format_small_int, loading_or_empty_message,
+        responsive_table_widths, table_viewport_rows, table_window, workload_sort_header,
+        workload_sort_suffix,
     },
 };
 
@@ -270,25 +271,6 @@ fn cached_deployment_derived(
     }
 
     built
-}
-
-fn format_age(age: Option<std::time::Duration>) -> String {
-    let Some(age) = age else {
-        return "-".to_string();
-    };
-
-    let secs = age.as_secs();
-    let days = secs / 86_400;
-    let hours = (secs % 86_400) / 3_600;
-    let mins = (secs % 3_600) / 60;
-
-    if days > 0 {
-        format!("{days}d {hours}h")
-    } else if hours > 0 {
-        format!("{hours}h {mins}m")
-    } else {
-        format!("{mins}m")
-    }
 }
 
 #[cfg(test)]

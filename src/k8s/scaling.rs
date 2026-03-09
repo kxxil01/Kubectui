@@ -102,7 +102,7 @@ impl K8sClient {
         })?;
         let patch = Patch::Merge(json!({"spec": {"replicas": replicas}}));
         deployments
-            .patch(name, &PatchParams::apply("kubectui"), &patch)
+            .patch(name, &PatchParams::default(), &patch)
             .await
             .with_context(|| {
                 format!(
@@ -135,7 +135,7 @@ impl K8sClient {
         })?;
         let patch = Patch::Merge(json!({"spec": {"replicas": replicas}}));
         statefulsets
-            .patch(name, &PatchParams::apply("kubectui"), &patch)
+            .patch(name, &PatchParams::default(), &patch)
             .await
             .with_context(|| {
                 format!(
@@ -162,7 +162,7 @@ impl K8sClient {
                 }
             }
         }));
-        let pp = PatchParams::apply("kubectui");
+        let pp = PatchParams::default();
         let client = self.get_client();
         match kind.to_lowercase().as_str() {
             "deployment" => {

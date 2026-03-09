@@ -118,20 +118,15 @@ impl UpdateCoordinator {
     pub async fn start_probe_polling(&self, pod_name: String, namespace: String) -> Result<()> {
         let key = format!("{}/{}", namespace, pod_name);
 
-        // Don't start a new task if one is already running
-        {
-            let tasks = self.probe_tasks.read().await;
-            if tasks.contains_key(&key) {
-                return Ok(());
-            }
-        }
-
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
         let handle = TaskHandle::new(cancel_tx);
 
-        // Store the handle before spawning the task
+        // Atomically check-and-insert under a single write lock to avoid TOCTOU races.
         {
             let mut tasks = self.probe_tasks.write().await;
+            if tasks.contains_key(&key) {
+                return Ok(());
+            }
             tasks.insert(key.clone(), handle);
         }
 
@@ -183,20 +178,15 @@ impl UpdateCoordinator {
     ) -> Result<()> {
         let key = format!("{}/{}/{}", namespace, pod_name, container_name);
 
-        // Don't start a new task if one is already running
-        {
-            let tasks = self.log_tasks.read().await;
-            if tasks.contains_key(&key) {
-                return Ok(());
-            }
-        }
-
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
         let handle = TaskHandle::new(cancel_tx);
 
-        // Store the handle before spawning the task
+        // Atomically check-and-insert under a single write lock to avoid TOCTOU races.
         {
             let mut tasks = self.log_tasks.write().await;
+            if tasks.contains_key(&key) {
+                return Ok(());
+            }
             tasks.insert(key.clone(), handle);
         }
 

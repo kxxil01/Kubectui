@@ -156,8 +156,6 @@ pub enum AppView {
 }
 
 impl AppView {
-    pub const COUNT: usize = 46;
-
     const ORDER: [AppView; 46] = [
         // Overview
         AppView::Dashboard,
@@ -215,6 +213,8 @@ impl AppView {
         // Custom Resources
         AppView::Extensions,
     ];
+
+    pub const COUNT: usize = Self::ORDER.len();
 
     /// Returns a static display label for this view.
     pub const fn label(self) -> &'static str {
@@ -990,9 +990,13 @@ pub struct LogsViewerState {
 impl LogsViewerState {
     /// Appends a log line, evicting the oldest lines if the buffer exceeds [`MAX_LOG_LINES`].
     pub fn push_line(&mut self, line: String) {
-        let line = if line.len() > 10_000 {
+        const MAX_LINE_BYTES: usize = 10_000;
+        let line = if line.len() > MAX_LINE_BYTES {
+            // Find the nearest char boundary at or before the limit to avoid
+            // panicking on multi-byte UTF-8 sequences.
+            let end = line.floor_char_boundary(MAX_LINE_BYTES);
             let mut truncated = line;
-            truncated.truncate(10_000);
+            truncated.truncate(end);
             truncated.push_str("…[truncated]");
             truncated
         } else {
@@ -1601,6 +1605,7 @@ impl AppState {
     /// Sets active namespace for namespaced resource fetches.
     pub fn set_namespace(&mut self, ns: String) {
         self.current_namespace = ns;
+        self.selected_idx = 0;
     }
 
     /// Returns currently active namespace (`all` means cluster-wide listing).
@@ -2465,11 +2470,9 @@ impl AppState {
                 AppAction::LogsViewerOpen
             }
             KeyCode::Char('y')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::ViewYaml))
-                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
+                if (self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::ViewYaml) && !detail.confirm_delete
+                }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::OpenResourceYaml
             }
@@ -2578,11 +2581,11 @@ impl AppState {
             {
                 AppAction::DeleteResource
             }
-            KeyCode::Tab => {
+            KeyCode::Tab if self.detail_view.is_none() => {
                 self.next_view();
                 AppAction::None
             }
-            KeyCode::BackTab => {
+            KeyCode::BackTab if self.detail_view.is_none() => {
                 self.previous_view();
                 AppAction::None
             }
@@ -2626,11 +2629,15 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Down if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Down
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 self.select_next();
                 AppAction::None
             }
-            KeyCode::Up if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Up
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 self.select_previous();
                 AppAction::None
             }

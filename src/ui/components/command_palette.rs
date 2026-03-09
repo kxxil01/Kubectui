@@ -213,14 +213,14 @@ impl CommandPalette {
                     .map(|v| CommandPaletteAction::Navigate(*v))
                     .unwrap_or(CommandPaletteAction::None)
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down => {
                 let len = self.filtered().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
                 }
                 CommandPaletteAction::None
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up => {
                 let len = self.filtered().len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {

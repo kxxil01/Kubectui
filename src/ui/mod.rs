@@ -1031,7 +1031,9 @@ pub(crate) fn readiness_style(
     desired: i32,
     theme: &crate::ui::theme::Theme,
 ) -> ratatui::prelude::Style {
-    if desired > 0 && ready >= desired {
+    if desired == 0 && ready == 0 {
+        theme.inactive_style()
+    } else if desired > 0 && ready >= desired {
         theme.badge_success_style()
     } else if ready > 0 {
         theme.badge_warning_style()

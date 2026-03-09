@@ -5,7 +5,6 @@ use std::{
 };
 
 pub mod command_palette;
-pub mod common;
 pub mod context_picker;
 pub mod input_field;
 pub mod namespace_picker;

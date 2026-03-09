@@ -72,14 +72,14 @@ impl ContextPicker {
                 .cloned()
                 .map(ContextPickerAction::Select)
                 .unwrap_or(ContextPickerAction::None),
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Down => {
                 let len = self.filtered_contexts().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
                 }
                 ContextPickerAction::None
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Up => {
                 let len = self.filtered_contexts().len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {

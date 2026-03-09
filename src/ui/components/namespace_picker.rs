@@ -38,6 +38,8 @@ impl NamespacePicker {
 
     pub fn open(&mut self) {
         self.is_open = true;
+        self.search_query.clear();
+        self.selected_index = 0;
     }
 
     pub fn close(&mut self) {
@@ -74,14 +76,14 @@ impl NamespacePicker {
                 .cloned()
                 .map(NamespacePickerAction::Select)
                 .unwrap_or(NamespacePickerAction::None),
-            KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Down => {
                 let len = self.filtered_namespaces().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
                 }
                 NamespacePickerAction::None
             }
-            KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::Up => {
                 let len = self.filtered_namespaces().len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {

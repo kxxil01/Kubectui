@@ -2114,7 +2114,12 @@ impl K8sClient {
             .as_ref()
             .and_then(|spec| spec.containers.first())
             .and_then(|container| container.ports.as_ref())
-            .map(|ports| ports.iter().map(|p| p.container_port as u16).collect())
+            .map(|ports| {
+                ports
+                    .iter()
+                    .filter_map(|p| u16::try_from(p.container_port).ok())
+                    .collect()
+            })
             .unwrap_or_default();
 
         if !container_ports.is_empty() && !container_ports.contains(&target.remote_port) {
