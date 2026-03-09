@@ -2602,14 +2602,6 @@ impl K8sClient {
                 let created_at = secret.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
                 let age = created_at.and_then(|ts| (now - ts).to_std().ok());
 
-                // Chart name and version are stored in annotations or can be decoded from data,
-                // but labels often contain them too. Fall back to annotation-based approach.
-                let annotations = secret.metadata.annotations.as_ref();
-                let _chart = annotations
-                    .and_then(|a| a.get("meta.helm.sh/release-name"))
-                    .cloned()
-                    .unwrap_or_else(|| release_name.clone());
-
                 // Try to get chart info from the "helmrelease" label pattern
                 let chart_label = labels.get("chart").cloned().unwrap_or_default();
                 let (chart_name, chart_version) = if let Some(pos) = chart_label.rfind('-') {

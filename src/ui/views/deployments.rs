@@ -25,8 +25,8 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window, workload_sort_header, workload_sort_suffix,
+        format_image, format_small_int, loading_or_empty_message, responsive_table_widths,
+        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -137,7 +137,7 @@ pub fn render_deployments(
         } else {
             (
                 Cow::Owned(format_age(deploy.age)),
-                Cow::Owned(format_image(deploy.image.as_deref())),
+                Cow::Owned(format_image(deploy.image.as_deref(), 34)),
                 deployment_health_from_ready(&deploy.ready),
             )
         };
@@ -258,7 +258,7 @@ fn cached_deployment_derived(
                 let deploy = &snapshot.deployments[deploy_idx];
                 DeploymentDerivedCell {
                     age: format_age(deploy.age),
-                    image: format_image(deploy.image.as_deref()),
+                    image: format_image(deploy.image.as_deref(), 34),
                     health: deployment_health_from_ready(&deploy.ready),
                 }
             })
@@ -270,25 +270,6 @@ fn cached_deployment_derived(
     }
 
     built
-}
-
-fn format_image(image: Option<&str>) -> String {
-    let Some(image) = image else {
-        return "-".to_string();
-    };
-
-    const MAX_LEN: usize = 34;
-    if image.chars().count() <= MAX_LEN {
-        image.to_string()
-    } else {
-        format!(
-            "{}...",
-            image
-                .chars()
-                .take(MAX_LEN.saturating_sub(3))
-                .collect::<String>()
-        )
-    }
 }
 
 fn format_age(age: Option<std::time::Duration>) -> String {
@@ -337,7 +318,7 @@ mod tests {
     #[test]
     fn format_image_truncates_long_strings() {
         let long = "registry.io/team/service:very-long-tag-1234567890";
-        let out = format_image(Some(long));
+        let out = format_image(Some(long), 34);
         assert!(out.ends_with("..."));
         assert!(out.len() <= 37);
     }
@@ -345,6 +326,6 @@ mod tests {
     /// Verifies missing image renders a dash placeholder.
     #[test]
     fn format_image_empty_placeholder() {
-        assert_eq!(format_image(None), "-");
+        assert_eq!(format_image(None, 34), "-");
     }
 }

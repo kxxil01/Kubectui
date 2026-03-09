@@ -51,7 +51,7 @@ impl LogsClient {
         Ok(raw.lines().map(str::to_string).collect())
     }
 
-    #[allow(dead_code)]
+    #[cfg(test)]
     async fn verify_pod_exists(&self, pod_ref: &PodRef) -> anyhow::Result<()> {
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &pod_ref.namespace);
         pods.get(&pod_ref.name).await.context("Pod not found")?;

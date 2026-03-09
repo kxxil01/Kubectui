@@ -3,7 +3,6 @@
 use std::{future::Future, pin::Pin, time::Duration};
 
 use anyhow::{Context, Result, anyhow};
-use futures::FutureExt;
 use k8s_openapi::{api::core::v1::Pod, apimachinery::pkg::apis::meta::v1::Status};
 use kube::{
     Api,
@@ -16,7 +15,6 @@ use tokio::{
 
 use crate::k8s::client::K8sClient;
 
-pub const EXEC_OUTPUT_BUFFER_LIMIT: usize = 5_000;
 const SHELL_READY_GRACE_PERIOD_MS: u64 = 250;
 const READ_CHUNK_SIZE: usize = 1024;
 
@@ -116,6 +114,7 @@ pub async fn spawn_exec_session(
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_exec_session(
     client: K8sClient,
     session_id: u64,
@@ -143,10 +142,20 @@ async fn run_exec_session(
     let stdout = attached.stdout();
     let stderr = attached.stderr();
     let stdout_task = stdout.map(|reader| {
-        tokio::spawn(pipe_exec_output(session_id, reader, false, update_tx.clone()))
+        tokio::spawn(pipe_exec_output(
+            session_id,
+            reader,
+            false,
+            update_tx.clone(),
+        ))
     });
     let stderr_task = stderr.map(|reader| {
-        tokio::spawn(pipe_exec_output(session_id, reader, true, update_tx.clone()))
+        tokio::spawn(pipe_exec_output(
+            session_id,
+            reader,
+            true,
+            update_tx.clone(),
+        ))
     });
 
     loop {

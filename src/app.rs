@@ -2153,7 +2153,11 @@ impl AppState {
                 _ => AppAction::None,
             },
             WorkbenchTabState::WorkloadLogs(tab) => {
-                let filtered_len = tab.lines.iter().filter(|line| tab.matches_filter(line)).count();
+                let filtered_len = tab
+                    .lines
+                    .iter()
+                    .filter(|line| tab.matches_filter(line))
+                    .count();
                 if tab.editing_text_filter {
                     match key.code {
                         KeyCode::Esc => {

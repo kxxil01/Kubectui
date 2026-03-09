@@ -481,8 +481,11 @@ fn render_workload_logs_tab(
         return;
     }
 
-    let filtered: Vec<&crate::workbench::WorkloadLogLine> =
-        tab.lines.iter().filter(|line| tab.matches_filter(line)).collect();
+    let filtered: Vec<&crate::workbench::WorkloadLogLine> = tab
+        .lines
+        .iter()
+        .filter(|line| tab.matches_filter(line))
+        .collect();
     if filtered.is_empty() {
         let message = tab.notice.as_deref().unwrap_or(if tab.loading {
             " Loading workload logs..."
@@ -527,7 +530,11 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
     let theme = default_theme();
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0), Constraint::Length(2)])
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(0),
+            Constraint::Length(2),
+        ])
         .split(area);
 
     let status = if tab.loading {
@@ -582,7 +589,11 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             .iter()
             .enumerate()
             .map(|(idx, container)| {
-                let prefix = if idx == tab.container_cursor { ">" } else { " " };
+                let prefix = if idx == tab.container_cursor {
+                    ">"
+                } else {
+                    " "
+                };
                 Line::from(format!("{prefix} {container}"))
             })
             .collect();
@@ -591,7 +602,11 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             sections[1],
         );
     } else {
-        let mut lines: Vec<Line> = tab.lines.iter().map(|line| Line::from(line.clone())).collect();
+        let mut lines: Vec<Line> = tab
+            .lines
+            .iter()
+            .map(|line| Line::from(line.clone()))
+            .collect();
         if !tab.pending_fragment.is_empty() {
             lines.push(Line::from(tab.pending_fragment.clone()));
         }

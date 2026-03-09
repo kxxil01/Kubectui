@@ -36,7 +36,12 @@ pub async fn resolve_workload_log_targets(
                 .get(name)
                 .await
                 .with_context(|| format!("failed to fetch Deployment '{name}'"))?;
-            list_pods_for_selector(client, namespace, selector_to_string(workload.spec.and_then(|spec| spec.selector))?).await
+            list_pods_for_selector(
+                client,
+                namespace,
+                selector_to_string(workload.spec.map(|spec| spec.selector))?,
+            )
+            .await
         }
         ResourceRef::StatefulSet(name, namespace) => {
             let api: Api<StatefulSet> = Api::namespaced(client.clone(), namespace);
@@ -44,7 +49,12 @@ pub async fn resolve_workload_log_targets(
                 .get(name)
                 .await
                 .with_context(|| format!("failed to fetch StatefulSet '{name}'"))?;
-            list_pods_for_selector(client, namespace, selector_to_string(workload.spec.and_then(|spec| spec.selector))?).await
+            list_pods_for_selector(
+                client,
+                namespace,
+                selector_to_string(workload.spec.map(|spec| spec.selector))?,
+            )
+            .await
         }
         ResourceRef::DaemonSet(name, namespace) => {
             let api: Api<DaemonSet> = Api::namespaced(client.clone(), namespace);
@@ -52,7 +62,12 @@ pub async fn resolve_workload_log_targets(
                 .get(name)
                 .await
                 .with_context(|| format!("failed to fetch DaemonSet '{name}'"))?;
-            list_pods_for_selector(client, namespace, selector_to_string(workload.spec.and_then(|spec| spec.selector))?).await
+            list_pods_for_selector(
+                client,
+                namespace,
+                selector_to_string(workload.spec.map(|spec| spec.selector))?,
+            )
+            .await
         }
         ResourceRef::ReplicaSet(name, namespace) => {
             let api: Api<ReplicaSet> = Api::namespaced(client.clone(), namespace);
@@ -60,7 +75,12 @@ pub async fn resolve_workload_log_targets(
                 .get(name)
                 .await
                 .with_context(|| format!("failed to fetch ReplicaSet '{name}'"))?;
-            list_pods_for_selector(client, namespace, selector_to_string(workload.spec.and_then(|spec| spec.selector))?).await
+            list_pods_for_selector(
+                client,
+                namespace,
+                selector_to_string(workload.spec.map(|spec| spec.selector))?,
+            )
+            .await
         }
         ResourceRef::ReplicationController(name, namespace) => {
             let api: Api<ReplicationController> = Api::namespaced(client.clone(), namespace);
@@ -68,7 +88,12 @@ pub async fn resolve_workload_log_targets(
                 .get(name)
                 .await
                 .with_context(|| format!("failed to fetch ReplicationController '{name}'"))?;
-            list_pods_for_match_labels(client, namespace, workload.spec.and_then(|spec| spec.selector)).await
+            list_pods_for_match_labels(
+                client,
+                namespace,
+                workload.spec.and_then(|spec| spec.selector),
+            )
+            .await
         }
         ResourceRef::Job(name, namespace) => {
             let api: Api<Job> = Api::namespaced(client.clone(), namespace);
@@ -76,7 +101,12 @@ pub async fn resolve_workload_log_targets(
                 .get(name)
                 .await
                 .with_context(|| format!("failed to fetch Job '{name}'"))?;
-            list_pods_for_selector(client, namespace, selector_to_string(workload.spec.and_then(|spec| spec.selector))?).await
+            list_pods_for_selector(
+                client,
+                namespace,
+                selector_to_string(workload.spec.and_then(|spec| spec.selector))?,
+            )
+            .await
         }
         _ => Err(anyhow!(
             "Aggregated logs are only available for Pods, Deployments, StatefulSets, DaemonSets, ReplicaSets, ReplicationControllers, and Jobs."
@@ -84,7 +114,11 @@ pub async fn resolve_workload_log_targets(
     }
 }
 
-async fn fetch_single_pod_target(client: Client, name: &str, namespace: &str) -> Result<Vec<WorkloadLogTarget>> {
+async fn fetch_single_pod_target(
+    client: Client,
+    name: &str,
+    namespace: &str,
+) -> Result<Vec<WorkloadLogTarget>> {
     let pods: Api<Pod> = Api::namespaced(client, namespace);
     let pod = pods
         .get(name)
@@ -172,7 +206,11 @@ fn selector_to_string(selector: Option<LabelSelector>) -> Result<String> {
     if let Some(labels) = selector.match_labels {
         let mut labels = labels.into_iter().collect::<Vec<_>>();
         labels.sort_by(|left, right| left.0.cmp(&right.0));
-        parts.extend(labels.into_iter().map(|(key, value)| format!("{key}={value}")));
+        parts.extend(
+            labels
+                .into_iter()
+                .map(|(key, value)| format!("{key}={value}")),
+        );
     }
     if let Some(expressions) = selector.match_expressions {
         let mut expressions = expressions;

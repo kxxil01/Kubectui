@@ -22,8 +22,8 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        loading_or_empty_message, responsive_table_widths, table_viewport_rows, table_window,
-        workload_sort_header, workload_sort_suffix,
+        format_image, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
+        table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -132,7 +132,7 @@ pub fn render_statefulsets(
             } else {
                 (
                     Cow::Owned(format!("{}/{}", ss.ready_replicas, ss.desired_replicas)),
-                    Cow::Owned(format_image(ss.image.as_deref())),
+                    Cow::Owned(format_image(ss.image.as_deref(), 30)),
                     Cow::Owned(format_age(ss.age)),
                 )
             };
@@ -241,7 +241,7 @@ fn cached_statefulset_derived(
                 let ss = &cluster.statefulsets[ss_idx];
                 StatefulSetDerivedCell {
                     ready: format!("{}/{}", ss.ready_replicas, ss.desired_replicas),
-                    image: format_image(ss.image.as_deref()),
+                    image: format_image(ss.image.as_deref(), 30),
                     age: format_age(ss.age),
                 }
             })
@@ -255,34 +255,7 @@ fn cached_statefulset_derived(
     built
 }
 
-fn readiness_style(ready: i32, desired: i32, theme: &crate::ui::theme::Theme) -> Style {
-    if desired > 0 && ready >= desired {
-        theme.badge_success_style()
-    } else if ready > 0 {
-        theme.badge_warning_style()
-    } else {
-        theme.badge_error_style()
-    }
-}
-
-fn format_image(image: Option<&str>) -> String {
-    let Some(image) = image else {
-        return "-".to_string();
-    };
-
-    const MAX_LEN: usize = 30;
-    if image.chars().count() <= MAX_LEN {
-        image.to_string()
-    } else {
-        format!(
-            "{}...",
-            image
-                .chars()
-                .take(MAX_LEN.saturating_sub(3))
-                .collect::<String>()
-        )
-    }
-}
+use crate::ui::readiness_style;
 
 fn format_age(age: Option<std::time::Duration>) -> String {
     let Some(age) = age else {

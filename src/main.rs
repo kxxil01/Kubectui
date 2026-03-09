@@ -198,9 +198,8 @@ fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
                         }) {
                             logs_tab.loading = false;
                             if let LogStreamStatus::Error(err) = &status {
-                                logs_tab.notice = Some(format!(
-                                    "{pod_name}/{container_name}: {err}"
-                                ));
+                                logs_tab.notice =
+                                    Some(format!("{pod_name}/{container_name}: {err}"));
                             }
                         }
                     }
@@ -484,8 +483,6 @@ struct ProbeAsyncResult {
 struct ExecBootstrapResult {
     session_id: u64,
     resource: ResourceRef,
-    pod_name: String,
-    namespace: String,
     result: Result<Vec<String>, String>,
 }
 
@@ -1656,6 +1653,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     exec_sessions.remove(&session_id);
                                 }
                             }
+                            break;
                         }
                     }
                 }
@@ -2314,8 +2312,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 .send(ExecBootstrapResult {
                                     session_id,
                                     resource,
-                                    pod_name,
-                                    namespace: pod_ns,
                                     result,
                                 })
                                 .await;

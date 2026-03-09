@@ -100,6 +100,9 @@ impl SidebarLineCache {
     }
 
     fn touch(&mut self, key: &SidebarCacheKey) {
+        if self.order.back().is_some_and(|k| k == key) {
+            return;
+        }
         if let Some(pos) = self.order.iter().position(|item| item == key) {
             self.order.remove(pos);
             self.order.push_back(key.clone());

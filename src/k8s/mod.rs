@@ -2,8 +2,8 @@
 
 pub mod client;
 pub mod dtos;
-pub mod exec;
 pub mod events;
+pub mod exec;
 pub mod flux;
 pub mod helm;
 pub mod logs;
