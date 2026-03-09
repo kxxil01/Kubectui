@@ -4056,6 +4056,7 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                         .map(|ts: chrono::DateTime<chrono::Utc>| ts.to_rfc3339()),
                     labels: pod.labels.clone(),
                     annotations: pod.annotations.clone(),
+                    owner_references: pod.owner_references.clone(),
                     ..DetailMetadata::default()
                 }
             } else {

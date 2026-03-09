@@ -166,6 +166,25 @@ fn render_details_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
         }
     }
 
+    if !detail_state.metadata.owner_references.is_empty() {
+        if !lines.is_empty() {
+            lines.push(Line::from(""));
+        }
+        lines.push(Line::from(Span::styled(
+            " OWNERS",
+            theme.section_title_style(),
+        )));
+        for oref in &detail_state.metadata.owner_references {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {} ", oref.kind),
+                    Style::default().fg(theme.accent),
+                ),
+                Span::styled(&*oref.name, Style::default().fg(theme.fg)),
+            ]));
+        }
+    }
+
     if !detail_state.events.is_empty() {
         if !lines.is_empty() {
             lines.push(Line::from(""));
