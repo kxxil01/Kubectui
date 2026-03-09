@@ -600,6 +600,7 @@ Completed
 - Multi-line labels display (up to 5 in metadata panel)
 - Force delete option: `F` key in delete confirmation dialog uses grace_period_seconds=0
 - CronJob manual trigger: `T` key creates a Job from CronJob spec, recorded in action history
+- Help overlay updated with `F` (force delete) and `T` (trigger CronJob) entries
 - Container environment variables deferred (YAML view already provides this data)
 
 ### Goal
