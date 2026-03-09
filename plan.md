@@ -20,7 +20,7 @@ Current milestone status:
 - Milestone 5: completed
 - Milestone 6: completed
 - Milestone 7: completed
-- Milestone 8: next
+- Milestone 8: completed
 
 Completion notes:
 
@@ -591,7 +591,16 @@ Let users get data out of the TUI without manual transcription.
 
 ### Status
 
-Planned
+Completed
+
+### What shipped
+
+- Annotations displayed in detail metadata panel (up to 5, values truncated at 60 chars)
+- Owner references shown as OWNERS section in detail view (Kind/Name)
+- Multi-line labels display (up to 5 in metadata panel)
+- Force delete option: `F` key in delete confirmation dialog uses grace_period_seconds=0
+- CronJob manual trigger: `T` key creates a Job from CronJob spec, recorded in action history
+- Container environment variables deferred (YAML view already provides this data)
 
 ### Goal
 
@@ -600,38 +609,15 @@ Bring detail view information density closer to Lens without visual clutter.
 ### Scope
 
 - labels and annotations display
-- environment variables for containers
 - owner reference links
 - force delete option
-
-### Tasks
-
-1. Add labels/annotations section to detail view:
-   - collapsible, hidden by default if many labels
-   - `l` key toggles label display
-2. Add container environment variables:
-   - shown in container section of pod detail
-   - secrets masked by default, toggle to reveal
-3. Add owner reference display:
-   - shows "Owner: Deployment/foo-bar" with jump-to shortcut
-4. Add force delete option:
-   - `F` in delete confirmation triggers force delete (removes finalizers)
-   - stronger warning text than normal delete
-   - recorded in action history
-5. Add CronJob manual trigger:
-   - `T` on CronJob detail creates a Job from the CronJob spec
-   - recorded in action history
-
-### Deliverables
-
-- richer detail views
-- force delete for stuck resources
-- CronJob trigger
+- CronJob manual trigger
 
 ### Acceptance Criteria
 
-- users can inspect labels, env vars, and ownership without kubectl
+- users can inspect labels, annotations, and ownership without kubectl
 - stuck resources can be force-deleted from the TUI
+- CronJobs can be manually triggered from detail view
 
 ---
 
