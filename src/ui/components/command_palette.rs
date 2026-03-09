@@ -226,7 +226,7 @@ pub struct CommandPalette {
     query: String,
     selected_index: usize,
     is_open: bool,
-    cached_filtered: RefCell<Option<Vec<AppView>>>,
+    cached_filtered: RefCell<Option<Vec<PaletteEntry>>>,
     resource_context: Option<ResourceRef>,
 }
 
@@ -264,11 +264,21 @@ impl CommandPalette {
         match key.code {
             KeyCode::Esc => CommandPaletteAction::Close,
             KeyCode::Enter => {
-                let matches = self.filtered();
-                matches
-                    .get(self.selected_index)
-                    .map(|v| CommandPaletteAction::Navigate(*v))
-                    .unwrap_or(CommandPaletteAction::None)
+                let entries = self.filtered();
+                if let Some(entry) = entries.get(self.selected_index) {
+                    match entry {
+                        PaletteEntry::Navigate(view) => CommandPaletteAction::Navigate(*view),
+                        PaletteEntry::Action(action) => {
+                            if let Some(resource) = &self.resource_context {
+                                CommandPaletteAction::Execute(*action, resource.clone())
+                            } else {
+                                CommandPaletteAction::None
+                            }
+                        }
+                    }
+                } else {
+                    CommandPaletteAction::None
+                }
             }
             KeyCode::Down => {
                 let len = self.filtered().len();
@@ -304,24 +314,42 @@ impl CommandPalette {
         }
     }
 
-    /// Returns views whose aliases fuzzy-match the current query.
-    pub fn filtered(&self) -> Vec<AppView> {
+    /// Returns palette entries whose aliases fuzzy-match the current query.
+    /// Actions (if a resource context exists) come first, then navigation entries.
+    pub fn filtered(&self) -> Vec<PaletteEntry> {
         if let Some(cached) = self.cached_filtered.borrow().as_ref() {
             return cached.clone();
         }
-        let result: Vec<AppView> = if self.query.is_empty() {
-            COMMANDS.iter().map(|c| c.view).collect()
-        } else {
-            COMMANDS
-                .iter()
-                .filter(|cmd| {
-                    cmd.aliases
+
+        let mut result = Vec::new();
+
+        // Actions section (only if resource context exists)
+        if let Some(resource) = &self.resource_context {
+            let actions = action_entries_for_resource(Some(resource));
+            for entry in &actions {
+                if self.query.is_empty()
+                    || entry
+                        .aliases
                         .iter()
                         .any(|alias| fuzzy_match(alias, &self.query))
-                })
-                .map(|c| c.view)
-                .collect()
-        };
+                {
+                    result.push(PaletteEntry::Action(entry.action));
+                }
+            }
+        }
+
+        // Navigation section
+        for cmd in COMMANDS {
+            if self.query.is_empty()
+                || cmd
+                    .aliases
+                    .iter()
+                    .any(|alias| fuzzy_match(alias, &self.query))
+            {
+                result.push(PaletteEntry::Navigate(cmd.view));
+            }
+        }
+
         *self.cached_filtered.borrow_mut() = Some(result.clone());
         result
     }
@@ -416,25 +444,32 @@ impl CommandPalette {
             matches
                 .iter()
                 .enumerate()
-                .map(|(idx, view)| {
-                    let group_label = view.group().label();
+                .map(|(idx, entry)| {
+                    let (name, right_label) = match entry {
+                        PaletteEntry::Navigate(view) => {
+                            (view.label(), view.group().label().to_string())
+                        }
+                        PaletteEntry::Action(action) => {
+                            (action.label(), action.key_hint().to_string())
+                        }
+                    };
                     if idx == self.selected_index {
                         ListItem::new(Line::from(vec![
                             Span::styled(" ▶ ", theme.title_style()),
                             Span::styled(
-                                view.label(),
+                                name,
                                 Style::default()
                                     .fg(theme.selection_fg)
                                     .bg(theme.selection_bg)
                                     .add_modifier(Modifier::BOLD),
                             ),
-                            Span::styled(format!("  {group_label}"), theme.inactive_style()),
+                            Span::styled(format!("  {right_label}"), theme.inactive_style()),
                         ]))
                     } else {
                         ListItem::new(Line::from(vec![
                             Span::styled("   ", theme.inactive_style()),
-                            Span::styled(view.label(), Style::default().fg(theme.fg_dim)),
-                            Span::styled(format!("  {group_label}"), theme.inactive_style()),
+                            Span::styled(name, Style::default().fg(theme.fg_dim)),
+                            Span::styled(format!("  {right_label}"), theme.inactive_style()),
                         ]))
                     }
                 })
@@ -508,7 +543,7 @@ mod tests {
             p.handle_key(KeyEvent::from(KeyCode::Char(c)));
         }
         let results = p.filtered();
-        assert!(results.contains(&AppView::Pods));
+        assert!(results.contains(&PaletteEntry::Navigate(AppView::Pods)));
     }
 
     #[test]
@@ -518,7 +553,10 @@ mod tests {
         for c in "svc".chars() {
             p.handle_key(KeyEvent::from(KeyCode::Char(c)));
         }
-        assert!(p.filtered().contains(&AppView::Services));
+        assert!(
+            p.filtered()
+                .contains(&PaletteEntry::Navigate(AppView::Services))
+        );
     }
 
     #[test]
@@ -592,5 +630,51 @@ mod tests {
         palette.open_with_context(None);
         assert!(palette.is_open());
         assert!(palette.resource_context().is_none());
+    }
+
+    #[test]
+    fn filtered_returns_actions_then_navigation() {
+        let mut palette = CommandPalette::default();
+        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        palette.open_with_context(Some(resource));
+        let entries = palette.filtered();
+        let first_action_idx = entries
+            .iter()
+            .position(|e| matches!(e, PaletteEntry::Action(_)));
+        let first_nav_idx = entries
+            .iter()
+            .position(|e| matches!(e, PaletteEntry::Navigate(_)));
+        assert!(first_action_idx.is_some());
+        assert!(first_nav_idx.is_some());
+        assert!(first_action_idx.unwrap() < first_nav_idx.unwrap());
+    }
+
+    #[test]
+    fn filtered_with_query_matches_actions_and_views() {
+        let mut palette = CommandPalette::default();
+        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        palette.open_with_context(Some(resource));
+        // Type "scl" which should fuzzy-match "scale"
+        for c in "scl".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let entries = palette.filtered();
+        assert!(
+            entries
+                .iter()
+                .any(|e| matches!(e, PaletteEntry::Action(DetailAction::Scale)))
+        );
+    }
+
+    #[test]
+    fn filtered_no_context_has_no_actions() {
+        let mut palette = CommandPalette::default();
+        palette.open_with_context(None);
+        let entries = palette.filtered();
+        assert!(
+            entries
+                .iter()
+                .all(|e| matches!(e, PaletteEntry::Navigate(_)))
+        );
     }
 }
