@@ -2867,7 +2867,7 @@ impl AppState {
                 AppAction::WorkbenchDecreaseHeight
             }
             KeyCode::Char('c') if self.detail_view.is_none() => AppAction::OpenContextPicker,
-            KeyCode::Char(':') if self.detail_view.is_none() => AppAction::OpenCommandPalette,
+            KeyCode::Char(':') => AppAction::OpenCommandPalette,
             KeyCode::Char('R')
                 if self.detail_view.is_none()
                     && self
