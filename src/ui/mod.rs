@@ -359,6 +359,20 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .split(body_root[0])
     };
 
+    let sidebar_counts: Vec<(AppView, usize)> = {
+        use crate::app::SidebarItem;
+        crate::app::sidebar_rows(&app.collapsed_groups)
+            .iter()
+            .filter_map(|item| {
+                if let SidebarItem::View(view) = item {
+                    cluster.resource_count(*view).map(|c| (*view, c))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    };
+
     {
         let _sidebar_scope = profiling::span_scope("sidebar");
         components::render_sidebar(
@@ -368,6 +382,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             app.sidebar_cursor,
             &app.collapsed_groups,
             app.focus,
+            &sidebar_counts,
         );
     }
 
