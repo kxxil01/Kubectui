@@ -911,6 +911,7 @@ fn render_pods_widget(
             theme.header_style(),
         )),
         Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("IP", theme.header_style())),
         Cell::from(Span::styled(status_header, theme.header_style())),
         Cell::from(Span::styled("Node", theme.header_style())),
         Cell::from(Span::styled(restarts_header, theme.header_style())),
@@ -952,6 +953,10 @@ fn render_pods_widget(
                     Span::styled(pod.name.as_str(), name_style),
                 ])),
                 Cell::from(Span::styled(pod.namespace.as_str(), dim_style)),
+                Cell::from(Span::styled(
+                    pod.pod_ip.as_deref().unwrap_or("-"),
+                    dim_style,
+                )),
                 Cell::from(Span::styled(status, status_style)),
                 Cell::from(Span::styled(
                     pod.node.as_deref().unwrap_or("n/a"),
@@ -987,12 +992,13 @@ fn render_pods_widget(
         responsive_table_widths(
             area.width,
             [
-                Constraint::Min(28),
-                Constraint::Length(18),
-                Constraint::Length(20),
-                Constraint::Length(22),
-                Constraint::Length(10),
-                Constraint::Length(9),
+                Constraint::Min(28),    // Name
+                Constraint::Length(18), // Namespace
+                Constraint::Length(16), // IP
+                Constraint::Length(20), // Status
+                Constraint::Length(22), // Node
+                Constraint::Length(10), // Restarts
+                Constraint::Length(9),  // Age
             ],
         ),
     )
