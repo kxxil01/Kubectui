@@ -4,6 +4,7 @@
 
 pub mod action_history;
 pub mod app;
+pub mod clipboard;
 pub mod coordinator;
 pub mod events;
 pub mod k8s;
