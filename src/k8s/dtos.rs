@@ -33,6 +33,7 @@ pub struct PodInfo {
     pub restarts: i32,
     pub created_at: Option<DateTime<Utc>>,
     pub labels: Vec<(String, String)>,
+    pub annotations: Vec<(String, String)>,
     pub waiting_reasons: Vec<String>,
 }
 
