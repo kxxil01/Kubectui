@@ -175,6 +175,7 @@ impl UpdateCoordinator {
         namespace: String,
         container_name: String,
         follow: bool,
+        previous: bool,
     ) -> Result<()> {
         let key = format!("{}/{}/{}", namespace, pod_name, container_name);
 
@@ -203,6 +204,7 @@ impl UpdateCoordinator {
                 PodRef::new(pod_name_clone, namespace_clone.clone()),
                 container_name_clone.clone(),
                 follow,
+                previous,
                 coordinator.update_tx.clone(),
                 cancel_rx,
             ));

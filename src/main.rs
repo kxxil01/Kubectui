@@ -1723,7 +1723,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
                     for (pod_name, namespace, container_name) in sources_to_start {
                         let _ = coordinator
-                            .start_log_streaming(pod_name, namespace, container_name, true)
+                            .start_log_streaming(pod_name, namespace, container_name, true, false)
                             .await;
                     }
                 }
@@ -2504,7 +2504,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             // Start streaming each container
                             for (pod, ns, container) in sources {
                                 let _ = coordinator
-                                    .start_log_streaming(pod, ns, container, true)
+                                    .start_log_streaming(pod, ns, container, true, false)
                                     .await;
                             }
                         }
@@ -2535,13 +2535,87 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 apply_action(AppAction::LogsViewerToggleFollow, &mut app);
                                 if !was_following {
                                     let _ = coordinator
-                                        .start_log_streaming(pod_name, pod_ns, container_name, true)
+                                        .start_log_streaming(pod_name, pod_ns, container_name, true, false)
                                         .await;
                                 } else if !pod_name.is_empty() && !container_name.is_empty() {
                                     let _ = coordinator
                                         .stop_log_streaming(&pod_name, &pod_ns, &container_name)
                                         .await;
                                 }
+                            }
+                        }
+                    }
+                    AppAction::LogsViewerTogglePrevious => {
+                        let prev_info = app.workbench().active_tab().and_then(|tab| {
+                            if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
+                                let v = &logs_tab.viewer;
+                                if v.picking_container || v.container_name.is_empty() {
+                                    return None;
+                                }
+                                Some((
+                                    v.pod_name.clone(),
+                                    v.pod_namespace.clone(),
+                                    v.container_name.clone(),
+                                    v.previous_logs,
+                                    v.follow_mode,
+                                ))
+                            } else {
+                                None
+                            }
+                        });
+                        if let Some((pod_name, pod_ns, container_name, was_previous, was_following)) = prev_info {
+                            // Cancel any current log stream
+                            if was_following || was_previous {
+                                let _ = coordinator
+                                    .stop_log_streaming(&pod_name, &pod_ns, &container_name)
+                                    .await;
+                            }
+
+                            // Toggle previous_logs and reset viewer state
+                            if let Some(tab) = app.workbench_mut().active_tab_mut()
+                                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+                            {
+                                let viewer = &mut logs_tab.viewer;
+                                viewer.previous_logs = !was_previous;
+                                viewer.follow_mode = false;
+                                viewer.lines.clear();
+                                viewer.scroll_offset = 0;
+                                viewer.loading = true;
+                                viewer.error = None;
+
+                                logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
+                                let request_id = logs_viewer_request_seq;
+                                viewer.pending_logs_request_id = Some(request_id);
+
+                                let new_previous = viewer.previous_logs;
+                                let tx = logs_viewer_tx.clone();
+                                let client_clone = client.clone();
+                                let pn = pod_name.clone();
+                                let pns = pod_ns.clone();
+                                let cn = container_name.clone();
+                                tokio::spawn(async move {
+                                    let logs_client = LogsClient::new(client_clone.get_client());
+                                    let pod_ref = PodRef::new(pn.clone(), pns.clone());
+                                    let tail = Some(500);
+                                    let result = if new_previous {
+                                        logs_client
+                                            .tail_previous_logs(&pod_ref, tail, Some(cn.as_str()))
+                                            .await
+                                            .map_err(|err| err.to_string())
+                                    } else {
+                                        logs_client
+                                            .tail_logs(&pod_ref, tail, Some(cn.as_str()))
+                                            .await
+                                            .map_err(|err| err.to_string())
+                                    };
+                                    let _ = tx.send(LogsViewerAsyncResult::Tail {
+                                        request_id,
+                                        pod_name: pn,
+                                        namespace: pns,
+                                        container_name: cn,
+                                        result,
+                                    }).await;
+                                });
                             }
                         }
                     }

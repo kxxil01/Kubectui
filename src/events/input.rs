@@ -175,7 +175,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             }
             false
         }
-        // LogsViewerSelectContainer / SelectAll handled in main.rs (needs async log fetch)
+        // LogsViewerSelectContainer / SelectAll / TogglePrevious handled in main.rs (needs async log fetch)
+        AppAction::LogsViewerTogglePrevious => true,
         AppAction::LogsViewerSelectContainer(_) => true,
         AppAction::LogsViewerSelectAllContainers => true,
         AppAction::OpenResourceYaml => true,

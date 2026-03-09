@@ -51,6 +51,30 @@ impl LogsClient {
         Ok(raw.lines().map(str::to_string).collect())
     }
 
+    pub async fn tail_previous_logs(
+        &self,
+        pod_ref: &PodRef,
+        tail_lines: Option<i64>,
+        container: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        use kube::api::LogParams;
+
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), &pod_ref.namespace);
+        let params = LogParams {
+            tail_lines,
+            timestamps: false,
+            container: container.map(str::to_string),
+            previous: true,
+            ..Default::default()
+        };
+        let raw = pods
+            .logs(&pod_ref.name, &params)
+            .await
+            .context("failed to fetch previous pod logs")?;
+
+        Ok(raw.lines().map(str::to_string).collect())
+    }
+
     #[cfg(test)]
     async fn verify_pod_exists(&self, pod_ref: &PodRef) -> anyhow::Result<()> {
         let pods: Api<Pod> = Api::namespaced(self.client.clone(), &pod_ref.namespace);
