@@ -995,6 +995,7 @@ pub struct DetailMetadata {
     pub ip: Option<String>,
     pub created: Option<String>,
     pub labels: Vec<(String, String)>,
+    pub annotations: Vec<(String, String)>,
     pub flux_reconcile_enabled: bool,
 }
 

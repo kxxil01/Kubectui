@@ -262,6 +262,12 @@ impl K8sClient {
                         .unwrap_or_default()
                         .into_iter()
                         .collect(),
+                    annotations: pod
+                        .metadata
+                        .annotations
+                        .unwrap_or_default()
+                        .into_iter()
+                        .collect(),
                     waiting_reasons,
                 }
             })

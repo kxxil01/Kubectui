@@ -17,23 +17,10 @@ use crate::{
 fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
 
-    let labels_str = if detail_state.metadata.labels.is_empty() {
-        "—".to_string()
-    } else {
-        detail_state
-            .metadata
-            .labels
-            .iter()
-            .take(3)
-            .map(|(k, v)| format!("{k}={v}"))
-            .collect::<Vec<_>>()
-            .join("  ")
-    };
-
     let status_str = detail_state.metadata.status.as_deref().unwrap_or("Unknown");
     let status_style = theme.get_status_style(status_str);
 
-    let lines = vec![
+    let mut lines = vec![
         Line::from(vec![
             Span::styled(" Name      ", theme.inactive_style()),
             Span::styled(
@@ -69,11 +56,67 @@ fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailVie
                 Style::default().fg(theme.fg_dim),
             ),
         ]),
-        Line::from(vec![
-            Span::styled(" Labels    ", theme.inactive_style()),
-            Span::styled(labels_str, Style::default().fg(theme.muted)),
-        ]),
     ];
+
+    // Labels
+    if !detail_state.metadata.labels.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(" Labels    ", theme.inactive_style()),
+            Span::styled(
+                format!("({})", detail_state.metadata.labels.len()),
+                Style::default().fg(theme.muted),
+            ),
+        ]));
+        for (k, v) in detail_state.metadata.labels.iter().take(5) {
+            lines.push(Line::from(vec![
+                Span::styled("   ", theme.inactive_style()),
+                Span::styled(k.clone(), Style::default().fg(theme.accent)),
+                Span::styled("=", Style::default().fg(theme.muted)),
+                Span::styled(v.clone(), Style::default().fg(theme.fg_dim)),
+            ]));
+        }
+        if detail_state.metadata.labels.len() > 5 {
+            lines.push(Line::from(Span::styled(
+                format!("   … +{} more", detail_state.metadata.labels.len() - 5),
+                Style::default().fg(theme.muted),
+            )));
+        }
+    } else {
+        lines.push(Line::from(vec![
+            Span::styled(" Labels    ", theme.inactive_style()),
+            Span::styled("—", Style::default().fg(theme.muted)),
+        ]));
+    }
+
+    // Annotations
+    if !detail_state.metadata.annotations.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled(" Annot.    ", theme.inactive_style()),
+            Span::styled(
+                format!("({})", detail_state.metadata.annotations.len()),
+                Style::default().fg(theme.muted),
+            ),
+        ]));
+        for (k, v) in detail_state.metadata.annotations.iter().take(3) {
+            let display_val = if v.len() > 50 {
+                format!("{}…", &v[..v.floor_char_boundary(50)])
+            } else {
+                v.clone()
+            };
+            lines.push(Line::from(vec![
+                Span::styled("   ", theme.inactive_style()),
+                Span::styled(k.clone(), Style::default().fg(theme.accent)),
+                Span::styled("=", Style::default().fg(theme.muted)),
+                Span::styled(display_val, Style::default().fg(theme.fg_dim)),
+            ]));
+        }
+        if detail_state.metadata.annotations.len() > 3 {
+            lines.push(Line::from(Span::styled(
+                format!("   … +{} more", detail_state.metadata.annotations.len() - 3),
+                Style::default().fg(theme.muted),
+            )));
+        }
+    }
 
     let block = Block::default()
         .title(Span::styled(" Metadata ", theme.section_title_style()))
@@ -362,7 +405,7 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),
-            Constraint::Length(9),
+            Constraint::Min(9),
             Constraint::Min(6),
             Constraint::Length(2),
         ])
