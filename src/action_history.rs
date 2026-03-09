@@ -64,10 +64,19 @@ pub struct ActionHistoryEntry {
     pub finished_at: Option<DateTime<Utc>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct ActionHistoryState {
     entries: VecDeque<ActionHistoryEntry>,
     next_id: u64,
+}
+
+impl Default for ActionHistoryState {
+    fn default() -> Self {
+        Self {
+            entries: VecDeque::new(),
+            next_id: 1,
+        }
+    }
 }
 
 impl ActionHistoryState {

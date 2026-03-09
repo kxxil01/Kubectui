@@ -213,10 +213,8 @@ impl WorkloadLogsTabState {
     }
 
     pub fn cycle_container_filter(&mut self) {
-        self.container_filter = cycle_filter_value(
-            &self.available_containers,
-            self.container_filter.as_deref(),
-        );
+        self.container_filter =
+            cycle_filter_value(&self.available_containers, self.container_filter.as_deref());
         self.scroll = 0;
     }
 
@@ -257,7 +255,12 @@ pub struct ExecTabState {
 }
 
 impl ExecTabState {
-    pub fn new(resource: ResourceRef, session_id: u64, pod_name: String, namespace: String) -> Self {
+    pub fn new(
+        resource: ResourceRef,
+        session_id: u64,
+        pod_name: String,
+        namespace: String,
+    ) -> Self {
         Self {
             resource,
             session_id,
@@ -293,9 +296,9 @@ impl ExecTabState {
     pub fn append_output(&mut self, chunk: &str) {
         for segment in chunk.split_inclusive('\n') {
             if segment.ends_with('\n') {
-                self.pending_fragment.push_str(segment.trim_end_matches('\n'));
-                self.lines
-                    .push(std::mem::take(&mut self.pending_fragment));
+                self.pending_fragment
+                    .push_str(segment.trim_end_matches('\n'));
+                self.lines.push(std::mem::take(&mut self.pending_fragment));
             } else {
                 self.pending_fragment.push_str(segment);
             }

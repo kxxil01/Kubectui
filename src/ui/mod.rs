@@ -1006,6 +1006,60 @@ fn render_pods_widget(
     );
 }
 
+/// Formats a `Duration` as a human-readable age string (e.g. "3d 2h", "5h 12m", "7m").
+pub fn format_age(age: Option<std::time::Duration>) -> String {
+    let Some(age) = age else {
+        return "-".to_string();
+    };
+
+    let secs = age.as_secs();
+    let days = secs / 86_400;
+    let hours = (secs % 86_400) / 3_600;
+    let mins = (secs % 3_600) / 60;
+
+    if days > 0 {
+        format!("{days}d {hours}h")
+    } else if hours > 0 {
+        format!("{hours}h {mins}m")
+    } else {
+        format!("{mins}m")
+    }
+}
+
+pub(crate) fn readiness_style(
+    ready: i32,
+    desired: i32,
+    theme: &crate::ui::theme::Theme,
+) -> ratatui::prelude::Style {
+    if desired > 0 && ready >= desired {
+        theme.badge_success_style()
+    } else if ready > 0 {
+        theme.badge_warning_style()
+    } else {
+        theme.badge_error_style()
+    }
+}
+
+pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
+}
+
 #[inline]
 fn format_age_from_timestamp(
     created_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -1030,6 +1084,16 @@ fn format_age_from_timestamp(
     }
 }
 
+pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {
+    let Some(image) = image else {
+        return "-".to_string();
+    };
+    if image.chars().count() <= max_len {
+        image.to_string()
+    } else {
+        format!("{}...", &image.chars().take(max_len).collect::<String>())
+    }
+}
 #[cfg(test)]
 mod tests {
     use ratatui::{Terminal, backend::TestBackend};

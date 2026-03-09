@@ -47,8 +47,9 @@ pub fn render_crd_picker(
         return;
     }
 
+    let clamped_idx = selected_idx.min(filtered.len().saturating_sub(1));
     let rows = filtered.iter().enumerate().map(|(idx, crd)| {
-        let style = if is_focused && idx == selected_idx {
+        let style = if is_focused && idx == clamped_idx {
             Style::default().bg(Color::DarkGray)
         } else {
             Style::default()

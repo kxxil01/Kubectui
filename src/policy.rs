@@ -455,7 +455,7 @@ mod tests {
         assert!(detail.supports_action(DetailAction::Restart));
         assert!(detail.supports_action(DetailAction::EditYaml));
         assert!(detail.supports_action(DetailAction::Delete));
-        assert!(!detail.supports_action(DetailAction::Logs));
+        assert!(detail.supports_action(DetailAction::Logs));
         assert!(!detail.supports_action(DetailAction::FluxReconcile));
     }
 
