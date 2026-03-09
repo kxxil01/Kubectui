@@ -7,6 +7,7 @@ pub mod app;
 pub mod clipboard;
 pub mod coordinator;
 pub mod events;
+pub mod export;
 pub mod k8s;
 pub mod policy;
 pub mod state;

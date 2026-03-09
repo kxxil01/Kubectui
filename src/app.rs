@@ -1346,6 +1346,7 @@ pub enum AppAction {
     CopyResourceName,
     CopyResourceFullName,
     CopyLogContent,
+    ExportLogs,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -2274,6 +2275,9 @@ impl AppState {
                 KeyCode::Char('y') if !tab.viewer.searching && !tab.viewer.picking_container => {
                     AppAction::CopyLogContent
                 }
+                KeyCode::Char('S') if !tab.viewer.searching && !tab.viewer.picking_container => {
+                    AppAction::ExportLogs
+                }
                 _ => AppAction::None,
             },
             WorkbenchTabState::WorkloadLogs(tab) => {
@@ -2359,6 +2363,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char('y') if !tab.editing_text_filter => AppAction::CopyLogContent,
+                        KeyCode::Char('S') if !tab.editing_text_filter => AppAction::ExportLogs,
                         _ => AppAction::None,
                     }
                 }
