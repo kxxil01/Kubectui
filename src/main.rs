@@ -2956,6 +2956,55 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             }
                         }
                     }
+                    AppAction::ExportLogs => {
+                        let export_data = app.workbench().active_tab().and_then(|tab| {
+                            match &tab.state {
+                                WorkbenchTabState::PodLogs(logs_tab) => {
+                                    if logs_tab.viewer.lines.is_empty() {
+                                        None
+                                    } else {
+                                        let label = format!(
+                                            "{}-{}",
+                                            logs_tab.viewer.pod_name,
+                                            logs_tab.viewer.container_name,
+                                        );
+                                        Some((label, logs_tab.viewer.lines.join("\n")))
+                                    }
+                                }
+                                WorkbenchTabState::WorkloadLogs(wl_tab) => {
+                                    if wl_tab.lines.is_empty() {
+                                        None
+                                    } else {
+                                        let label = tab.state.title().replace(' ', "-");
+                                        let content = wl_tab
+                                            .lines
+                                            .iter()
+                                            .map(|l| {
+                                                format!(
+                                                    "{}:{} {}",
+                                                    l.pod_name, l.container_name, l.content
+                                                )
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join("\n");
+                                        Some((label, content))
+                                    }
+                                }
+                                _ => None,
+                            }
+                        });
+                        if let Some((label, content)) = export_data {
+                            match kubectui::export::save_logs_to_file(&label, &content) {
+                                Ok(path) => {
+                                    app.status_message =
+                                        Some(format!("Saved to {}", path.display()));
+                                }
+                                Err(e) => {
+                                    app.set_error(format!("Export error: {e}"));
+                                }
+                            }
+                        }
+                    }
                     AppAction::EditYaml => {
                         if !app
                             .detail_view

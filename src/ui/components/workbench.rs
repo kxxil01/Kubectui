@@ -371,7 +371,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
     }
     status_spans.push(Span::raw("  "));
     status_spans.push(Span::styled(
-        "[Esc] back  [f] follow  [P] previous  [t] timestamps  [/] search  [n/N] next/prev",
+        "[Esc] back  [f] follow  [P] previous  [t] timestamps  [/] search  [n/N] next/prev  [S] save",
         theme.keybind_desc_style(),
     ));
 
@@ -541,7 +541,7 @@ fn render_workload_logs_tab(
         ))
     } else {
         Line::from(Span::styled(
-            "[/] text  [p] pod  [c] container  [f] follow  [Esc] back",
+            "[/] text  [p] pod  [c] container  [f] follow  [S] save  [Esc] back",
             theme.keybind_desc_style(),
         ))
     };
