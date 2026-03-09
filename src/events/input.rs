@@ -420,6 +420,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs (needs log buffer access)
             true
         }
+        AppAction::PaletteAction { .. } => {
+            app_state.command_palette.close();
+            true
+        }
     }
 }
 
@@ -439,6 +443,24 @@ mod tests {
         assert!(!app.should_quit);
         apply_action(AppAction::Quit, &mut app);
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn test_apply_action_palette_action_closes_palette() {
+        use crate::app::ResourceRef;
+        use crate::policy::DetailAction;
+        let mut app = AppState::default();
+        app.command_palette
+            .open_with_context(Some(ResourceRef::Pod("test".into(), "default".into())));
+        let changed = apply_action(
+            AppAction::PaletteAction {
+                action: DetailAction::ViewYaml,
+                resource: ResourceRef::Pod("test".into(), "default".into()),
+            },
+            &mut app,
+        );
+        assert!(changed);
+        assert!(!app.command_palette.is_open());
     }
 
     #[test]
