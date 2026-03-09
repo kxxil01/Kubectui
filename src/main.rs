@@ -3665,6 +3665,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     apply_action(other, &mut app);
                 }
             }
+
+            // Clear stale deferred palette action if detail view was closed or errored
+            if pending_palette_action.is_some()
+                && (app.detail_view.is_none()
+                    || app.detail_view.as_ref().is_some_and(|d| d.error.is_some()))
+            {
+                pending_palette_action = None;
+            }
         }
     }
 

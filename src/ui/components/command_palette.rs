@@ -696,4 +696,42 @@ mod tests {
                 .all(|e| matches!(e, PaletteEntry::Navigate(_)))
         );
     }
+
+    #[test]
+    fn handle_key_enter_on_action_returns_execute() {
+        use crate::app::ResourceRef;
+        let mut palette = CommandPalette::default();
+        let resource = ResourceRef::Pod("test".into(), "default".into());
+        palette.open_with_context(Some(resource.clone()));
+        // First entry should be an action (ViewYaml for Pod)
+        let result = palette.handle_key(KeyEvent::from(KeyCode::Enter));
+        match result {
+            CommandPaletteAction::Execute(_, ref res) => {
+                assert_eq!(*res, resource);
+            }
+            other => panic!("Expected Execute, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn empty_query_with_context_shows_actions_and_views() {
+        use crate::app::ResourceRef;
+        let mut palette = CommandPalette::default();
+        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        palette.open_with_context(Some(resource));
+        let entries = palette.filtered();
+        let has_actions = entries.iter().any(|e| matches!(e, PaletteEntry::Action(_)));
+        let has_nav = entries
+            .iter()
+            .any(|e| matches!(e, PaletteEntry::Navigate(_)));
+        assert!(
+            has_actions,
+            "Should have action entries with resource context"
+        );
+        assert!(has_nav, "Should have navigation entries");
+        assert!(
+            entries.len() > COMMANDS.len(),
+            "Should have more entries than navigation alone"
+        );
+    }
 }
