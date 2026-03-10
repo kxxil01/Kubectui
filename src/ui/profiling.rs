@@ -233,8 +233,14 @@ fn build_summary(
     rows.sort_unstable_by(|a, b| b.6.total_cmp(&a.6));
     for (view, count, avg, p50, p95, max, total_ms) in rows {
         out.push_str(&format!(
-            "- {:<28} frames={:<5} avg={:>7.3}ms p50={:>7.3}ms p95={:>7.3}ms max={:>7.3}ms total={:>8.3}ms\n",
-            view.label(), count, avg, p50, p95, max, total_ms
+            "- {:<28} frames={:<5} avg={:.3}ms p50={:.3}ms p95={:.3}ms max={:.3}ms total={:.3}ms\n",
+            view.label(),
+            count,
+            avg,
+            p50,
+            p95,
+            max,
+            total_ms
         ));
     }
 
@@ -254,7 +260,7 @@ fn build_summary(
     span_rows.sort_unstable_by(|a, b| b.2.total_cmp(&a.2));
     for (name, count, total_ms, max_ms) in span_rows.into_iter().take(20) {
         out.push_str(&format!(
-            "- {:<28} count={:<6} total={:>8.3}ms max={:>7.3}ms\n",
+            "- {:<28} count={:<6} total={:.3}ms max={:.3}ms\n",
             name, count, total_ms, max_ms
         ));
     }

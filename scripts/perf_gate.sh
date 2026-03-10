@@ -42,6 +42,10 @@ extract_total_ms() {
           value = $i
           sub(/^total=/, "", value)
           sub(/ms$/, "", value)
+          if (value == "" && i+1 <= NF) {
+            value = $(i+1)
+            sub(/ms$/, "", value)
+          }
           print value
           exit
         }
