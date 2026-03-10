@@ -2705,7 +2705,9 @@ impl AppState {
             }
             KeyCode::Char('y')
                 if (self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::ViewYaml) && !detail.confirm_delete
+                    detail.supports_action(DetailAction::ViewYaml)
+                        && !detail.confirm_delete
+                        && !detail.confirm_drain
                 }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::OpenResourceYaml
@@ -2965,7 +2967,12 @@ impl AppState {
                 AppAction::WorkbenchDecreaseHeight
             }
             KeyCode::Char('c') if self.detail_view.is_none() => AppAction::OpenContextPicker,
-            KeyCode::Char(':') if !self.detail_view.as_ref().is_some_and(|d| d.confirm_delete) => {
+            KeyCode::Char(':')
+                if !self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+            {
                 AppAction::OpenCommandPalette
             }
             KeyCode::Char('R')
@@ -3839,7 +3846,70 @@ mod tests {
             ..DetailViewState::default()
         });
         let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
-        // c should not dispatch CordonNode for non-node resources
         assert_ne!(action, AppAction::CordonNode);
+    }
+
+    #[test]
+    fn d_key_does_not_drain_for_pod_detail() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: Pod".to_string()),
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+        assert_ne!(action, AppAction::DrainNode);
+        assert!(!app.detail_view.as_ref().unwrap().confirm_drain);
+    }
+
+    #[test]
+    fn u_key_does_not_uncordon_for_pod_detail() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: Pod".to_string()),
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
+        assert_ne!(action, AppAction::UncordonNode);
+    }
+
+    #[test]
+    fn y_key_in_drain_confirm_dispatches_drain_not_yaml() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert_eq!(action, AppAction::DrainNode);
+    }
+
+    #[test]
+    fn palette_blocked_during_drain_confirm() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::NONE));
+        assert_ne!(action, AppAction::OpenCommandPalette);
+    }
+
+    #[test]
+    fn y_key_blocked_during_drain_confirm_does_not_open_yaml() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
+        assert_ne!(action, AppAction::OpenResourceYaml);
     }
 }

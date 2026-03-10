@@ -699,7 +699,9 @@ impl GlobalState {
     pub fn apply_optimistic_node_schedulable(&mut self, node_name: &str, unschedulable: bool) {
         if let Some(node) = self.snapshot.nodes.iter_mut().find(|n| n.name == node_name) {
             node.unschedulable = unschedulable;
+            self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
             self.snapshot_dirty = true;
+            self.publish_snapshot();
         }
     }
 
