@@ -2298,6 +2298,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &detail_tx,
                         resource,
                     );
+                    if app.focus == kubectui::app::Focus::Workbench {
+                        app.focus = kubectui::app::Focus::Content;
+                    }
                 }
                 AppAction::ActionHistoryOpenSelected => {
                     let Some(target) = app.selected_action_history_target().cloned() else {
