@@ -985,7 +985,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (trigger_cronjob_tx, mut trigger_cronjob_rx) =
         tokio::sync::mpsc::channel::<TriggerCronJobAsyncResult>(16);
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
-    let (_relations_tx, mut relations_rx) = tokio::sync::mpsc::channel::<(
+    let (relations_tx, mut relations_rx) = tokio::sync::mpsc::channel::<(
         ResourceRef,
         Result<Vec<kubectui::k8s::relationships::RelationNode>, String>,
     )>(16);
@@ -2397,8 +2397,22 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         kubectui::workbench::RelationsTabState::new(resource.clone()),
                     ));
                     app.focus = kubectui::app::Focus::Workbench;
-                    // TODO(Task 14): spawn async resolve_relationships and send result via
-                    // _relations_tx once the resolver is implemented.
+
+                    let tx = relations_tx.clone();
+                    let client_clone = client.clone();
+                    let snapshot_clone = cached_snapshot.clone();
+                    let requested_resource = resource.clone();
+                    tokio::spawn(async move {
+                        let result =
+                            kubectui::k8s::relationships::resolve_relationships(
+                                &requested_resource,
+                                &snapshot_clone,
+                                &client_clone,
+                            )
+                            .await
+                            .map_err(|err| format!("{err:#}"));
+                        let _ = tx.send((requested_resource, result)).await;
+                    });
                 }
                 AppAction::OpenResourceEvents => {
                     let resource = app
