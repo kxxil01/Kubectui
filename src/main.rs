@@ -2403,14 +2403,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     let snapshot_clone = cached_snapshot.clone();
                     let requested_resource = resource.clone();
                     tokio::spawn(async move {
-                        let result =
-                            kubectui::k8s::relationships::resolve_relationships(
-                                &requested_resource,
-                                &snapshot_clone,
-                                &client_clone,
-                            )
-                            .await
-                            .map_err(|err| format!("{err:#}"));
+                        let result = kubectui::k8s::relationships::resolve_relationships(
+                            &requested_resource,
+                            &snapshot_clone,
+                            &client_clone,
+                        )
+                        .await
+                        .map_err(|err| format!("{err:#}"));
                         let _ = tx.send((requested_resource, result)).await;
                     });
                 }

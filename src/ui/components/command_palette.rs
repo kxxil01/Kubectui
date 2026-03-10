@@ -52,7 +52,14 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     (DetailAction::Trigger, &["trigger", "run"]),
     (
         DetailAction::ViewRelationships,
-        &["relations", "relationships", "related", "web", "tree", "deps"],
+        &[
+            "relations",
+            "relationships",
+            "related",
+            "web",
+            "tree",
+            "deps",
+        ],
     ),
 ];
 

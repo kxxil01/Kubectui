@@ -1,35 +1,34 @@
 //! Rendering for the Relations workbench tab.
 
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 
-use crate::k8s::relationships::{flatten_tree, FlatNode, RelationKind};
+use crate::k8s::relationships::{FlatNode, RelationKind, flatten_tree};
 use crate::ui::theme::Theme;
 use crate::workbench::RelationsTabState;
 
 pub fn render_relations_tab(frame: &mut Frame, area: Rect, tab: &RelationsTabState, theme: &Theme) {
     if tab.loading {
-        let text = Paragraph::new("Loading relationships...")
-            .style(Style::default().fg(theme.fg_dim));
+        let text =
+            Paragraph::new("Loading relationships...").style(Style::default().fg(theme.fg_dim));
         frame.render_widget(text, area);
         return;
     }
 
     if let Some(err) = &tab.error {
-        let text = Paragraph::new(format!("Error: {err}"))
-            .style(Style::default().fg(theme.error));
+        let text = Paragraph::new(format!("Error: {err}")).style(Style::default().fg(theme.error));
         frame.render_widget(text, area);
         return;
     }
 
     if tab.tree.is_empty() {
-        let text = Paragraph::new("No relationships found.")
-            .style(Style::default().fg(theme.fg_dim));
+        let text =
+            Paragraph::new("No relationships found.").style(Style::default().fg(theme.fg_dim));
         frame.render_widget(text, area);
         return;
     }
@@ -50,7 +49,12 @@ pub fn render_relations_tab(frame: &mut Frame, area: Rect, tab: &RelationsTabSta
     };
 
     let mut lines = Vec::new();
-    for (i, node) in flat.iter().enumerate().skip(scroll_offset).take(visible_height) {
+    for (i, node) in flat
+        .iter()
+        .enumerate()
+        .skip(scroll_offset)
+        .take(visible_height)
+    {
         let line = render_flat_node(node, i == tab.cursor, theme);
         lines.push(line);
     }
@@ -68,7 +72,9 @@ fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'st
         let padding = "─".repeat(60usize.saturating_sub(header.len()));
         spans.push(Span::styled(
             format!("{header}{padding}"),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ));
     } else {
         // Indent with tree connectors
@@ -116,7 +122,10 @@ fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'st
 
         // Namespace (dimmed)
         if let Some(ns) = &node.namespace {
-            spans.push(Span::styled(format!(" {ns}"), Style::default().fg(theme.fg_dim)));
+            spans.push(Span::styled(
+                format!(" {ns}"),
+                Style::default().fg(theme.fg_dim),
+            ));
         }
 
         // Status
@@ -127,17 +136,27 @@ fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'st
                 "Failed" | "Error" | "CrashLoopBackOff" => theme.error,
                 _ => theme.fg_dim,
             };
-            spans.push(Span::styled(format!(" {status}"), Style::default().fg(status_color)));
+            spans.push(Span::styled(
+                format!(" {status}"),
+                Style::default().fg(status_color),
+            ));
         }
 
         if node.not_found {
-            spans.push(Span::styled(" (not found)", Style::default().fg(theme.fg_dim)));
+            spans.push(Span::styled(
+                " (not found)",
+                Style::default().fg(theme.fg_dim),
+            ));
         }
     }
 
     let mut line = Line::from(spans);
     if is_cursor {
-        line = line.style(Style::default().bg(theme.selection_bg).fg(theme.selection_fg));
+        line = line.style(
+            Style::default()
+                .bg(theme.selection_bg)
+                .fg(theme.selection_fg),
+        );
     }
     line
 }

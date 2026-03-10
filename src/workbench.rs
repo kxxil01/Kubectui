@@ -738,12 +738,12 @@ mod tests {
     #[test]
     fn relations_tab_deduplicates_by_resource() {
         let mut state = WorkbenchState::default();
-        let first = state.open_tab(WorkbenchTabState::Relations(RelationsTabState::new(
-            pod("pod-0"),
-        )));
-        let second = state.open_tab(WorkbenchTabState::Relations(RelationsTabState::new(
-            pod("pod-0"),
-        )));
+        let first = state.open_tab(WorkbenchTabState::Relations(RelationsTabState::new(pod(
+            "pod-0",
+        ))));
+        let second = state.open_tab(WorkbenchTabState::Relations(RelationsTabState::new(pod(
+            "pod-0",
+        ))));
         assert_eq!(first, second);
         assert_eq!(state.tabs.len(), 1);
     }

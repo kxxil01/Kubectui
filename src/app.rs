@@ -2437,68 +2437,66 @@ impl AppState {
                 PortForwardAction::Create(args) => AppAction::PortForwardCreate(args),
                 PortForwardAction::Stop(tunnel_id) => AppAction::PortForwardStop(tunnel_id),
             },
-            WorkbenchTabState::Relations(tab) => {
-                match key.code {
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                        if !flat.is_empty() {
-                            tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
-                        }
-                        AppAction::None
+            WorkbenchTabState::Relations(tab) => match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if !flat.is_empty() {
+                        tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        tab.cursor = tab.cursor.saturating_sub(1);
-                        AppAction::None
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.cursor = tab.cursor.saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.cursor = 0;
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    tab.cursor = flat.len().saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('l') | KeyCode::Right => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if let Some(node) = flat.get(tab.cursor)
+                        && node.has_children
+                        && !node.expanded
+                    {
+                        tab.expanded.insert(node.tree_index);
                     }
-                    KeyCode::Char('g') => {
-                        tab.cursor = 0;
-                        AppAction::None
-                    }
-                    KeyCode::Char('G') => {
-                        let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                        tab.cursor = flat.len().saturating_sub(1);
-                        AppAction::None
-                    }
-                    KeyCode::Char('l') | KeyCode::Right => {
-                        let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                        if let Some(node) = flat.get(tab.cursor)
-                            && node.has_children && !node.expanded
-                        {
-                            tab.expanded.insert(node.tree_index);
-                        }
-                        AppAction::None
-                    }
-                    KeyCode::Char('h') | KeyCode::Left => {
-                        let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                        if let Some(node) = flat.get(tab.cursor) {
-                            if node.expanded {
-                                tab.expanded.remove(&node.tree_index);
-                            } else if tab.cursor > 0 {
-                                for i in (0..tab.cursor).rev() {
-                                    if flat[i].depth < node.depth {
-                                        tab.cursor = i;
-                                        break;
-                                    }
+                    AppAction::None
+                }
+                KeyCode::Char('h') | KeyCode::Left => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if let Some(node) = flat.get(tab.cursor) {
+                        if node.expanded {
+                            tab.expanded.remove(&node.tree_index);
+                        } else if tab.cursor > 0 {
+                            for i in (0..tab.cursor).rev() {
+                                if flat[i].depth < node.depth {
+                                    tab.cursor = i;
+                                    break;
                                 }
                             }
                         }
-                        AppAction::None
                     }
-                    KeyCode::Enter => {
-                        let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                        if let Some(node) = flat.get(tab.cursor)
-                            && let Some(resource) = &node.resource
-                            && !node.not_found
-                            && node.relation
-                                != crate::k8s::relationships::RelationKind::SectionHeader
-                        {
-                            return AppAction::OpenDetail(resource.clone());
-                        }
-                        AppAction::None
-                    }
-                    _ => AppAction::None,
+                    AppAction::None
                 }
-            }
+                KeyCode::Enter => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if let Some(node) = flat.get(tab.cursor)
+                        && let Some(resource) = &node.resource
+                        && !node.not_found
+                        && node.relation != crate::k8s::relationships::RelationKind::SectionHeader
+                    {
+                        return AppAction::OpenDetail(resource.clone());
+                    }
+                    AppAction::None
+                }
+                _ => AppAction::None,
+            },
         }
     }
 
