@@ -22,6 +22,7 @@ Current milestone status:
 - Milestone 7: completed
 - Milestone 8: completed
 - Milestone 9: completed
+- Milestone 10: completed
 
 Completion notes:
 
@@ -31,6 +32,8 @@ Completion notes:
 - Milestone 3 added a canonical action history model, recorded pending/success/error mutation state centrally, and exposed the verification surface in the workbench with jump-back to affected resources where possible.
 - Milestone 4 added pod exec/shell sessions hosted in the workbench with container selection, shell fallback order, bounded scrollback, and error handling.
 - Milestone 5 added multi-pod and workload-level logs with per-pod/container/text filtering, follow mode, "All Containers" picker in pod logs, and workload log aggregation from deployments/statefulsets/daemonsets.
+
+- Milestone 10 shipped the Relationship Explorer: workbench-hosted Relations tab with 6 resolver chains (owner, service backends, ingress backends, storage bindings, RBAC bindings, Flux lineage), indented expand/collapse tree with connectors, `w` keybinding from detail view, action palette integration, and Enter-to-jump navigation to related resources.
 
 Post-milestone fixes and improvements (shipped after M5):
 
@@ -42,7 +45,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 480+ tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 503+ tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -656,7 +659,7 @@ Turn the command palette into the main discoverability and action surface.
 
 ### Status
 
-Planned
+Completed
 
 ### Goal
 
@@ -1014,7 +1017,7 @@ This is the execution order.
 - Milestone 9: Action Palette v2
 
 ## P2 (Current)
-- Milestone 10: Relationship Explorer
+- Milestone 10: Relationship Explorer ✅
 - Milestone 11: Node Operations
 
 ## P3
@@ -1031,12 +1034,11 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-Start with Milestone 10: Relationship Explorer.
+Start with Milestone 11: Node Operations.
 
-P0 and P1 are complete (M0-M9). The next real implementation work should be:
+P0, P1, and M10 are complete (M0-M10). The next real implementation work should be:
 
-1. Add relationship capability policy per view/resource
-2. Add relationship node and edge model
+1. Add node action capability policies (cordon, uncordon, drain)
 3. Implement first relation sets (deployment→replicaset→pod, service→endpoints→pod, etc.)
 4. Render relationships as expandable tree/list
 5. Add jump-to-related-resource behavior
