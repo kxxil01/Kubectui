@@ -2436,6 +2436,7 @@ impl AppState {
                 PortForwardAction::Create(args) => AppAction::PortForwardCreate(args),
                 PortForwardAction::Stop(tunnel_id) => AppAction::PortForwardStop(tunnel_id),
             },
+            WorkbenchTabState::Relations(_) => AppAction::None,
         }
     }
 
