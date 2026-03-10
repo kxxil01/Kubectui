@@ -424,6 +424,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.command_palette.close();
             true
         }
+        AppAction::OpenRelationships => true,
     }
 }
 
@@ -470,5 +471,11 @@ mod tests {
         assert!(app.detail_view.is_some());
         apply_action(AppAction::CloseDetail, &mut app);
         assert!(app.detail_view.is_none());
+    }
+
+    #[test]
+    fn test_apply_action_open_relationships_returns_true() {
+        let mut app = AppState::default();
+        assert!(apply_action(AppAction::OpenRelationships, &mut app));
     }
 }
