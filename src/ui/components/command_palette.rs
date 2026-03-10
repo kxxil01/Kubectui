@@ -61,6 +61,9 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
             "deps",
         ],
     ),
+    (DetailAction::Cordon, &["cordon", "unschedulable"]),
+    (DetailAction::Uncordon, &["uncordon", "schedulable"]),
+    (DetailAction::Drain, &["drain", "evict"]),
 ];
 
 pub fn action_entries_for_resource(resource: Option<&ResourceRef>) -> Vec<ActionEntry> {

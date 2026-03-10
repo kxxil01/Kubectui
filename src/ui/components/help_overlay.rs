@@ -78,6 +78,14 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Node Actions",
+        &[
+            ("c", "Cordon node"),
+            ("u", "Uncordon node"),
+            ("D", "Drain node (with confirmation)"),
+        ],
+    ),
+    (
         "Relations Tree",
         &[
             ("j / k", "Move cursor down / up"),

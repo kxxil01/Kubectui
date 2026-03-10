@@ -1126,6 +1126,8 @@ pub struct DetailViewState {
     pub probe_panel: Option<ProbePanelComponentState>,
     /// When true, a delete confirmation prompt is shown in the detail view.
     pub confirm_delete: bool,
+    /// When true, a drain confirmation prompt is shown in the detail view.
+    pub confirm_drain: bool,
 }
 
 /// A row in the sidebar — either a group header or a leaf view item.
@@ -1356,6 +1358,10 @@ pub enum AppAction {
         resource: ResourceRef,
     },
     OpenRelationships,
+    CordonNode,
+    UncordonNode,
+    DrainNode,
+    ForceDrainNode,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -2660,6 +2666,18 @@ impl AppState {
                 }
                 AppAction::None
             }
+            KeyCode::Esc
+                if self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| d.confirm_drain)
+                    .unwrap_or(false) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.confirm_drain = false;
+                }
+                AppAction::None
+            }
             KeyCode::Esc if self.detail_view.is_some() => AppAction::CloseDetail,
             KeyCode::Esc if self.focus == Focus::Content => {
                 self.focus = Focus::Sidebar;
@@ -2771,6 +2789,24 @@ impl AppState {
                     detail.confirm_delete = true;
                 }
                 AppAction::None
+            }
+            KeyCode::Char('F')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| d.confirm_drain)
+                    .unwrap_or(false) =>
+            {
+                AppAction::ForceDrainNode
+            }
+            KeyCode::Char('D') | KeyCode::Char('y') | KeyCode::Enter
+                if self
+                    .detail_view
+                    .as_ref()
+                    .map(|d| d.confirm_drain)
+                    .unwrap_or(false) =>
+            {
+                AppAction::DrainNode
             }
             KeyCode::Char('F')
                 if self
@@ -2959,6 +2995,34 @@ impl AppState {
                     .is_some_and(|detail| detail.supports_action(DetailAction::Trigger)) =>
             {
                 AppAction::TriggerCronJob
+            }
+            KeyCode::Char('c')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Cordon)) =>
+            {
+                AppAction::CordonNode
+            }
+            KeyCode::Char('u')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Uncordon)) =>
+            {
+                AppAction::UncordonNode
+            }
+            KeyCode::Char('D')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Drain)) =>
+            {
+                // Open drain confirmation prompt
+                if let Some(detail) = &mut self.detail_view {
+                    detail.confirm_drain = true;
+                }
+                AppAction::None
             }
             KeyCode::Char('T') if self.detail_view.is_none() => AppAction::CycleTheme,
             KeyCode::Char('?') => AppAction::OpenHelp,
@@ -3687,5 +3751,95 @@ mod tests {
         app.focus = Focus::Content;
         let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::SHIFT));
         assert_eq!(action, AppAction::CopyResourceFullName);
+    }
+
+    #[test]
+    fn c_key_returns_cordon_in_node_detail() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        assert_eq!(action, AppAction::CordonNode);
+    }
+
+    #[test]
+    fn u_key_returns_uncordon_in_node_detail() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
+        assert_eq!(action, AppAction::UncordonNode);
+    }
+
+    #[test]
+    fn d_key_opens_drain_confirmation_in_node_detail() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+        assert_eq!(action, AppAction::None);
+        assert!(app.detail_view.as_ref().unwrap().confirm_drain);
+    }
+
+    #[test]
+    fn drain_confirm_d_returns_drain_node() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+        assert_eq!(action, AppAction::DrainNode);
+    }
+
+    #[test]
+    fn drain_confirm_f_returns_force_drain() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('F'), KeyModifiers::SHIFT));
+        assert_eq!(action, AppAction::ForceDrainNode);
+    }
+
+    #[test]
+    fn drain_confirm_esc_cancels() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(action, AppAction::None);
+        assert!(!app.detail_view.as_ref().unwrap().confirm_drain);
+    }
+
+    #[test]
+    fn c_key_does_not_cordon_for_pod_detail() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: Pod".to_string()),
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+        // c should not dispatch CordonNode for non-node resources
+        assert_ne!(action, AppAction::CordonNode);
     }
 }

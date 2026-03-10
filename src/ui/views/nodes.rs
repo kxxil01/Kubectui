@@ -148,15 +148,11 @@ pub fn render_nodes(
             .get(idx)
             .map(|cell| Cow::Borrowed(cell.age.as_str()))
             .unwrap_or_else(|| Cow::Owned(format_age(node.created_at, now_unix)));
-        let status_style = if node.ready {
-            theme.badge_success_style()
-        } else {
-            theme.badge_error_style()
-        };
-        let status_text = if node.ready {
-            "● Ready"
-        } else {
-            "✗ NotReady"
+        let (status_text, status_style) = match (node.ready, node.unschedulable) {
+            (true, false) => ("● Ready", theme.badge_success_style()),
+            (true, true) => ("● Ready SchedulingDisabled", theme.badge_warning_style()),
+            (false, false) => ("✗ NotReady", theme.badge_error_style()),
+            (false, true) => ("✗ NotReady SchedulingDisabled", theme.badge_error_style()),
         };
 
         let mut status_spans = Vec::with_capacity(3);

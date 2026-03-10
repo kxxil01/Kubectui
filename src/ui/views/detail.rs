@@ -498,6 +498,9 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
     if detail_state.confirm_delete {
         render_delete_confirm(frame, popup, detail_state);
     }
+    if detail_state.confirm_drain {
+        render_drain_confirm(frame, popup, detail_state);
+    }
 }
 
 fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
@@ -559,6 +562,74 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
         Span::styled("Confirm  ", theme.keybind_desc_style()),
         Span::styled("[F] ", theme.keybind_key_style()),
         Span::styled("Force  ", theme.keybind_desc_style()),
+        Span::styled("[Esc] ", theme.keybind_key_style()),
+        Span::styled("Cancel", theme.keybind_desc_style()),
+    ]);
+    frame.render_widget(
+        Paragraph::new(footer).alignment(ratatui::layout::Alignment::Center),
+        rows[1],
+    );
+}
+
+fn render_drain_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
+    let theme = default_theme();
+    let popup = centered_rect(52, 24, parent);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(Span::styled(
+            " Confirm Drain ",
+            theme.badge_warning_style().add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_active_style())
+        .style(Style::default().bg(theme.bg));
+    frame.render_widget(block, popup);
+
+    let inner = Rect {
+        x: popup.x + 1,
+        y: popup.y + 1,
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(2)])
+        .split(inner);
+
+    let node_name = detail_state
+        .resource
+        .as_ref()
+        .map(|r| r.name().to_string())
+        .unwrap_or_else(|| "selected node".to_string());
+
+    let body = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(" Drain Node ", theme.badge_warning_style()),
+            Span::styled(format!("'{node_name}'"), Style::default().fg(theme.fg)),
+            Span::styled(" ?", Style::default().fg(theme.fg)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            " This will evict all pods from this node.",
+            theme.inactive_style(),
+        )),
+    ];
+    frame.render_widget(
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .alignment(ratatui::layout::Alignment::Center),
+        rows[0],
+    );
+
+    let footer = Line::from(vec![
+        Span::styled(" [D] / [y] / [Enter] ", theme.keybind_key_style()),
+        Span::styled("Drain  ", theme.keybind_desc_style()),
+        Span::styled("[F] ", theme.keybind_key_style()),
+        Span::styled("Force drain  ", theme.keybind_desc_style()),
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
     ]);

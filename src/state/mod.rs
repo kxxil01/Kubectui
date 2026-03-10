@@ -695,6 +695,14 @@ impl GlobalState {
         &self.namespaces
     }
 
+    /// Applies an optimistic node schedulable state change after cordon/uncordon.
+    pub fn apply_optimistic_node_schedulable(&mut self, node_name: &str, unschedulable: bool) {
+        if let Some(node) = self.snapshot.nodes.iter_mut().find(|n| n.name == node_name) {
+            node.unschedulable = unschedulable;
+            self.snapshot_dirty = true;
+        }
+    }
+
     /// Applies a successful delete locally so the list updates immediately
     /// before the background refresh completes.
     pub fn apply_optimistic_delete(&mut self, resource: &ResourceRef) {
