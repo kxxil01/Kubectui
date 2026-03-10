@@ -23,6 +23,7 @@ Current milestone status:
 - Milestone 8: completed
 - Milestone 9: completed
 - Milestone 10: completed
+- Milestone 11: completed
 
 Completion notes:
 
@@ -35,6 +36,8 @@ Completion notes:
 
 - Milestone 10 shipped the Relationship Explorer: workbench-hosted Relations tab with 6 resolver chains (owner, service backends, ingress backends, storage bindings, RBAC bindings, Flux lineage), indented expand/collapse tree with connectors, `w` keybinding from detail view, action palette integration, and Enter-to-jump navigation to related resources.
 
+- Milestone 11 shipped Node Operations: cordon (`c`), uncordon (`u`), and drain (`D`) for Kubernetes nodes. Cordon/uncordon execute immediately with optimistic cache updates. Drain shows a confirmation dialog with force-drain option (`F`). Node list status column now shows SchedulingDisabled for cordoned nodes. All three operations are available via the action palette and recorded in action history.
+
 Post-milestone fixes and improvements (shipped after M5):
 
 - Deep audit: 23 fixes across 35 files (UTF-8 safe truncation, time-based backoff, TOCTOU race fix, non-blocking extension fetch, temp file security, magic number cleanup)
@@ -45,7 +48,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 506 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 517 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -1046,14 +1049,7 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-Start with Milestone 11: Node Operations.
-
-P0, P1, and M10 are complete (M0-M10). The next real implementation work should be:
-
-1. Add node action capability policies (cordon, uncordon, drain)
-2. Implement cordon/uncordon with confirmation and action history recording
-3. Implement drain with strong warning, progress feedback, and error handling
-4. Add tests for action availability, mutation lifecycle, and error paths
+M0-M11 are complete. The next real implementation work should pick from the remaining gaps/milestones (e.g., CRD management, batch actions, multi-cluster, or other P1/P2 items).
 
 Do not start next with:
 
