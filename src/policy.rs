@@ -48,10 +48,13 @@ pub enum DetailAction {
     Delete,
     Trigger,
     ViewRelationships,
+    Cordon,
+    Uncordon,
+    Drain,
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 13] = [
+    pub const ORDER: [DetailAction; 16] = [
         DetailAction::ViewYaml,
         DetailAction::ViewEvents,
         DetailAction::Logs,
@@ -65,6 +68,9 @@ impl DetailAction {
         DetailAction::Delete,
         DetailAction::Trigger,
         DetailAction::ViewRelationships,
+        DetailAction::Cordon,
+        DetailAction::Uncordon,
+        DetailAction::Drain,
     ];
 
     pub const fn key_hint(self) -> &'static str {
@@ -81,6 +87,9 @@ impl DetailAction {
             DetailAction::Delete => "[d]",
             DetailAction::Trigger => "[T]",
             DetailAction::ViewRelationships => "[w]",
+            DetailAction::Cordon => "[c]",
+            DetailAction::Uncordon => "[u]",
+            DetailAction::Drain => "[D]",
         }
     }
 
@@ -99,6 +108,9 @@ impl DetailAction {
             DetailAction::Delete => "Delete",
             DetailAction::Trigger => "Trigger",
             DetailAction::ViewRelationships => "Relations",
+            DetailAction::Cordon => "Cordon",
+            DetailAction::Uncordon => "Uncordon",
+            DetailAction::Drain => "Drain",
         }
     }
 }
@@ -367,13 +379,19 @@ impl ResourceRef {
             DetailAction::ViewRelationships => {
                 crate::k8s::relationships::resource_has_relationships(self)
             }
+            DetailAction::Cordon | DetailAction::Uncordon | DetailAction::Drain => {
+                matches!(self, ResourceRef::Node(_))
+            }
         }
     }
 }
 
 impl DetailViewState {
     pub fn has_blocking_detail_overlay(&self) -> bool {
-        self.scale_dialog.is_some() || self.probe_panel.is_some() || self.confirm_delete
+        self.scale_dialog.is_some()
+            || self.probe_panel.is_some()
+            || self.confirm_delete
+            || self.confirm_drain
     }
 
     pub fn supports_action(&self, action: DetailAction) -> bool {
@@ -396,6 +414,9 @@ impl DetailViewState {
                 | DetailAction::Delete
                 | DetailAction::Trigger
                 | DetailAction::ViewRelationships
+                | DetailAction::Cordon
+                | DetailAction::Uncordon
+                | DetailAction::Drain
         );
 
         if self.loading {
@@ -515,6 +536,40 @@ mod tests {
 
         let cm = ResourceRef::ConfigMap("cm".to_string(), "ns".to_string());
         assert!(!cm.supports_detail_action(DetailAction::ViewRelationships));
+    }
+
+    #[test]
+    fn node_supports_cordon_uncordon_drain() {
+        let node = ResourceRef::Node("node-0".to_string());
+        assert!(node.supports_detail_action(DetailAction::Cordon));
+        assert!(node.supports_detail_action(DetailAction::Uncordon));
+        assert!(node.supports_detail_action(DetailAction::Drain));
+    }
+
+    #[test]
+    fn non_node_resources_do_not_support_node_ops() {
+        let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        assert!(!pod.supports_detail_action(DetailAction::Cordon));
+        assert!(!pod.supports_detail_action(DetailAction::Uncordon));
+        assert!(!pod.supports_detail_action(DetailAction::Drain));
+
+        let deploy = ResourceRef::Deployment("api".to_string(), "ns".to_string());
+        assert!(!deploy.supports_detail_action(DetailAction::Cordon));
+        assert!(!deploy.supports_detail_action(DetailAction::Drain));
+    }
+
+    #[test]
+    fn confirm_drain_blocks_detail_actions() {
+        let detail = DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        };
+
+        assert!(!detail.supports_action(DetailAction::ViewYaml));
+        assert!(!detail.supports_action(DetailAction::Delete));
+        assert!(!detail.supports_action(DetailAction::Cordon));
     }
 
     #[test]

@@ -20,6 +20,7 @@ pub struct NodeInfo {
     pub disk_pressure: bool,
     pub pid_pressure: bool,
     pub network_unavailable: bool,
+    pub unschedulable: bool,
 }
 
 /// Lightweight owner reference for display in detail views.

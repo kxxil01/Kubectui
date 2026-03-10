@@ -22,7 +22,7 @@ use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomRe
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::{
     Api, Client, Config,
-    api::{ApiResource, DynamicObject, GroupVersionKind, ListParams},
+    api::{ApiResource, DynamicObject, GroupVersionKind, ListParams, Patch, PatchParams},
     config::KubeConfigOptions,
 };
 
@@ -180,11 +180,139 @@ impl K8sClient {
                     disk_pressure: node_condition_true(&node, "DiskPressure"),
                     pid_pressure: node_condition_true(&node, "PIDPressure"),
                     network_unavailable: node_condition_true(&node, "NetworkUnavailable"),
+                    unschedulable: node
+                        .spec
+                        .as_ref()
+                        .and_then(|s| s.unschedulable)
+                        .unwrap_or(false),
                 }
             })
             .collect();
 
         Ok(nodes)
+    }
+
+    /// Cordons a node by setting `spec.unschedulable = true`.
+    pub async fn cordon_node(&self, name: &str) -> Result<()> {
+        let nodes_api: Api<Node> = Api::all(self.client.clone());
+        let patch = serde_json::json!({"spec": {"unschedulable": true}});
+        nodes_api
+            .patch(name, &PatchParams::default(), &Patch::Merge(patch))
+            .await
+            .with_context(|| format!("failed to cordon node '{name}'"))?;
+        Ok(())
+    }
+
+    /// Uncordons a node by setting `spec.unschedulable = false`.
+    pub async fn uncordon_node(&self, name: &str) -> Result<()> {
+        let nodes_api: Api<Node> = Api::all(self.client.clone());
+        let patch = serde_json::json!({"spec": {"unschedulable": false}});
+        nodes_api
+            .patch(name, &PatchParams::default(), &Patch::Merge(patch))
+            .await
+            .with_context(|| format!("failed to uncordon node '{name}'"))?;
+        Ok(())
+    }
+
+    /// Drains a node by evicting all non-DaemonSet, non-mirror pods.
+    ///
+    /// If `force` is true, pods that cannot be evicted (PDB violations) are deleted directly.
+    pub async fn drain_node(
+        &self,
+        name: &str,
+        timeout_secs: u64,
+        grace_period_secs: u64,
+        force: bool,
+    ) -> Result<()> {
+        let pods_api: Api<k8s_openapi::api::core::v1::Pod> = Api::all(self.client.clone());
+        let lp = ListParams::default().fields(&format!("spec.nodeName={name}"));
+        let pod_list = pods_api
+            .list(&lp)
+            .await
+            .with_context(|| format!("failed to list pods on node '{name}'"))?;
+
+        let mut to_evict = Vec::new();
+        for pod in pod_list {
+            let meta = &pod.metadata;
+            // Skip mirror pods (created by kubelet from static manifests).
+            if meta
+                .annotations
+                .as_ref()
+                .is_some_and(|a| a.contains_key("kubernetes.io/config.mirror"))
+            {
+                continue;
+            }
+            // Skip DaemonSet-owned pods.
+            if pod
+                .metadata
+                .owner_references
+                .as_ref()
+                .is_some_and(|refs| refs.iter().any(|r| r.kind == "DaemonSet"))
+            {
+                continue;
+            }
+            let pod_name = meta.name.clone().unwrap_or_default();
+            let pod_ns = meta.namespace.clone().unwrap_or_default();
+            if !pod_name.is_empty() && !pod_ns.is_empty() {
+                to_evict.push((pod_name, pod_ns));
+            }
+        }
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+
+        let evict_params = kube::api::EvictParams {
+            delete_options: Some(kube::api::DeleteParams {
+                grace_period_seconds: Some(grace_period_secs as u32),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        for (pod_name, pod_ns) in &to_evict {
+            let ns_pods: Api<k8s_openapi::api::core::v1::Pod> =
+                Api::namespaced(self.client.clone(), pod_ns);
+            let result = ns_pods.evict(pod_name, &evict_params).await;
+            match result {
+                Ok(_) => {}
+                Err(kube::Error::Api(ref status)) if status.code == 429 && force => {
+                    // PDB violation — force delete if requested.
+                    let dp = kube::api::DeleteParams {
+                        grace_period_seconds: Some(0),
+                        ..Default::default()
+                    };
+                    ns_pods.delete(pod_name, &dp).await.with_context(|| {
+                        format!("failed to force-delete pod '{pod_name}' in '{pod_ns}'")
+                    })?;
+                }
+                Err(e) => {
+                    return Err(e).with_context(|| {
+                        format!("failed to evict pod '{pod_name}' in '{pod_ns}'")
+                    });
+                }
+            }
+        }
+
+        // Wait for pods to terminate.
+        for (pod_name, pod_ns) in &to_evict {
+            let ns_pods: Api<k8s_openapi::api::core::v1::Pod> =
+                Api::namespaced(self.client.clone(), pod_ns);
+            loop {
+                if tokio::time::Instant::now() >= deadline {
+                    anyhow::bail!(
+                        "drain timed out after {timeout_secs}s waiting for pod '{pod_name}' in '{pod_ns}' to terminate"
+                    );
+                }
+                match ns_pods.get_opt(pod_name).await {
+                    Ok(None) => break, // Pod is gone.
+                    Ok(Some(_)) => {
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
+                    Err(_) => break, // 404 or similar, pod is gone.
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Fetches available namespaces sorted alphabetically.
@@ -3073,6 +3201,11 @@ mod tests {
             disk_pressure: node_condition_true(&node, "DiskPressure"),
             pid_pressure: node_condition_true(&node, "PIDPressure"),
             network_unavailable: node_condition_true(&node, "NetworkUnavailable"),
+            unschedulable: node
+                .spec
+                .as_ref()
+                .and_then(|s| s.unschedulable)
+                .unwrap_or(false),
         };
 
         assert_eq!(info.name, "<unknown>");

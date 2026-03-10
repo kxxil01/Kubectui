@@ -508,6 +508,33 @@ struct ExtensionFetchResult {
     result: Result<Vec<kubectui::k8s::dtos::CustomResourceInfo>, String>,
 }
 
+#[derive(Debug, Clone, Copy)]
+enum NodeOpKind {
+    Cordon,
+    Uncordon,
+    Drain,
+}
+
+impl NodeOpKind {
+    fn label(self) -> &'static str {
+        match self {
+            NodeOpKind::Cordon => "Cordon",
+            NodeOpKind::Uncordon => "Uncordon",
+            NodeOpKind::Drain => "Drain",
+        }
+    }
+}
+
+#[derive(Debug)]
+struct NodeOpsAsyncResult {
+    action_history_id: u64,
+    context_generation: u64,
+    origin_view: AppView,
+    node_name: String,
+    op_kind: NodeOpKind,
+    result: Result<(), String>,
+}
+
 #[derive(Debug, Clone)]
 struct DeferredRefreshTrigger {
     context_generation: u64,
@@ -984,6 +1011,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         tokio::sync::mpsc::channel::<FluxReconcileAsyncResult>(16);
     let (trigger_cronjob_tx, mut trigger_cronjob_rx) =
         tokio::sync::mpsc::channel::<TriggerCronJobAsyncResult>(16);
+    let (node_ops_tx, mut node_ops_rx) = tokio::sync::mpsc::channel::<NodeOpsAsyncResult>(16);
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
     let (relations_tx, mut relations_rx) = tokio::sync::mpsc::channel::<(
         ResourceRef,
@@ -1658,6 +1686,65 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
+            result = node_ops_rx.recv() => {
+                if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            format!("{} cancelled because the active context changed.", result.op_kind.label()),
+                            true,
+                        );
+                        continue;
+                    }
+
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(()) => {
+                            // Optimistic update for cordon/uncordon: flip unschedulable in cache.
+                            if matches!(result.op_kind, NodeOpKind::Cordon | NodeOpKind::Uncordon) {
+                                let new_val = matches!(result.op_kind, NodeOpKind::Cordon);
+                                global_state.apply_optimistic_node_schedulable(&result.node_name, new_val);
+                                snapshot_dirty = true;
+                            }
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!("{} succeeded for Node '{}'.", result.op_kind.label(), result.node_name),
+                                true,
+                            );
+                            finish_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                format!("{} succeeded for Node '{}'. Refreshing view...", result.op_kind.label(), result.node_name),
+                                false,
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
+                        }
+                        Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("{} failed: {err}", result.op_kind.label()),
+                                true,
+                            );
+                            status_message_clear_at = None;
+                            app.set_error(format!("{} failed: {err}", result.op_kind.label()));
+                        }
+                    }
+                }
+            }
+
             result = exec_bootstrap_rx.recv() => {
                 if let Some(result) = result {
                     let mut start_session: Option<(u64, String, String, String)> = None;
@@ -2139,6 +2226,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         DetailAction::Delete => AppAction::DeleteResource,
                         DetailAction::Trigger => AppAction::TriggerCronJob,
                         DetailAction::ViewRelationships => AppAction::OpenRelationships,
+                        DetailAction::Cordon => AppAction::CordonNode,
+                        DetailAction::Uncordon => AppAction::UncordonNode,
+                        DetailAction::Drain => {
+                            // Open drain confirmation — don't dispatch immediately
+                            if let Some(detail) = &mut app.detail_view {
+                                detail.confirm_drain = true;
+                            }
+                            continue;
+                        }
                     };
 
                     let needs_detail = matches!(
@@ -3253,6 +3349,137 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     context_generation,
                                     origin_view,
                                     resource_label,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                }
+                AppAction::CordonNode => {
+                    let node_name = app.detail_view.as_ref().and_then(|d| {
+                        if let Some(ResourceRef::Node(name)) = &d.resource {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(name) = node_name {
+                        let resource_label = format!("Node '{name}'");
+                        let origin_view = app.view();
+                        let action_history_id = app.record_action_pending(
+                            ActionKind::Cordon,
+                            origin_view,
+                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
+                            resource_label.clone(),
+                            format!("Cordoning {resource_label}..."),
+                        );
+                        begin_detail_mutation(
+                            &mut app,
+                            &mut status_message_clear_at,
+                            format!("Cordoning {resource_label}..."),
+                        );
+                        let tx = node_ops_tx.clone();
+                        let c = client.clone();
+                        let context_generation = refresh_state.context_generation;
+                        tokio::spawn(async move {
+                            let result = c.cordon_node(&name).await.map_err(|e| format!("{e:#}"));
+                            let _ = tx
+                                .send(NodeOpsAsyncResult {
+                                    action_history_id,
+                                    context_generation,
+                                    origin_view,
+                                    node_name: name,
+                                    op_kind: NodeOpKind::Cordon,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                }
+                AppAction::UncordonNode => {
+                    let node_name = app.detail_view.as_ref().and_then(|d| {
+                        if let Some(ResourceRef::Node(name)) = &d.resource {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(name) = node_name {
+                        let resource_label = format!("Node '{name}'");
+                        let origin_view = app.view();
+                        let action_history_id = app.record_action_pending(
+                            ActionKind::Uncordon,
+                            origin_view,
+                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
+                            resource_label.clone(),
+                            format!("Uncordoning {resource_label}..."),
+                        );
+                        begin_detail_mutation(
+                            &mut app,
+                            &mut status_message_clear_at,
+                            format!("Uncordoning {resource_label}..."),
+                        );
+                        let tx = node_ops_tx.clone();
+                        let c = client.clone();
+                        let context_generation = refresh_state.context_generation;
+                        tokio::spawn(async move {
+                            let result = c.uncordon_node(&name).await.map_err(|e| format!("{e:#}"));
+                            let _ = tx
+                                .send(NodeOpsAsyncResult {
+                                    action_history_id,
+                                    context_generation,
+                                    origin_view,
+                                    node_name: name,
+                                    op_kind: NodeOpKind::Uncordon,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                }
+                AppAction::DrainNode | AppAction::ForceDrainNode => {
+                    let force = matches!(action, AppAction::ForceDrainNode);
+                    let node_name = app.detail_view.as_ref().and_then(|d| {
+                        if let Some(ResourceRef::Node(name)) = &d.resource {
+                            Some(name.clone())
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some(name) = node_name {
+                        if let Some(detail) = &mut app.detail_view {
+                            detail.confirm_drain = false;
+                        }
+                        let force_label = if force { " (force)" } else { "" };
+                        let resource_label = format!("Node '{name}'");
+                        let origin_view = app.view();
+                        let action_history_id = app.record_action_pending(
+                            ActionKind::Drain,
+                            origin_view,
+                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
+                            resource_label.clone(),
+                            format!("Draining{force_label} {resource_label}..."),
+                        );
+                        begin_detail_mutation(
+                            &mut app,
+                            &mut status_message_clear_at,
+                            format!("Draining{force_label} {resource_label}..."),
+                        );
+                        let tx = node_ops_tx.clone();
+                        let c = client.clone();
+                        let context_generation = refresh_state.context_generation;
+                        tokio::spawn(async move {
+                            let result = c
+                                .drain_node(&name, 300, 30, force)
+                                .await
+                                .map_err(|e| format!("{e:#}"));
+                            let _ = tx
+                                .send(NodeOpsAsyncResult {
+                                    action_history_id,
+                                    context_generation,
+                                    origin_view,
+                                    node_name: name,
+                                    op_kind: NodeOpKind::Drain,
                                     result,
                                 })
                                 .await;
@@ -4444,6 +4671,7 @@ async fn fetch_detail_view(
         scale_dialog: None,
         probe_panel: None,
         confirm_delete: false,
+        confirm_drain: false,
     })
 }
 

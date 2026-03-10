@@ -16,6 +16,9 @@ pub enum ActionKind {
     FluxReconcile,
     ApplyYaml,
     Trigger,
+    Cordon,
+    Uncordon,
+    Drain,
 }
 
 impl ActionKind {
@@ -27,6 +30,9 @@ impl ActionKind {
             ActionKind::FluxReconcile => "Reconcile",
             ActionKind::ApplyYaml => "Apply YAML",
             ActionKind::Trigger => "Trigger",
+            ActionKind::Cordon => "Cordon",
+            ActionKind::Uncordon => "Uncordon",
+            ActionKind::Drain => "Drain",
         }
     }
 }
@@ -195,6 +201,13 @@ mod tests {
 
         let entry = state.get(0).expect("entry");
         assert!(entry.target.is_none());
+    }
+
+    #[test]
+    fn node_ops_action_kinds_have_labels() {
+        assert_eq!(ActionKind::Cordon.label(), "Cordon");
+        assert_eq!(ActionKind::Uncordon.label(), "Uncordon");
+        assert_eq!(ActionKind::Drain.label(), "Drain");
     }
 
     #[test]
