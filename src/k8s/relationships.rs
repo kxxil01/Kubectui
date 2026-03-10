@@ -7,6 +7,10 @@ use crate::k8s::dtos::OwnerRefInfo;
 use crate::policy::RelationshipCapability;
 use crate::state::ClusterSnapshot;
 
+/// Safety limit for owner chain traversal to prevent infinite loops from
+/// circular ownerReferences in corrupt snapshots.
+const MAX_OWNER_CHAIN_DEPTH: usize = 20;
+
 /// A node in the relationship tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelationNode {
@@ -123,7 +127,7 @@ fn flatten_recursive(
 }
 
 /// Advance `counter` by the number of descendants without emitting anything.
-fn count_descendants(nodes: &[RelationNode], counter: &mut usize) {
+pub fn count_descendants(nodes: &[RelationNode], counter: &mut usize) {
     for node in nodes {
         *counter += 1;
         count_descendants(&node.children, counter);
@@ -228,63 +232,12 @@ fn get_owner_refs(resource: &ResourceRef, snapshot: &ClusterSnapshot) -> Vec<Own
 
 /// Get the namespace for a ResourceRef (None for cluster-scoped).
 fn resource_namespace(resource: &ResourceRef) -> Option<&str> {
-    match resource {
-        ResourceRef::Pod(_, ns)
-        | ResourceRef::Deployment(_, ns)
-        | ResourceRef::StatefulSet(_, ns)
-        | ResourceRef::DaemonSet(_, ns)
-        | ResourceRef::ReplicaSet(_, ns)
-        | ResourceRef::ReplicationController(_, ns)
-        | ResourceRef::Job(_, ns)
-        | ResourceRef::CronJob(_, ns)
-        | ResourceRef::Service(_, ns)
-        | ResourceRef::Endpoint(_, ns)
-        | ResourceRef::Ingress(_, ns)
-        | ResourceRef::Pvc(_, ns)
-        | ResourceRef::ServiceAccount(_, ns)
-        | ResourceRef::Role(_, ns)
-        | ResourceRef::RoleBinding(_, ns) => Some(ns.as_str()),
-        ResourceRef::Pv(name)
-        | ResourceRef::StorageClass(name)
-        | ResourceRef::IngressClass(name)
-        | ResourceRef::ClusterRole(name)
-        | ResourceRef::ClusterRoleBinding(name)
-        | ResourceRef::Node(name) => {
-            let _ = name;
-            None
-        }
-        ResourceRef::CustomResource { namespace, .. } => namespace.as_deref(),
-        _ => None,
-    }
+    resource.namespace()
 }
 
 /// Get the name for a ResourceRef.
 fn resource_name(resource: &ResourceRef) -> &str {
-    match resource {
-        ResourceRef::Pod(name, _)
-        | ResourceRef::Deployment(name, _)
-        | ResourceRef::StatefulSet(name, _)
-        | ResourceRef::DaemonSet(name, _)
-        | ResourceRef::ReplicaSet(name, _)
-        | ResourceRef::ReplicationController(name, _)
-        | ResourceRef::Job(name, _)
-        | ResourceRef::CronJob(name, _)
-        | ResourceRef::Service(name, _)
-        | ResourceRef::Endpoint(name, _)
-        | ResourceRef::Ingress(name, _)
-        | ResourceRef::Pvc(name, _)
-        | ResourceRef::Pv(name)
-        | ResourceRef::StorageClass(name)
-        | ResourceRef::IngressClass(name)
-        | ResourceRef::ServiceAccount(name, _)
-        | ResourceRef::ClusterRole(name)
-        | ResourceRef::Role(name, _)
-        | ResourceRef::ClusterRoleBinding(name)
-        | ResourceRef::RoleBinding(name, _)
-        | ResourceRef::Node(name) => name.as_str(),
-        ResourceRef::CustomResource { name, .. } => name.as_str(),
-        _ => "",
-    }
+    resource.name()
 }
 
 /// Build a human-readable kind string for a ResourceRef.
@@ -488,6 +441,13 @@ fn find_owned_resources(resource: &ResourceRef, snapshot: &ClusterSnapshot) -> V
     owned
 }
 
+/// Represents an entry in the owner chain walk — either a resolved resource
+/// or an unresolvable owner reference.
+enum ChainEntry {
+    Resolved(ResourceRef),
+    NotFound(OwnerRefInfo),
+}
+
 /// Walk owner references upward from a resource, returning the chain
 /// top-down (root owner first). Also finds resources owned by the target.
 pub fn resolve_owner_chain_from_snapshot(
@@ -499,12 +459,13 @@ pub fn resolve_owner_chain_from_snapshot(
         None => return vec![],
     };
 
-    // Walk up the owner chain, collecting (resource, owner_refs) pairs.
-    // We stop when there are no more owner refs or we can't find the owner.
-    let mut chain: Vec<ResourceRef> = vec![resource.clone()];
+    // Walk up the owner chain, collecting entries.
+    // We stop when there are no more owner refs, we can't find the owner,
+    // or we hit the depth limit (cycle protection).
+    let mut chain: Vec<ChainEntry> = vec![ChainEntry::Resolved(resource.clone())];
     let mut current = resource.clone();
 
-    loop {
+    for _ in 0..MAX_OWNER_CHAIN_DEPTH {
         let owner_refs = get_owner_refs(&current, snapshot);
         if owner_refs.is_empty() {
             break;
@@ -513,20 +474,18 @@ pub fn resolve_owner_chain_from_snapshot(
         let oref = &owner_refs[0];
         match find_resource_for_owner_ref(oref, &ns, snapshot) {
             Some(parent_ref) => {
-                chain.push(parent_ref.clone());
+                // Cycle detection: check if we've already visited this resource
+                let already_seen = chain
+                    .iter()
+                    .any(|entry| matches!(entry, ChainEntry::Resolved(r) if r == &parent_ref));
+                if already_seen {
+                    break;
+                }
+                chain.push(ChainEntry::Resolved(parent_ref.clone()));
                 current = parent_ref;
             }
             None => {
-                // Owner not found in snapshot — represent as not_found
-                let placeholder =
-                    ResourceRef::Pod(format!("__not_found__{}", oref.name), ns.clone());
-                // We use a sentinel to signal not_found; handled below
-                let _ = placeholder;
-                // Push a dummy entry to mark not_found at the top
-                chain.push(ResourceRef::Pod(
-                    format!("__not_found__{}__{}", oref.kind, oref.name),
-                    ns.clone(),
-                ));
+                chain.push(ChainEntry::NotFound(oref.clone()));
                 break;
             }
         }
@@ -535,19 +494,15 @@ pub fn resolve_owner_chain_from_snapshot(
     // chain is bottom-up; reverse to top-down
     chain.reverse();
 
-    // Build the tree top-down with nesting
-    // The top of chain owns the next, etc.
-    // We also append owned resources (downward) to the target resource.
-
     // Build owned children for the original resource
     let target_owned: Vec<RelationNode> = find_owned_resources(resource, snapshot)
         .into_iter()
         .map(|r| make_node(r, snapshot, RelationKind::Owned))
         .collect();
 
-    // Build the nested tree top-down with nesting.
+    // Build the nested tree top-down.
     fn build_chain_tree(
-        chain: &[ResourceRef],
+        chain: &[ChainEntry],
         snapshot: &ClusterSnapshot,
         target: &ResourceRef,
         target_owned: Vec<RelationNode>,
@@ -556,50 +511,30 @@ pub fn resolve_owner_chain_from_snapshot(
             return vec![];
         }
 
-        let first = &chain[0];
+        match &chain[0] {
+            ChainEntry::NotFound(oref) => {
+                vec![make_not_found_node(oref, RelationKind::Owner)]
+            }
+            ChainEntry::Resolved(res) => {
+                let is_target = res == target;
 
-        // Check if this is a not_found sentinel
-        let is_not_found =
-            matches!(first, ResourceRef::Pod(name, _) if name.starts_with("__not_found__"));
+                let mut node = if is_target {
+                    let mut n = make_node(res.clone(), snapshot, RelationKind::Root);
+                    n.children = target_owned;
+                    n
+                } else {
+                    make_node(res.clone(), snapshot, RelationKind::Owner)
+                };
 
-        if is_not_found {
-            // Extract kind and name from sentinel
-            let sentinel_name = resource_name(first);
-            let parts: Vec<&str> = sentinel_name
-                .strip_prefix("__not_found__")
-                .unwrap_or("")
-                .splitn(3, "__")
-                .collect();
-            let (kind, name) = if parts.len() >= 2 {
-                (parts[0], parts[1])
-            } else {
-                ("Unknown", sentinel_name)
-            };
-            let oref = OwnerRefInfo {
-                kind: kind.to_string(),
-                name: name.to_string(),
-                uid: String::new(),
-            };
-            return vec![make_not_found_node(&oref, RelationKind::Owner)];
+                if chain.len() > 1 && !is_target {
+                    let rest = &chain[1..];
+                    let children = build_chain_tree(rest, snapshot, target, vec![]);
+                    node.children = children;
+                }
+
+                vec![node]
+            }
         }
-
-        let is_target = first == target;
-
-        let mut node = if is_target {
-            let mut n = make_node(first.clone(), snapshot, RelationKind::Root);
-            n.children = target_owned;
-            n
-        } else {
-            make_node(first.clone(), snapshot, RelationKind::Owner)
-        };
-
-        if chain.len() > 1 && !is_target {
-            let rest = &chain[1..];
-            let children = build_chain_tree(rest, snapshot, target, vec![]);
-            node.children = children;
-        }
-
-        vec![node]
     }
 
     build_chain_tree(&chain, snapshot, resource, target_owned)
@@ -1431,31 +1366,67 @@ fn resolve_rbac_for_cluster_role_binding(
     }]
 }
 
-/// Resolve Flux lineage: find related Flux resources in the same namespace.
+/// Resolve Flux lineage: find Flux resources that are owners/owned or share
+/// the same source reference within the namespace. Only shows genuinely
+/// related resources rather than every Flux resource in the namespace.
 pub fn resolve_flux_lineage_from_snapshot(
     resource: &ResourceRef,
     snapshot: &ClusterSnapshot,
 ) -> Vec<RelationNode> {
-    let (name, namespace) = match resource {
+    let (name, namespace, kind, group) = match resource {
         ResourceRef::CustomResource {
-            name, namespace, ..
-        } => (name.as_str(), namespace.as_deref()),
+            name,
+            namespace,
+            kind,
+            group,
+            ..
+        } => (
+            name.as_str(),
+            namespace.as_deref(),
+            kind.as_str(),
+            group.as_str(),
+        ),
         _ => return vec![],
     };
 
     let resource_ns = namespace.unwrap_or("");
 
-    // Collect related Flux resources: same namespace, different name/kind
+    // Find this resource's source_url for matching.
+    let self_info = snapshot
+        .flux_resources
+        .iter()
+        .find(|f| f.name == name && f.namespace.as_deref().unwrap_or("") == resource_ns);
+
+    let self_source_url = self_info.and_then(|f| f.source_url.as_deref());
+
+    // Collect related Flux resources:
+    // 1. Resources sharing the same source_url (implies same source dependency)
+    // 2. Same namespace, filtering out unrelated resources
     let related: Vec<RelationNode> = snapshot
         .flux_resources
         .iter()
         .filter(|f| {
-            // Same namespace (or cluster-scoped with no namespace)
             let f_ns = f.namespace.as_deref().unwrap_or("");
-            let ns_match = resource_ns.is_empty() || f_ns.is_empty() || f_ns == resource_ns;
+            // Must be same namespace
+            if !(resource_ns.is_empty() || f_ns.is_empty() || f_ns == resource_ns) {
+                return false;
+            }
             // Not the resource itself
-            let not_self = !(f.name == name && f_ns == resource_ns);
-            ns_match && not_self
+            if f.name == name && f.kind == kind && f.group == group && f_ns == resource_ns {
+                return false;
+            }
+            // Match by shared source_url
+            if let (Some(self_url), Some(f_url)) = (self_source_url, f.source_url.as_deref())
+                && self_url == f_url
+            {
+                return true;
+            }
+            // Match if candidate's name appears in this resource's name
+            // or vice-versa (basic name-based association)
+            if f.name.starts_with(name) || name.starts_with(&f.name) {
+                return true;
+            }
+            false
         })
         .map(|f| RelationNode {
             resource: Some(ResourceRef::CustomResource {
@@ -1786,6 +1757,47 @@ mod tests {
         assert!(result[0].not_found);
     }
 
+    #[test]
+    fn resolve_owner_chain_handles_cycle_without_infinite_loop() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        // Create a pathological cycle: rs-a owns rs-b owns rs-a
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.replicasets = vec![
+            ReplicaSetInfo {
+                name: "rs-a".into(),
+                namespace: "default".into(),
+                desired: 1,
+                ready: 1,
+                owner_references: vec![OwnerRefInfo {
+                    kind: "ReplicaSet".into(),
+                    name: "rs-b".into(),
+                    uid: "uid-b".into(),
+                }],
+                ..Default::default()
+            },
+            ReplicaSetInfo {
+                name: "rs-b".into(),
+                namespace: "default".into(),
+                desired: 1,
+                ready: 1,
+                owner_references: vec![OwnerRefInfo {
+                    kind: "ReplicaSet".into(),
+                    name: "rs-a".into(),
+                    uid: "uid-a".into(),
+                }],
+                ..Default::default()
+            },
+        ];
+
+        let resource = ResourceRef::ReplicaSet("rs-a".into(), "default".into());
+        // This must terminate (not hang forever)
+        let result = resolve_owner_chain_from_snapshot(&resource, &snapshot);
+        // Should produce a tree with at most the two resources (no infinite chain)
+        assert!(!result.is_empty());
+    }
+
     // ---------------------------------------------------------------------------
     // Task 11 tests: Service backends
     // ---------------------------------------------------------------------------
@@ -2049,7 +2061,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_flux_lineage_returns_related_resources_in_namespace() {
+    fn resolve_flux_lineage_returns_related_resources_by_source_url() {
         use crate::k8s::dtos::*;
         use crate::state::ClusterSnapshot;
 
@@ -2062,6 +2074,7 @@ mod tests {
                 group: "kustomize.toolkit.fluxcd.io".into(),
                 plural: "kustomizations".into(),
                 status: "Ready".into(),
+                source_url: Some("https://github.com/org/repo".into()),
                 ..Default::default()
             },
             FluxResourceInfo {
@@ -2071,6 +2084,17 @@ mod tests {
                 group: "source.toolkit.fluxcd.io".into(),
                 plural: "gitrepositories".into(),
                 status: "Ready".into(),
+                source_url: Some("https://github.com/org/repo".into()),
+                ..Default::default()
+            },
+            FluxResourceInfo {
+                name: "unrelated".into(),
+                namespace: Some("flux-system".into()),
+                kind: "HelmRelease".into(),
+                group: "helm.toolkit.fluxcd.io".into(),
+                plural: "helmreleases".into(),
+                status: "Ready".into(),
+                source_url: Some("https://charts.example.com".into()),
                 ..Default::default()
             },
             FluxResourceInfo {
@@ -2080,6 +2104,7 @@ mod tests {
                 group: "helm.toolkit.fluxcd.io".into(),
                 plural: "helmreleases".into(),
                 status: "Ready".into(),
+                source_url: Some("https://github.com/org/repo".into()),
                 ..Default::default()
             },
         ];
@@ -2096,8 +2121,48 @@ mod tests {
 
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].label, "Kustomization my-app");
-        // Should find my-repo in same namespace, not other-ns-resource
+        // Should find my-repo (same source_url, same ns), not unrelated or other-ns-resource
         assert_eq!(result[0].children.len(), 1);
         assert_eq!(result[0].children[0].label, "GitRepository my-repo");
+    }
+
+    #[test]
+    fn resolve_flux_lineage_excludes_different_namespace() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.flux_resources = vec![
+            FluxResourceInfo {
+                name: "my-app".into(),
+                namespace: Some("flux-system".into()),
+                kind: "Kustomization".into(),
+                group: "kustomize.toolkit.fluxcd.io".into(),
+                plural: "kustomizations".into(),
+                status: "Ready".into(),
+                ..Default::default()
+            },
+            FluxResourceInfo {
+                name: "my-app".into(),
+                namespace: Some("other".into()),
+                kind: "Kustomization".into(),
+                group: "kustomize.toolkit.fluxcd.io".into(),
+                plural: "kustomizations".into(),
+                status: "Ready".into(),
+                ..Default::default()
+            },
+        ];
+
+        let resource = ResourceRef::CustomResource {
+            group: "kustomize.toolkit.fluxcd.io".into(),
+            kind: "Kustomization".into(),
+            plural: "kustomizations".into(),
+            version: "v1".into(),
+            name: "my-app".into(),
+            namespace: Some("flux-system".into()),
+        };
+        let result = resolve_flux_lineage_from_snapshot(&resource, &snapshot);
+        // No same-ns related resources that match by source_url or name prefix
+        assert!(result.is_empty());
     }
 }

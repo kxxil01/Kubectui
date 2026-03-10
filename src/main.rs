@@ -1860,29 +1860,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         state.loading = false;
                         match result {
                             Ok(tree) => {
-                                // Auto-expand section headers and their immediate children.
-                                let mut expanded = std::collections::HashSet::new();
-                                let mut counter = 0usize;
-                                for section in &tree {
-                                    expanded.insert(counter);
-                                    counter += 1;
-                                    for child in &section.children {
-                                        expanded.insert(counter);
-                                        counter += 1;
-                                        fn count_children(
-                                            n: &kubectui::k8s::relationships::RelationNode,
-                                            c: &mut usize,
-                                        ) {
-                                            for ch in &n.children {
-                                                *c += 1;
-                                                count_children(ch, c);
-                                            }
-                                        }
-                                        count_children(child, &mut counter);
-                                    }
-                                }
-                                state.expanded = expanded;
-                                state.tree = tree;
+                                state.set_tree(tree);
                             }
                             Err(err) => {
                                 state.error = Some(err);

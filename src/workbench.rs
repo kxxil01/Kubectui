@@ -348,6 +348,24 @@ impl RelationsTabState {
             error: None,
         }
     }
+
+    /// Populate the tree and auto-expand section headers and their immediate
+    /// children so the user sees a useful overview on first open.
+    pub fn set_tree(&mut self, tree: Vec<crate::k8s::relationships::RelationNode>) {
+        let mut expanded = std::collections::HashSet::new();
+        let mut counter = 0usize;
+        for section in &tree {
+            expanded.insert(counter);
+            counter += 1;
+            for child in &section.children {
+                expanded.insert(counter);
+                counter += 1;
+                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
+            }
+        }
+        self.expanded = expanded;
+        self.tree = tree;
+    }
 }
 
 #[derive(Debug, Clone)]
