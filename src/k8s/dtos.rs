@@ -54,6 +54,7 @@ pub struct ServiceInfo {
     pub type_: String,
     pub cluster_ip: Option<String>,
     pub ports: Vec<String>,
+    pub selector: std::collections::BTreeMap<String, String>,
     pub created_at: Option<DateTime<Utc>>,
     pub age: Option<Duration>,
 }
@@ -515,6 +516,7 @@ pub struct IngressInfo {
     pub hosts: Vec<String>,
     pub address: Option<String>,
     pub ports: Vec<String>,
+    pub backend_services: Vec<(String, String)>,
     pub age: Option<Duration>,
     pub created_at: Option<DateTime<Utc>>,
 }

@@ -344,6 +344,11 @@ impl K8sClient {
                     type_: service_type,
                     cluster_ip: svc.spec.as_ref().and_then(|spec| spec.cluster_ip.clone()),
                     ports,
+                    selector: svc
+                        .spec
+                        .as_ref()
+                        .and_then(|spec| spec.selector.clone())
+                        .unwrap_or_default(),
                     created_at,
                     age: created_at.and_then(|ts| (now - ts).to_std().ok()),
                 }
@@ -1249,6 +1254,50 @@ impl K8sClient {
                     .and_then(|lb| lb.ingress.as_ref())
                     .and_then(|ingresses| ingresses.first())
                     .and_then(|i| i.ip.clone().or_else(|| i.hostname.clone()));
+                let backend_services: Vec<(String, String)> = ing
+                    .spec
+                    .as_ref()
+                    .map(|spec| {
+                        let mut backends = Vec::new();
+                        if let Some(default_backend) = &spec.default_backend
+                            && let Some(svc) = &default_backend.service
+                        {
+                            let port = svc
+                                .port
+                                .as_ref()
+                                .map(|p| {
+                                    p.name.clone().unwrap_or_else(|| {
+                                        p.number.map(|n| n.to_string()).unwrap_or_default()
+                                    })
+                                })
+                                .unwrap_or_default();
+                            backends.push((svc.name.clone(), port));
+                        }
+                        for rule in spec.rules.as_deref().unwrap_or_default() {
+                            if let Some(http) = &rule.http {
+                                for path in &http.paths {
+                                    if let Some(svc) = &path.backend.service {
+                                        let port = svc
+                                            .port
+                                            .as_ref()
+                                            .map(|p| {
+                                                p.name.clone().unwrap_or_else(|| {
+                                                    p.number
+                                                        .map(|n| n.to_string())
+                                                        .unwrap_or_default()
+                                                })
+                                            })
+                                            .unwrap_or_default();
+                                        backends.push((svc.name.clone(), port));
+                                    }
+                                }
+                            }
+                        }
+                        backends.sort();
+                        backends.dedup();
+                        backends
+                    })
+                    .unwrap_or_default();
                 IngressInfo {
                     name: ing.metadata.name.unwrap_or_default(),
                     namespace: ing.metadata.namespace.unwrap_or_default(),
@@ -1256,6 +1305,7 @@ impl K8sClient {
                     hosts,
                     address,
                     ports: vec!["80".to_string(), "443".to_string()],
+                    backend_services,
                     age: created_at.and_then(|ts| (now - ts).to_std().ok()),
                     created_at,
                 }
