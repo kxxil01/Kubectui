@@ -1496,6 +1496,56 @@ pub fn resolve_flux_lineage_from_snapshot(
     }]
 }
 
+// ---------------------------------------------------------------------------
+// Task 14: Async orchestrator
+// ---------------------------------------------------------------------------
+
+/// Resolve all relationship sections for a resource using snapshot data.
+pub async fn resolve_relationships(
+    resource: &ResourceRef,
+    snapshot: &ClusterSnapshot,
+    _client: &crate::k8s::client::K8sClient,
+) -> anyhow::Result<Vec<RelationNode>> {
+    let Some(view) = resource_to_view(resource) else {
+        return Ok(Vec::new());
+    };
+    let capabilities = view.relationship_capabilities();
+    let mut sections = Vec::new();
+    for cap in capabilities {
+        let nodes = match cap {
+            RelationshipCapability::OwnerChain => {
+                resolve_owner_chain_from_snapshot(resource, snapshot)
+            }
+            RelationshipCapability::ServiceBackends => {
+                resolve_service_backends_from_snapshot(resource, snapshot)
+            }
+            RelationshipCapability::IngressBackends => {
+                resolve_ingress_backends_from_snapshot(resource, snapshot)
+            }
+            RelationshipCapability::StorageBindings => {
+                resolve_storage_bindings_from_snapshot(resource, snapshot)
+            }
+            RelationshipCapability::FluxLineage => {
+                resolve_flux_lineage_from_snapshot(resource, snapshot)
+            }
+            RelationshipCapability::RbacBindings => {
+                resolve_rbac_bindings_from_snapshot(resource, snapshot)
+            }
+        };
+        if !nodes.is_empty() {
+            sections.push(RelationNode {
+                resource: None,
+                label: cap.section_title().to_string(),
+                status: None,
+                namespace: None,
+                relation: RelationKind::SectionHeader,
+                not_found: false,
+                children: nodes,
+            });
+        }
+    }
+    Ok(sections)
+}
 
 #[cfg(test)]
 mod tests {
