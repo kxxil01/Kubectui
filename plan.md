@@ -45,7 +45,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 503+ tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 506 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---

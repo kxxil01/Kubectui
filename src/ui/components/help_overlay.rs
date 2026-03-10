@@ -78,6 +78,17 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Relations Tree",
+        &[
+            ("j / k", "Move cursor down / up"),
+            ("l / Right", "Expand node"),
+            ("h / Left", "Collapse / jump to parent"),
+            ("g / G", "Jump to top / bottom"),
+            ("Enter", "Open detail for resource"),
+            ("Esc", "Close relations tab"),
+        ],
+    ),
+    (
         "Logs",
         &[
             ("f", "Toggle follow mode"),
