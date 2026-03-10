@@ -47,10 +47,11 @@ pub enum DetailAction {
     EditYaml,
     Delete,
     Trigger,
+    ViewRelationships,
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 12] = [
+    pub const ORDER: [DetailAction; 13] = [
         DetailAction::ViewYaml,
         DetailAction::ViewEvents,
         DetailAction::Logs,
@@ -63,6 +64,7 @@ impl DetailAction {
         DetailAction::EditYaml,
         DetailAction::Delete,
         DetailAction::Trigger,
+        DetailAction::ViewRelationships,
     ];
 
     pub const fn key_hint(self) -> &'static str {
@@ -78,6 +80,7 @@ impl DetailAction {
             DetailAction::EditYaml => "[e]",
             DetailAction::Delete => "[d]",
             DetailAction::Trigger => "[T]",
+            DetailAction::ViewRelationships => "[w]",
         }
     }
 
@@ -95,6 +98,7 @@ impl DetailAction {
             DetailAction::EditYaml => "Edit",
             DetailAction::Delete => "Delete",
             DetailAction::Trigger => "Trigger",
+            DetailAction::ViewRelationships => "Relations",
         }
     }
 }
@@ -360,6 +364,9 @@ impl ResourceRef {
             DetailAction::FluxReconcile => self.supports_flux_reconcile(),
             DetailAction::EditYaml | DetailAction::Delete => true,
             DetailAction::Trigger => matches!(self, ResourceRef::CronJob(_, _)),
+            DetailAction::ViewRelationships => {
+                crate::k8s::relationships::resource_has_relationships(self)
+            }
         }
     }
 }
@@ -388,6 +395,7 @@ impl DetailViewState {
                 | DetailAction::EditYaml
                 | DetailAction::Delete
                 | DetailAction::Trigger
+                | DetailAction::ViewRelationships
         );
 
         if self.loading {
@@ -483,6 +491,30 @@ mod tests {
         assert!(!detail.supports_action(DetailAction::EditYaml));
         assert!(!detail.supports_action(DetailAction::Delete));
         assert!(!detail.supports_action(DetailAction::PortForward));
+    }
+
+    #[test]
+    fn view_relationships_available_for_relationship_capable_resources() {
+        let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        assert!(pod.supports_detail_action(DetailAction::ViewRelationships));
+
+        let deploy = ResourceRef::Deployment("api".to_string(), "ns".to_string());
+        assert!(deploy.supports_detail_action(DetailAction::ViewRelationships));
+
+        let svc = ResourceRef::Service("svc".to_string(), "ns".to_string());
+        assert!(svc.supports_detail_action(DetailAction::ViewRelationships));
+
+        let pvc = ResourceRef::Pvc("pvc".to_string(), "ns".to_string());
+        assert!(pvc.supports_detail_action(DetailAction::ViewRelationships));
+    }
+
+    #[test]
+    fn view_relationships_unavailable_for_non_relationship_resources() {
+        let node = ResourceRef::Node("node-0".to_string());
+        assert!(!node.supports_detail_action(DetailAction::ViewRelationships));
+
+        let cm = ResourceRef::ConfigMap("cm".to_string(), "ns".to_string());
+        assert!(!cm.supports_detail_action(DetailAction::ViewRelationships));
     }
 
     #[test]
