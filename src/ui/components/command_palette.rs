@@ -50,6 +50,10 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     (DetailAction::EditYaml, &["edit", "modify"]),
     (DetailAction::Delete, &["delete", "remove"]),
     (DetailAction::Trigger, &["trigger", "run"]),
+    (
+        DetailAction::ViewRelationships,
+        &["relations", "relationships", "related", "web", "tree", "deps"],
+    ),
 ];
 
 pub fn action_entries_for_resource(resource: Option<&ResourceRef>) -> Vec<ActionEntry> {
