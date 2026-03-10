@@ -230,45 +230,6 @@ fn get_owner_refs(resource: &ResourceRef, snapshot: &ClusterSnapshot) -> Vec<Own
     }
 }
 
-/// Get the namespace for a ResourceRef (None for cluster-scoped).
-fn resource_namespace(resource: &ResourceRef) -> Option<&str> {
-    resource.namespace()
-}
-
-/// Get the name for a ResourceRef.
-fn resource_name(resource: &ResourceRef) -> &str {
-    resource.name()
-}
-
-/// Build a human-readable kind string for a ResourceRef.
-fn resource_kind_label(resource: &ResourceRef) -> &str {
-    match resource {
-        ResourceRef::Pod(_, _) => "Pod",
-        ResourceRef::Deployment(_, _) => "Deployment",
-        ResourceRef::StatefulSet(_, _) => "StatefulSet",
-        ResourceRef::DaemonSet(_, _) => "DaemonSet",
-        ResourceRef::ReplicaSet(_, _) => "ReplicaSet",
-        ResourceRef::ReplicationController(_, _) => "ReplicationController",
-        ResourceRef::Job(_, _) => "Job",
-        ResourceRef::CronJob(_, _) => "CronJob",
-        ResourceRef::Service(_, _) => "Service",
-        ResourceRef::Endpoint(_, _) => "Endpoint",
-        ResourceRef::Ingress(_, _) => "Ingress",
-        ResourceRef::IngressClass(_) => "IngressClass",
-        ResourceRef::Pvc(_, _) => "PersistentVolumeClaim",
-        ResourceRef::Pv(_) => "PersistentVolume",
-        ResourceRef::StorageClass(_) => "StorageClass",
-        ResourceRef::ServiceAccount(_, _) => "ServiceAccount",
-        ResourceRef::ClusterRole(_) => "ClusterRole",
-        ResourceRef::Role(_, _) => "Role",
-        ResourceRef::ClusterRoleBinding(_) => "ClusterRoleBinding",
-        ResourceRef::RoleBinding(_, _) => "RoleBinding",
-        ResourceRef::Node(_) => "Node",
-        ResourceRef::CustomResource { kind, .. } => kind.as_str(),
-        _ => "Resource",
-    }
-}
-
 /// Retrieve a resource's status string from the snapshot.
 fn resource_status(resource: &ResourceRef, snapshot: &ClusterSnapshot) -> Option<String> {
     match resource {
@@ -306,7 +267,13 @@ fn resource_status(resource: &ResourceRef, snapshot: &ClusterSnapshot) -> Option
             .cronjobs
             .iter()
             .find(|c| &c.name == name && &c.namespace == ns)
-            .map(|_c| String::new()),
+            .map(|c| {
+                if c.suspend {
+                    "Suspended".to_string()
+                } else {
+                    format!("{} active", c.active_jobs)
+                }
+            }),
         _ => None,
     }
 }
@@ -317,13 +284,9 @@ fn make_node(
     snapshot: &ClusterSnapshot,
     relation: RelationKind,
 ) -> RelationNode {
-    let label = format!(
-        "{} {}",
-        resource_kind_label(&resource),
-        resource_name(&resource)
-    );
+    let label = format!("{} {}", resource.kind(), resource.name());
     let status = resource_status(&resource, snapshot);
-    let namespace = resource_namespace(&resource).map(|s| s.to_string());
+    let namespace = resource.namespace().map(|s| s.to_string());
     RelationNode {
         resource: Some(resource),
         label,
@@ -396,9 +359,9 @@ fn find_resource_for_owner_ref(
 
 /// Find all resources in the snapshot that are owned by `resource`.
 fn find_owned_resources(resource: &ResourceRef, snapshot: &ClusterSnapshot) -> Vec<ResourceRef> {
-    let name = resource_name(resource);
-    let kind = resource_kind_label(resource);
-    let ns = resource_namespace(resource).unwrap_or("");
+    let name = resource.name();
+    let kind = resource.kind();
+    let ns = resource.namespace().unwrap_or("");
 
     let mut owned = Vec::new();
 
@@ -454,7 +417,7 @@ pub fn resolve_owner_chain_from_snapshot(
     resource: &ResourceRef,
     snapshot: &ClusterSnapshot,
 ) -> Vec<RelationNode> {
-    let ns = match resource_namespace(resource) {
+    let ns = match resource.namespace() {
         Some(ns) => ns.to_string(),
         None => return vec![],
     };
