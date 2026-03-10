@@ -687,6 +687,307 @@ fn pods_matching_selector(
         .collect()
 }
 
+// ---------------------------------------------------------------------------
+// Task 12: Ingress backends + storage bindings resolvers
+// ---------------------------------------------------------------------------
+
+/// Resolve ingress backend services (and their pods) or find ingresses for an IngressClass.
+pub fn resolve_ingress_backends_from_snapshot(
+    resource: &ResourceRef,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    match resource {
+        ResourceRef::Ingress(name, ns) => {
+            let Some(ing) = snapshot
+                .ingresses
+                .iter()
+                .find(|i| &i.name == name && &i.namespace == ns)
+            else {
+                return vec![];
+            };
+
+            let service_nodes: Vec<RelationNode> = ing
+                .backend_services
+                .iter()
+                .map(|(svc_name, _port)| {
+                    // Try to find the service in snapshot
+                    if let Some(svc) = snapshot
+                        .services
+                        .iter()
+                        .find(|s| &s.name == svc_name && &s.namespace == ns)
+                    {
+                        let pod_children = pods_matching_selector(&svc.selector, ns, snapshot);
+                        RelationNode {
+                            resource: Some(ResourceRef::Service(svc_name.clone(), ns.clone())),
+                            label: format!("Service {svc_name}"),
+                            status: None,
+                            namespace: Some(ns.clone()),
+                            relation: RelationKind::Backend,
+                            not_found: false,
+                            children: pod_children,
+                        }
+                    } else {
+                        RelationNode {
+                            resource: None,
+                            label: format!("Service {svc_name}"),
+                            status: None,
+                            namespace: Some(ns.clone()),
+                            relation: RelationKind::Backend,
+                            not_found: true,
+                            children: vec![],
+                        }
+                    }
+                })
+                .collect();
+
+            if service_nodes.is_empty() {
+                return vec![];
+            }
+
+            let ing_node = RelationNode {
+                resource: Some(ResourceRef::Ingress(name.clone(), ns.clone())),
+                label: format!("Ingress {name}"),
+                status: None,
+                namespace: Some(ns.clone()),
+                relation: RelationKind::Root,
+                not_found: false,
+                children: service_nodes,
+            };
+            vec![ing_node]
+        }
+        ResourceRef::IngressClass(class_name) => {
+            // Find all ingresses using this class
+            let ingress_nodes: Vec<RelationNode> = snapshot
+                .ingresses
+                .iter()
+                .filter(|i| i.class.as_deref() == Some(class_name.as_str()))
+                .map(|i| RelationNode {
+                    resource: Some(ResourceRef::Ingress(i.name.clone(), i.namespace.clone())),
+                    label: format!("Ingress {}", i.name),
+                    status: None,
+                    namespace: Some(i.namespace.clone()),
+                    relation: RelationKind::Owned,
+                    not_found: false,
+                    children: vec![],
+                })
+                .collect();
+
+            if ingress_nodes.is_empty() {
+                return vec![];
+            }
+
+            let class_node = RelationNode {
+                resource: Some(ResourceRef::IngressClass(class_name.clone())),
+                label: format!("IngressClass {class_name}"),
+                status: None,
+                namespace: None,
+                relation: RelationKind::Root,
+                not_found: false,
+                children: ingress_nodes,
+            };
+            vec![class_node]
+        }
+        _ => vec![],
+    }
+}
+
+/// Resolve storage binding chains: PVC → PV → StorageClass (and inverses).
+pub fn resolve_storage_bindings_from_snapshot(
+    resource: &ResourceRef,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    match resource {
+        ResourceRef::Pvc(name, ns) => {
+            let Some(pvc) = snapshot
+                .pvcs
+                .iter()
+                .find(|p| &p.name == name && &p.namespace == ns)
+            else {
+                return vec![];
+            };
+
+            // Find bound PV
+            let pv_node = pvc.volume.as_ref().and_then(|vol_name| {
+                let pv = snapshot.pvs.iter().find(|p| &p.name == vol_name);
+                let sc_child = pv
+                    .and_then(|p| p.storage_class.as_ref())
+                    .and_then(|sc_name| {
+                        snapshot
+                            .storage_classes
+                            .iter()
+                            .find(|sc| &sc.name == sc_name)
+                            .map(|sc| RelationNode {
+                                resource: Some(ResourceRef::StorageClass(sc.name.clone())),
+                                label: format!("StorageClass {}", sc.name),
+                                status: None,
+                                namespace: None,
+                                relation: RelationKind::Bound,
+                                not_found: false,
+                                children: vec![],
+                            })
+                    });
+
+                pv.map(|p| RelationNode {
+                    resource: Some(ResourceRef::Pv(p.name.clone())),
+                    label: format!("PersistentVolume {}", p.name),
+                    status: Some(p.status.clone()),
+                    namespace: None,
+                    relation: RelationKind::Bound,
+                    not_found: false,
+                    children: sc_child.into_iter().collect(),
+                })
+            });
+
+            let children: Vec<RelationNode> = pv_node.into_iter().collect();
+            if children.is_empty() {
+                return vec![];
+            }
+
+            vec![RelationNode {
+                resource: Some(ResourceRef::Pvc(name.clone(), ns.clone())),
+                label: format!("PersistentVolumeClaim {name}"),
+                status: Some(pvc.status.clone()),
+                namespace: Some(ns.clone()),
+                relation: RelationKind::Root,
+                not_found: false,
+                children,
+            }]
+        }
+        ResourceRef::Pv(name) => {
+            let Some(pv) = snapshot.pvs.iter().find(|p| &p.name == name) else {
+                return vec![];
+            };
+
+            let mut children = Vec::new();
+
+            // Find bound PVC
+            if let Some(claim) = &pv.claim {
+                // claim is typically "namespace/name"
+                let (pvc_ns, pvc_name) = claim.split_once('/').unwrap_or(("", claim.as_str()));
+                let found = snapshot
+                    .pvcs
+                    .iter()
+                    .find(|p| p.name == pvc_name && (pvc_ns.is_empty() || p.namespace == pvc_ns));
+                let pvc_node = if let Some(p) = found {
+                    RelationNode {
+                        resource: Some(ResourceRef::Pvc(p.name.clone(), p.namespace.clone())),
+                        label: format!("PersistentVolumeClaim {}", p.name),
+                        status: Some(p.status.clone()),
+                        namespace: Some(p.namespace.clone()),
+                        relation: RelationKind::Bound,
+                        not_found: false,
+                        children: vec![],
+                    }
+                } else {
+                    RelationNode {
+                        resource: None,
+                        label: format!("PersistentVolumeClaim {pvc_name}"),
+                        status: None,
+                        namespace: None,
+                        relation: RelationKind::Bound,
+                        not_found: true,
+                        children: vec![],
+                    }
+                };
+                children.push(pvc_node);
+            }
+
+            // Find StorageClass
+            if let Some(sc_name) = &pv.storage_class {
+                let sc_node = if let Some(sc) =
+                    snapshot.storage_classes.iter().find(|s| &s.name == sc_name)
+                {
+                    RelationNode {
+                        resource: Some(ResourceRef::StorageClass(sc.name.clone())),
+                        label: format!("StorageClass {}", sc.name),
+                        status: None,
+                        namespace: None,
+                        relation: RelationKind::Bound,
+                        not_found: false,
+                        children: vec![],
+                    }
+                } else {
+                    RelationNode {
+                        resource: None,
+                        label: format!("StorageClass {sc_name}"),
+                        status: None,
+                        namespace: None,
+                        relation: RelationKind::Bound,
+                        not_found: true,
+                        children: vec![],
+                    }
+                };
+                children.push(sc_node);
+            }
+
+            if children.is_empty() {
+                return vec![];
+            }
+
+            vec![RelationNode {
+                resource: Some(ResourceRef::Pv(name.clone())),
+                label: format!("PersistentVolume {name}"),
+                status: Some(pv.status.clone()),
+                namespace: None,
+                relation: RelationKind::Root,
+                not_found: false,
+                children,
+            }]
+        }
+        ResourceRef::StorageClass(name) => {
+            // Find all PVs using this storage class
+            let pv_nodes: Vec<RelationNode> = snapshot
+                .pvs
+                .iter()
+                .filter(|p| p.storage_class.as_deref() == Some(name.as_str()))
+                .map(|p| RelationNode {
+                    resource: Some(ResourceRef::Pv(p.name.clone())),
+                    label: format!("PersistentVolume {}", p.name),
+                    status: Some(p.status.clone()),
+                    namespace: None,
+                    relation: RelationKind::Bound,
+                    not_found: false,
+                    children: vec![],
+                })
+                .collect();
+
+            // Also find PVCs using this storage class
+            let pvc_nodes: Vec<RelationNode> = snapshot
+                .pvcs
+                .iter()
+                .filter(|p| p.storage_class.as_deref() == Some(name.as_str()))
+                .map(|p| RelationNode {
+                    resource: Some(ResourceRef::Pvc(p.name.clone(), p.namespace.clone())),
+                    label: format!("PersistentVolumeClaim {}", p.name),
+                    status: Some(p.status.clone()),
+                    namespace: Some(p.namespace.clone()),
+                    relation: RelationKind::Bound,
+                    not_found: false,
+                    children: vec![],
+                })
+                .collect();
+
+            let mut children = pv_nodes;
+            children.extend(pvc_nodes);
+
+            if children.is_empty() {
+                return vec![];
+            }
+
+            vec![RelationNode {
+                resource: Some(ResourceRef::StorageClass(name.clone())),
+                label: format!("StorageClass {name}"),
+                status: None,
+                namespace: None,
+                relation: RelationKind::Root,
+                not_found: false,
+                children,
+            }]
+        }
+        _ => vec![],
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -987,6 +1288,127 @@ mod tests {
         let resource = ResourceRef::Service("headless".into(), "default".into());
         let result = resolve_service_backends_from_snapshot(&resource, &snapshot);
         assert!(result.is_empty());
+    }
+
+    // ---------------------------------------------------------------------------
+    // Task 12 tests: Ingress backends + storage bindings
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn resolve_ingress_backends_matches_services() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.ingresses = vec![IngressInfo {
+            name: "my-ingress".into(),
+            namespace: "default".into(),
+            backend_services: vec![("web-svc".to_string(), "80".to_string())],
+            ..Default::default()
+        }];
+        snapshot.services = vec![ServiceInfo {
+            name: "web-svc".into(),
+            namespace: "default".into(),
+            selector: [("app".to_string(), "web".to_string())].into(),
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::Ingress("my-ingress".into(), "default".into());
+        let result = resolve_ingress_backends_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].label, "Ingress my-ingress");
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "Service web-svc");
+        assert!(!result[0].children[0].not_found);
+    }
+
+    #[test]
+    fn resolve_ingress_backends_missing_service_not_found() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.ingresses = vec![IngressInfo {
+            name: "my-ingress".into(),
+            namespace: "default".into(),
+            backend_services: vec![("missing-svc".to_string(), "80".to_string())],
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::Ingress("my-ingress".into(), "default".into());
+        let result = resolve_ingress_backends_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert!(result[0].children[0].not_found);
+    }
+
+    #[test]
+    fn resolve_ingress_class_finds_ingresses() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.ingresses = vec![
+            IngressInfo {
+                name: "ing-1".into(),
+                namespace: "default".into(),
+                class: Some("nginx".into()),
+                ..Default::default()
+            },
+            IngressInfo {
+                name: "ing-2".into(),
+                namespace: "prod".into(),
+                class: Some("traefik".into()),
+                ..Default::default()
+            },
+        ];
+
+        let resource = ResourceRef::IngressClass("nginx".into());
+        let result = resolve_ingress_backends_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].label, "IngressClass nginx");
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "Ingress ing-1");
+    }
+
+    #[test]
+    fn resolve_pvc_to_pv_to_storage_class() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pvcs = vec![PvcInfo {
+            name: "data-pvc".into(),
+            namespace: "default".into(),
+            status: "Bound".into(),
+            volume: Some("pv-001".into()),
+            storage_class: Some("fast".into()),
+            ..Default::default()
+        }];
+        snapshot.pvs = vec![PvInfo {
+            name: "pv-001".into(),
+            status: "Bound".into(),
+            storage_class: Some("fast".into()),
+            claim: Some("default/data-pvc".into()),
+            ..Default::default()
+        }];
+        snapshot.storage_classes = vec![StorageClassInfo {
+            name: "fast".into(),
+            provisioner: "disk.csi.k8s.io".into(),
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::Pvc("data-pvc".into(), "default".into());
+        let result = resolve_storage_bindings_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].label, "PersistentVolumeClaim data-pvc");
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "PersistentVolume pv-001");
+        assert_eq!(result[0].children[0].children.len(), 1);
+        assert_eq!(result[0].children[0].children[0].label, "StorageClass fast");
     }
 
     // ---------------------------------------------------------------------------
