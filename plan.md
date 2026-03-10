@@ -145,7 +145,7 @@ KubecTUI already has:
 - per-view loading state with explicit loading/refreshing/ready/empty/error states
 - responsive layouts with sidebar + content + workbench split
 - shared sorting across workloads and pods with ascending/descending toggle
-- bottom workbench with 7 persistent tab types (ActionHistory, YAML, Events, PodLogs, WorkloadLogs, Exec, PortForward)
+- bottom workbench with 8 persistent tab types (ActionHistory, YAML, Events, PodLogs, WorkloadLogs, Exec, PortForward, Relations)
 - workbench maximize (`z` to fullscreen, Esc to restore), resizable height (8-40 lines)
 - pod logs with container picker, "All Containers" option, follow mode
 - workload-level log aggregation with pod/container/text filtering
@@ -313,19 +313,16 @@ Needed:
 - timeline-oriented verification
 - faster understanding of what changed after an action
 
-## Gap I: Weak relationship navigation
+## Gap I: Weak relationship navigation (addressed in M10)
 
-Current issue:
+Addressed by Milestone 10 (Relationship Explorer):
 
-- resources are browsable by kind, not by dependency chain
-
-Needed:
-
-- service -> endpoint -> pod
-- deployment -> replicaset -> pod
-- ingress -> service -> pod
-- PVC -> PV -> StorageClass
-- Flux source -> downstream resource chain
+- deployment -> replicaset -> pod (owner chain)
+- service -> endpoint -> pod (service backends)
+- ingress -> service -> pod (ingress backends)
+- PVC -> PV -> StorageClass (storage bindings)
+- SA -> RoleBinding -> Role / ClusterRoleBinding -> ClusterRole (RBAC bindings)
+- Flux source -> downstream resource chain (Flux lineage)
 
 ## Gap J: Weak issue-centered workflow
 
@@ -660,6 +657,21 @@ Turn the command palette into the main discoverability and action surface.
 ### Status
 
 Completed
+
+### What shipped
+
+- RelationNode tree model with ResourceRef-typed references and 6 resolver chains
+- Owner chain resolver with cycle detection (MAX_OWNER_CHAIN_DEPTH=20) and NotFound handling
+- Service backends resolver (Service → Endpoints → Pods via selector matching)
+- Ingress backends resolver (Ingress → Service → Pods with IngressClass display)
+- Storage bindings resolver (PVC ↔ PV ↔ StorageClass with status display)
+- RBAC bindings resolver (ServiceAccount → RoleBinding/ClusterRoleBinding → Role/ClusterRole)
+- Flux lineage resolver (HelmRelease → source/downstream matching by URL and name-prefix)
+- Workbench-hosted Relations tab with indented expand/collapse tree and Unicode connectors
+- `w` keybinding from detail view, action palette integration (`View Relations`)
+- Enter-to-jump navigation opening detail for related resources
+- Snapshot-based resolution (no additional API calls)
+- 506 tests passing including relationship-specific coverage
 
 ### Goal
 
@@ -1039,9 +1051,9 @@ Start with Milestone 11: Node Operations.
 P0, P1, and M10 are complete (M0-M10). The next real implementation work should be:
 
 1. Add node action capability policies (cordon, uncordon, drain)
-3. Implement first relation sets (deployment→replicaset→pod, service→endpoints→pod, etc.)
-4. Render relationships as expandable tree/list
-5. Add jump-to-related-resource behavior
+2. Implement cordon/uncordon with confirmation and action history recording
+3. Implement drain with strong warning, progress feedback, and error handling
+4. Add tests for action availability, mutation lifecycle, and error paths
 
 Do not start next with:
 
@@ -1228,7 +1240,7 @@ The correct path is:
 - close discoverability and QoL gaps (done)
 - add clipboard and export (done)
 - add enhanced detail, action palette (done)
-- add relationships, node operations, issues
+- add node operations, issues
 - preserve speed at every step
 
 This milestone plan is now the canonical implementation roadmap.
