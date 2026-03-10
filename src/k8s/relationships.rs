@@ -988,6 +988,514 @@ pub fn resolve_storage_bindings_from_snapshot(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Task 13: RBAC bindings + Flux lineage resolvers
+// ---------------------------------------------------------------------------
+
+/// Resolve RBAC binding relationships for ServiceAccount, Role/ClusterRole, RoleBinding/ClusterRoleBinding.
+pub fn resolve_rbac_bindings_from_snapshot(
+    resource: &ResourceRef,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    match resource {
+        ResourceRef::ServiceAccount(sa_name, sa_ns) => {
+            resolve_rbac_for_service_account(sa_name, sa_ns, snapshot)
+        }
+        ResourceRef::Role(role_name, role_ns) => {
+            resolve_rbac_for_role(role_name, role_ns, snapshot)
+        }
+        ResourceRef::ClusterRole(role_name) => resolve_rbac_for_cluster_role(role_name, snapshot),
+        ResourceRef::RoleBinding(binding_name, binding_ns) => {
+            resolve_rbac_for_role_binding(binding_name, binding_ns, snapshot)
+        }
+        ResourceRef::ClusterRoleBinding(binding_name) => {
+            resolve_rbac_for_cluster_role_binding(binding_name, snapshot)
+        }
+        _ => vec![],
+    }
+}
+
+fn resolve_rbac_for_service_account(
+    sa_name: &str,
+    sa_ns: &str,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    let mut binding_nodes = Vec::new();
+
+    // Check RoleBindings
+    for rb in &snapshot.role_bindings {
+        if rb.namespace != sa_ns {
+            continue;
+        }
+        let matches = rb.subjects.iter().any(|s| {
+            s.kind == "ServiceAccount"
+                && s.name == sa_name
+                && s.namespace.as_deref().unwrap_or(sa_ns) == sa_ns
+        });
+        if !matches {
+            continue;
+        }
+
+        // Find the role it references
+        let role_child = make_role_ref_node(
+            &rb.role_ref_kind,
+            &rb.role_ref_name,
+            &rb.namespace,
+            snapshot,
+        );
+
+        let rb_node = RelationNode {
+            resource: Some(ResourceRef::RoleBinding(
+                rb.name.clone(),
+                rb.namespace.clone(),
+            )),
+            label: format!("RoleBinding {}", rb.name),
+            status: None,
+            namespace: Some(rb.namespace.clone()),
+            relation: RelationKind::RbacBinding,
+            not_found: false,
+            children: vec![role_child],
+        };
+        binding_nodes.push(rb_node);
+    }
+
+    // Check ClusterRoleBindings
+    for crb in &snapshot.cluster_role_bindings {
+        let matches = crb.subjects.iter().any(|s| {
+            s.kind == "ServiceAccount" && s.name == sa_name && s.namespace.as_deref() == Some(sa_ns)
+        });
+        if !matches {
+            continue;
+        }
+
+        let role_child = make_role_ref_node(&crb.role_ref_kind, &crb.role_ref_name, "", snapshot);
+
+        let crb_node = RelationNode {
+            resource: Some(ResourceRef::ClusterRoleBinding(crb.name.clone())),
+            label: format!("ClusterRoleBinding {}", crb.name),
+            status: None,
+            namespace: None,
+            relation: RelationKind::RbacBinding,
+            not_found: false,
+            children: vec![role_child],
+        };
+        binding_nodes.push(crb_node);
+    }
+
+    if binding_nodes.is_empty() {
+        return vec![];
+    }
+
+    vec![RelationNode {
+        resource: Some(ResourceRef::ServiceAccount(
+            sa_name.to_string(),
+            sa_ns.to_string(),
+        )),
+        label: format!("ServiceAccount {sa_name}"),
+        status: None,
+        namespace: Some(sa_ns.to_string()),
+        relation: RelationKind::Root,
+        not_found: false,
+        children: binding_nodes,
+    }]
+}
+
+fn make_role_ref_node(
+    role_ref_kind: &str,
+    role_ref_name: &str,
+    namespace: &str,
+    snapshot: &ClusterSnapshot,
+) -> RelationNode {
+    match role_ref_kind {
+        "Role" => {
+            let found = snapshot
+                .roles
+                .iter()
+                .find(|r| r.name == role_ref_name && r.namespace == namespace);
+            if let Some(r) = found {
+                RelationNode {
+                    resource: Some(ResourceRef::Role(r.name.clone(), r.namespace.clone())),
+                    label: format!("Role {}", r.name),
+                    status: None,
+                    namespace: Some(r.namespace.clone()),
+                    relation: RelationKind::RbacBinding,
+                    not_found: false,
+                    children: vec![],
+                }
+            } else {
+                RelationNode {
+                    resource: None,
+                    label: format!("Role {role_ref_name}"),
+                    status: None,
+                    namespace: None,
+                    relation: RelationKind::RbacBinding,
+                    not_found: true,
+                    children: vec![],
+                }
+            }
+        }
+        "ClusterRole" => {
+            let found = snapshot
+                .cluster_roles
+                .iter()
+                .find(|r| r.name == role_ref_name);
+            if let Some(r) = found {
+                RelationNode {
+                    resource: Some(ResourceRef::ClusterRole(r.name.clone())),
+                    label: format!("ClusterRole {}", r.name),
+                    status: None,
+                    namespace: None,
+                    relation: RelationKind::RbacBinding,
+                    not_found: false,
+                    children: vec![],
+                }
+            } else {
+                RelationNode {
+                    resource: None,
+                    label: format!("ClusterRole {role_ref_name}"),
+                    status: None,
+                    namespace: None,
+                    relation: RelationKind::RbacBinding,
+                    not_found: true,
+                    children: vec![],
+                }
+            }
+        }
+        _ => RelationNode {
+            resource: None,
+            label: format!("{role_ref_kind} {role_ref_name}"),
+            status: None,
+            namespace: None,
+            relation: RelationKind::RbacBinding,
+            not_found: true,
+            children: vec![],
+        },
+    }
+}
+
+fn resolve_rbac_for_role(
+    role_name: &str,
+    role_ns: &str,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    let binding_nodes: Vec<RelationNode> = snapshot
+        .role_bindings
+        .iter()
+        .filter(|rb| {
+            rb.namespace == role_ns && rb.role_ref_kind == "Role" && rb.role_ref_name == role_name
+        })
+        .map(|rb| {
+            let subject_children: Vec<RelationNode> = rb
+                .subjects
+                .iter()
+                .map(|s| RelationNode {
+                    resource: if s.kind == "ServiceAccount" {
+                        Some(ResourceRef::ServiceAccount(
+                            s.name.clone(),
+                            s.namespace.clone().unwrap_or_else(|| rb.namespace.clone()),
+                        ))
+                    } else {
+                        None
+                    },
+                    label: format!("{} {}", s.kind, s.name),
+                    status: None,
+                    namespace: s.namespace.clone(),
+                    relation: RelationKind::RbacBinding,
+                    not_found: false,
+                    children: vec![],
+                })
+                .collect();
+            RelationNode {
+                resource: Some(ResourceRef::RoleBinding(
+                    rb.name.clone(),
+                    rb.namespace.clone(),
+                )),
+                label: format!("RoleBinding {}", rb.name),
+                status: None,
+                namespace: Some(rb.namespace.clone()),
+                relation: RelationKind::RbacBinding,
+                not_found: false,
+                children: subject_children,
+            }
+        })
+        .collect();
+
+    if binding_nodes.is_empty() {
+        return vec![];
+    }
+
+    vec![RelationNode {
+        resource: Some(ResourceRef::Role(
+            role_name.to_string(),
+            role_ns.to_string(),
+        )),
+        label: format!("Role {role_name}"),
+        status: None,
+        namespace: Some(role_ns.to_string()),
+        relation: RelationKind::Root,
+        not_found: false,
+        children: binding_nodes,
+    }]
+}
+
+fn resolve_rbac_for_cluster_role(role_name: &str, snapshot: &ClusterSnapshot) -> Vec<RelationNode> {
+    let mut binding_nodes: Vec<RelationNode> = Vec::new();
+
+    // RoleBindings that reference this ClusterRole
+    for rb in &snapshot.role_bindings {
+        if rb.role_ref_kind == "ClusterRole" && rb.role_ref_name == role_name {
+            let subject_children: Vec<RelationNode> = rb
+                .subjects
+                .iter()
+                .map(|s| RelationNode {
+                    resource: if s.kind == "ServiceAccount" {
+                        Some(ResourceRef::ServiceAccount(
+                            s.name.clone(),
+                            s.namespace.clone().unwrap_or_else(|| rb.namespace.clone()),
+                        ))
+                    } else {
+                        None
+                    },
+                    label: format!("{} {}", s.kind, s.name),
+                    status: None,
+                    namespace: s.namespace.clone(),
+                    relation: RelationKind::RbacBinding,
+                    not_found: false,
+                    children: vec![],
+                })
+                .collect();
+            binding_nodes.push(RelationNode {
+                resource: Some(ResourceRef::RoleBinding(
+                    rb.name.clone(),
+                    rb.namespace.clone(),
+                )),
+                label: format!("RoleBinding {}", rb.name),
+                status: None,
+                namespace: Some(rb.namespace.clone()),
+                relation: RelationKind::RbacBinding,
+                not_found: false,
+                children: subject_children,
+            });
+        }
+    }
+
+    // ClusterRoleBindings that reference this ClusterRole
+    for crb in &snapshot.cluster_role_bindings {
+        if crb.role_ref_kind == "ClusterRole" && crb.role_ref_name == role_name {
+            let subject_children: Vec<RelationNode> = crb
+                .subjects
+                .iter()
+                .map(|s| RelationNode {
+                    resource: if s.kind == "ServiceAccount" {
+                        Some(ResourceRef::ServiceAccount(
+                            s.name.clone(),
+                            s.namespace.clone().unwrap_or_default(),
+                        ))
+                    } else {
+                        None
+                    },
+                    label: format!("{} {}", s.kind, s.name),
+                    status: None,
+                    namespace: s.namespace.clone(),
+                    relation: RelationKind::RbacBinding,
+                    not_found: false,
+                    children: vec![],
+                })
+                .collect();
+            binding_nodes.push(RelationNode {
+                resource: Some(ResourceRef::ClusterRoleBinding(crb.name.clone())),
+                label: format!("ClusterRoleBinding {}", crb.name),
+                status: None,
+                namespace: None,
+                relation: RelationKind::RbacBinding,
+                not_found: false,
+                children: subject_children,
+            });
+        }
+    }
+
+    if binding_nodes.is_empty() {
+        return vec![];
+    }
+
+    vec![RelationNode {
+        resource: Some(ResourceRef::ClusterRole(role_name.to_string())),
+        label: format!("ClusterRole {role_name}"),
+        status: None,
+        namespace: None,
+        relation: RelationKind::Root,
+        not_found: false,
+        children: binding_nodes,
+    }]
+}
+
+fn resolve_rbac_for_role_binding(
+    binding_name: &str,
+    binding_ns: &str,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    let Some(rb) = snapshot
+        .role_bindings
+        .iter()
+        .find(|r| r.name == binding_name && r.namespace == binding_ns)
+    else {
+        return vec![];
+    };
+
+    let role_child = make_role_ref_node(&rb.role_ref_kind, &rb.role_ref_name, binding_ns, snapshot);
+
+    let subject_children: Vec<RelationNode> = rb
+        .subjects
+        .iter()
+        .map(|s| RelationNode {
+            resource: if s.kind == "ServiceAccount" {
+                Some(ResourceRef::ServiceAccount(
+                    s.name.clone(),
+                    s.namespace
+                        .clone()
+                        .unwrap_or_else(|| binding_ns.to_string()),
+                ))
+            } else {
+                None
+            },
+            label: format!("{} {}", s.kind, s.name),
+            status: None,
+            namespace: s.namespace.clone(),
+            relation: RelationKind::RbacBinding,
+            not_found: false,
+            children: vec![],
+        })
+        .collect();
+
+    vec![RelationNode {
+        resource: Some(ResourceRef::RoleBinding(
+            binding_name.to_string(),
+            binding_ns.to_string(),
+        )),
+        label: format!("RoleBinding {binding_name}"),
+        status: None,
+        namespace: Some(binding_ns.to_string()),
+        relation: RelationKind::Root,
+        not_found: false,
+        children: std::iter::once(role_child)
+            .chain(subject_children)
+            .collect(),
+    }]
+}
+
+fn resolve_rbac_for_cluster_role_binding(
+    binding_name: &str,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    let Some(crb) = snapshot
+        .cluster_role_bindings
+        .iter()
+        .find(|r| r.name == binding_name)
+    else {
+        return vec![];
+    };
+
+    let role_child = make_role_ref_node(&crb.role_ref_kind, &crb.role_ref_name, "", snapshot);
+
+    let subject_children: Vec<RelationNode> = crb
+        .subjects
+        .iter()
+        .map(|s| RelationNode {
+            resource: if s.kind == "ServiceAccount" {
+                Some(ResourceRef::ServiceAccount(
+                    s.name.clone(),
+                    s.namespace.clone().unwrap_or_default(),
+                ))
+            } else {
+                None
+            },
+            label: format!("{} {}", s.kind, s.name),
+            status: None,
+            namespace: s.namespace.clone(),
+            relation: RelationKind::RbacBinding,
+            not_found: false,
+            children: vec![],
+        })
+        .collect();
+
+    vec![RelationNode {
+        resource: Some(ResourceRef::ClusterRoleBinding(binding_name.to_string())),
+        label: format!("ClusterRoleBinding {binding_name}"),
+        status: None,
+        namespace: None,
+        relation: RelationKind::Root,
+        not_found: false,
+        children: std::iter::once(role_child)
+            .chain(subject_children)
+            .collect(),
+    }]
+}
+
+/// Resolve Flux lineage: find related Flux resources in the same namespace.
+pub fn resolve_flux_lineage_from_snapshot(
+    resource: &ResourceRef,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    let (name, namespace) = match resource {
+        ResourceRef::CustomResource {
+            name, namespace, ..
+        } => (name.as_str(), namespace.as_deref()),
+        _ => return vec![],
+    };
+
+    let resource_ns = namespace.unwrap_or("");
+
+    // Collect related Flux resources: same namespace, different name/kind
+    let related: Vec<RelationNode> = snapshot
+        .flux_resources
+        .iter()
+        .filter(|f| {
+            // Same namespace (or cluster-scoped with no namespace)
+            let f_ns = f.namespace.as_deref().unwrap_or("");
+            let ns_match = resource_ns.is_empty() || f_ns.is_empty() || f_ns == resource_ns;
+            // Not the resource itself
+            let not_self = !(f.name == name && f_ns == resource_ns);
+            ns_match && not_self
+        })
+        .map(|f| RelationNode {
+            resource: Some(ResourceRef::CustomResource {
+                group: f.group.clone(),
+                kind: f.kind.clone(),
+                plural: f.plural.clone(),
+                version: f.version.clone(),
+                name: f.name.clone(),
+                namespace: f.namespace.clone(),
+            }),
+            label: format!("{} {}", f.kind, f.name),
+            status: Some(f.status.clone()),
+            namespace: f.namespace.clone(),
+            relation: RelationKind::FluxSource,
+            not_found: false,
+            children: vec![],
+        })
+        .collect();
+
+    if related.is_empty() {
+        return vec![];
+    }
+
+    vec![RelationNode {
+        resource: Some(resource.clone()),
+        label: format!(
+            "{} {name}",
+            match resource {
+                ResourceRef::CustomResource { kind, .. } => kind.as_str(),
+                _ => "Resource",
+            }
+        ),
+        status: None,
+        namespace: namespace.map(|s| s.to_string()),
+        relation: RelationKind::Root,
+        not_found: false,
+        children: related,
+    }]
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -1412,4 +1920,134 @@ mod tests {
     }
 
     // ---------------------------------------------------------------------------
+    // Task 13 tests: RBAC and Flux
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn resolve_rbac_service_account_to_binding_to_role() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.service_accounts = vec![ServiceAccountInfo {
+            name: "my-sa".into(),
+            namespace: "default".into(),
+            ..Default::default()
+        }];
+        snapshot.roles = vec![RoleInfo {
+            name: "my-role".into(),
+            namespace: "default".into(),
+            ..Default::default()
+        }];
+        snapshot.role_bindings = vec![RoleBindingInfo {
+            name: "my-rb".into(),
+            namespace: "default".into(),
+            role_ref_kind: "Role".into(),
+            role_ref_name: "my-role".into(),
+            subjects: vec![RoleBindingSubject {
+                kind: "ServiceAccount".into(),
+                name: "my-sa".into(),
+                namespace: Some("default".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::ServiceAccount("my-sa".into(), "default".into());
+        let result = resolve_rbac_bindings_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].label, "ServiceAccount my-sa");
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "RoleBinding my-rb");
+        assert_eq!(result[0].children[0].children.len(), 1);
+        assert_eq!(result[0].children[0].children[0].label, "Role my-role");
+    }
+
+    #[test]
+    fn resolve_rbac_cluster_role_binding_shows_role_and_subjects() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.cluster_roles = vec![ClusterRoleInfo {
+            name: "admin".into(),
+            ..Default::default()
+        }];
+        snapshot.cluster_role_bindings = vec![ClusterRoleBindingInfo {
+            name: "admin-crb".into(),
+            role_ref_kind: "ClusterRole".into(),
+            role_ref_name: "admin".into(),
+            subjects: vec![RoleBindingSubject {
+                kind: "ServiceAccount".into(),
+                name: "ops-sa".into(),
+                namespace: Some("ops".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::ClusterRoleBinding("admin-crb".into());
+        let result = resolve_rbac_bindings_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].label, "ClusterRoleBinding admin-crb");
+        // First child = ClusterRole, second child = subject
+        assert!(!result[0].children.is_empty());
+        assert_eq!(result[0].children[0].label, "ClusterRole admin");
+        assert!(!result[0].children[0].not_found);
+    }
+
+    #[test]
+    fn resolve_flux_lineage_returns_related_resources_in_namespace() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.flux_resources = vec![
+            FluxResourceInfo {
+                name: "my-app".into(),
+                namespace: Some("flux-system".into()),
+                kind: "Kustomization".into(),
+                group: "kustomize.toolkit.fluxcd.io".into(),
+                plural: "kustomizations".into(),
+                status: "Ready".into(),
+                ..Default::default()
+            },
+            FluxResourceInfo {
+                name: "my-repo".into(),
+                namespace: Some("flux-system".into()),
+                kind: "GitRepository".into(),
+                group: "source.toolkit.fluxcd.io".into(),
+                plural: "gitrepositories".into(),
+                status: "Ready".into(),
+                ..Default::default()
+            },
+            FluxResourceInfo {
+                name: "other-ns-resource".into(),
+                namespace: Some("other".into()),
+                kind: "HelmRelease".into(),
+                group: "helm.toolkit.fluxcd.io".into(),
+                plural: "helmreleases".into(),
+                status: "Ready".into(),
+                ..Default::default()
+            },
+        ];
+
+        let resource = ResourceRef::CustomResource {
+            group: "kustomize.toolkit.fluxcd.io".into(),
+            kind: "Kustomization".into(),
+            plural: "kustomizations".into(),
+            version: "v1".into(),
+            name: "my-app".into(),
+            namespace: Some("flux-system".into()),
+        };
+        let result = resolve_flux_lineage_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].label, "Kustomization my-app");
+        // Should find my-repo in same namespace, not other-ns-resource
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "GitRepository my-repo");
+    }
 }
