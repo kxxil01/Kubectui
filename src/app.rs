@@ -2495,6 +2495,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
+                KeyCode::Esc => AppAction::EscapePressed,
                 _ => AppAction::None,
             },
         }
