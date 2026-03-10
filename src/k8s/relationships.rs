@@ -518,19 +518,17 @@ pub fn resolve_owner_chain_from_snapshot(
             ChainEntry::Resolved(res) => {
                 let is_target = res == target;
 
-                let mut node = if is_target {
+                let node = if is_target {
                     let mut n = make_node(res.clone(), snapshot, RelationKind::Root);
                     n.children = target_owned;
                     n
                 } else {
-                    make_node(res.clone(), snapshot, RelationKind::Owner)
+                    let mut n = make_node(res.clone(), snapshot, RelationKind::Owner);
+                    if chain.len() > 1 {
+                        n.children = build_chain_tree(&chain[1..], snapshot, target, target_owned);
+                    }
+                    n
                 };
-
-                if chain.len() > 1 && !is_target {
-                    let rest = &chain[1..];
-                    let children = build_chain_tree(rest, snapshot, target, vec![]);
-                    node.children = children;
-                }
 
                 vec![node]
             }
@@ -1731,6 +1729,59 @@ mod tests {
         assert_eq!(result[0].label, "Deployment deploy-1");
         assert_eq!(result[0].children.len(), 1);
         assert_eq!(result[0].children[0].label, "ReplicaSet rs-abc");
+    }
+
+    #[test]
+    fn resolve_owner_chain_includes_owned_children_of_target() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        // ReplicaSet owned by Deployment, and the ReplicaSet owns a Pod.
+        // The target (ReplicaSet) should show its owned Pod even when it has an owner.
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.replicasets = vec![ReplicaSetInfo {
+            name: "rs-abc".into(),
+            namespace: "default".into(),
+            desired: 3,
+            ready: 3,
+            owner_references: vec![OwnerRefInfo {
+                kind: "Deployment".into(),
+                name: "deploy-1".into(),
+                uid: "uid-deploy".into(),
+            }],
+            ..Default::default()
+        }];
+        snapshot.deployments = vec![DeploymentInfo {
+            name: "deploy-1".into(),
+            namespace: "default".into(),
+            ready: "3/3".into(),
+            ..Default::default()
+        }];
+        snapshot.pods = vec![PodInfo {
+            name: "pod-0".into(),
+            namespace: "default".into(),
+            status: "Running".into(),
+            owner_references: vec![OwnerRefInfo {
+                kind: "ReplicaSet".into(),
+                name: "rs-abc".into(),
+                uid: "uid-rs".into(),
+            }],
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::ReplicaSet("rs-abc".into(), "default".into());
+        let result = resolve_owner_chain_from_snapshot(&resource, &snapshot);
+
+        // Tree: Deployment → ReplicaSet (target) → Pod (owned)
+        assert_eq!(result[0].label, "Deployment deploy-1");
+        let rs_node = &result[0].children[0];
+        assert_eq!(rs_node.label, "ReplicaSet rs-abc");
+        assert_eq!(
+            rs_node.children.len(),
+            1,
+            "target should include owned children"
+        );
+        assert_eq!(rs_node.children[0].label, "Pod pod-0");
     }
 
     #[test]
