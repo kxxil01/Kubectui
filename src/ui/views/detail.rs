@@ -497,8 +497,7 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
 
     if detail_state.confirm_delete {
         render_delete_confirm(frame, popup, detail_state);
-    }
-    if detail_state.confirm_drain {
+    } else if detail_state.confirm_drain {
         render_drain_confirm(frame, popup, detail_state);
     }
 }

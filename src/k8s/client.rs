@@ -284,6 +284,9 @@ impl K8sClient {
                         format!("failed to force-delete pod '{pod_name}' in '{pod_ns}'")
                     })?;
                 }
+                Err(kube::Error::Api(ref status)) if status.code == 404 => {
+                    // Pod disappeared between list and evict — treat as success.
+                }
                 Err(e) => {
                     return Err(e).with_context(|| {
                         format!("failed to evict pod '{pod_name}' in '{pod_ns}'")
@@ -307,7 +310,11 @@ impl K8sClient {
                     Ok(Some(_)) => {
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     }
-                    Err(_) => break, // 404 or similar, pod is gone.
+                    Err(kube::Error::Api(ref status)) if status.code == 404 => break,
+                    Err(_) => {
+                        // Transient error — keep polling rather than assuming pod is gone.
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    }
                 }
             }
         }
