@@ -2473,12 +2473,6 @@ impl AppState {
                     if let Some(node) = flat.get(tab.cursor) {
                         if node.expanded {
                             tab.expanded.remove(&node.tree_index);
-                            // Clamp cursor: collapsing may reduce visible nodes
-                            let new_flat =
-                                crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                            if tab.cursor >= new_flat.len() {
-                                tab.cursor = new_flat.len().saturating_sub(1);
-                            }
                         } else if tab.cursor > 0 {
                             for i in (0..tab.cursor).rev() {
                                 if flat[i].depth < node.depth {

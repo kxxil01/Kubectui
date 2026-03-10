@@ -513,7 +513,11 @@ pub fn resolve_owner_chain_from_snapshot(
 
         match &chain[0] {
             ChainEntry::NotFound(oref) => {
-                vec![make_not_found_node(oref, RelationKind::Owner)]
+                let mut n = make_not_found_node(oref, RelationKind::Owner);
+                if chain.len() > 1 {
+                    n.children = build_chain_tree(&chain[1..], snapshot, target, target_owned);
+                }
+                vec![n]
             }
             ChainEntry::Resolved(res) => {
                 let is_target = res == target;
@@ -1220,10 +1224,9 @@ fn resolve_rbac_for_cluster_role(role_name: &str, snapshot: &ClusterSnapshot) ->
                 .iter()
                 .map(|s| RelationNode {
                     resource: if s.kind == "ServiceAccount" {
-                        Some(ResourceRef::ServiceAccount(
-                            s.name.clone(),
-                            s.namespace.clone().unwrap_or_default(),
-                        ))
+                        s.namespace
+                            .as_ref()
+                            .map(|ns| ResourceRef::ServiceAccount(s.name.clone(), ns.clone()))
                     } else {
                         None
                     },
@@ -1335,10 +1338,9 @@ fn resolve_rbac_for_cluster_role_binding(
         .iter()
         .map(|s| RelationNode {
             resource: if s.kind == "ServiceAccount" {
-                Some(ResourceRef::ServiceAccount(
-                    s.name.clone(),
-                    s.namespace.clone().unwrap_or_default(),
-                ))
+                s.namespace
+                    .as_ref()
+                    .map(|ns| ResourceRef::ServiceAccount(s.name.clone(), ns.clone()))
             } else {
                 None
             },
@@ -1405,8 +1407,8 @@ pub fn resolve_flux_lineage_from_snapshot(
         .iter()
         .filter(|f| {
             let f_ns = f.namespace.as_deref().unwrap_or("");
-            // Must be same namespace
-            if !(resource_ns.is_empty() || f_ns.is_empty() || f_ns == resource_ns) {
+            // Must be same namespace (strict match)
+            if f_ns != resource_ns {
                 return false;
             }
             // Not the resource itself
@@ -1419,9 +1421,9 @@ pub fn resolve_flux_lineage_from_snapshot(
             {
                 return true;
             }
-            // Match if candidate's name appears in this resource's name
-            // or vice-versa (basic name-based association)
-            if f.name.starts_with(name) || name.starts_with(&f.name) {
+            // Match by name prefix with separator (e.g. "my-app" matches "my-app-source")
+            if f.name.starts_with(&format!("{name}-")) || name.starts_with(&format!("{}-", f.name))
+            {
                 return true;
             }
             false
