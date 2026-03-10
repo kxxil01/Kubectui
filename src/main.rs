@@ -985,6 +985,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (trigger_cronjob_tx, mut trigger_cronjob_rx) =
         tokio::sync::mpsc::channel::<TriggerCronJobAsyncResult>(16);
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
+    let (_relations_tx, mut relations_rx) = tokio::sync::mpsc::channel::<(
+        ResourceRef,
+        Result<Vec<kubectui::k8s::relationships::RelationNode>, String>,
+    )>(16);
     let (exec_bootstrap_tx, mut exec_bootstrap_rx) =
         tokio::sync::mpsc::channel::<ExecBootstrapResult>(16);
     let (exec_update_tx, mut exec_update_rx) = tokio::sync::mpsc::channel::<ExecEvent>(128);
@@ -1846,6 +1850,49 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
+            result = relations_rx.recv() => {
+                if let Some(payload) = result {
+                    let (requested_resource, result): (ResourceRef, Result<Vec<kubectui::k8s::relationships::RelationNode>, String>) = payload;
+                    let tab_key = WorkbenchTabKey::Relations(requested_resource.clone());
+                    if let Some(tab) = app.workbench.find_tab_mut(&tab_key)
+                        && let WorkbenchTabState::Relations(ref mut state) = tab.state
+                    {
+                        state.loading = false;
+                        match result {
+                            Ok(tree) => {
+                                // Auto-expand section headers and their immediate children.
+                                let mut expanded = std::collections::HashSet::new();
+                                let mut counter = 0usize;
+                                for section in &tree {
+                                    expanded.insert(counter);
+                                    counter += 1;
+                                    for child in &section.children {
+                                        expanded.insert(counter);
+                                        counter += 1;
+                                        fn count_children(
+                                            n: &kubectui::k8s::relationships::RelationNode,
+                                            c: &mut usize,
+                                        ) {
+                                            for ch in &n.children {
+                                                *c += 1;
+                                                count_children(ch, c);
+                                            }
+                                        }
+                                        count_children(child, &mut counter);
+                                    }
+                                }
+                                state.expanded = expanded;
+                                state.tree = tree;
+                            }
+                            Err(err) => {
+                                state.error = Some(err);
+                            }
+                        }
+                    }
+                    needs_redraw = true;
+                }
+            }
+
             trigger = deferred_refresh_rx.recv() => {
                 if let Some(trigger) = trigger {
                     if trigger.context_generation != refresh_state.context_generation {
@@ -2332,6 +2379,26 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             let _ = tx.send((requested_resource, result)).await;
                         });
                     }
+                }
+                AppAction::OpenRelationships => {
+                    let resource = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.clone())
+                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                    let Some(resource) = resource else {
+                        app.set_error(
+                            "No resource selected for relationship exploration.".to_string(),
+                        );
+                        continue;
+                    };
+                    app.detail_view = None;
+                    app.workbench.open_tab(WorkbenchTabState::Relations(
+                        kubectui::workbench::RelationsTabState::new(resource.clone()),
+                    ));
+                    app.focus = kubectui::app::Focus::Workbench;
+                    // TODO(Task 14): spawn async resolve_relationships and send result via
+                    // _relations_tx once the resolver is implemented.
                 }
                 AppAction::OpenResourceEvents => {
                     let resource = app
