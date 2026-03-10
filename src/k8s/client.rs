@@ -196,8 +196,12 @@ impl K8sClient {
     pub async fn cordon_node(&self, name: &str) -> Result<()> {
         let nodes_api: Api<Node> = Api::all(self.client.clone());
         let patch = serde_json::json!({"spec": {"unschedulable": true}});
+        let pp = PatchParams {
+            field_manager: Some("kubectui".to_string()),
+            ..Default::default()
+        };
         nodes_api
-            .patch(name, &PatchParams::default(), &Patch::Merge(patch))
+            .patch(name, &pp, &Patch::Merge(patch))
             .await
             .with_context(|| format!("failed to cordon node '{name}'"))?;
         Ok(())
@@ -207,23 +211,30 @@ impl K8sClient {
     pub async fn uncordon_node(&self, name: &str) -> Result<()> {
         let nodes_api: Api<Node> = Api::all(self.client.clone());
         let patch = serde_json::json!({"spec": {"unschedulable": false}});
+        let pp = PatchParams {
+            field_manager: Some("kubectui".to_string()),
+            ..Default::default()
+        };
         nodes_api
-            .patch(name, &PatchParams::default(), &Patch::Merge(patch))
+            .patch(name, &pp, &Patch::Merge(patch))
             .await
             .with_context(|| format!("failed to uncordon node '{name}'"))?;
         Ok(())
     }
 
-    /// Drains a node by evicting all non-DaemonSet, non-mirror pods.
+    /// Drains a node by cordoning it then evicting all non-DaemonSet, non-mirror pods.
     ///
     /// If `force` is true, pods that cannot be evicted (PDB violations) are deleted directly.
     pub async fn drain_node(
         &self,
         name: &str,
         timeout_secs: u64,
-        grace_period_secs: u64,
+        grace_period_secs: u32,
         force: bool,
     ) -> Result<()> {
+        // Cordon first to prevent new pods from being scheduled during drain.
+        self.cordon_node(name).await?;
+
         let pods_api: Api<k8s_openapi::api::core::v1::Pod> = Api::all(self.client.clone());
         let lp = ListParams::default().fields(&format!("spec.nodeName={name}"));
         let pod_list = pods_api
@@ -262,7 +273,7 @@ impl K8sClient {
 
         let evict_params = kube::api::EvictParams {
             delete_options: Some(kube::api::DeleteParams {
-                grace_period_seconds: Some(grace_period_secs as u32),
+                grace_period_seconds: Some(grace_period_secs),
                 ..Default::default()
             }),
             ..Default::default()
@@ -271,34 +282,50 @@ impl K8sClient {
         for (pod_name, pod_ns) in &to_evict {
             let ns_pods: Api<k8s_openapi::api::core::v1::Pod> =
                 Api::namespaced(self.client.clone(), pod_ns);
-            let result = ns_pods.evict(pod_name, &evict_params).await;
-            match result {
-                Ok(_) => {}
-                Err(kube::Error::Api(ref status)) if status.code == 429 && force => {
-                    // PDB violation — force delete if requested.
-                    let dp = kube::api::DeleteParams {
-                        grace_period_seconds: Some(0),
-                        ..Default::default()
-                    };
-                    ns_pods.delete(pod_name, &dp).await.with_context(|| {
-                        format!("failed to force-delete pod '{pod_name}' in '{pod_ns}'")
-                    })?;
+            loop {
+                if tokio::time::Instant::now() >= deadline {
+                    anyhow::bail!(
+                        "drain timed out after {timeout_secs}s while evicting pod '{pod_name}' in '{pod_ns}'"
+                    );
                 }
-                Err(kube::Error::Api(ref status)) if status.code == 404 => {
-                    // Pod disappeared between list and evict — treat as success.
-                }
-                Err(e) => {
-                    return Err(e).with_context(|| {
-                        format!("failed to evict pod '{pod_name}' in '{pod_ns}'")
-                    });
+                let result = ns_pods.evict(pod_name, &evict_params).await;
+                match result {
+                    Ok(_) => break,
+                    Err(kube::Error::Api(ref status))
+                        if (status.code == 429 || status.code == 409) && force =>
+                    {
+                        // PDB violation — force delete if requested.
+                        let dp = kube::api::DeleteParams {
+                            grace_period_seconds: Some(0),
+                            ..Default::default()
+                        };
+                        ns_pods.delete(pod_name, &dp).await.with_context(|| {
+                            format!("failed to force-delete pod '{pod_name}' in '{pod_ns}'")
+                        })?;
+                        break;
+                    }
+                    Err(kube::Error::Api(ref status))
+                        if (status.code == 429 || status.code == 409) =>
+                    {
+                        // PDB violation, non-force — retry with backoff until deadline.
+                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                    }
+                    Err(kube::Error::Api(ref status)) if status.code == 404 => break,
+                    Err(e) => {
+                        return Err(e).with_context(|| {
+                            format!("failed to evict pod '{pod_name}' in '{pod_ns}'")
+                        });
+                    }
                 }
             }
         }
 
         // Wait for pods to terminate.
+        const MAX_CONSECUTIVE_ERRORS: u32 = 5;
         for (pod_name, pod_ns) in &to_evict {
             let ns_pods: Api<k8s_openapi::api::core::v1::Pod> =
                 Api::namespaced(self.client.clone(), pod_ns);
+            let mut consecutive_errors: u32 = 0;
             loop {
                 if tokio::time::Instant::now() >= deadline {
                     anyhow::bail!(
@@ -306,13 +333,19 @@ impl K8sClient {
                     );
                 }
                 match ns_pods.get_opt(pod_name).await {
-                    Ok(None) => break, // Pod is gone.
+                    Ok(None) => break,
                     Ok(Some(_)) => {
+                        consecutive_errors = 0;
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     }
                     Err(kube::Error::Api(ref status)) if status.code == 404 => break,
-                    Err(_) => {
-                        // Transient error — keep polling rather than assuming pod is gone.
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                            return Err(e).context(format!(
+                                "repeated errors waiting for pod '{pod_name}' in '{pod_ns}' to terminate"
+                            ));
+                        }
                         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     }
                 }

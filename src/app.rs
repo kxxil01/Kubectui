@@ -2724,7 +2724,14 @@ impl AppState {
             {
                 AppAction::OpenResourceEvents
             }
-            KeyCode::Char('H') => AppAction::OpenActionHistory,
+            KeyCode::Char('H')
+                if !self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+            {
+                AppAction::OpenActionHistory
+            }
             KeyCode::Char('x')
                 if self
                     .detail_view
@@ -2984,8 +2991,21 @@ impl AppState {
             {
                 AppAction::FluxReconcile
             }
-            KeyCode::Char('r') => AppAction::RefreshData,
-            KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('r')
+                if !self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+            {
+                AppAction::RefreshData
+            }
+            KeyCode::Char('R')
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+            {
                 AppAction::RefreshData
             }
             KeyCode::Char('w')
@@ -3032,7 +3052,14 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('T') if self.detail_view.is_none() => AppAction::CycleTheme,
-            KeyCode::Char('?') => AppAction::OpenHelp,
+            KeyCode::Char('?')
+                if !self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+            {
+                AppAction::OpenHelp
+            }
             _ => AppAction::None,
         }
     }
