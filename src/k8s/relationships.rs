@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 
 use crate::app::{AppView, ResourceRef};
+use crate::k8s::dtos::OwnerRefInfo;
 use crate::policy::RelationshipCapability;
+use crate::state::ClusterSnapshot;
 
 /// A node in the relationship tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -194,6 +196,415 @@ impl RelationshipCapability {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Task 10: Owner chain resolver
+// ---------------------------------------------------------------------------
+
+/// Get owner references for any supported resource type.
+fn get_owner_refs(resource: &ResourceRef, snapshot: &ClusterSnapshot) -> Vec<OwnerRefInfo> {
+    match resource {
+        ResourceRef::Pod(name, ns) => snapshot
+            .pods
+            .iter()
+            .find(|p| &p.name == name && &p.namespace == ns)
+            .map(|p| p.owner_references.clone())
+            .unwrap_or_default(),
+        ResourceRef::ReplicaSet(name, ns) => snapshot
+            .replicasets
+            .iter()
+            .find(|r| &r.name == name && &r.namespace == ns)
+            .map(|r| r.owner_references.clone())
+            .unwrap_or_default(),
+        ResourceRef::Job(name, ns) => snapshot
+            .jobs
+            .iter()
+            .find(|j| &j.name == name && &j.namespace == ns)
+            .map(|j| j.owner_references.clone())
+            .unwrap_or_default(),
+        // All other types don't have owner_references in the DTO.
+        _ => vec![],
+    }
+}
+
+/// Get the namespace for a ResourceRef (None for cluster-scoped).
+fn resource_namespace(resource: &ResourceRef) -> Option<&str> {
+    match resource {
+        ResourceRef::Pod(_, ns)
+        | ResourceRef::Deployment(_, ns)
+        | ResourceRef::StatefulSet(_, ns)
+        | ResourceRef::DaemonSet(_, ns)
+        | ResourceRef::ReplicaSet(_, ns)
+        | ResourceRef::ReplicationController(_, ns)
+        | ResourceRef::Job(_, ns)
+        | ResourceRef::CronJob(_, ns)
+        | ResourceRef::Service(_, ns)
+        | ResourceRef::Endpoint(_, ns)
+        | ResourceRef::Ingress(_, ns)
+        | ResourceRef::Pvc(_, ns)
+        | ResourceRef::ServiceAccount(_, ns)
+        | ResourceRef::Role(_, ns)
+        | ResourceRef::RoleBinding(_, ns) => Some(ns.as_str()),
+        ResourceRef::Pv(name)
+        | ResourceRef::StorageClass(name)
+        | ResourceRef::IngressClass(name)
+        | ResourceRef::ClusterRole(name)
+        | ResourceRef::ClusterRoleBinding(name)
+        | ResourceRef::Node(name) => {
+            let _ = name;
+            None
+        }
+        ResourceRef::CustomResource { namespace, .. } => namespace.as_deref(),
+        _ => None,
+    }
+}
+
+/// Get the name for a ResourceRef.
+fn resource_name(resource: &ResourceRef) -> &str {
+    match resource {
+        ResourceRef::Pod(name, _)
+        | ResourceRef::Deployment(name, _)
+        | ResourceRef::StatefulSet(name, _)
+        | ResourceRef::DaemonSet(name, _)
+        | ResourceRef::ReplicaSet(name, _)
+        | ResourceRef::ReplicationController(name, _)
+        | ResourceRef::Job(name, _)
+        | ResourceRef::CronJob(name, _)
+        | ResourceRef::Service(name, _)
+        | ResourceRef::Endpoint(name, _)
+        | ResourceRef::Ingress(name, _)
+        | ResourceRef::Pvc(name, _)
+        | ResourceRef::Pv(name)
+        | ResourceRef::StorageClass(name)
+        | ResourceRef::IngressClass(name)
+        | ResourceRef::ServiceAccount(name, _)
+        | ResourceRef::ClusterRole(name)
+        | ResourceRef::Role(name, _)
+        | ResourceRef::ClusterRoleBinding(name)
+        | ResourceRef::RoleBinding(name, _)
+        | ResourceRef::Node(name) => name.as_str(),
+        ResourceRef::CustomResource { name, .. } => name.as_str(),
+        _ => "",
+    }
+}
+
+/// Build a human-readable kind string for a ResourceRef.
+fn resource_kind_label(resource: &ResourceRef) -> &str {
+    match resource {
+        ResourceRef::Pod(_, _) => "Pod",
+        ResourceRef::Deployment(_, _) => "Deployment",
+        ResourceRef::StatefulSet(_, _) => "StatefulSet",
+        ResourceRef::DaemonSet(_, _) => "DaemonSet",
+        ResourceRef::ReplicaSet(_, _) => "ReplicaSet",
+        ResourceRef::ReplicationController(_, _) => "ReplicationController",
+        ResourceRef::Job(_, _) => "Job",
+        ResourceRef::CronJob(_, _) => "CronJob",
+        ResourceRef::Service(_, _) => "Service",
+        ResourceRef::Endpoint(_, _) => "Endpoint",
+        ResourceRef::Ingress(_, _) => "Ingress",
+        ResourceRef::IngressClass(_) => "IngressClass",
+        ResourceRef::Pvc(_, _) => "PersistentVolumeClaim",
+        ResourceRef::Pv(_) => "PersistentVolume",
+        ResourceRef::StorageClass(_) => "StorageClass",
+        ResourceRef::ServiceAccount(_, _) => "ServiceAccount",
+        ResourceRef::ClusterRole(_) => "ClusterRole",
+        ResourceRef::Role(_, _) => "Role",
+        ResourceRef::ClusterRoleBinding(_) => "ClusterRoleBinding",
+        ResourceRef::RoleBinding(_, _) => "RoleBinding",
+        ResourceRef::Node(_) => "Node",
+        ResourceRef::CustomResource { kind, .. } => kind.as_str(),
+        _ => "Resource",
+    }
+}
+
+/// Retrieve a resource's status string from the snapshot.
+fn resource_status(resource: &ResourceRef, snapshot: &ClusterSnapshot) -> Option<String> {
+    match resource {
+        ResourceRef::Pod(name, ns) => snapshot
+            .pods
+            .iter()
+            .find(|p| &p.name == name && &p.namespace == ns)
+            .map(|p| p.status.clone()),
+        ResourceRef::Deployment(name, ns) => snapshot
+            .deployments
+            .iter()
+            .find(|d| &d.name == name && &d.namespace == ns)
+            .map(|d| d.ready.clone()),
+        ResourceRef::ReplicaSet(name, ns) => snapshot
+            .replicasets
+            .iter()
+            .find(|r| &r.name == name && &r.namespace == ns)
+            .map(|r| format!("{}/{}", r.ready, r.desired)),
+        ResourceRef::Job(name, ns) => snapshot
+            .jobs
+            .iter()
+            .find(|j| &j.name == name && &j.namespace == ns)
+            .map(|j| j.status.clone()),
+        ResourceRef::StatefulSet(name, ns) => snapshot
+            .statefulsets
+            .iter()
+            .find(|s| &s.name == name && &s.namespace == ns)
+            .map(|s| format!("{}/{}", s.ready_replicas, s.desired_replicas)),
+        ResourceRef::DaemonSet(name, ns) => snapshot
+            .daemonsets
+            .iter()
+            .find(|d| &d.name == name && &d.namespace == ns)
+            .map(|d| d.status_message.clone()),
+        ResourceRef::CronJob(name, ns) => snapshot
+            .cronjobs
+            .iter()
+            .find(|c| &c.name == name && &c.namespace == ns)
+            .map(|_c| String::new()),
+        _ => None,
+    }
+}
+
+/// Create a RelationNode for a known ResourceRef.
+fn make_node(
+    resource: ResourceRef,
+    snapshot: &ClusterSnapshot,
+    relation: RelationKind,
+) -> RelationNode {
+    let label = format!(
+        "{} {}",
+        resource_kind_label(&resource),
+        resource_name(&resource)
+    );
+    let status = resource_status(&resource, snapshot);
+    let namespace = resource_namespace(&resource).map(|s| s.to_string());
+    RelationNode {
+        resource: Some(resource),
+        label,
+        status,
+        namespace,
+        relation,
+        not_found: false,
+        children: vec![],
+    }
+}
+
+/// Create a not_found placeholder node for an unresolvable owner reference.
+fn make_not_found_node(oref: &OwnerRefInfo, relation: RelationKind) -> RelationNode {
+    RelationNode {
+        resource: None,
+        label: format!("{} {}", oref.kind, oref.name),
+        status: None,
+        namespace: None,
+        relation,
+        not_found: true,
+        children: vec![],
+    }
+}
+
+/// Find the ResourceRef for an owner reference in the snapshot (same namespace).
+fn find_resource_for_owner_ref(
+    oref: &OwnerRefInfo,
+    namespace: &str,
+    snapshot: &ClusterSnapshot,
+) -> Option<ResourceRef> {
+    match oref.kind.as_str() {
+        "ReplicaSet" => snapshot
+            .replicasets
+            .iter()
+            .find(|r| r.name == oref.name && r.namespace == namespace)
+            .map(|r| ResourceRef::ReplicaSet(r.name.clone(), r.namespace.clone())),
+        "Deployment" => snapshot
+            .deployments
+            .iter()
+            .find(|d| d.name == oref.name && d.namespace == namespace)
+            .map(|d| ResourceRef::Deployment(d.name.clone(), d.namespace.clone())),
+        "StatefulSet" => snapshot
+            .statefulsets
+            .iter()
+            .find(|s| s.name == oref.name && s.namespace == namespace)
+            .map(|s| ResourceRef::StatefulSet(s.name.clone(), s.namespace.clone())),
+        "DaemonSet" => snapshot
+            .daemonsets
+            .iter()
+            .find(|d| d.name == oref.name && d.namespace == namespace)
+            .map(|d| ResourceRef::DaemonSet(d.name.clone(), d.namespace.clone())),
+        "Job" => snapshot
+            .jobs
+            .iter()
+            .find(|j| j.name == oref.name && j.namespace == namespace)
+            .map(|j| ResourceRef::Job(j.name.clone(), j.namespace.clone())),
+        "CronJob" => snapshot
+            .cronjobs
+            .iter()
+            .find(|c| c.name == oref.name && c.namespace == namespace)
+            .map(|c| ResourceRef::CronJob(c.name.clone(), c.namespace.clone())),
+        "ReplicationController" => snapshot
+            .replication_controllers
+            .iter()
+            .find(|r| r.name == oref.name && r.namespace == namespace)
+            .map(|r| ResourceRef::ReplicationController(r.name.clone(), r.namespace.clone())),
+        _ => None,
+    }
+}
+
+/// Find all resources in the snapshot that are owned by `resource`.
+fn find_owned_resources(resource: &ResourceRef, snapshot: &ClusterSnapshot) -> Vec<ResourceRef> {
+    let name = resource_name(resource);
+    let kind = resource_kind_label(resource);
+    let ns = resource_namespace(resource).unwrap_or("");
+
+    let mut owned = Vec::new();
+
+    // Check pods
+    for pod in &snapshot.pods {
+        if pod.namespace == ns {
+            for oref in &pod.owner_references {
+                if oref.name == name && oref.kind == kind {
+                    owned.push(ResourceRef::Pod(pod.name.clone(), pod.namespace.clone()));
+                }
+            }
+        }
+    }
+
+    // Check replicasets
+    for rs in &snapshot.replicasets {
+        if rs.namespace == ns {
+            for oref in &rs.owner_references {
+                if oref.name == name && oref.kind == kind {
+                    owned.push(ResourceRef::ReplicaSet(
+                        rs.name.clone(),
+                        rs.namespace.clone(),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Check jobs
+    for job in &snapshot.jobs {
+        if job.namespace == ns {
+            for oref in &job.owner_references {
+                if oref.name == name && oref.kind == kind {
+                    owned.push(ResourceRef::Job(job.name.clone(), job.namespace.clone()));
+                }
+            }
+        }
+    }
+
+    owned
+}
+
+/// Walk owner references upward from a resource, returning the chain
+/// top-down (root owner first). Also finds resources owned by the target.
+pub fn resolve_owner_chain_from_snapshot(
+    resource: &ResourceRef,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    let ns = match resource_namespace(resource) {
+        Some(ns) => ns.to_string(),
+        None => return vec![],
+    };
+
+    // Walk up the owner chain, collecting (resource, owner_refs) pairs.
+    // We stop when there are no more owner refs or we can't find the owner.
+    let mut chain: Vec<ResourceRef> = vec![resource.clone()];
+    let mut current = resource.clone();
+
+    loop {
+        let owner_refs = get_owner_refs(&current, snapshot);
+        if owner_refs.is_empty() {
+            break;
+        }
+        // Take the first owner ref (typical case)
+        let oref = &owner_refs[0];
+        match find_resource_for_owner_ref(oref, &ns, snapshot) {
+            Some(parent_ref) => {
+                chain.push(parent_ref.clone());
+                current = parent_ref;
+            }
+            None => {
+                // Owner not found in snapshot — represent as not_found
+                let placeholder =
+                    ResourceRef::Pod(format!("__not_found__{}", oref.name), ns.clone());
+                // We use a sentinel to signal not_found; handled below
+                let _ = placeholder;
+                // Push a dummy entry to mark not_found at the top
+                chain.push(ResourceRef::Pod(
+                    format!("__not_found__{}__{}", oref.kind, oref.name),
+                    ns.clone(),
+                ));
+                break;
+            }
+        }
+    }
+
+    // chain is bottom-up; reverse to top-down
+    chain.reverse();
+
+    // Build the tree top-down with nesting
+    // The top of chain owns the next, etc.
+    // We also append owned resources (downward) to the target resource.
+
+    // Build owned children for the original resource
+    let target_owned: Vec<RelationNode> = find_owned_resources(resource, snapshot)
+        .into_iter()
+        .map(|r| make_node(r, snapshot, RelationKind::Owned))
+        .collect();
+
+    // Build the nested tree top-down with nesting.
+    fn build_chain_tree(
+        chain: &[ResourceRef],
+        snapshot: &ClusterSnapshot,
+        target: &ResourceRef,
+        target_owned: Vec<RelationNode>,
+    ) -> Vec<RelationNode> {
+        if chain.is_empty() {
+            return vec![];
+        }
+
+        let first = &chain[0];
+
+        // Check if this is a not_found sentinel
+        let is_not_found =
+            matches!(first, ResourceRef::Pod(name, _) if name.starts_with("__not_found__"));
+
+        if is_not_found {
+            // Extract kind and name from sentinel
+            let sentinel_name = resource_name(first);
+            let parts: Vec<&str> = sentinel_name
+                .strip_prefix("__not_found__")
+                .unwrap_or("")
+                .splitn(3, "__")
+                .collect();
+            let (kind, name) = if parts.len() >= 2 {
+                (parts[0], parts[1])
+            } else {
+                ("Unknown", sentinel_name)
+            };
+            let oref = OwnerRefInfo {
+                kind: kind.to_string(),
+                name: name.to_string(),
+                uid: String::new(),
+            };
+            return vec![make_not_found_node(&oref, RelationKind::Owner)];
+        }
+
+        let is_target = first == target;
+
+        let mut node = if is_target {
+            let mut n = make_node(first.clone(), snapshot, RelationKind::Root);
+            n.children = target_owned;
+            n
+        } else {
+            make_node(first.clone(), snapshot, RelationKind::Owner)
+        };
+
+        if chain.len() > 1 && !is_target {
+            let rest = &chain[1..];
+            let children = build_chain_tree(rest, snapshot, target, vec![]);
+            node.children = children;
+        }
+
+        vec![node]
+    }
+
+    build_chain_tree(&chain, snapshot, resource, target_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,4 +770,78 @@ mod tests {
         assert_eq!(result[2].depth, 2);
         assert_eq!(result[2].parent_is_last, vec![true, true]);
     }
+
+    // ---------------------------------------------------------------------------
+    // Task 10 tests: Owner chain
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn resolve_owner_chain_pod_to_replicaset_to_deployment() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods = vec![PodInfo {
+            name: "pod-0".into(),
+            namespace: "default".into(),
+            status: "Running".into(),
+            owner_references: vec![OwnerRefInfo {
+                kind: "ReplicaSet".into(),
+                name: "rs-abc".into(),
+                uid: "uid-rs".into(),
+            }],
+            ..Default::default()
+        }];
+        snapshot.replicasets = vec![ReplicaSetInfo {
+            name: "rs-abc".into(),
+            namespace: "default".into(),
+            desired: 3,
+            ready: 3,
+            owner_references: vec![OwnerRefInfo {
+                kind: "Deployment".into(),
+                name: "deploy-1".into(),
+                uid: "uid-deploy".into(),
+            }],
+            ..Default::default()
+        }];
+        snapshot.deployments = vec![DeploymentInfo {
+            name: "deploy-1".into(),
+            namespace: "default".into(),
+            ready: "3/3".into(),
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::Pod("pod-0".into(), "default".into());
+        let result = resolve_owner_chain_from_snapshot(&resource, &snapshot);
+
+        assert!(!result.is_empty());
+        assert_eq!(result[0].label, "Deployment deploy-1");
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "ReplicaSet rs-abc");
+    }
+
+    #[test]
+    fn resolve_owner_chain_missing_owner_shows_not_found() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods = vec![PodInfo {
+            name: "orphan-pod".into(),
+            namespace: "default".into(),
+            owner_references: vec![OwnerRefInfo {
+                kind: "ReplicaSet".into(),
+                name: "deleted-rs".into(),
+                uid: "uid-gone".into(),
+            }],
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::Pod("orphan-pod".into(), "default".into());
+        let result = resolve_owner_chain_from_snapshot(&resource, &snapshot);
+
+        assert!(!result.is_empty());
+        assert!(result[0].not_found);
+    }
+
 }
