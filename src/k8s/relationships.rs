@@ -605,6 +605,89 @@ pub fn resolve_owner_chain_from_snapshot(
     build_chain_tree(&chain, snapshot, resource, target_owned)
 }
 
+// ---------------------------------------------------------------------------
+// Task 11: Service backends resolver
+// ---------------------------------------------------------------------------
+
+/// Match pods to a service by its selector labels (same namespace, all labels must match).
+pub fn resolve_service_backends_from_snapshot(
+    resource: &ResourceRef,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    match resource {
+        ResourceRef::Service(name, ns) => {
+            let Some(svc) = snapshot
+                .services
+                .iter()
+                .find(|s| &s.name == name && &s.namespace == ns)
+            else {
+                return vec![];
+            };
+
+            if svc.selector.is_empty() {
+                return vec![];
+            }
+
+            let backends = pods_matching_selector(&svc.selector, ns, snapshot);
+            if backends.is_empty() {
+                return vec![];
+            }
+
+            let svc_node = RelationNode {
+                resource: Some(ResourceRef::Service(name.clone(), ns.clone())),
+                label: format!("Service {name}"),
+                status: None,
+                namespace: Some(ns.clone()),
+                relation: RelationKind::Root,
+                not_found: false,
+                children: backends,
+            };
+            vec![svc_node]
+        }
+        ResourceRef::Endpoint(name, ns) => {
+            // Find parent service with the same name in the same namespace
+            if let Some(svc) = snapshot
+                .services
+                .iter()
+                .find(|s| &s.name == name && &s.namespace == ns)
+            {
+                let svc_ref = ResourceRef::Service(svc.name.clone(), svc.namespace.clone());
+                return resolve_service_backends_from_snapshot(&svc_ref, snapshot);
+            }
+            vec![]
+        }
+        _ => vec![],
+    }
+}
+
+/// Return RelationNodes for pods whose labels match all entries in `selector`.
+fn pods_matching_selector(
+    selector: &std::collections::BTreeMap<String, String>,
+    namespace: &str,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    snapshot
+        .pods
+        .iter()
+        .filter(|pod| {
+            pod.namespace == namespace
+                && selector
+                    .iter()
+                    .all(|(k, v)| pod.labels.iter().any(|(pk, pv)| pk == k && pv == v))
+        })
+        .map(|pod| RelationNode {
+            resource: Some(ResourceRef::Pod(pod.name.clone(), pod.namespace.clone())),
+            label: format!("Pod {}", pod.name),
+            status: Some(pod.status.clone()),
+            namespace: Some(pod.namespace.clone()),
+            relation: RelationKind::Backend,
+            not_found: false,
+            children: vec![],
+        })
+        .collect()
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -844,4 +927,67 @@ mod tests {
         assert!(result[0].not_found);
     }
 
+    // ---------------------------------------------------------------------------
+    // Task 11 tests: Service backends
+    // ---------------------------------------------------------------------------
+
+    #[test]
+    fn resolve_service_backends_matches_pods_by_selector() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.services = vec![ServiceInfo {
+            name: "nginx-svc".into(),
+            namespace: "default".into(),
+            type_: "ClusterIP".into(),
+            selector: [("app".to_string(), "nginx".to_string())].into(),
+            ..Default::default()
+        }];
+        snapshot.pods = vec![
+            PodInfo {
+                name: "nginx-pod-1".into(),
+                namespace: "default".into(),
+                status: "Running".into(),
+                labels: vec![("app".into(), "nginx".into())],
+                ..Default::default()
+            },
+            PodInfo {
+                name: "other-pod".into(),
+                namespace: "default".into(),
+                status: "Running".into(),
+                labels: vec![("app".into(), "other".into())],
+                ..Default::default()
+            },
+        ];
+
+        let resource = ResourceRef::Service("nginx-svc".into(), "default".into());
+        let result = resolve_service_backends_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].label, "Service nginx-svc");
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "Pod nginx-pod-1");
+    }
+
+    #[test]
+    fn resolve_service_backends_empty_selector_returns_nothing() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.services = vec![ServiceInfo {
+            name: "headless".into(),
+            namespace: "default".into(),
+            type_: "ClusterIP".into(),
+            selector: std::collections::BTreeMap::new(),
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::Service("headless".into(), "default".into());
+        let result = resolve_service_backends_from_snapshot(&resource, &snapshot);
+        assert!(result.is_empty());
+    }
+
+    // ---------------------------------------------------------------------------
 }
