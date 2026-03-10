@@ -78,10 +78,7 @@ fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'st
         ));
     } else {
         // Indent with tree connectors
-        for (depth_idx, &parent_last) in node.parent_is_last.iter().enumerate() {
-            if depth_idx == 0 && node.depth == 0 {
-                continue;
-            }
+        for &parent_last in &node.parent_is_last {
             if parent_last {
                 spans.push(Span::raw("  "));
             } else {
@@ -95,11 +92,11 @@ fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'st
             spans.push(Span::styled(connector, Style::default().fg(theme.fg_dim)));
         }
 
-        // Expand/collapse marker
+        // Expand/collapse marker (or alignment padding for leaves)
         if node.has_children {
             let marker = if node.expanded { "▼ " } else { "▶ " };
             spans.push(Span::styled(marker, Style::default().fg(theme.fg_dim)));
-        } else if node.depth == 0 {
+        } else {
             spans.push(Span::raw("  "));
         }
 

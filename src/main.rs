@@ -1866,8 +1866,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 state.error = Some(err);
                             }
                         }
+                        needs_redraw = true;
                     }
-                    needs_redraw = true;
                 }
             }
 

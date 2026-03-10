@@ -365,6 +365,11 @@ impl RelationsTabState {
         }
         self.expanded = expanded;
         self.tree = tree;
+        // Clamp cursor so it stays valid if the new tree is smaller.
+        let flat = crate::k8s::relationships::flatten_tree(&self.tree, &self.expanded);
+        if self.cursor >= flat.len() {
+            self.cursor = flat.len().saturating_sub(1);
+        }
     }
 }
 
