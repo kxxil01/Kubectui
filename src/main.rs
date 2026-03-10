@@ -1012,6 +1012,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (trigger_cronjob_tx, mut trigger_cronjob_rx) =
         tokio::sync::mpsc::channel::<TriggerCronJobAsyncResult>(16);
     let (node_ops_tx, mut node_ops_rx) = tokio::sync::mpsc::channel::<NodeOpsAsyncResult>(16);
+    let mut node_op_in_flight: bool = false;
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
     let (relations_tx, mut relations_rx) = tokio::sync::mpsc::channel::<(
         ResourceRef,
@@ -1699,14 +1700,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
 
                     needs_redraw = true;
+                    node_op_in_flight = false;
                     match result.result {
                         Ok(()) => {
-                            // Optimistic update for cordon/uncordon: flip unschedulable in cache.
-                            if matches!(result.op_kind, NodeOpKind::Cordon | NodeOpKind::Uncordon) {
-                                let new_val = matches!(result.op_kind, NodeOpKind::Cordon);
-                                global_state.apply_optimistic_node_schedulable(&result.node_name, new_val);
-                                snapshot_dirty = true;
-                            }
+                            // Optimistic update: flip unschedulable in cache.
+                            // Drain cordons the node, so it also sets unschedulable = true.
+                            let new_val = !matches!(result.op_kind, NodeOpKind::Uncordon);
+                            global_state.apply_optimistic_node_schedulable(&result.node_name, new_val);
+                            snapshot_dirty = true;
                             app.complete_action_history(
                                 result.action_history_id,
                                 ActionStatus::Succeeded,
@@ -3355,7 +3356,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         });
                     }
                 }
-                AppAction::CordonNode => {
+                AppAction::CordonNode if !node_op_in_flight => {
                     let node_name = app.detail_view.as_ref().and_then(|d| {
                         if let Some(ResourceRef::Node(name)) = &d.resource {
                             Some(name.clone())
@@ -3364,6 +3365,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     });
                     if let Some(name) = node_name {
+                        node_op_in_flight = true;
                         let resource_label = format!("Node '{name}'");
                         let origin_view = app.view();
                         let action_history_id = app.record_action_pending(
@@ -3396,7 +3398,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         });
                     }
                 }
-                AppAction::UncordonNode => {
+                AppAction::CordonNode => {} // in-flight guard
+                AppAction::UncordonNode if !node_op_in_flight => {
                     let node_name = app.detail_view.as_ref().and_then(|d| {
                         if let Some(ResourceRef::Node(name)) = &d.resource {
                             Some(name.clone())
@@ -3405,6 +3408,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     });
                     if let Some(name) = node_name {
+                        node_op_in_flight = true;
                         let resource_label = format!("Node '{name}'");
                         let origin_view = app.view();
                         let action_history_id = app.record_action_pending(
@@ -3437,8 +3441,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         });
                     }
                 }
-                AppAction::DrainNode | AppAction::ForceDrainNode => {
+                AppAction::UncordonNode => {} // in-flight guard
+                AppAction::DrainNode | AppAction::ForceDrainNode if !node_op_in_flight => {
                     let force = matches!(action, AppAction::ForceDrainNode);
+                    // Always dismiss the confirmation dialog, even if node_name is None.
+                    if let Some(detail) = &mut app.detail_view {
+                        detail.confirm_drain = false;
+                    }
                     let node_name = app.detail_view.as_ref().and_then(|d| {
                         if let Some(ResourceRef::Node(name)) = &d.resource {
                             Some(name.clone())
@@ -3447,9 +3456,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     });
                     if let Some(name) = node_name {
-                        if let Some(detail) = &mut app.detail_view {
-                            detail.confirm_drain = false;
-                        }
+                        node_op_in_flight = true;
                         let force_label = if force { " (force)" } else { "" };
                         let resource_label = format!("Node '{name}'");
                         let origin_view = app.view();
@@ -3484,6 +3491,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 })
                                 .await;
                         });
+                    }
+                }
+                AppAction::DrainNode | AppAction::ForceDrainNode => {
+                    // In-flight guard — dismiss dialog even when blocked.
+                    if let Some(detail) = &mut app.detail_view {
+                        detail.confirm_drain = false;
                     }
                 }
                 AppAction::CopyResourceName => {
