@@ -21,6 +21,7 @@ pub enum WorkbenchTabKind {
     WorkloadLogs,
     Exec,
     PortForward,
+    Relations,
 }
 
 impl WorkbenchTabKind {
@@ -33,6 +34,7 @@ impl WorkbenchTabKind {
             WorkbenchTabKind::WorkloadLogs => "Workload Logs",
             WorkbenchTabKind::Exec => "Exec",
             WorkbenchTabKind::PortForward => "Port-Forward",
+            WorkbenchTabKind::Relations => "Relations",
         }
     }
 }
@@ -46,6 +48,7 @@ pub enum WorkbenchTabKey {
     WorkloadLogs(ResourceRef),
     Exec(ResourceRef),
     PortForward,
+    Relations(ResourceRef),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -325,6 +328,29 @@ impl PortForwardTabState {
 }
 
 #[derive(Debug, Clone)]
+pub struct RelationsTabState {
+    pub resource: ResourceRef,
+    pub tree: Vec<crate::k8s::relationships::RelationNode>,
+    pub cursor: usize,
+    pub expanded: std::collections::HashSet<usize>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+impl RelationsTabState {
+    pub fn new(resource: ResourceRef) -> Self {
+        Self {
+            resource,
+            tree: Vec::new(),
+            cursor: 0,
+            expanded: std::collections::HashSet::new(),
+            loading: true,
+            error: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum WorkbenchTabState {
     ActionHistory(ActionHistoryTabState),
     ResourceYaml(ResourceYamlTabState),
@@ -333,6 +359,7 @@ pub enum WorkbenchTabState {
     WorkloadLogs(WorkloadLogsTabState),
     Exec(ExecTabState),
     PortForward(PortForwardTabState),
+    Relations(RelationsTabState),
 }
 
 impl WorkbenchTabState {
@@ -345,6 +372,7 @@ impl WorkbenchTabState {
             Self::WorkloadLogs(_) => WorkbenchTabKind::WorkloadLogs,
             Self::Exec(_) => WorkbenchTabKind::Exec,
             Self::PortForward(_) => WorkbenchTabKind::PortForward,
+            Self::Relations(_) => WorkbenchTabKind::Relations,
         }
     }
 
@@ -357,6 +385,7 @@ impl WorkbenchTabState {
             Self::WorkloadLogs(tab) => WorkbenchTabKey::WorkloadLogs(tab.resource.clone()),
             Self::Exec(tab) => WorkbenchTabKey::Exec(tab.resource.clone()),
             Self::PortForward(_) => WorkbenchTabKey::PortForward,
+            Self::Relations(tab) => WorkbenchTabKey::Relations(tab.resource.clone()),
         }
     }
 
@@ -372,6 +401,7 @@ impl WorkbenchTabState {
                 Some(resource) => format!("Port-Forward {}", resource_title(resource)),
                 None => "Port-Forward Sessions".to_string(),
             },
+            Self::Relations(tab) => format!("Relations {}", resource_title(&tab.resource)),
         }
     }
 }
@@ -703,5 +733,18 @@ mod tests {
         state.maximized = true;
         state.close();
         assert!(!state.maximized);
+    }
+
+    #[test]
+    fn relations_tab_deduplicates_by_resource() {
+        let mut state = WorkbenchState::default();
+        let first = state.open_tab(WorkbenchTabState::Relations(RelationsTabState::new(
+            pod("pod-0"),
+        )));
+        let second = state.open_tab(WorkbenchTabState::Relations(RelationsTabState::new(
+            pod("pod-0"),
+        )));
+        assert_eq!(first, second);
+        assert_eq!(state.tabs.len(), 1);
     }
 }

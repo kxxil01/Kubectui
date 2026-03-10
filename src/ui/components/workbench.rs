@@ -91,6 +91,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
         WorkbenchTabState::WorkloadLogs(tab) => render_workload_logs_tab(frame, inner, tab),
         WorkbenchTabState::Exec(tab) => render_exec_tab(frame, inner, tab),
         WorkbenchTabState::PortForward(tab) => tab.dialog.render_embedded(frame, inner),
+        WorkbenchTabState::Relations(_) => render_empty_state(frame, inner),
     }
 }
 
