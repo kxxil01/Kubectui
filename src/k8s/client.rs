@@ -588,6 +588,17 @@ impl K8sClient {
                     ),
                     age: created_at.and_then(|ts| (now - ts).to_std().ok()),
                     created_at,
+                    owner_references: rs
+                        .metadata
+                        .owner_references
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|oref| crate::k8s::dtos::OwnerRefInfo {
+                            kind: oref.kind,
+                            name: oref.name,
+                            uid: oref.uid,
+                        })
+                        .collect(),
                 }
             })
             .collect();
@@ -898,6 +909,17 @@ impl K8sClient {
                     failed_pods: failed,
                     age: created_at.and_then(|ts| (now - ts).to_std().ok()),
                     created_at,
+                    owner_references: job
+                        .metadata
+                        .owner_references
+                        .unwrap_or_default()
+                        .into_iter()
+                        .map(|oref| crate::k8s::dtos::OwnerRefInfo {
+                            kind: oref.kind,
+                            name: oref.name,
+                            uid: oref.uid,
+                        })
+                        .collect(),
                 }
             })
             .collect();

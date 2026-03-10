@@ -194,6 +194,7 @@ pub struct ReplicaSetInfo {
     pub image: Option<String>,
     pub age: Option<Duration>,
     pub created_at: Option<DateTime<Utc>>,
+    pub owner_references: Vec<OwnerRefInfo>,
 }
 
 /// Lightweight ReplicationController view used by list and detail pages.
@@ -222,6 +223,7 @@ pub struct JobInfo {
     pub failed_pods: i32,
     pub age: Option<Duration>,
     pub created_at: Option<DateTime<Utc>>,
+    pub owner_references: Vec<OwnerRefInfo>,
 }
 
 /// Lightweight CronJob view used by list and detail pages.
