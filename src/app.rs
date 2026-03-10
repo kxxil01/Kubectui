@@ -1355,6 +1355,7 @@ pub enum AppAction {
         action: crate::policy::DetailAction,
         resource: ResourceRef,
     },
+    OpenRelationships,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -2883,6 +2884,14 @@ impl AppState {
             KeyCode::Char('r') => AppAction::RefreshData,
             KeyCode::Char('R') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 AppAction::RefreshData
+            }
+            KeyCode::Char('w')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::ViewRelationships)) =>
+            {
+                AppAction::OpenRelationships
             }
             KeyCode::Char('T')
                 if self

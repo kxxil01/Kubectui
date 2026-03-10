@@ -2113,6 +2113,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         DetailAction::EditYaml => AppAction::EditYaml,
                         DetailAction::Delete => AppAction::DeleteResource,
                         DetailAction::Trigger => AppAction::TriggerCronJob,
+                        DetailAction::ViewRelationships => AppAction::OpenRelationships,
                     };
 
                     let needs_detail = matches!(
