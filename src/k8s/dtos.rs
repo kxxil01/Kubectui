@@ -27,6 +27,7 @@ pub struct NodeInfo {
 pub struct OwnerRefInfo {
     pub kind: String,
     pub name: String,
+    pub uid: String,
 }
 
 /// Lightweight pod view used by state management and rendering.

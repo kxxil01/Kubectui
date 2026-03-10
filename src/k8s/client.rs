@@ -276,6 +276,7 @@ impl K8sClient {
                         .map(|oref| crate::k8s::dtos::OwnerRefInfo {
                             kind: oref.kind,
                             name: oref.name,
+                            uid: oref.uid,
                         })
                         .collect(),
                     waiting_reasons,
