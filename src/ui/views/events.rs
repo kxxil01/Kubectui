@@ -1,5 +1,10 @@
 //! Events list view.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -21,6 +26,64 @@ use crate::{
         table_window,
     },
 };
+
+// ── Event derived cell cache ────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct EventDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct EventDerivedCell {
+    count: String,
+    message_truncated: String,
+}
+
+type EventDerivedCacheValue = Arc<Vec<EventDerivedCell>>;
+static EVENT_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(EventDerivedCacheKey, EventDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_event_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> EventDerivedCacheValue {
+    let key = EventDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.events, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = EVENT_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&ev_idx| {
+                let ev = &snapshot.events[ev_idx];
+                EventDerivedCell {
+                    count: format_small_int(i64::from(ev.count)).into_owned(),
+                    message_truncated: ev.message.chars().take(60).collect(),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = EVENT_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 pub fn render_events(
     frame: &mut Frame,
@@ -88,6 +151,8 @@ pub fn render_events(
     .style(theme.header_style())
     .height(1);
 
+    let derived = cached_event_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -104,13 +169,25 @@ pub fn render_events(
             } else {
                 theme.badge_success_style()
             };
+            let (count, msg): (Cow<'_, str>, Cow<'_, str>) =
+                if let Some(cell) = derived.get(idx) {
+                    (
+                        Cow::Borrowed(cell.count.as_str()),
+                        Cow::Borrowed(cell.message_truncated.as_str()),
+                    )
+                } else {
+                    (
+                        format_small_int(i64::from(ev.count)),
+                        Cow::Owned(ev.message.chars().take(60).collect()),
+                    )
+                };
             Row::new(vec![
                 Cell::from(Span::styled(ev.type_.clone(), type_style)),
                 Cell::from(ev.namespace.clone()),
                 Cell::from(ev.involved_object.clone()),
                 Cell::from(ev.reason.clone()),
-                Cell::from(format_small_int(i64::from(ev.count))),
-                Cell::from(ev.message.chars().take(60).collect::<String>()),
+                Cell::from(Span::from(count)),
+                Cell::from(Span::from(msg)),
             ])
             .style(row_style)
         })

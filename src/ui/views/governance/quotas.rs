@@ -1,5 +1,10 @@
 //! ResourceQuotas list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -21,6 +26,69 @@ use crate::{
         table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
     },
 };
+
+// ── ResourceQuota derived cell cache ────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+struct ResourceQuotaDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ResourceQuotaDerivedCell {
+    tracked: String,
+    max_pct_text: String,
+    max_pct: f64,
+    age: String,
+}
+
+type ResourceQuotaDerivedCacheValue = Arc<Vec<ResourceQuotaDerivedCell>>;
+static RESOURCE_QUOTA_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(ResourceQuotaDerivedCacheKey, ResourceQuotaDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_resource_quota_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> ResourceQuotaDerivedCacheValue {
+    let key = ResourceQuotaDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.resource_quotas, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = RESOURCE_QUOTA_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&rq_idx| {
+                let rq = &snapshot.resource_quotas[rq_idx];
+                let (tracked, max_pct) = quota_summary(rq);
+                ResourceQuotaDerivedCell {
+                    tracked: format_small_int(tracked as i64).into_owned(),
+                    max_pct_text: format!("{max_pct:.0}%"),
+                    max_pct,
+                    age: format_age(rq.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = RESOURCE_QUOTA_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 pub fn render_resource_quotas(
     frame: &mut Frame,
@@ -92,19 +160,36 @@ pub fn render_resource_quotas(
     .height(1)
     .style(theme.header_style());
 
+    let derived = cached_resource_quota_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
         .map(|(local_idx, &rq_idx)| {
             let idx = window.start + local_idx;
             let rq = &cluster.resource_quotas[rq_idx];
-            let (tracked, max_pct) = quota_summary(rq);
-            let pct_style = usage_style(max_pct, &theme);
             let row_style = if idx.is_multiple_of(2) {
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
             };
+            let (tracked, max_pct_text, max_pct, age) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.tracked.as_str()),
+                    Cow::Borrowed(cell.max_pct_text.as_str()),
+                    cell.max_pct,
+                    Cow::Borrowed(cell.age.as_str()),
+                )
+            } else {
+                let (t, p) = quota_summary(rq);
+                (
+                    format_small_int(t as i64),
+                    Cow::Owned(format!("{p:.0}%")),
+                    p,
+                    Cow::Owned(format_age(rq.age)),
+                )
+            };
+            let pct_style = usage_style(max_pct, &theme);
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {}", rq.name),
@@ -114,12 +199,9 @@ pub fn render_resource_quotas(
                     rq.namespace.clone(),
                     Style::default().fg(theme.fg_dim),
                 )),
-                Cell::from(Span::styled(
-                    format_small_int(tracked as i64),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(format!("{max_pct:.0}%"), pct_style)),
-                Cell::from(Span::styled(format_age(rq.age), theme.inactive_style())),
+                Cell::from(Span::styled(tracked, Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(max_pct_text, pct_style)),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
         })

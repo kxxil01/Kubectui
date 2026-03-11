@@ -1,0 +1,38 @@
+{
+  "id": "cached-cells_20260312",
+  "title": "Per-View Cached Formatted Cells",
+  "type": "feature",
+  "status": "complete",
+  "created": "2026-03-12",
+  "updated": "2026-03-12",
+  "current_phase": 4,
+  "current_task": "4.4",
+  "phases": {
+    "total": 4,
+    "completed": 4
+  },
+  "tasks": {
+    "total": 25,
+    "completed": 25
+  },
+  "commits": [
+    "1d8ab94: chore: add cached-cells track",
+    "93bbc91: perf: add derived cell cache to render_pvcs",
+    "6561e78: perf: add derived cell cache to render_pvs",
+    "bdaf330: perf: add derived cell cache to render_storage_classes",
+    "6575198: perf: add derived cell cache to render_config_maps",
+    "c572e6b: perf: add derived cell cache to render_secrets",
+    "898631f: perf: add derived cell cache to render_roles",
+    "7a07324: perf: add derived cell cache to render_cluster_roles",
+    "e9b052d: perf: add derived cell cache to render_role_bindings",
+    "0b53eb1: perf: add derived cell cache to render_cluster_role_bindings",
+    "49d47ed: perf: add derived cell cache to render_pdbs",
+    "b66992f: perf: add derived cell cache to render_limit_ranges",
+    "0010221: perf: add derived cell cache to render_resource_quotas",
+    "e3b3cc1: perf: add derived cell cache to render_events",
+    "c649cbb: perf: add derived cell cache to render_hpas",
+    "ee445e2: perf: add derived cell cache to render_priority_classes",
+    "7459639: perf: add derived cell cache to render_ingresses",
+    "ce66b0f: perf: add derived cell cache to render_helm_releases"
+  ]
+}
