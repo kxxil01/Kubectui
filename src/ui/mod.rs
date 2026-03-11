@@ -566,6 +566,13 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
             ),
+            AppView::Issues => views::issue_center::render_issues(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+            ),
             AppView::Services => views::services::render_services(
                 frame,
                 content,

@@ -2,6 +2,7 @@
 
 pub mod alerts;
 pub mod filters;
+pub mod issues;
 pub mod port_forward;
 
 use anyhow::{Result, anyhow};
@@ -120,6 +121,7 @@ pub struct ClusterSnapshot {
     pub flux_resources: Vec<FluxResourceInfo>,
     pub helm_repositories: Vec<crate::k8s::dtos::HelmRepoInfo>,
     pub node_metrics: Vec<NodeMetricsInfo>,
+    pub issue_count: usize,
     pub services_count: usize,
     pub namespaces_count: usize,
     pub phase: DataPhase,
@@ -171,6 +173,7 @@ impl Default for ClusterSnapshot {
             flux_resources: Vec::new(),
             helm_repositories: Vec::new(),
             node_metrics: Vec::new(),
+            issue_count: 0,
             services_count: 0,
             namespaces_count: 0,
             phase: DataPhase::Idle,
@@ -290,6 +293,7 @@ impl ClusterSnapshot {
                     .filter(|r| r.group == "source.toolkit.fluxcd.io")
                     .count(),
             ),
+            AppView::Issues => Some(self.issue_count),
             // Dashboard and PortForwarding don't have direct collections
             AppView::Dashboard | AppView::PortForwarding => None,
         }
@@ -687,6 +691,7 @@ impl GlobalState {
             return;
         }
         self.snapshot_dirty = false;
+        self.snapshot.issue_count = issues::compute_issues(&self.snapshot).len();
         self.arc_snapshot = std::sync::Arc::new(self.snapshot.clone());
     }
 
@@ -1022,6 +1027,7 @@ impl GlobalState {
             AppView::ClusterRoleBindings => !self.snapshot.cluster_role_bindings.is_empty(),
             AppView::RoleBindings => !self.snapshot.role_bindings.is_empty(),
             AppView::Extensions => !self.snapshot.custom_resource_definitions.is_empty(),
+            AppView::Issues => !self.snapshot.pods.is_empty() || !self.snapshot.nodes.is_empty(),
         }
     }
 
