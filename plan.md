@@ -26,6 +26,7 @@ Current milestone status:
 - Milestone 11: completed
 - Milestone 12: completed
 - Milestone 13: completed
+- Milestone 14: completed
 
 Completion notes:
 
@@ -52,7 +53,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 602 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 624 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -898,7 +899,21 @@ Show users what happened over time around a resource or action.
 
 ### Status
 
-Planned
+Completed
+
+### What shipped
+
+- ViewPreferences model with sort_column, sort_ascending, hidden_columns, column_order
+- Global + per-cluster preference hierarchy with resolution fallback (cluster → global → defaults)
+- Column registry (ColumnDef) for 23 views with hideable/non-hideable flags
+- Column toggle via action palette (`:` then search "columns", checkbox-style `[x]`/`[ ]` toggle)
+- Sort persistence: sort preferences saved per-view and restored on view switch
+- Dynamic column rendering for Pods, Deployments, Nodes (column-driven headers, rows, constraints)
+- Nav group collapse persistence across sessions
+- Config dirty flag with batched saves in event loop
+- Context name tracking on context switch for per-cluster preference resolution
+- Backward-compatible JSON config expansion (all new fields use `#[serde(default)]`)
+- 22 new tests across preferences, columns, sort persistence, config round-trip
 
 ### Goal
 
@@ -1053,11 +1068,11 @@ This is the execution order.
 - Milestone 10: Relationship Explorer ✅
 - Milestone 11: Node Operations ✅
 
-## P3 (Current)
+## P3 (Completed)
 
 - Milestone 12: Issue Center ✅
 - Milestone 13: Timeline & Correlation ✅
-- Milestone 14: View Personalization
+- Milestone 14: View Personalization ✅
 
 ## P4
 
@@ -1067,7 +1082,7 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M13 are complete. The next milestone is M14: View Personalization (persisted sort, columns, workspace preferences).
+M0-M14 are complete. The next milestone is M15: Performance Track (virtualization, caching, instrumentation).
 
 Do not start next with:
 
@@ -1211,7 +1226,6 @@ These are valid ideas, but they are not current milestone priorities:
 - integrated Prometheus metric graphs (sparklines possible in later milestone)
 - Helm chart installation workflow
 - CSV export of table views
-- customizable columns per view
 
 They should not distract from the milestone order above.
 
@@ -1256,6 +1270,7 @@ The correct path is:
 - add enhanced detail, action palette (done)
 - add node operations, issues (done)
 - add timeline and event correlation (done)
+- add view personalization and workspace persistence (done)
 - preserve speed at every step
 
 This milestone plan is now the canonical implementation roadmap.

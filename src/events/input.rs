@@ -57,6 +57,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenCommandPalette => {
+            app_state.refresh_palette_columns();
             app_state.command_palette.open();
             true
         }
@@ -68,6 +69,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.command_palette.close();
             app_state.view = view;
             app_state.selected_idx = 0;
+            app_state.apply_sort_from_preferences(crate::columns::view_key(view));
             true
         }
         AppAction::EscapePressed => {

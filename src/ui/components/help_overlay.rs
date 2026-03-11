@@ -28,7 +28,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("/", "Search / filter"),
             ("~", "Namespace picker"),
             ("c", "Context picker"),
-            (":", "Action palette (navigate + actions)"),
+            (":", "Action palette (navigate + columns)"),
             ("r", "Refresh data"),
             ("Ctrl+y", "Copy resource name"),
             ("Y", "Copy namespace/name"),

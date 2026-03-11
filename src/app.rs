@@ -1,6 +1,6 @@
 //! Application state machine and keyboard input handling.
 
-use std::{collections::HashSet, fs, path::Path, sync::LazyLock};
+use std::{collections::HashMap, collections::HashSet, fs, path::Path, sync::LazyLock};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
@@ -12,6 +12,7 @@ use crate::{
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodInfo, PodMetricsInfo},
     },
     policy::{DetailAction, ViewAction},
+    preferences::{ClusterPreferences, UserPreferences},
     ui::components::{
         CommandPalette, CommandPaletteAction, ContextPicker, ContextPickerAction, NamespacePicker,
         NamespacePickerAction,
@@ -1466,6 +1467,14 @@ pub struct AppState {
     pub tunnel_registry: crate::state::port_forward::TunnelRegistry,
     /// Canonical mutation/action history.
     pub action_history: ActionHistoryState,
+    /// Global user preferences for view sort/column customization.
+    pub preferences: Option<UserPreferences>,
+    /// Per-cluster preference overrides, keyed by kube context name.
+    pub cluster_preferences: Option<HashMap<String, ClusterPreferences>>,
+    /// Active kube context name (for per-cluster preferences).
+    pub current_context_name: Option<String>,
+    /// When true, config should be saved at next convenient point.
+    pub needs_config_save: bool,
     /// Persistent bottom workbench state.
     pub workbench: WorkbenchState,
 }
@@ -1500,6 +1509,10 @@ impl Default for AppState {
             pod_sort: None,
             tunnel_registry: crate::state::port_forward::TunnelRegistry::new(),
             action_history: ActionHistoryState::default(),
+            preferences: None,
+            cluster_preferences: None,
+            current_context_name: None,
+            needs_config_save: false,
             workbench: WorkbenchState::default(),
         }
     }
@@ -1517,6 +1530,12 @@ struct AppConfig {
     workbench_open: bool,
     #[serde(default = "default_workbench_height")]
     workbench_height: u16,
+    #[serde(default)]
+    collapsed_nav_groups: Vec<String>,
+    #[serde(default)]
+    preferences: Option<UserPreferences>,
+    #[serde(default)]
+    clusters: Option<HashMap<String, ClusterPreferences>>,
 }
 
 fn default_refresh_interval() -> u64 {
@@ -1525,6 +1544,35 @@ fn default_refresh_interval() -> u64 {
 
 fn default_workbench_height() -> u16 {
     DEFAULT_WORKBENCH_HEIGHT
+}
+
+fn nav_group_from_str(s: &str) -> Option<NavGroup> {
+    match s {
+        "overview" => Some(NavGroup::Overview),
+        "workloads" => Some(NavGroup::Workloads),
+        "network" => Some(NavGroup::Network),
+        "config" => Some(NavGroup::Config),
+        "storage" => Some(NavGroup::Storage),
+        "helm" => Some(NavGroup::Helm),
+        "flux" | "fluxcd" => Some(NavGroup::FluxCD),
+        "access_control" | "rbac" => Some(NavGroup::AccessControl),
+        "custom_resources" | "extensions" => Some(NavGroup::CustomResources),
+        _ => None,
+    }
+}
+
+fn nav_group_to_str(g: NavGroup) -> &'static str {
+    match g {
+        NavGroup::Overview => "overview",
+        NavGroup::Workloads => "workloads",
+        NavGroup::Network => "network",
+        NavGroup::Config => "config",
+        NavGroup::Storage => "storage",
+        NavGroup::Helm => "helm",
+        NavGroup::FluxCD => "flux",
+        NavGroup::AccessControl => "access_control",
+        NavGroup::CustomResources => "custom_resources",
+    }
 }
 
 impl AppState {
@@ -1814,6 +1862,7 @@ impl AppState {
         self.view = self.view.next();
         self.selected_idx = 0;
         self.sync_sidebar_cursor_to_view();
+        self.apply_sort_from_preferences(crate::columns::view_key(self.view));
     }
 
     /// Retreats to the previous view in [`AppView::ORDER`], wrapping around.
@@ -1823,6 +1872,7 @@ impl AppState {
         self.view = self.view.previous();
         self.selected_idx = 0;
         self.sync_sidebar_cursor_to_view();
+        self.apply_sort_from_preferences(crate::columns::view_key(self.view));
     }
 
     /// Moves the content list selection down one row (saturates at `usize::MAX`).
@@ -1845,11 +1895,13 @@ impl AppState {
             }
             _ => Some(PodSortState::new(column, column.default_descending())),
         };
+        self.save_sort_to_preferences("pods");
     }
 
     fn clear_pod_sort(&mut self) {
         self.selected_idx = 0;
         self.pod_sort = None;
+        self.save_sort_to_preferences("pods");
     }
 
     fn set_or_toggle_workload_sort(&mut self, column: WorkloadSortColumn) {
@@ -1860,11 +1912,140 @@ impl AppState {
             }
             _ => Some(WorkloadSortState::new(column, column.default_descending())),
         };
+        let view_key = crate::columns::view_key(self.view);
+        self.save_sort_to_preferences(view_key);
     }
 
     fn clear_workload_sort(&mut self) {
         self.selected_idx = 0;
         self.workload_sort = None;
+        let view_key = crate::columns::view_key(self.view);
+        self.save_sort_to_preferences(view_key);
+    }
+
+    /// Toggles a column's visibility in user preferences for the current view.
+    fn toggle_column_visibility(&mut self, column_id: &str) {
+        let view_key = crate::columns::view_key(self.view);
+        // Verify the column exists and is hideable
+        if let Some(registry) = crate::columns::columns_for_view(self.view) {
+            let Some(col) = registry.iter().find(|c| c.id == column_id) else {
+                return;
+            };
+            if !col.hideable {
+                return;
+            }
+        } else {
+            return;
+        }
+
+        let global = self.preferences.get_or_insert_with(Default::default);
+        let vp = global.views.entry(view_key.to_string()).or_default();
+        if let Some(pos) = vp.hidden_columns.iter().position(|c| c == column_id) {
+            vp.hidden_columns.remove(pos);
+        } else {
+            vp.hidden_columns.push(column_id.to_string());
+        }
+        self.needs_config_save = true;
+
+        // Refresh column info in the palette so checkboxes update
+        self.refresh_palette_columns();
+    }
+
+    /// Populates the command palette with current view's column info.
+    pub fn refresh_palette_columns(&mut self) {
+        if let Some(registry) = crate::columns::columns_for_view(self.view) {
+            let prefs = crate::preferences::resolve_view_preferences(
+                crate::columns::view_key(self.view),
+                &self.preferences,
+                &self.cluster_preferences,
+                self.current_context_name.as_deref(),
+            );
+            let info: Vec<(String, String, bool)> = registry
+                .iter()
+                .filter(|c| c.hideable)
+                .map(|c| {
+                    let visible =
+                        c.default_visible && !prefs.hidden_columns.iter().any(|h| h == c.id);
+                    (c.id.to_string(), c.label.to_string(), visible)
+                })
+                .collect();
+            self.command_palette.set_columns_info(Some(info));
+        } else {
+            self.command_palette.set_columns_info(None);
+        }
+    }
+
+    /// Applies persisted sort preferences for the given view key.
+    pub fn apply_sort_from_preferences(&mut self, view_key: &str) {
+        let prefs = crate::preferences::resolve_view_preferences(
+            view_key,
+            &self.preferences,
+            &self.cluster_preferences,
+            self.current_context_name.as_deref(),
+        );
+        let Some(col_id) = &prefs.sort_column else {
+            return;
+        };
+        let descending = !prefs.sort_ascending;
+
+        match view_key {
+            "pods" => {
+                let column = match col_id.as_str() {
+                    "name" => PodSortColumn::Name,
+                    "age" => PodSortColumn::Age,
+                    "status" => PodSortColumn::Status,
+                    "restarts" => PodSortColumn::Restarts,
+                    _ => return,
+                };
+                self.pod_sort = Some(PodSortState::new(column, descending));
+            }
+            _ => {
+                let column = match col_id.as_str() {
+                    "name" => WorkloadSortColumn::Name,
+                    "age" => WorkloadSortColumn::Age,
+                    _ => return,
+                };
+                self.workload_sort = Some(WorkloadSortState::new(column, descending));
+            }
+        }
+    }
+
+    /// Saves the current sort state for the given view key into preferences.
+    pub fn save_sort_to_preferences(&mut self, view_key: &str) {
+        let (sort_column, sort_ascending) = match view_key {
+            "pods" => match self.pod_sort {
+                Some(s) => (
+                    Some(match s.column {
+                        PodSortColumn::Name => "name",
+                        PodSortColumn::Age => "age",
+                        PodSortColumn::Status => "status",
+                        PodSortColumn::Restarts => "restarts",
+                    }),
+                    !s.descending,
+                ),
+                None => (None, true),
+            },
+            _ => match self.workload_sort {
+                Some(s) => (
+                    Some(match s.column {
+                        WorkloadSortColumn::Name => "name",
+                        WorkloadSortColumn::Age => "age",
+                    }),
+                    !s.descending,
+                ),
+                None => (None, true),
+            },
+        };
+
+        let global = self.preferences.get_or_insert_with(Default::default);
+        if let Some(col) = sort_column {
+            let vp = global.views.entry(view_key.to_string()).or_default();
+            vp.sort_column = Some(col.to_string());
+            vp.sort_ascending = sort_ascending;
+        } else if let Some(vp) = global.views.get_mut(view_key) {
+            vp.sort_column = None;
+        }
+        self.needs_config_save = true;
     }
 
     /// Moves the sidebar cursor down one row, wrapping from the last row back to the first.
@@ -1931,6 +2112,7 @@ impl AppState {
         }
         let rows = sidebar_rows(&self.collapsed_groups);
         self.sidebar_cursor = self.sidebar_cursor.min(rows.len().saturating_sub(1));
+        self.needs_config_save = true;
     }
 
     /// Returns which detail sub-component is currently active.
@@ -2614,6 +2796,10 @@ impl AppState {
                 CommandPaletteAction::Execute(action, resource) => {
                     AppAction::PaletteAction { action, resource }
                 }
+                CommandPaletteAction::ToggleColumn(column_id) => {
+                    self.toggle_column_visibility(&column_id);
+                    AppAction::None
+                }
                 CommandPaletteAction::Close => AppAction::CloseCommandPalette,
             };
         }
@@ -3150,7 +3336,18 @@ pub fn load_config_from_path(path: &Path) -> AppState {
         app.refresh_interval_secs = cfg.refresh_interval_secs;
         app.workbench
             .set_open_and_height(cfg.workbench_open, cfg.workbench_height);
+        for name in &cfg.collapsed_nav_groups {
+            if let Some(g) = nav_group_from_str(name) {
+                app.collapsed_groups.insert(g);
+            }
+        }
+        app.preferences = cfg.preferences;
+        app.cluster_preferences = cfg.clusters;
     }
+
+    app.current_context_name = kube::config::Kubeconfig::read()
+        .ok()
+        .and_then(|cfg| cfg.current_context);
 
     app
 }
@@ -3158,12 +3355,20 @@ pub fn load_config_from_path(path: &Path) -> AppState {
 /// Saves app namespace config to a given path.
 pub fn save_config_to_path(app: &AppState, path: &Path) {
     let theme_name = crate::ui::theme::active_theme().name;
+    let collapsed: Vec<String> = app
+        .collapsed_groups
+        .iter()
+        .map(|g| nav_group_to_str(*g).to_string())
+        .collect();
     let cfg = AppConfig {
         namespace: app.current_namespace.clone(),
         theme: Some(theme_name.to_string()),
         refresh_interval_secs: app.refresh_interval_secs,
         workbench_open: app.workbench.open,
         workbench_height: app.workbench.height,
+        collapsed_nav_groups: collapsed,
+        preferences: app.preferences.clone(),
+        clusters: app.cluster_preferences.clone(),
     };
 
     if let Some(parent) = path.parent() {
@@ -3980,5 +4185,158 @@ mod tests {
         });
         let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
         assert_ne!(action, AppAction::OpenResourceYaml);
+    }
+
+    #[test]
+    fn apply_sort_from_preferences_pods() {
+        use crate::preferences::{UserPreferences, ViewPreferences};
+        let mut app = AppState::default();
+        let mut global = UserPreferences::default();
+        global.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                sort_column: Some("restarts".into()),
+                sort_ascending: false,
+                ..Default::default()
+            },
+        );
+        app.preferences = Some(global);
+        app.apply_sort_from_preferences("pods");
+        let sort = app.pod_sort.unwrap();
+        assert_eq!(sort.column, PodSortColumn::Restarts);
+        assert!(sort.descending);
+    }
+
+    #[test]
+    fn apply_sort_from_preferences_workload() {
+        use crate::preferences::{UserPreferences, ViewPreferences};
+        let mut app = AppState::default();
+        let mut global = UserPreferences::default();
+        global.views.insert(
+            "deployments".into(),
+            ViewPreferences {
+                sort_column: Some("age".into()),
+                sort_ascending: true,
+                ..Default::default()
+            },
+        );
+        app.preferences = Some(global);
+        app.apply_sort_from_preferences("deployments");
+        let sort = app.workload_sort.unwrap();
+        assert_eq!(sort.column, WorkloadSortColumn::Age);
+        assert!(!sort.descending);
+    }
+
+    #[test]
+    fn apply_sort_invalid_column_ignored() {
+        use crate::preferences::{UserPreferences, ViewPreferences};
+        let mut app = AppState::default();
+        let mut global = UserPreferences::default();
+        global.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                sort_column: Some("nonexistent".into()),
+                ..Default::default()
+            },
+        );
+        app.preferences = Some(global);
+        app.apply_sort_from_preferences("pods");
+        assert!(app.pod_sort.is_none());
+    }
+
+    #[test]
+    fn save_sort_to_preferences_round_trip() {
+        let mut app = AppState::default();
+        app.pod_sort = Some(PodSortState::new(PodSortColumn::Status, false));
+        app.save_sort_to_preferences("pods");
+        let prefs = app.preferences.as_ref().unwrap();
+        let vp = prefs.views.get("pods").unwrap();
+        assert_eq!(vp.sort_column.as_deref(), Some("status"));
+        assert!(vp.sort_ascending); // descending=false → ascending=true
+        assert!(app.needs_config_save);
+    }
+
+    #[test]
+    fn clear_sort_removes_from_preferences() {
+        use crate::preferences::{UserPreferences, ViewPreferences};
+        let mut app = AppState::default();
+        let mut global = UserPreferences::default();
+        global.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                sort_column: Some("age".into()),
+                ..Default::default()
+            },
+        );
+        app.preferences = Some(global);
+        app.pod_sort = None;
+        app.save_sort_to_preferences("pods");
+        let vp = app.preferences.as_ref().unwrap().views.get("pods").unwrap();
+        assert!(vp.sort_column.is_none());
+    }
+
+    #[test]
+    fn config_round_trip_with_preferences() {
+        use crate::preferences::{ClusterPreferences, UserPreferences, ViewPreferences};
+        let path = std::env::temp_dir().join("kubectui_test_config_prefs.json");
+
+        let mut app = AppState::default();
+        let mut global = UserPreferences::default();
+        global.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                sort_column: Some("restarts".into()),
+                sort_ascending: false,
+                hidden_columns: vec!["namespace".into()],
+                column_order: None,
+            },
+        );
+        app.preferences = Some(global);
+
+        let mut cluster_prefs = ClusterPreferences::default();
+        cluster_prefs.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                sort_column: Some("status".into()),
+                ..Default::default()
+            },
+        );
+        let mut clusters = HashMap::new();
+        clusters.insert("prod".into(), cluster_prefs);
+        app.cluster_preferences = Some(clusters);
+
+        app.collapsed_groups.insert(NavGroup::FluxCD);
+        app.collapsed_groups.insert(NavGroup::AccessControl);
+
+        save_config_to_path(&app, &path);
+        let loaded = load_config_from_path(&path);
+
+        let prefs = loaded.preferences.as_ref().unwrap();
+        let pod_prefs = prefs.views.get("pods").unwrap();
+        assert_eq!(pod_prefs.sort_column.as_deref(), Some("restarts"));
+        assert!(!pod_prefs.sort_ascending);
+        assert_eq!(pod_prefs.hidden_columns, vec!["namespace"]);
+
+        let clusters = loaded.cluster_preferences.as_ref().unwrap();
+        let prod = clusters.get("prod").unwrap();
+        let prod_pods = prod.views.get("pods").unwrap();
+        assert_eq!(prod_pods.sort_column.as_deref(), Some("status"));
+
+        assert!(loaded.collapsed_groups.contains(&NavGroup::FluxCD));
+        assert!(loaded.collapsed_groups.contains(&NavGroup::AccessControl));
+    }
+
+    #[test]
+    fn config_backward_compat_no_prefs() {
+        let path = std::env::temp_dir().join("kubectui_test_config_compat.json");
+        std::fs::write(
+            &path,
+            r#"{"namespace":"default","workbench_open":true,"workbench_height":14}"#,
+        )
+        .unwrap();
+        let loaded = load_config_from_path(&path);
+        assert!(loaded.preferences.is_none());
+        assert!(loaded.cluster_preferences.is_none());
+        assert!(loaded.collapsed_groups.is_empty());
     }
 }

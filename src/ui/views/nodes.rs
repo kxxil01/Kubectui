@@ -7,7 +7,7 @@ use std::{
 
 use chrono::Utc;
 use ratatui::{
-    layout::{Constraint, Margin, Rect},
+    layout::{Margin, Rect},
     prelude::{Frame, Line, Style},
     text::Span,
     widgets::{
@@ -18,13 +18,14 @@ use ratatui::{
 
 use crate::{
     app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    columns::ColumnDef,
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        loading_or_empty_message, loading_or_empty_message_no_search, table_viewport_rows,
-        table_window, workload_sort_header, workload_sort_suffix,
+        loading_or_empty_message, loading_or_empty_message_no_search, responsive_table_widths_vec,
+        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -53,6 +54,7 @@ pub fn render_nodes(
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
+    visible_columns: &[ColumnDef],
 ) {
     let theme = default_theme();
     let query = query.trim();
@@ -117,22 +119,23 @@ pub fn render_nodes(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
-    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
-    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
 
-    let header = Row::new([
-        Cell::from(Span::styled(
-            format!("  {name_header}"),
-            theme.header_style(),
-        )),
-        Cell::from(Span::styled("Status", theme.header_style())),
-        Cell::from(Span::styled("Role", theme.header_style())),
-        Cell::from(Span::styled("CPU", theme.header_style())),
-        Cell::from(Span::styled("Memory", theme.header_style())),
-        Cell::from(Span::styled(age_header, theme.header_style())),
-    ])
-    .height(1)
-    .style(theme.header_style());
+    let header_cells: Vec<Cell> = visible_columns
+        .iter()
+        .map(|col| {
+            let label = match col.id {
+                "name" => format!(
+                    "  {}",
+                    workload_sort_header(col.label, sort, WorkloadSortColumn::Name)
+                ),
+                "age" => workload_sort_header(col.label, sort, WorkloadSortColumn::Age).to_string(),
+                _ => col.label.to_string(),
+            };
+            Cell::from(Span::styled(label, theme.header_style()))
+        })
+        .collect();
+    let header = Row::new(header_cells).height(1).style(theme.header_style());
+
     let name_style = Style::default().fg(theme.fg);
     let accent_style = Style::default().fg(theme.accent2);
     let dim_style = Style::default().fg(theme.fg_dim);
@@ -170,36 +173,32 @@ pub fn render_nodes(
             theme.row_alt_style()
         };
 
-        rows.push(
-            Row::new(vec![
-                Cell::from(Line::from(vec![
+        let cells: Vec<Cell> = visible_columns
+            .iter()
+            .map(|col| match col.id {
+                "name" => Cell::from(Line::from(vec![
                     Span::styled("  ", name_style),
                     Span::styled(node.name.as_str(), name_style),
                 ])),
-                Cell::from(Line::from(status_spans)),
-                Cell::from(Span::styled(node.role.as_str(), accent_style)),
-                Cell::from(Span::styled(
+                "status" => Cell::from(Line::from(status_spans.clone())),
+                "roles" => Cell::from(Span::styled(node.role.as_str(), accent_style)),
+                "cpu" => Cell::from(Span::styled(
                     node.cpu_allocatable.as_deref().unwrap_or("N/A"),
                     dim_style,
                 )),
-                Cell::from(Span::styled(
+                "memory" => Cell::from(Span::styled(
                     node.memory_allocatable.as_deref().unwrap_or("N/A"),
                     dim_style,
                 )),
-                Cell::from(Span::styled(age, theme.inactive_style())),
-            ])
-            .style(row_style),
-        );
+                "age" => Cell::from(Span::styled(age.to_string(), theme.inactive_style())),
+                _ => Cell::from(""),
+            })
+            .collect();
+        rows.push(Row::new(cells).style(row_style));
     }
 
-    let widths = [
-        Constraint::Percentage(26),
-        Constraint::Percentage(28),
-        Constraint::Percentage(12),
-        Constraint::Percentage(12),
-        Constraint::Percentage(12),
-        Constraint::Percentage(10),
-    ];
+    let constraints = crate::columns::visible_constraints(visible_columns);
+    let widths = responsive_table_widths_vec(area.width, &constraints);
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 

@@ -19,6 +19,7 @@ pub enum CommandPaletteAction {
     None,
     Navigate(AppView),
     Execute(DetailAction, ResourceRef),
+    ToggleColumn(String),
     Close,
 }
 
@@ -26,6 +27,11 @@ pub enum CommandPaletteAction {
 pub enum PaletteEntry {
     Navigate(AppView),
     Action(DetailAction),
+    ColumnToggle {
+        id: String,
+        label: String,
+        visible: bool,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +248,8 @@ pub struct CommandPalette {
     is_open: bool,
     cached_filtered: RefCell<Option<Vec<PaletteEntry>>>,
     resource_context: Option<ResourceActionContext>,
+    /// Column toggle info for current view: (id, label, currently_visible).
+    columns_info: Option<Vec<(String, String, bool)>>,
 }
 
 impl CommandPalette {
@@ -260,6 +268,12 @@ impl CommandPalette {
     pub fn close(&mut self) {
         self.is_open = false;
         self.resource_context = None;
+        self.columns_info = None;
+    }
+
+    pub fn set_columns_info(&mut self, info: Option<Vec<(String, String, bool)>>) {
+        self.columns_info = info;
+        self.cached_filtered.borrow_mut().take();
     }
 
     pub fn is_open(&self) -> bool {
@@ -288,6 +302,9 @@ impl CommandPalette {
                             } else {
                                 CommandPaletteAction::None
                             }
+                        }
+                        PaletteEntry::ColumnToggle { id, .. } => {
+                            CommandPaletteAction::ToggleColumn(id.clone())
                         }
                     }
                 } else {
@@ -366,6 +383,25 @@ impl CommandPalette {
                         .any(|alias| fuzzy_match(alias, &self.query))
                 {
                     result.push(PaletteEntry::Action(entry.action));
+                }
+            }
+        }
+
+        // Column toggles (when query matches "columns", "toggle", or a column label)
+        if let Some(cols) = &self.columns_info {
+            let q_lower = self.query.to_ascii_lowercase();
+            for (id, label, visible) in cols {
+                let label_lower = label.to_ascii_lowercase();
+                if q_lower.is_empty()
+                    || fuzzy_match("columns", &q_lower)
+                    || fuzzy_match("toggle", &q_lower)
+                    || fuzzy_match(&label_lower, &q_lower)
+                {
+                    result.push(PaletteEntry::ColumnToggle {
+                        id: id.clone(),
+                        label: label.clone(),
+                        visible: *visible,
+                    });
                 }
             }
         }
@@ -476,6 +512,7 @@ impl CommandPalette {
             ))));
         } else {
             let mut seen_action = false;
+            let mut seen_column = false;
             let mut seen_nav = false;
 
             for (selectable_idx, entry) in matches.iter().enumerate() {
@@ -484,6 +521,13 @@ impl CommandPalette {
                         seen_action = true;
                         items.push(ListItem::new(Line::from(Span::styled(
                             " ── Actions ──",
+                            theme.muted_style(),
+                        ))));
+                    }
+                    PaletteEntry::ColumnToggle { .. } if !seen_column => {
+                        seen_column = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Columns ──",
                             theme.muted_style(),
                         ))));
                     }
@@ -497,11 +541,39 @@ impl CommandPalette {
                     _ => {}
                 }
 
+                // Column toggles get special checkbox rendering
+                if let PaletteEntry::ColumnToggle { label, visible, .. } = entry {
+                    let check = if *visible { "[x]" } else { "[ ]" };
+                    let is_selected = selectable_idx == self.selected_index;
+                    let style = if is_selected {
+                        Style::default()
+                            .fg(theme.selection_fg)
+                            .bg(theme.selection_bg)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(theme.fg_dim)
+                    };
+                    let prefix = if is_selected { " ▶ " } else { "   " };
+                    items.push(ListItem::new(Line::from(vec![
+                        Span::styled(
+                            prefix,
+                            if is_selected {
+                                theme.title_style()
+                            } else {
+                                theme.inactive_style()
+                            },
+                        ),
+                        Span::styled(format!("{check} {label}"), style),
+                    ])));
+                    continue;
+                }
+
                 let (name, right_label) = match entry {
                     PaletteEntry::Navigate(view) => {
                         (view.label(), view.group().label().to_string())
                     }
                     PaletteEntry::Action(action) => (action.label(), action.key_hint().to_string()),
+                    PaletteEntry::ColumnToggle { .. } => unreachable!(),
                 };
 
                 let is_selected = selectable_idx == self.selected_index;
