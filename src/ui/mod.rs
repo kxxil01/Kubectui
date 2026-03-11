@@ -140,6 +140,45 @@ pub(crate) fn responsive_table_widths<const N: usize>(
     std::array::from_fn(|idx| Constraint::Percentage(percentages[idx]))
 }
 
+/// Like [`responsive_table_widths`] but accepts and returns `Vec<Constraint>`.
+pub(crate) fn responsive_table_widths_vec(area_width: u16, wide: &[Constraint]) -> Vec<Constraint> {
+    let n = wide.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let usable_width = area_width.saturating_sub(3);
+    let ideal_total: u16 = wide.iter().map(|c| constraint_ideal_width(*c)).sum();
+
+    if usable_width >= ideal_total {
+        return wide.to_vec();
+    }
+
+    let total_weight = ideal_total.max(1) as u32;
+    let mut percentages = vec![0u16; n];
+    let mut assigned = 0u16;
+    let mut remainders: Vec<(u32, usize)> = Vec::with_capacity(n);
+
+    for (idx, constraint) in wide.iter().copied().enumerate() {
+        let ideal = u32::from(constraint_ideal_width(constraint).max(1));
+        let scaled = ideal * 100;
+        let percentage = (scaled / total_weight) as u16;
+        percentages[idx] = percentage;
+        assigned = assigned.saturating_add(percentage);
+        remainders.push((scaled % total_weight, idx));
+    }
+
+    remainders.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    let remaining = 100u16.saturating_sub(assigned);
+    for idx in 0..usize::from(remaining) {
+        percentages[remainders[idx % n].1] = percentages[remainders[idx % n].1].saturating_add(1);
+    }
+
+    percentages
+        .into_iter()
+        .map(Constraint::Percentage)
+        .collect()
+}
+
 fn constraint_ideal_width(constraint: Constraint) -> u16 {
     match constraint {
         Constraint::Percentage(value) => value.max(1),
@@ -393,6 +432,22 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     let content = body[1];
 
+    // Resolve visible columns for current view
+    let visible_columns: Vec<crate::columns::ColumnDef> = {
+        let view_key = crate::columns::view_key(app.view());
+        let prefs = crate::preferences::resolve_view_preferences(
+            view_key,
+            &app.preferences,
+            &app.cluster_preferences,
+            app.current_context_name.as_deref(),
+        );
+        if let Some(registry) = crate::columns::columns_for_view(app.view()) {
+            crate::columns::resolve_columns(registry, &prefs)
+        } else {
+            Vec::new()
+        }
+    };
+
     {
         let _view_scope = profiling::span_scope(app.view().profiling_key());
         match app.view() {
@@ -404,6 +459,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                &visible_columns,
             ),
             AppView::Pods => {
                 render_pods_widget(
@@ -413,6 +469,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     app.selected_idx(),
                     app.search_query(),
                     app.pod_sort(),
+                    &visible_columns,
                 );
             }
             AppView::ReplicaSets => views::replicasets::render_replicasets(
@@ -588,6 +645,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                &visible_columns,
             ),
             AppView::StatefulSets => views::statefulsets::render_statefulsets(
                 frame,
@@ -850,6 +908,7 @@ fn render_pods_widget(
     selected_idx: usize,
     query: &str,
     pod_sort: Option<PodSortState>,
+    visible_columns: &[crate::columns::ColumnDef],
 ) {
     let theme = default_theme();
     let cache_variant = pod_sort.map_or(0, PodSortState::cache_variant);
@@ -882,65 +941,70 @@ fn render_pods_widget(
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
 
-    let name_header = match pod_sort {
-        Some(PodSortState {
-            column: PodSortColumn::Name,
-            descending: true,
-        }) => "Name▼",
-        Some(PodSortState {
-            column: PodSortColumn::Name,
-            descending: false,
-        }) => "Name▲",
-        _ => "Name",
-    };
-    let age_header = match pod_sort {
-        Some(PodSortState {
-            column: PodSortColumn::Age,
-            descending: true,
-        }) => "Age▼",
-        Some(PodSortState {
-            column: PodSortColumn::Age,
-            descending: false,
-        }) => "Age▲",
-        _ => "Age",
-    };
-    let status_header = match pod_sort {
-        Some(PodSortState {
-            column: PodSortColumn::Status,
-            descending: true,
-        }) => "Status▼",
-        Some(PodSortState {
-            column: PodSortColumn::Status,
-            descending: false,
-        }) => "Status▲",
-        _ => "Status",
-    };
-    let restarts_header = match pod_sort {
-        Some(PodSortState {
-            column: PodSortColumn::Restarts,
-            descending: true,
-        }) => "Restarts▼",
-        Some(PodSortState {
-            column: PodSortColumn::Restarts,
-            descending: false,
-        }) => "Restarts▲",
-        _ => "Restarts",
+    let pod_sort_header = |col_id: &str, label: &str| -> String {
+        match col_id {
+            "name" => format!(
+                "  {}",
+                match pod_sort {
+                    Some(PodSortState {
+                        column: PodSortColumn::Name,
+                        descending: true,
+                    }) => format!("{label}\u{25bc}"),
+                    Some(PodSortState {
+                        column: PodSortColumn::Name,
+                        descending: false,
+                    }) => format!("{label}\u{25b2}"),
+                    _ => label.to_string(),
+                }
+            ),
+            "age" => match pod_sort {
+                Some(PodSortState {
+                    column: PodSortColumn::Age,
+                    descending: true,
+                }) => format!("{label}\u{25bc}"),
+                Some(PodSortState {
+                    column: PodSortColumn::Age,
+                    descending: false,
+                }) => format!("{label}\u{25b2}"),
+                _ => label.to_string(),
+            },
+            "status" => match pod_sort {
+                Some(PodSortState {
+                    column: PodSortColumn::Status,
+                    descending: true,
+                }) => format!("{label}\u{25bc}"),
+                Some(PodSortState {
+                    column: PodSortColumn::Status,
+                    descending: false,
+                }) => format!("{label}\u{25b2}"),
+                _ => label.to_string(),
+            },
+            "restarts" => match pod_sort {
+                Some(PodSortState {
+                    column: PodSortColumn::Restarts,
+                    descending: true,
+                }) => format!("{label}\u{25bc}"),
+                Some(PodSortState {
+                    column: PodSortColumn::Restarts,
+                    descending: false,
+                }) => format!("{label}\u{25b2}"),
+                _ => label.to_string(),
+            },
+            _ => label.to_string(),
+        }
     };
 
-    let header = Row::new([
-        Cell::from(Span::styled(
-            format!("  {name_header}"),
-            theme.header_style(),
-        )),
-        Cell::from(Span::styled("Namespace", theme.header_style())),
-        Cell::from(Span::styled("IP", theme.header_style())),
-        Cell::from(Span::styled(status_header, theme.header_style())),
-        Cell::from(Span::styled("Node", theme.header_style())),
-        Cell::from(Span::styled(restarts_header, theme.header_style())),
-        Cell::from(Span::styled(age_header, theme.header_style())),
-    ])
-    .height(1)
-    .style(theme.header_style());
+    let header_cells: Vec<Cell> = visible_columns
+        .iter()
+        .map(|col| {
+            Cell::from(Span::styled(
+                pod_sort_header(col.id, col.label),
+                theme.header_style(),
+            ))
+        })
+        .collect();
+    let header = Row::new(header_cells).height(1).style(theme.header_style());
+
     let name_style = ratatui::prelude::Style::default().fg(theme.fg);
     let dim_style = ratatui::prelude::Style::default().fg(theme.fg_dim);
     let now_unix = chrono::Utc::now().timestamp();
@@ -968,30 +1032,32 @@ fn render_pods_widget(
             .map(|cell| cell.age.as_str())
             .unwrap_or("-");
 
-        rows.push(
-            Row::new(vec![
-                Cell::from(Line::from(vec![
+        let cells: Vec<Cell> = visible_columns
+            .iter()
+            .map(|col| match col.id {
+                "name" => Cell::from(Line::from(vec![
                     Span::styled("  ", name_style),
                     Span::styled(pod.name.as_str(), name_style),
                 ])),
-                Cell::from(Span::styled(pod.namespace.as_str(), dim_style)),
-                Cell::from(Span::styled(
+                "namespace" => Cell::from(Span::styled(pod.namespace.as_str(), dim_style)),
+                "ip" => Cell::from(Span::styled(
                     pod.pod_ip.as_deref().unwrap_or("-"),
                     dim_style,
                 )),
-                Cell::from(Span::styled(status, status_style)),
-                Cell::from(Span::styled(
+                "status" => Cell::from(Span::styled(status, status_style)),
+                "node" => Cell::from(Span::styled(
                     pod.node.as_deref().unwrap_or("n/a"),
                     dim_style,
                 )),
-                Cell::from(Span::styled(
+                "restarts" => Cell::from(Span::styled(
                     format_small_int(i64::from(pod.restarts)),
                     restart_style,
                 )),
-                Cell::from(Span::styled(age, theme.inactive_style())),
-            ])
-            .style(row_style),
-        );
+                "age" => Cell::from(Span::styled(age, theme.inactive_style())),
+                _ => Cell::from(""),
+            })
+            .collect();
+        rows.push(Row::new(cells).style(row_style));
     }
 
     let mut table_state = TableState::default().with_selected(Some(window.selected));
@@ -1009,26 +1075,13 @@ fn render_pods_widget(
         ))
     };
 
-    let table = Table::new(
-        rows,
-        responsive_table_widths(
-            area.width,
-            [
-                Constraint::Min(28),    // Name
-                Constraint::Length(18), // Namespace
-                Constraint::Length(16), // IP
-                Constraint::Length(20), // Status
-                Constraint::Length(22), // Node
-                Constraint::Length(10), // Restarts
-                Constraint::Length(9),  // Age
-            ],
-        ),
-    )
-    .header(header)
-    .block(block)
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
+    let constraints = crate::columns::visible_constraints(visible_columns);
+    let table = Table::new(rows, responsive_table_widths_vec(area.width, &constraints))
+        .header(header)
+        .block(block)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
 
     frame.render_stateful_widget(table, area, &mut table_state);
 

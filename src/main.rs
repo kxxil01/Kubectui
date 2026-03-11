@@ -2249,6 +2249,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         .as_ref()
                         .and_then(|d| d.resource_action_context())
                         .or_else(|| selected_resource_context(&app, &cached_snapshot));
+                    app.refresh_palette_columns();
                     app.command_palette.open_with_context(resource_ctx);
                 }
                 AppAction::CloseCommandPalette => {
@@ -2327,6 +2328,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             app.tunnel_registry.update_tunnels(Vec::new());
 
                             client = new_client;
+                            app.current_context_name = Some(ctx.clone());
                             coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
                             port_forwarder =
                                 PortForwarderService::new(std::sync::Arc::new(client.clone()));
@@ -3993,6 +3995,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     || app.detail_view.as_ref().is_some_and(|d| d.error.is_some()))
             {
                 pending_palette_action = None;
+            }
+
+            // Persist preferences when dirty flag is set
+            if app.needs_config_save {
+                app.needs_config_save = false;
+                save_config(&app);
             }
         }
     }
