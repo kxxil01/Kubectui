@@ -2,8 +2,32 @@
 
 A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream logs, exec into pods, port-forward, scale workloads, inspect probes, and trigger rolling restarts — all without leaving your terminal.
 
-![Rust](https://img.shields.io/badge/rust-1.93.1+-orange)
+![Rust](https://img.shields.io/badge/rust-1.85+-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
+[![CI](https://github.com/kxxil01/Kubectui/actions/workflows/ci.yml/badge.svg)](https://github.com/kxxil01/Kubectui/actions/workflows/ci.yml)
+
+---
+
+## Installation
+
+### Homebrew (macOS / Linux)
+
+```bash
+brew install kxxil01/tap/kubectui
+```
+
+### Build from source
+
+```bash
+git clone https://github.com/kxxil01/Kubectui.git
+cd Kubectui
+cargo build --release
+./target/release/kubectui
+```
+
+### Prerequisites
+
+- A kubeconfig at `~/.kube/config` (or `KUBECONFIG` env var)
 
 ---
 
@@ -26,8 +50,6 @@ A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream log
 - **Clipboard integration** — `Ctrl+y` copies resource name, `Y` copies namespace/name, `y` in logs copies content
 - **Log export** — `S` in log tabs saves buffer to file
 - **Action history** with pending/success/error tracking and resource jump-back
-- **Help overlay** (`?`) — discoverable keybinding reference organized by context
-- **Sidebar resource counts** — at-a-glance counts next to each view (e.g., "Pods (12)")
 - **Helm release browser** — reads Helm v3 releases from cluster secrets
 - **FluxCD support** — browse all Flux resources, trigger reconcile from detail or palette
 - **5 color themes** — Dark (default), Nord, Dracula, Catppuccin Mocha, Light — cycle with `T`, persist in config
@@ -36,24 +58,6 @@ A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream log
 - **Fuzzy search** (`/`) on every resource list
 - **Dashboard** with cluster health gauges, alerts, and workload summaries
 - **Configuration persistence** — namespace, theme, workbench state, refresh interval
-
----
-
-## Installation
-
-### Prerequisites
-
-- Rust 1.93.1+
-- A kubeconfig at `~/.kube/config` (or `KUBECONFIG` env var)
-
-### Build from source
-
-```bash
-git clone https://github.com/kxxil01/Kubectui.git
-cd Kubectui
-cargo build --release
-./target/release/kubectui
-```
 
 ---
 
@@ -176,6 +180,20 @@ Press `:` from anywhere to open. Shows context-aware resource actions when a res
 | `k` / `↑` | Select previous container |
 | `Space` | Expand/collapse container probe details |
 | `Esc` | Close inspector |
+
+---
+
+## CLI Options
+
+```
+kubectui [OPTIONS]
+
+  --theme <name>          Set color theme (dark, nord, dracula, catppuccin, light)
+  --profile-render        Enable render profiling (frame timings + folded stacks)
+  --profile-output <dir>  Profile output directory (default: target/profiles)
+  --version, -V           Show version
+  --help, -h              Show help
+```
 
 ---
 
