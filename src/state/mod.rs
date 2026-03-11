@@ -25,9 +25,12 @@ use crate::k8s::{
     },
 };
 
-const MAX_CONCURRENT_RESOURCE_FETCHES: usize = 8;
-static RESOURCE_FETCH_SEMAPHORE: LazyLock<Semaphore> =
-    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_RESOURCE_FETCHES));
+const MAX_CONCURRENT_CORE_FETCHES: usize = 8;
+const MAX_CONCURRENT_SECONDARY_FETCHES: usize = 4;
+static CORE_FETCH_SEMAPHORE: LazyLock<Semaphore> =
+    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_CORE_FETCHES));
+static SECONDARY_FETCH_SEMAPHORE: LazyLock<Semaphore> =
+    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_SECONDARY_FETCHES));
 
 /// High-level data loading phase for cluster resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -1130,13 +1133,17 @@ impl GlobalState {
     const TRANSIENT_RETRY_ATTEMPTS: usize = 3;
     const TRANSIENT_RETRY_DELAY_MS: u64 = 150;
 
-    async fn fetch_with_timeout<T, F, Fut>(label: &'static str, make_fut: F) -> Result<T>
+    async fn fetch_with_timeout<T, F, Fut>(
+        label: &'static str,
+        semaphore: &Semaphore,
+        make_fut: F,
+    ) -> Result<T>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
         for attempt in 0..=Self::TRANSIENT_RETRY_ATTEMPTS {
-            let _permit = RESOURCE_FETCH_SEMAPHORE
+            let _permit = semaphore
                 .acquire()
                 .await
                 .map_err(|_| anyhow!("resource fetch coordinator shut down"))?;
@@ -1301,24 +1308,31 @@ impl GlobalState {
         let include_events = options.include_events;
         let flux_fetch = async move {
             if include_flux {
-                Self::fetch_with_timeout("fluxresources", || client.fetch_flux_resources(namespace))
-                    .await
+                Self::fetch_with_timeout("fluxresources", &CORE_FETCH_SEMAPHORE, || {
+                    client.fetch_flux_resources(namespace)
+                })
+                .await
             } else {
                 Ok(prev_flux_resources)
             }
         };
         let cluster_info_fetch = async move {
             if include_cluster_info {
-                Self::fetch_with_timeout("cluster info", || client.fetch_cluster_info())
-                    .await
-                    .map(Some)
+                Self::fetch_with_timeout("cluster info", &CORE_FETCH_SEMAPHORE, || {
+                    client.fetch_cluster_info()
+                })
+                .await
+                .map(Some)
             } else {
                 Ok(None)
             }
         };
         let events_fetch = async move {
             if include_events {
-                Self::fetch_with_timeout("events", || client.fetch_events(namespace)).await
+                Self::fetch_with_timeout("events", &CORE_FETCH_SEMAPHORE, || {
+                    client.fetch_events(namespace)
+                })
+                .await
             } else {
                 Ok(prev_events)
             }
@@ -1348,22 +1362,33 @@ impl GlobalState {
         let prev_helm_releases = self.snapshot.helm_releases.clone();
         let prev_node_metrics = self.snapshot.node_metrics.clone();
 
-        // Wave 1 (core resources) and wave 2 (secondary) run concurrently.
-        // The RESOURCE_FETCH_SEMAPHORE (8 permits) provides backpressure.
+        // Wave 1 (core) and wave 2 (secondary) run concurrently with separate
+        // semaphores: CORE_FETCH_SEMAPHORE (8 permits) and SECONDARY_FETCH_SEMAPHORE
+        // (4 permits). This ensures core resources are never starved by secondary fetches.
         let wave1 = async {
             tokio::join!(
-                Self::fetch_with_timeout("nodes", || client.fetch_nodes()),
-                Self::fetch_with_timeout("pods", || client.fetch_pods(namespace)),
-                Self::fetch_with_timeout("services", || client.fetch_services(namespace)),
-                Self::fetch_with_timeout("deployments", || client.fetch_deployments(namespace)),
-                Self::fetch_with_timeout("statefulsets", || client.fetch_statefulsets(namespace)),
-                Self::fetch_with_timeout("daemonsets", || client.fetch_daemonsets(namespace)),
-                Self::fetch_with_timeout("replicasets", || client.fetch_replicasets(namespace)),
-                Self::fetch_with_timeout("replicationcontrollers", || client
-                    .fetch_replication_controllers(namespace)),
-                Self::fetch_with_timeout("jobs", || client.fetch_jobs(namespace)),
-                Self::fetch_with_timeout("cronjobs", || client.fetch_cronjobs(namespace)),
-                Self::fetch_with_timeout("namespacelist", || client.fetch_namespace_list()),
+                Self::fetch_with_timeout("nodes", &CORE_FETCH_SEMAPHORE, || client.fetch_nodes()),
+                Self::fetch_with_timeout("pods", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_pods(namespace)),
+                Self::fetch_with_timeout("services", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_services(namespace)),
+                Self::fetch_with_timeout("deployments", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_deployments(namespace)),
+                Self::fetch_with_timeout("statefulsets", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_statefulsets(namespace)),
+                Self::fetch_with_timeout("daemonsets", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_daemonsets(namespace)),
+                Self::fetch_with_timeout("replicasets", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_replicasets(namespace)),
+                Self::fetch_with_timeout("replicationcontrollers", &CORE_FETCH_SEMAPHORE, || {
+                    client.fetch_replication_controllers(namespace)
+                }),
+                Self::fetch_with_timeout("jobs", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_jobs(namespace)),
+                Self::fetch_with_timeout("cronjobs", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_cronjobs(namespace)),
+                Self::fetch_with_timeout("namespacelist", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_namespace_list()),
                 flux_fetch,
                 cluster_info_fetch,
                 events_fetch,
@@ -1373,36 +1398,59 @@ impl GlobalState {
         let wave2 = async {
             if include_secondary_resources {
                 tokio::join!(
-                    Self::fetch_with_timeout("resourcequotas", || client
-                        .fetch_resource_quotas(namespace)),
-                    Self::fetch_with_timeout("limitranges", || client
+                    Self::fetch_with_timeout("resourcequotas", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_resource_quotas(namespace)
+                    }),
+                    Self::fetch_with_timeout("limitranges", &SECONDARY_FETCH_SEMAPHORE, || client
                         .fetch_limit_ranges(namespace)),
-                    Self::fetch_with_timeout("pdbs", || client
+                    Self::fetch_with_timeout("pdbs", &SECONDARY_FETCH_SEMAPHORE, || client
                         .fetch_pod_disruption_budgets(namespace)),
-                    Self::fetch_with_timeout("serviceaccounts", || client
-                        .fetch_service_accounts(namespace)),
-                    Self::fetch_with_timeout("roles", || client.fetch_roles(namespace)),
-                    Self::fetch_with_timeout("rolebindings", || client
+                    Self::fetch_with_timeout("serviceaccounts", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_service_accounts(namespace)
+                    }),
+                    Self::fetch_with_timeout("roles", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_roles(namespace)),
+                    Self::fetch_with_timeout("rolebindings", &SECONDARY_FETCH_SEMAPHORE, || client
                         .fetch_role_bindings(namespace)),
-                    Self::fetch_with_timeout("clusterroles", || client.fetch_cluster_roles()),
-                    Self::fetch_with_timeout("clusterrolebindings", || client
-                        .fetch_cluster_role_bindings()),
-                    Self::fetch_with_timeout("crds", || client.fetch_custom_resource_definitions()),
-                    Self::fetch_with_timeout("endpoints", || client.fetch_endpoints(namespace)),
-                    Self::fetch_with_timeout("ingresses", || client.fetch_ingresses(namespace)),
-                    Self::fetch_with_timeout("ingressclasses", || client.fetch_ingress_classes()),
-                    Self::fetch_with_timeout("networkpolicies", || client
-                        .fetch_network_policies(namespace)),
-                    Self::fetch_with_timeout("configmaps", || client.fetch_config_maps(namespace)),
-                    Self::fetch_with_timeout("secrets", || client.fetch_secrets(namespace)),
-                    Self::fetch_with_timeout("hpas", || client.fetch_hpas(namespace)),
-                    Self::fetch_with_timeout("pvcs", || client.fetch_pvcs(namespace)),
-                    Self::fetch_with_timeout("pvs", || client.fetch_pvs()),
-                    Self::fetch_with_timeout("storageclasses", || client.fetch_storage_classes()),
-                    Self::fetch_with_timeout("priorityclasses", || client.fetch_priority_classes()),
-                    Self::fetch_with_timeout("helmreleases", || client
+                    Self::fetch_with_timeout("clusterroles", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_cluster_roles()),
+                    Self::fetch_with_timeout(
+                        "clusterrolebindings",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_cluster_role_bindings()
+                    ),
+                    Self::fetch_with_timeout("crds", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_custom_resource_definitions()),
+                    Self::fetch_with_timeout("endpoints", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_endpoints(namespace)),
+                    Self::fetch_with_timeout("ingresses", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_ingresses(namespace)),
+                    Self::fetch_with_timeout("ingressclasses", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_ingress_classes()
+                    }),
+                    Self::fetch_with_timeout("networkpolicies", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_network_policies(namespace)
+                    }),
+                    Self::fetch_with_timeout("configmaps", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_config_maps(namespace)),
+                    Self::fetch_with_timeout("secrets", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_secrets(namespace)),
+                    Self::fetch_with_timeout("hpas", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_hpas(namespace)),
+                    Self::fetch_with_timeout("pvcs", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_pvcs(namespace)),
+                    Self::fetch_with_timeout("pvs", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_pvs()),
+                    Self::fetch_with_timeout("storageclasses", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_storage_classes()
+                    }),
+                    Self::fetch_with_timeout("priorityclasses", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_priority_classes()
+                    }),
+                    Self::fetch_with_timeout("helmreleases", &SECONDARY_FETCH_SEMAPHORE, || client
                         .fetch_helm_releases(namespace)),
-                    Self::fetch_with_timeout("nodemetrics", || client.fetch_all_node_metrics()),
+                    Self::fetch_with_timeout("nodemetrics", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_all_node_metrics()),
                 )
             } else {
                 (
@@ -2948,18 +2996,19 @@ mod tests {
 
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_fetch = Arc::clone(&calls);
-        let result: Result<i32> = GlobalState::fetch_with_timeout("pods", move || {
-            let calls = Arc::clone(&calls_for_fetch);
-            async move {
-                let attempt = calls.fetch_add(1, Ordering::SeqCst);
-                if attempt == 0 {
-                    Err(anyhow::anyhow!("client error (SendRequest)"))
-                } else {
-                    Ok(7)
+        let result: Result<i32> =
+            GlobalState::fetch_with_timeout("pods", &CORE_FETCH_SEMAPHORE, move || {
+                let calls = Arc::clone(&calls_for_fetch);
+                async move {
+                    let attempt = calls.fetch_add(1, Ordering::SeqCst);
+                    if attempt == 0 {
+                        Err(anyhow::anyhow!("client error (SendRequest)"))
+                    } else {
+                        Ok(7)
+                    }
                 }
-            }
-        })
-        .await;
+            })
+            .await;
 
         assert_eq!(result.expect("transient SendRequest should retry"), 7);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
