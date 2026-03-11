@@ -1,5 +1,10 @@
 //! ConfigMaps and Secrets list views.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -20,6 +25,62 @@ use crate::{
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
     },
 };
+
+// ── ConfigMap derived cell cache ────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConfigMapDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct ConfigMapDerivedCell {
+    data_count: String,
+}
+
+type ConfigMapDerivedCacheValue = Arc<Vec<ConfigMapDerivedCell>>;
+static CONFIG_MAP_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(ConfigMapDerivedCacheKey, ConfigMapDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_config_map_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> ConfigMapDerivedCacheValue {
+    let key = ConfigMapDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.config_maps, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = CONFIG_MAP_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&cm_idx| {
+                let cm = &snapshot.config_maps[cm_idx];
+                ConfigMapDerivedCell {
+                    data_count: format_small_int(cm.data_count as i64).into_owned(),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = CONFIG_MAP_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 pub fn render_config_maps(
     frame: &mut Frame,
@@ -79,6 +140,8 @@ pub fn render_config_maps(
     .height(1)
     .style(theme.header_style());
 
+    let derived = cached_config_map_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -90,6 +153,11 @@ pub fn render_config_maps(
             } else {
                 theme.row_alt_style()
             };
+            let data_count: Cow<'_, str> = if let Some(cell) = derived.get(idx) {
+                Cow::Borrowed(cell.data_count.as_str())
+            } else {
+                format_small_int(cm.data_count as i64)
+            };
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {}", cm.name),
@@ -99,10 +167,7 @@ pub fn render_config_maps(
                     cm.namespace.clone(),
                     Style::default().fg(theme.fg_dim),
                 )),
-                Cell::from(Span::styled(
-                    format_small_int(cm.data_count as i64),
-                    Style::default().fg(theme.info),
-                )),
+                Cell::from(Span::styled(data_count, Style::default().fg(theme.info))),
             ])
             .style(row_style)
         })
