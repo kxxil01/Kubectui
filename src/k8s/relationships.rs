@@ -524,14 +524,15 @@ pub fn resolve_service_backends_from_snapshot(
                 return vec![];
             };
 
-            if svc.selector.is_empty() {
+            let selector_pods = if svc.selector.is_empty() {
+                Vec::new()
+            } else {
+                pods_matching_selector(&svc.selector, ns, snapshot)
+            };
+            let Some(endpoint_node) = endpoint_node_for_service(name, ns, snapshot, selector_pods)
+            else {
                 return vec![];
-            }
-
-            let backends = pods_matching_selector(&svc.selector, ns, snapshot);
-            if backends.is_empty() {
-                return vec![];
-            }
+            };
 
             let svc_node = RelationNode {
                 resource: Some(ResourceRef::Service(name.clone(), ns.clone())),
@@ -540,21 +541,40 @@ pub fn resolve_service_backends_from_snapshot(
                 namespace: Some(ns.clone()),
                 relation: RelationKind::Root,
                 not_found: false,
-                children: backends,
+                children: vec![endpoint_node],
             };
             vec![svc_node]
         }
         ResourceRef::Endpoint(name, ns) => {
-            // Find parent service with the same name in the same namespace
-            if let Some(svc) = snapshot
-                .services
+            let Some(endpoint) = snapshot
+                .endpoints
                 .iter()
-                .find(|s| &s.name == name && &s.namespace == ns)
+                .find(|ep| &ep.name == name && &ep.namespace == ns)
+            else {
+                return vec![];
+            };
+
+            let mut backend_pods =
+                pods_matching_endpoint_addresses(&endpoint.addresses, ns, snapshot);
+            if backend_pods.is_empty()
+                && let Some(service) = snapshot
+                    .services
+                    .iter()
+                    .find(|svc| &svc.name == name && &svc.namespace == ns)
+                && !service.selector.is_empty()
             {
-                let svc_ref = ResourceRef::Service(svc.name.clone(), svc.namespace.clone());
-                return resolve_service_backends_from_snapshot(&svc_ref, snapshot);
+                backend_pods = pods_matching_selector(&service.selector, ns, snapshot);
             }
-            vec![]
+
+            vec![RelationNode {
+                resource: Some(ResourceRef::Endpoint(name.clone(), ns.clone())),
+                label: format!("Endpoints {name}"),
+                status: Some(format!("{} addresses", endpoint.addresses.len())),
+                namespace: Some(ns.clone()),
+                relation: RelationKind::Root,
+                not_found: false,
+                children: backend_pods,
+            }]
         }
         _ => vec![],
     }
@@ -585,6 +605,67 @@ fn pods_matching_selector(
             children: vec![],
         })
         .collect()
+}
+
+fn pods_matching_endpoint_addresses(
+    addresses: &[String],
+    namespace: &str,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    snapshot
+        .pods
+        .iter()
+        .filter(|pod| {
+            pod.namespace == namespace
+                && pod
+                    .pod_ip
+                    .as_ref()
+                    .is_some_and(|ip| addresses.iter().any(|address| address == ip))
+        })
+        .map(|pod| RelationNode {
+            resource: Some(ResourceRef::Pod(pod.name.clone(), pod.namespace.clone())),
+            label: format!("Pod {}", pod.name),
+            status: Some(pod.status.clone()),
+            namespace: Some(pod.namespace.clone()),
+            relation: RelationKind::Backend,
+            not_found: false,
+            children: vec![],
+        })
+        .collect()
+}
+
+fn endpoint_node_for_service(
+    name: &str,
+    namespace: &str,
+    snapshot: &ClusterSnapshot,
+    fallback_pods: Vec<RelationNode>,
+) -> Option<RelationNode> {
+    let endpoint = snapshot
+        .endpoints
+        .iter()
+        .find(|ep| ep.name == name && ep.namespace == namespace);
+    let endpoint_pods = endpoint
+        .map(|ep| pods_matching_endpoint_addresses(&ep.addresses, namespace, snapshot))
+        .unwrap_or_default();
+    let children = if endpoint_pods.is_empty() {
+        fallback_pods
+    } else {
+        endpoint_pods
+    };
+
+    if endpoint.is_none() && children.is_empty() {
+        return None;
+    }
+
+    Some(RelationNode {
+        resource: endpoint.map(|_| ResourceRef::Endpoint(name.to_string(), namespace.to_string())),
+        label: format!("Endpoints {name}"),
+        status: endpoint.map(|ep| format!("{} addresses", ep.addresses.len())),
+        namespace: Some(namespace.to_string()),
+        relation: RelationKind::Backend,
+        not_found: endpoint.is_none(),
+        children,
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1831,11 +1912,18 @@ mod tests {
             selector: [("app".to_string(), "nginx".to_string())].into(),
             ..Default::default()
         }];
+        snapshot.endpoints = vec![EndpointInfo {
+            name: "nginx-svc".into(),
+            namespace: "default".into(),
+            addresses: vec!["10.0.0.10".into()],
+            ..Default::default()
+        }];
         snapshot.pods = vec![
             PodInfo {
                 name: "nginx-pod-1".into(),
                 namespace: "default".into(),
                 status: "Running".into(),
+                pod_ip: Some("10.0.0.10".into()),
                 labels: vec![("app".into(), "nginx".into())],
                 ..Default::default()
             },
@@ -1854,7 +1942,9 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].label, "Service nginx-svc");
         assert_eq!(result[0].children.len(), 1);
-        assert_eq!(result[0].children[0].label, "Pod nginx-pod-1");
+        assert_eq!(result[0].children[0].label, "Endpoints nginx-svc");
+        assert_eq!(result[0].children[0].children.len(), 1);
+        assert_eq!(result[0].children[0].children[0].label, "Pod nginx-pod-1");
     }
 
     #[test]
@@ -1874,6 +1964,63 @@ mod tests {
         let resource = ResourceRef::Service("headless".into(), "default".into());
         let result = resolve_service_backends_from_snapshot(&resource, &snapshot);
         assert!(result.is_empty());
+    }
+
+    #[test]
+    fn resolve_service_backends_selectorless_service_keeps_manual_endpoints_visible() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.services = vec![ServiceInfo {
+            name: "manual".into(),
+            namespace: "default".into(),
+            type_: "ClusterIP".into(),
+            selector: std::collections::BTreeMap::new(),
+            ..Default::default()
+        }];
+        snapshot.endpoints = vec![EndpointInfo {
+            name: "manual".into(),
+            namespace: "default".into(),
+            addresses: vec!["10.0.0.20".into()],
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::Service("manual".into(), "default".into());
+        let result = resolve_service_backends_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "Endpoints manual");
+    }
+
+    #[test]
+    fn resolve_endpoint_resource_returns_endpoint_root() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.endpoints = vec![EndpointInfo {
+            name: "api".into(),
+            namespace: "default".into(),
+            addresses: vec!["10.0.0.30".into()],
+            ..Default::default()
+        }];
+        snapshot.pods = vec![PodInfo {
+            name: "api-pod".into(),
+            namespace: "default".into(),
+            status: "Running".into(),
+            pod_ip: Some("10.0.0.30".into()),
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::Endpoint("api".into(), "default".into());
+        let result = resolve_service_backends_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].label, "Endpoints api");
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "Pod api-pod");
     }
 
     // ---------------------------------------------------------------------------
