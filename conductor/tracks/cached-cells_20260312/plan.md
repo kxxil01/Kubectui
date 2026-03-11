@@ -3,75 +3,78 @@
 **Track ID:** cached-cells_20260312
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-03-12
-**Status:** [ ] Not Started
+**Status:** [~] In Progress
 
 ## Overview
 
-Introduce per-view formatted-row caches that store preformatted cell payloads, invalidated on snapshot/query changes. Special handling for time-sensitive fields (Age) via minute-bucket invalidation.
+Extend the existing per-view derived cell cache pattern (proven in 12 views) to all remaining table views. The cache infrastructure (`LazyLock<Mutex<Option<(Key, Value)>>>`, `data_fingerprint()`, filter cache MRU) already exists — this track applies it consistently across the codebase.
 
-## Phase 1: Cache Infrastructure
+## Already Cached (12 views)
 
-Design and build the shared caching layer.
+deployments, services, nodes, replicasets, replication_controllers, daemonsets, statefulsets, cronjobs, jobs, endpoints, network_policies, service_accounts
 
-### Tasks
+## Phase 1: Storage & Config Views
 
-- [ ] Task 1.1: Write tests for cache key generation `(view, query, snapshot_version, data_fingerprint)`
-- [ ] Task 1.2: Write tests for cache invalidation (snapshot change, query change, fingerprint change)
-- [ ] Task 1.3: Implement `FormattedCellCache` struct with keyed storage
-- [ ] Task 1.4: Implement LRU/eviction policy with configurable per-view entry limit
-- [ ] Task 1.5: Write tests for memory bounds and eviction behavior
-
-### Verification
-
-- [ ] All cache unit tests pass
-- [ ] Cache correctly invalidates on key changes
-- [ ] Memory bounded under stress (many views, many entries)
-
-## Phase 2: Time-Sensitive Field Handling
-
-Handle fields like `Age` that change every minute without full cache invalidation.
+Extend cache to resource-heavy views that lack it.
 
 ### Tasks
 
-- [ ] Task 2.1: Write tests for minute-bucket key derivation
-- [ ] Task 2.2: Implement minute-bucket invalidation for Age fields
-- [ ] Task 2.3: Write tests verifying Age updates without full cache flush
-- [ ] Task 2.4: Implement lightweight render-time update path for Age-only refreshes
+- [x] Task 1.1: Add derived cell cache to `render_pvcs` (storage.rs)
+- [x] Task 1.2: Add derived cell cache to `render_pvs` (storage.rs)
+- [x] Task 1.3: Add derived cell cache to `render_storage_classes` (storage.rs)
+- [x] Task 1.4: Add derived cell cache to `render_config_maps` (config.rs)
+- [x] Task 1.5: Add derived cell cache to `render_secrets` (config.rs)
 
 ### Verification
 
-- [ ] Age fields update correctly each minute
-- [ ] Non-Age fields remain cached across minute boundaries
-- [ ] No stale data rendering in any scenario
+- [x] All tests pass
+- [x] No stale data on snapshot change
 
-## Phase 3: View Integration
-
-Wire the cache into existing view render paths.
+## Phase 2: Security & Governance Views
 
 ### Tasks
 
-- [ ] Task 3.1: Identify all view render paths that produce formatted cells (audit `src/ui/views/`)
-- [ ] Task 3.2: Write integration tests for cache hit/miss on high-cardinality views (Pods, Deployments, Services)
-- [ ] Task 3.3: Integrate cache into Pods view render path
-- [ ] Task 3.4: Integrate cache into remaining 22 views
-- [ ] Task 3.5: Write tests verifying cache coherence across view switches and filter changes
+- [x] Task 2.1: Add derived cell cache to `render_roles` (security/roles.rs)
+- [x] Task 2.2: Add derived cell cache to `render_cluster_roles` (security/cluster_roles.rs)
+- [x] Task 2.3: Add derived cell cache to `render_role_bindings` (security/role_bindings.rs)
+- [x] Task 2.4: Add derived cell cache to `render_cluster_role_bindings` (security/cluster_role_bindings.rs)
+- [x] Task 2.5: Add derived cell cache to `render_pdbs` (governance/pdbs.rs)
+- [x] Task 2.6: Add derived cell cache to `render_limit_ranges` (governance/limits.rs)
+- [x] Task 2.7: Add derived cell cache to `render_resource_quotas` (governance/quotas.rs)
 
 ### Verification
 
-- [ ] All 23 views use the cache
-- [ ] View switching doesn't produce stale data
-- [ ] Filter/search changes trigger correct invalidation
+- [x] All tests pass
+- [x] No stale data on snapshot change
+
+## Phase 3: Remaining Views
+
+### Tasks
+
+- [x] Task 3.1: Add derived cell cache to `render_events` (events.rs)
+- [x] Task 3.2: Add derived cell cache to `render_hpas` (hpas.rs)
+- [x] Task 3.3: Skip — `render_namespaces` has no non-trivial derived cells
+- [x] Task 3.4: Add derived cell cache to `render_priority_classes` (priority_classes.rs)
+- [x] Task 3.5: Add derived cell cache to `render_ingresses` (ingresses.rs)
+- [x] Task 3.6: Skip — `render_ingress_classes` has no non-trivial derived cells
+- [x] Task 3.7: Add derived cell cache to `render_helm_releases` (helm.rs)
+- [x] Task 3.8: Skip — `render_helm_repos` has no non-trivial derived cells
+- [x] Task 3.9: Skip — `render_flux_resources` already has comprehensive cache
+
+### Verification
+
+- [x] All tests pass (626 passing)
+- [x] All table views with non-trivial derived cells now use caches
+- [x] No stale data on snapshot/query/filter changes
 
 ## Phase 4: Performance Validation
 
-Measure improvement using the 5-run median protocol.
-
 ### Tasks
 
-- [ ] Task 4.1: Run 5-run baseline profiling (pre-cache)
-- [ ] Task 4.2: Run 5-run candidate profiling (with cache)
+- [ ] Task 4.1: Run 5-run baseline profiling (pre-patch)
+- [ ] Task 4.2: Run 5-run candidate profiling (with all caches)
 - [ ] Task 4.3: Compare medians for `render`, `sidebar`, `header` and per-view hotspots
-- [ ] Task 4.4: Revert any view integration that regresses
+- [ ] Task 4.4: Revert any view cache that regresses
 
 ### Verification
 
