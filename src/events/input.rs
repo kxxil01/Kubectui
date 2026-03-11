@@ -425,6 +425,12 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenRelationships => true,
+        AppAction::ConfirmDrainNode => {
+            if let Some(detail) = &mut app_state.detail_view {
+                detail.confirm_drain = true;
+            }
+            true
+        }
         AppAction::CordonNode | AppAction::UncordonNode => {
             // Handled in main.rs (needs async K8s call)
             true
@@ -439,6 +445,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::ResourceActionContext;
 
     #[test]
     fn test_apply_action_none() {
@@ -460,7 +467,10 @@ mod tests {
         use crate::policy::DetailAction;
         let mut app = AppState::default();
         app.command_palette
-            .open_with_context(Some(ResourceRef::Pod("test".into(), "default".into())));
+            .open_with_context(Some(ResourceActionContext {
+                resource: ResourceRef::Pod("test".into(), "default".into()),
+                node_unschedulable: None,
+            }));
         let changed = apply_action(
             AppAction::PaletteAction {
                 action: DetailAction::ViewYaml,

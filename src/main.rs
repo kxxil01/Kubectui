@@ -40,7 +40,7 @@ use kubectui::{
         probes::extract_probes_from_pod,
         workload_logs::{MAX_WORKLOAD_LOG_STREAMS, resolve_workload_log_targets},
     },
-    policy::DetailAction,
+    policy::{DetailAction, ResourceActionContext},
     state::{ClusterSnapshot, GlobalState, RefreshOptions},
     ui,
     workbench::{WorkbenchTabKey, WorkbenchTabState},
@@ -662,6 +662,57 @@ fn full_refresh_options(
     }
 }
 
+fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
+    matches!(
+        action,
+        DetailAction::Scale
+            | DetailAction::Restart
+            | DetailAction::Probes
+            | DetailAction::Delete
+            | DetailAction::EditYaml
+            | DetailAction::Trigger
+            | DetailAction::Cordon
+            | DetailAction::Uncordon
+            | DetailAction::Drain
+    )
+}
+
+fn map_palette_detail_action(action: DetailAction) -> AppAction {
+    match action {
+        DetailAction::ViewYaml => AppAction::OpenResourceYaml,
+        DetailAction::ViewEvents => AppAction::OpenResourceEvents,
+        DetailAction::Logs => AppAction::LogsViewerOpen,
+        DetailAction::Exec => AppAction::OpenExec,
+        DetailAction::PortForward => AppAction::PortForwardOpen,
+        DetailAction::Probes => AppAction::ProbePanelOpen,
+        DetailAction::Scale => AppAction::ScaleDialogOpen,
+        DetailAction::Restart => AppAction::RolloutRestart,
+        DetailAction::FluxReconcile => AppAction::FluxReconcile,
+        DetailAction::EditYaml => AppAction::EditYaml,
+        DetailAction::Delete => AppAction::DeleteResource,
+        DetailAction::Trigger => AppAction::TriggerCronJob,
+        DetailAction::ViewRelationships => AppAction::OpenRelationships,
+        DetailAction::Cordon => AppAction::CordonNode,
+        DetailAction::Uncordon => AppAction::UncordonNode,
+        DetailAction::Drain => AppAction::ConfirmDrainNode,
+    }
+}
+
+fn palette_action_requires_loaded_detail(action: &AppAction) -> bool {
+    matches!(
+        action,
+        AppAction::ScaleDialogOpen
+            | AppAction::RolloutRestart
+            | AppAction::ProbePanelOpen
+            | AppAction::DeleteResource
+            | AppAction::EditYaml
+            | AppAction::TriggerCronJob
+            | AppAction::CordonNode
+            | AppAction::UncordonNode
+            | AppAction::ConfirmDrainNode
+    )
+}
+
 fn view_prefers_secondary_refresh(view: AppView) -> bool {
     !matches!(
         view,
@@ -1100,15 +1151,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
         // Check if a deferred palette action is ready to dispatch.
         let pending_action_ready = pending_palette_action.as_ref().is_some_and(|a| {
-            let needs_loaded_detail = matches!(
-                a,
-                AppAction::ScaleDialogOpen
-                    | AppAction::RolloutRestart
-                    | AppAction::ProbePanelOpen
-                    | AppAction::DeleteResource
-                    | AppAction::EditYaml
-                    | AppAction::TriggerCronJob
-            );
+            let needs_loaded_detail = palette_action_requires_loaded_detail(a);
             !needs_loaded_detail
                 || app
                     .detail_view
@@ -2203,8 +2246,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     let resource_ctx = app
                         .detail_view
                         .as_ref()
-                        .and_then(|d| d.resource.clone())
-                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                        .and_then(|d| d.resource_action_context())
+                        .or_else(|| selected_resource_context(&app, &cached_snapshot));
                     app.command_palette.open_with_context(resource_ctx);
                 }
                 AppAction::CloseCommandPalette => {
@@ -2213,40 +2256,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 AppAction::PaletteAction { action, resource } => {
                     app.command_palette.close();
 
-                    let mapped = match action {
-                        DetailAction::ViewYaml => AppAction::OpenResourceYaml,
-                        DetailAction::ViewEvents => AppAction::OpenResourceEvents,
-                        DetailAction::Logs => AppAction::LogsViewerOpen,
-                        DetailAction::Exec => AppAction::OpenExec,
-                        DetailAction::PortForward => AppAction::PortForwardOpen,
-                        DetailAction::Probes => AppAction::ProbePanelOpen,
-                        DetailAction::Scale => AppAction::ScaleDialogOpen,
-                        DetailAction::Restart => AppAction::RolloutRestart,
-                        DetailAction::FluxReconcile => AppAction::FluxReconcile,
-                        DetailAction::EditYaml => AppAction::EditYaml,
-                        DetailAction::Delete => AppAction::DeleteResource,
-                        DetailAction::Trigger => AppAction::TriggerCronJob,
-                        DetailAction::ViewRelationships => AppAction::OpenRelationships,
-                        DetailAction::Cordon => AppAction::CordonNode,
-                        DetailAction::Uncordon => AppAction::UncordonNode,
-                        DetailAction::Drain => {
-                            // Open drain confirmation — don't dispatch immediately
-                            if let Some(detail) = &mut app.detail_view {
-                                detail.confirm_drain = true;
-                            }
-                            continue;
-                        }
-                    };
-
-                    let needs_detail = matches!(
-                        action,
-                        DetailAction::Scale
-                            | DetailAction::Restart
-                            | DetailAction::Probes
-                            | DetailAction::Delete
-                            | DetailAction::EditYaml
-                            | DetailAction::Trigger
-                    );
+                    let mapped = map_palette_detail_action(action);
+                    let needs_detail = palette_detail_action_needs_detail(action);
 
                     if needs_detail && app.detail_view.is_none() {
                         open_detail_for_resource(
@@ -3356,6 +3367,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         });
                     }
                 }
+                AppAction::ConfirmDrainNode => {
+                    if let Some(detail) = &mut app.detail_view
+                        && detail.supports_action(DetailAction::Drain)
+                    {
+                        detail.confirm_drain = true;
+                    }
+                }
                 AppAction::CordonNode if !node_op_in_flight => {
                     let node_name = app.detail_view.as_ref().and_then(|d| {
                         if let Some(ResourceRef::Node(name)) = &d.resource {
@@ -4064,12 +4082,26 @@ where
     F: Fn(&T, &str) -> bool,
 {
     if query.is_empty() {
-        return items.get(idx);
+        return items.get(idx.min(items.len().saturating_sub(1)));
     }
-    items
+    let mut last_match = None;
+    for (match_idx, item) in items
         .iter()
         .filter(|item| text_fields(item, query))
-        .nth(idx)
+        .enumerate()
+    {
+        last_match = Some(item);
+        if match_idx == idx {
+            return Some(item);
+        }
+    }
+    last_match
+}
+
+fn filtered_index(indices: &[usize], idx: usize) -> Option<usize> {
+    indices
+        .get(idx.min(indices.len().saturating_sub(1)))
+        .copied()
 }
 
 fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<ResourceRef> {
@@ -4093,15 +4125,15 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                     })
                 },
             );
-            indices.get(idx).map(|node_idx| {
-                let node = &snapshot.nodes[*node_idx];
+            filtered_index(&indices, idx).map(|node_idx| {
+                let node = &snapshot.nodes[node_idx];
                 ResourceRef::Node(node.name.clone())
             })
         }
         AppView::Pods => {
             let indices = filtered_pod_indices(&snapshot.pods, q, app.pod_sort());
-            indices.get(idx).map(|pod_idx| {
-                let pod = &snapshot.pods[*pod_idx];
+            filtered_index(&indices, idx).map(|pod_idx| {
+                let pod = &snapshot.pods[pod_idx];
                 ResourceRef::Pod(pod.name.clone(), pod.namespace.clone())
             })
         }
@@ -4119,8 +4151,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |svc| svc.namespace.as_str(),
                 |svc| svc.age,
             );
-            indices.get(idx).map(|svc_idx| {
-                let svc = &snapshot.services[*svc_idx];
+            filtered_index(&indices, idx).map(|svc_idx| {
+                let svc = &snapshot.services[svc_idx];
                 ResourceRef::Service(svc.name.clone(), svc.namespace.clone())
             })
         }
@@ -4137,8 +4169,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |rq| rq.namespace.as_str(),
                 |rq| rq.age,
             );
-            indices.get(idx).map(|rq_idx| {
-                let rq = &snapshot.resource_quotas[*rq_idx];
+            filtered_index(&indices, idx).map(|rq_idx| {
+                let rq = &snapshot.resource_quotas[rq_idx];
                 ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone())
             })
         }
@@ -4158,8 +4190,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |lr| lr.namespace.as_str(),
                 |lr| lr.age,
             );
-            indices.get(idx).map(|lr_idx| {
-                let lr = &snapshot.limit_ranges[*lr_idx];
+            filtered_index(&indices, idx).map(|lr_idx| {
+                let lr = &snapshot.limit_ranges[lr_idx];
                 ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone())
             })
         }
@@ -4177,8 +4209,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |pdb| pdb.namespace.as_str(),
                 |pdb| pdb.age,
             );
-            indices.get(idx).map(|pdb_idx| {
-                let pdb = &snapshot.pod_disruption_budgets[*pdb_idx];
+            filtered_index(&indices, idx).map(|pdb_idx| {
+                let pdb = &snapshot.pod_disruption_budgets[pdb_idx];
                 ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone())
             })
         }
@@ -4194,8 +4226,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |deploy| deploy.namespace.as_str(),
                 |deploy| deploy.age,
             );
-            indices.get(idx).map(|deploy_idx| {
-                let deploy = &snapshot.deployments[*deploy_idx];
+            filtered_index(&indices, idx).map(|deploy_idx| {
+                let deploy = &snapshot.deployments[deploy_idx];
                 ResourceRef::Deployment(deploy.name.clone(), deploy.namespace.clone())
             })
         }
@@ -4212,8 +4244,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |ss| ss.namespace.as_str(),
                 |ss| ss.age,
             );
-            indices.get(idx).map(|ss_idx| {
-                let ss = &snapshot.statefulsets[*ss_idx];
+            filtered_index(&indices, idx).map(|ss_idx| {
+                let ss = &snapshot.statefulsets[ss_idx];
                 ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone())
             })
         }
@@ -4236,8 +4268,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |ds| ds.namespace.as_str(),
                 |ds| ds.age,
             );
-            indices.get(idx).map(|ds_idx| {
-                let ds = &snapshot.daemonsets[*ds_idx];
+            filtered_index(&indices, idx).map(|ds_idx| {
+                let ds = &snapshot.daemonsets[ds_idx];
                 ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone())
             })
         }
@@ -4251,8 +4283,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |rs| rs.namespace.as_str(),
                 |rs| rs.age,
             );
-            indices.get(idx).map(|rs_idx| {
-                let rs = &snapshot.replicasets[*rs_idx];
+            filtered_index(&indices, idx).map(|rs_idx| {
+                let rs = &snapshot.replicasets[rs_idx];
                 ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone())
             })
         }
@@ -4266,8 +4298,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |rc| rc.namespace.as_str(),
                 |rc| rc.age,
             );
-            indices.get(idx).map(|rc_idx| {
-                let rc = &snapshot.replication_controllers[*rc_idx];
+            filtered_index(&indices, idx).map(|rc_idx| {
+                let rc = &snapshot.replication_controllers[rc_idx];
                 ResourceRef::ReplicationController(rc.name.clone(), rc.namespace.clone())
             })
         }
@@ -4281,8 +4313,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |job| job.namespace.as_str(),
                 |job| job.age,
             );
-            indices.get(idx).map(|job_idx| {
-                let job = &snapshot.jobs[*job_idx];
+            filtered_index(&indices, idx).map(|job_idx| {
+                let job = &snapshot.jobs[job_idx];
                 ResourceRef::Job(job.name.clone(), job.namespace.clone())
             })
         }
@@ -4296,8 +4328,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |cj| cj.namespace.as_str(),
                 |cj| cj.age,
             );
-            indices.get(idx).map(|cj_idx| {
-                let cj = &snapshot.cronjobs[*cj_idx];
+            filtered_index(&indices, idx).map(|cj_idx| {
+                let cj = &snapshot.cronjobs[cj_idx];
                 ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone())
             })
         }
@@ -4343,8 +4375,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |pvc| pvc.namespace.as_str(),
                 |_pvc| None,
             );
-            indices.get(idx).map(|pvc_idx| {
-                let pvc = &snapshot.pvcs[*pvc_idx];
+            filtered_index(&indices, idx).map(|pvc_idx| {
+                let pvc = &snapshot.pvcs[pvc_idx];
                 ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone())
             })
         }
@@ -4358,9 +4390,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |_pv| "",
                 |_pv| None,
             );
-            indices
-                .get(idx)
-                .map(|pv_idx| ResourceRef::Pv(snapshot.pvs[*pv_idx].name.clone()))
+            filtered_index(&indices, idx)
+                .map(|pv_idx| ResourceRef::Pv(snapshot.pvs[pv_idx].name.clone()))
         }
         AppView::StorageClasses => {
             let indices = filtered_workload_indices(
@@ -4372,8 +4403,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |_sc| "",
                 |_sc| None,
             );
-            indices.get(idx).map(|sc_idx| {
-                ResourceRef::StorageClass(snapshot.storage_classes[*sc_idx].name.clone())
+            filtered_index(&indices, idx).map(|sc_idx| {
+                ResourceRef::StorageClass(snapshot.storage_classes[sc_idx].name.clone())
             })
         }
         AppView::Namespaces => filtered_get(&snapshot.namespace_list, idx, q, |ns, q| {
@@ -4394,8 +4425,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |sa| sa.namespace.as_str(),
                 |sa| sa.age,
             );
-            indices.get(idx).map(|sa_idx| {
-                let sa = &snapshot.service_accounts[*sa_idx];
+            filtered_index(&indices, idx).map(|sa_idx| {
+                let sa = &snapshot.service_accounts[sa_idx];
                 ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone())
             })
         }
@@ -4411,8 +4442,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |role| role.namespace.as_str(),
                 |role| role.age,
             );
-            indices.get(idx).map(|role_idx| {
-                let role = &snapshot.roles[*role_idx];
+            filtered_index(&indices, idx).map(|role_idx| {
+                let role = &snapshot.roles[role_idx];
                 ResourceRef::Role(role.name.clone(), role.namespace.clone())
             })
         }
@@ -4430,8 +4461,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |rb| rb.namespace.as_str(),
                 |rb| rb.age,
             );
-            indices.get(idx).map(|rb_idx| {
-                let rb = &snapshot.role_bindings[*rb_idx];
+            filtered_index(&indices, idx).map(|rb_idx| {
+                let rb = &snapshot.role_bindings[rb_idx];
                 ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone())
             })
         }
@@ -4445,9 +4476,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |_cr| "",
                 |cr| cr.age,
             );
-            indices.get(idx).map(|cr_idx| {
-                ResourceRef::ClusterRole(snapshot.cluster_roles[*cr_idx].name.clone())
-            })
+            filtered_index(&indices, idx)
+                .map(|cr_idx| ResourceRef::ClusterRole(snapshot.cluster_roles[cr_idx].name.clone()))
         }
         AppView::ClusterRoleBindings => {
             let indices = filtered_workload_indices(
@@ -4461,9 +4491,9 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 |_crb| "",
                 |crb| crb.age,
             );
-            indices.get(idx).map(|crb_idx| {
+            filtered_index(&indices, idx).map(|crb_idx| {
                 ResourceRef::ClusterRoleBinding(
-                    snapshot.cluster_role_bindings[*crb_idx].name.clone(),
+                    snapshot.cluster_role_bindings[crb_idx].name.clone(),
                 )
             })
         }
@@ -4514,9 +4544,8 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 q,
                 app.workload_sort(),
             );
-            filtered
-                .get(idx)
-                .and_then(|resource_idx| snapshot.flux_resources.get(*resource_idx))
+            filtered_index(&filtered, idx)
+                .and_then(|resource_idx| snapshot.flux_resources.get(resource_idx))
                 .map(|r| ResourceRef::CustomResource {
                     name: r.name.clone(),
                     namespace: r.namespace.clone(),
@@ -4527,6 +4556,25 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 })
         }
     }
+}
+
+fn selected_resource_context(
+    app: &AppState,
+    snapshot: &ClusterSnapshot,
+) -> Option<ResourceActionContext> {
+    let resource = selected_resource(app, snapshot)?;
+    let node_unschedulable = match &resource {
+        ResourceRef::Node(name) => snapshot
+            .nodes
+            .iter()
+            .find(|node| &node.name == name)
+            .map(|node| node.unschedulable),
+        _ => None,
+    };
+    Some(ResourceActionContext {
+        resource,
+        node_unschedulable,
+    })
 }
 
 fn selected_flux_reconcile_resource(
@@ -4696,6 +4744,7 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                     name: node.name.clone(),
                     namespace: None,
                     status: Some(if node.ready { "Ready" } else { "NotReady" }.to_string()),
+                    node_unschedulable: Some(node.unschedulable),
                     node: Some(node.name.clone()),
                     ip: None,
                     created: None,
@@ -5699,10 +5748,15 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
 
 #[cfg(test)]
 mod tests {
-    use super::{selected_flux_reconcile_resource, workbench_follow_streams_to_stop};
+    use super::{
+        map_palette_detail_action, palette_action_requires_loaded_detail,
+        selected_flux_reconcile_resource, selected_resource, workbench_follow_streams_to_stop,
+    };
+    use chrono::Utc;
     use kubectui::{
         app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
-        k8s::dtos::FluxResourceInfo,
+        k8s::dtos::{FluxResourceInfo, NodeInfo},
+        policy::DetailAction,
         state::ClusterSnapshot,
         workbench::{PodLogsTabState, WorkbenchTabState},
     };
@@ -5778,5 +5832,52 @@ mod tests {
         let app = AppState::default();
         let streams = workbench_follow_streams_to_stop(&app, AppAction::WorkbenchCloseActiveTab);
         assert!(streams.is_empty());
+    }
+
+    #[test]
+    fn selected_resource_clamps_to_last_visible_filtered_row() {
+        let mut app = AppState::default();
+        app.view = AppView::Nodes;
+        app.focus = kubectui::app::Focus::Content;
+        app.selected_idx = 8;
+        app.search_query = "worker".to_string();
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes = vec![
+            NodeInfo {
+                name: "control-plane".to_string(),
+                created_at: Some(Utc::now()),
+                ..NodeInfo::default()
+            },
+            NodeInfo {
+                name: "worker-a".to_string(),
+                created_at: Some(Utc::now()),
+                ..NodeInfo::default()
+            },
+        ];
+
+        let selected = selected_resource(&app, &snapshot).expect("selected resource");
+        assert_eq!(selected, ResourceRef::Node("worker-a".to_string()));
+    }
+
+    #[test]
+    fn palette_node_actions_require_loaded_detail() {
+        assert!(palette_action_requires_loaded_detail(
+            &AppAction::CordonNode
+        ));
+        assert!(palette_action_requires_loaded_detail(
+            &AppAction::UncordonNode
+        ));
+        assert!(palette_action_requires_loaded_detail(
+            &AppAction::ConfirmDrainNode
+        ));
+    }
+
+    #[test]
+    fn palette_drain_maps_to_confirmation_action() {
+        assert_eq!(
+            map_palette_detail_action(DetailAction::Drain),
+            AppAction::ConfirmDrainNode
+        );
     }
 }

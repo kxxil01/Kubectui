@@ -53,6 +53,12 @@ pub enum DetailAction {
     Drain,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResourceActionContext {
+    pub resource: ResourceRef,
+    pub node_unschedulable: Option<bool>,
+}
+
 impl DetailAction {
     pub const ORDER: [DetailAction; 16] = [
         DetailAction::ViewYaml,
@@ -345,7 +351,11 @@ impl ResourceRef {
         }
     }
 
-    pub fn supports_detail_action(&self, action: DetailAction) -> bool {
+    pub fn supports_detail_action(
+        &self,
+        action: DetailAction,
+        node_unschedulable: Option<bool>,
+    ) -> bool {
         match action {
             DetailAction::ViewYaml | DetailAction::ViewEvents => true,
             DetailAction::Logs => matches!(
@@ -379,14 +389,32 @@ impl ResourceRef {
             DetailAction::ViewRelationships => {
                 crate::k8s::relationships::resource_has_relationships(self)
             }
-            DetailAction::Cordon | DetailAction::Uncordon | DetailAction::Drain => {
-                matches!(self, ResourceRef::Node(_))
+            DetailAction::Cordon => {
+                matches!(self, ResourceRef::Node(_)) && !node_unschedulable.unwrap_or(false)
             }
+            DetailAction::Uncordon => {
+                matches!(self, ResourceRef::Node(_)) && node_unschedulable.unwrap_or(false)
+            }
+            DetailAction::Drain => matches!(self, ResourceRef::Node(_)),
         }
     }
 }
 
+impl ResourceActionContext {
+    pub fn supports_action(&self, action: DetailAction) -> bool {
+        self.resource
+            .supports_detail_action(action, self.node_unschedulable)
+    }
+}
+
 impl DetailViewState {
+    pub fn resource_action_context(&self) -> Option<ResourceActionContext> {
+        self.resource.clone().map(|resource| ResourceActionContext {
+            resource,
+            node_unschedulable: self.metadata.node_unschedulable,
+        })
+    }
+
     pub fn has_blocking_detail_overlay(&self) -> bool {
         self.scale_dialog.is_some()
             || self.probe_panel.is_some()
@@ -395,7 +423,7 @@ impl DetailViewState {
     }
 
     pub fn supports_action(&self, action: DetailAction) -> bool {
-        let Some(resource) = self.resource.as_ref() else {
+        let Some(resource) = self.resource_action_context() else {
             return false;
         };
 
@@ -429,7 +457,7 @@ impl DetailViewState {
             return false;
         }
 
-        resource.supports_detail_action(action)
+        resource.supports_action(action)
     }
 
     pub fn footer_actions(&self) -> Vec<DetailAction> {
@@ -517,45 +545,65 @@ mod tests {
     #[test]
     fn view_relationships_available_for_relationship_capable_resources() {
         let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
-        assert!(pod.supports_detail_action(DetailAction::ViewRelationships));
+        assert!(pod.supports_detail_action(DetailAction::ViewRelationships, None));
 
         let deploy = ResourceRef::Deployment("api".to_string(), "ns".to_string());
-        assert!(deploy.supports_detail_action(DetailAction::ViewRelationships));
+        assert!(deploy.supports_detail_action(DetailAction::ViewRelationships, None));
 
         let svc = ResourceRef::Service("svc".to_string(), "ns".to_string());
-        assert!(svc.supports_detail_action(DetailAction::ViewRelationships));
+        assert!(svc.supports_detail_action(DetailAction::ViewRelationships, None));
 
         let pvc = ResourceRef::Pvc("pvc".to_string(), "ns".to_string());
-        assert!(pvc.supports_detail_action(DetailAction::ViewRelationships));
+        assert!(pvc.supports_detail_action(DetailAction::ViewRelationships, None));
     }
 
     #[test]
     fn view_relationships_unavailable_for_non_relationship_resources() {
         let node = ResourceRef::Node("node-0".to_string());
-        assert!(!node.supports_detail_action(DetailAction::ViewRelationships));
+        assert!(!node.supports_detail_action(DetailAction::ViewRelationships, None));
 
         let cm = ResourceRef::ConfigMap("cm".to_string(), "ns".to_string());
-        assert!(!cm.supports_detail_action(DetailAction::ViewRelationships));
+        assert!(!cm.supports_detail_action(DetailAction::ViewRelationships, None));
     }
 
     #[test]
-    fn node_supports_cordon_uncordon_drain() {
+    fn node_actions_are_state_aware() {
         let node = ResourceRef::Node("node-0".to_string());
-        assert!(node.supports_detail_action(DetailAction::Cordon));
-        assert!(node.supports_detail_action(DetailAction::Uncordon));
-        assert!(node.supports_detail_action(DetailAction::Drain));
+        assert!(node.supports_detail_action(DetailAction::Cordon, Some(false)));
+        assert!(!node.supports_detail_action(DetailAction::Uncordon, Some(false)));
+        assert!(node.supports_detail_action(DetailAction::Drain, Some(false)));
+
+        assert!(!node.supports_detail_action(DetailAction::Cordon, Some(true)));
+        assert!(node.supports_detail_action(DetailAction::Uncordon, Some(true)));
+        assert!(node.supports_detail_action(DetailAction::Drain, Some(true)));
     }
 
     #[test]
     fn non_node_resources_do_not_support_node_ops() {
         let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
-        assert!(!pod.supports_detail_action(DetailAction::Cordon));
-        assert!(!pod.supports_detail_action(DetailAction::Uncordon));
-        assert!(!pod.supports_detail_action(DetailAction::Drain));
+        assert!(!pod.supports_detail_action(DetailAction::Cordon, None));
+        assert!(!pod.supports_detail_action(DetailAction::Uncordon, None));
+        assert!(!pod.supports_detail_action(DetailAction::Drain, None));
 
         let deploy = ResourceRef::Deployment("api".to_string(), "ns".to_string());
-        assert!(!deploy.supports_detail_action(DetailAction::Cordon));
-        assert!(!deploy.supports_detail_action(DetailAction::Drain));
+        assert!(!deploy.supports_detail_action(DetailAction::Cordon, None));
+        assert!(!deploy.supports_detail_action(DetailAction::Drain, None));
+    }
+
+    #[test]
+    fn detail_node_actions_follow_unschedulable_state() {
+        let mut detail = DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            ..DetailViewState::default()
+        };
+        detail.metadata.node_unschedulable = Some(false);
+        assert!(detail.supports_action(DetailAction::Cordon));
+        assert!(!detail.supports_action(DetailAction::Uncordon));
+
+        detail.metadata.node_unschedulable = Some(true);
+        assert!(!detail.supports_action(DetailAction::Cordon));
+        assert!(detail.supports_action(DetailAction::Uncordon));
     }
 
     #[test]

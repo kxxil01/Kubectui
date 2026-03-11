@@ -991,6 +991,7 @@ pub struct DetailMetadata {
     pub name: String,
     pub namespace: Option<String>,
     pub status: Option<String>,
+    pub node_unschedulable: Option<bool>,
     pub node: Option<String>,
     pub ip: Option<String>,
     pub created: Option<String>,
@@ -1358,6 +1359,7 @@ pub enum AppAction {
         resource: ResourceRef,
     },
     OpenRelationships,
+    ConfirmDrainNode,
     CordonNode,
     UncordonNode,
     DrainNode,
@@ -3802,11 +3804,13 @@ mod tests {
     #[test]
     fn u_key_returns_uncordon_in_node_detail() {
         let mut app = AppState::default();
-        app.detail_view = Some(DetailViewState {
+        let mut detail = DetailViewState {
             resource: Some(ResourceRef::Node("node-0".to_string())),
             yaml: Some("kind: Node".to_string()),
             ..DetailViewState::default()
-        });
+        };
+        detail.metadata.node_unschedulable = Some(true);
+        app.detail_view = Some(detail);
         let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::NONE));
         assert_eq!(action, AppAction::UncordonNode);
     }

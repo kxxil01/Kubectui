@@ -11,7 +11,7 @@ use ratatui::{
 use std::cell::RefCell;
 
 use crate::app::{AppView, ResourceRef};
-use crate::policy::DetailAction;
+use crate::policy::{DetailAction, ResourceActionContext};
 
 /// Actions emitted by the command palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,13 +66,13 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     (DetailAction::Drain, &["drain", "evict"]),
 ];
 
-pub fn action_entries_for_resource(resource: Option<&ResourceRef>) -> Vec<ActionEntry> {
+pub fn action_entries_for_resource(resource: Option<&ResourceActionContext>) -> Vec<ActionEntry> {
     let Some(resource) = resource else {
         return Vec::new();
     };
     ACTION_ALIASES
         .iter()
-        .filter(|(action, _)| resource.supports_detail_action(*action))
+        .filter(|(action, _)| resource.supports_action(*action))
         .map(|(action, aliases)| ActionEntry {
             action: *action,
             aliases,
@@ -241,7 +241,7 @@ pub struct CommandPalette {
     selected_index: usize,
     is_open: bool,
     cached_filtered: RefCell<Option<Vec<PaletteEntry>>>,
-    resource_context: Option<ResourceRef>,
+    resource_context: Option<ResourceActionContext>,
 }
 
 impl CommandPalette {
@@ -249,7 +249,7 @@ impl CommandPalette {
         self.open_with_context(None);
     }
 
-    pub fn open_with_context(&mut self, resource: Option<ResourceRef>) {
+    pub fn open_with_context(&mut self, resource: Option<ResourceActionContext>) {
         self.query.clear();
         self.selected_index = 0;
         self.is_open = true;
@@ -266,7 +266,7 @@ impl CommandPalette {
         self.is_open
     }
 
-    pub fn resource_context(&self) -> Option<&ResourceRef> {
+    pub fn resource_context(&self) -> Option<&ResourceActionContext> {
         self.resource_context.as_ref()
     }
 
@@ -284,7 +284,7 @@ impl CommandPalette {
                         PaletteEntry::Navigate(view) => CommandPaletteAction::Navigate(*view),
                         PaletteEntry::Action(action) => {
                             if let Some(resource) = &self.resource_context {
-                                CommandPaletteAction::Execute(*action, resource.clone())
+                                CommandPaletteAction::Execute(*action, resource.resource.clone())
                             } else {
                                 CommandPaletteAction::None
                             }
@@ -301,7 +301,25 @@ impl CommandPalette {
                 }
                 CommandPaletteAction::None
             }
+            KeyCode::Char('j') => {
+                let len = self.filtered().len();
+                if len > 0 {
+                    self.selected_index = (self.selected_index + 1) % len;
+                }
+                CommandPaletteAction::None
+            }
             KeyCode::Up => {
+                let len = self.filtered().len();
+                if len > 0 {
+                    self.selected_index = if self.selected_index == 0 {
+                        len - 1
+                    } else {
+                        self.selected_index - 1
+                    };
+                }
+                CommandPaletteAction::None
+            }
+            KeyCode::Char('k') => {
                 let len = self.filtered().len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {
@@ -540,6 +558,14 @@ impl CommandPalette {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::ResourceActionContext;
+
+    fn ctx(resource: ResourceRef, node_unschedulable: Option<bool>) -> ResourceActionContext {
+        ResourceActionContext {
+            resource,
+            node_unschedulable,
+        }
+    }
 
     #[test]
     fn fuzzy_match_exact() {
@@ -622,6 +648,16 @@ mod tests {
     }
 
     #[test]
+    fn vim_navigation_moves_selection() {
+        let mut p = CommandPalette::default();
+        p.open();
+        p.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        assert_eq!(p.selected_index, 1);
+        p.handle_key(KeyEvent::from(KeyCode::Char('k')));
+        assert_eq!(p.selected_index, 0);
+    }
+
+    #[test]
     fn palette_entry_action_aliases_match() {
         let entries = action_entries_for_resource(None);
         assert!(entries.is_empty(), "No actions without resource");
@@ -629,8 +665,7 @@ mod tests {
 
     #[test]
     fn palette_entry_action_aliases_pod() {
-        use crate::app::ResourceRef;
-        let resource = ResourceRef::Pod("test".into(), "default".into());
+        let resource = ctx(ResourceRef::Pod("test".into(), "default".into()), None);
         let entries = action_entries_for_resource(Some(&resource));
         assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
         assert!(entries.iter().any(|e| e.action == DetailAction::Exec));
@@ -639,8 +674,10 @@ mod tests {
 
     #[test]
     fn palette_entry_action_aliases_deployment() {
-        use crate::app::ResourceRef;
-        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        let resource = ctx(
+            ResourceRef::Deployment("api".into(), "default".into()),
+            None,
+        );
         let entries = action_entries_for_resource(Some(&resource));
         assert!(entries.iter().any(|e| e.action == DetailAction::Scale));
         assert!(entries.iter().any(|e| e.action == DetailAction::Restart));
@@ -649,9 +686,23 @@ mod tests {
     }
 
     #[test]
+    fn palette_entry_node_actions_follow_unschedulable_state() {
+        let schedulable = ctx(ResourceRef::Node("node-a".into()), Some(false));
+        let entries = action_entries_for_resource(Some(&schedulable));
+        assert!(entries.iter().any(|e| e.action == DetailAction::Cordon));
+        assert!(!entries.iter().any(|e| e.action == DetailAction::Uncordon));
+
+        let unschedulable = ctx(ResourceRef::Node("node-a".into()), Some(true));
+        let entries = action_entries_for_resource(Some(&unschedulable));
+        assert!(!entries.iter().any(|e| e.action == DetailAction::Cordon));
+        assert!(entries.iter().any(|e| e.action == DetailAction::Uncordon));
+        assert!(entries.iter().any(|e| e.action == DetailAction::Drain));
+    }
+
+    #[test]
     fn palette_set_context_enables_actions() {
         let mut palette = CommandPalette::default();
-        let resource = ResourceRef::Pod("test".into(), "default".into());
+        let resource = ctx(ResourceRef::Pod("test".into(), "default".into()), None);
         palette.open_with_context(Some(resource.clone()));
         assert!(palette.is_open());
         assert!(palette.resource_context().is_some());
@@ -668,7 +719,10 @@ mod tests {
     #[test]
     fn filtered_returns_actions_then_navigation() {
         let mut palette = CommandPalette::default();
-        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        let resource = ctx(
+            ResourceRef::Deployment("api".into(), "default".into()),
+            None,
+        );
         palette.open_with_context(Some(resource));
         let entries = palette.filtered();
         let first_action_idx = entries
@@ -685,7 +739,10 @@ mod tests {
     #[test]
     fn filtered_with_query_matches_actions_and_views() {
         let mut palette = CommandPalette::default();
-        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        let resource = ctx(
+            ResourceRef::Deployment("api".into(), "default".into()),
+            None,
+        );
         palette.open_with_context(Some(resource));
         // Type "scl" which should fuzzy-match "scale"
         for c in "scl".chars() {
@@ -713,10 +770,9 @@ mod tests {
 
     #[test]
     fn handle_key_enter_on_action_returns_execute() {
-        use crate::app::ResourceRef;
         let mut palette = CommandPalette::default();
         let resource = ResourceRef::Pod("test".into(), "default".into());
-        palette.open_with_context(Some(resource.clone()));
+        palette.open_with_context(Some(ctx(resource.clone(), None)));
         // First entry should be an action (ViewYaml for Pod)
         let result = palette.handle_key(KeyEvent::from(KeyCode::Enter));
         match result {
@@ -729,9 +785,11 @@ mod tests {
 
     #[test]
     fn empty_query_with_context_shows_actions_and_views() {
-        use crate::app::ResourceRef;
         let mut palette = CommandPalette::default();
-        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        let resource = ctx(
+            ResourceRef::Deployment("api".into(), "default".into()),
+            None,
+        );
         palette.open_with_context(Some(resource));
         let entries = palette.filtered();
         let has_actions = entries.iter().any(|e| matches!(e, PaletteEntry::Action(_)));
