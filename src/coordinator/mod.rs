@@ -283,7 +283,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "requires live K8s cluster"]
     async fn test_coordinator_creation() {
         let (tx, _rx) = mpsc::channel(4096);
         let client = K8sClient::connect()
