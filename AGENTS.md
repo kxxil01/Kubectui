@@ -108,7 +108,11 @@ Run all of the following:
 4. Performance profiling check for changed render paths
 
 ## Git Rules
-- Use Conventional Commits (`perf:`, `fix:`, `refactor:`).
+- **NEVER push directly to main.** All changes must go through: new branch → open PR → merge PR to main.
+- Branch naming: `fix/description`, `feat/description`, `chore/description`, `refactor/description`
+- Use `gh pr create` to open PRs, `gh pr merge --squash --delete-branch` to merge.
+- This ensures an accountable changelog via PR history.
+- Use Conventional Commits (`feat:`, `fix:`, `chore:`, `refactor:`, `perf:`, `docs:`, `test:`).
 - Keep commits scoped to one measurable objective.
 - Ask before any destructive git action.
 - Ask before force-push (never default to force).
