@@ -246,6 +246,7 @@ fn apply_detail_state_to_workbench(app: &mut AppState, state: &DetailViewState) 
         events_tab.events = state.events.clone();
         events_tab.loading = false;
         events_tab.error = state.error.clone();
+        events_tab.rebuild_timeline(&app.action_history);
     }
 }
 

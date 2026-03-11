@@ -1603,12 +1603,16 @@ impl AppState {
         message: impl Into<String>,
     ) -> u64 {
         self.open_action_history_tab(false);
+        let affected_resource = resource.clone();
         let target = resource.map(|resource| ActionHistoryTarget {
             view: origin_view,
             resource,
         });
-        self.action_history
-            .record_pending(kind, resource_label, message, target)
+        let id = self
+            .action_history
+            .record_pending(kind, resource_label, message, target);
+        self.rebuild_timeline_for(affected_resource.as_ref());
+        id
     }
 
     pub fn complete_action_history(
@@ -1618,8 +1622,29 @@ impl AppState {
         message: impl Into<String>,
         keep_target: bool,
     ) {
+        // Look up the affected resource before completing (complete may clear target).
+        let affected_resource = self
+            .action_history
+            .find_by_id(entry_id)
+            .and_then(|e| e.target.as_ref().map(|t| t.resource.clone()));
         self.action_history
             .complete(entry_id, status, message, keep_target);
+        self.rebuild_timeline_for(affected_resource.as_ref());
+    }
+
+    /// Rebuild timeline only for the specific resource's tab (or all if resource is None).
+    fn rebuild_timeline_for(&mut self, resource: Option<&ResourceRef>) {
+        for tab in &mut self.workbench.tabs {
+            if let WorkbenchTabState::ResourceEvents(events_tab) = &mut tab.state {
+                let dominated = match resource {
+                    Some(r) => events_tab.resource == *r,
+                    None => true,
+                };
+                if dominated {
+                    events_tab.rebuild_timeline(&self.action_history);
+                }
+            }
+        }
     }
 
     pub fn selected_action_history_target(&self) -> Option<&ActionHistoryTarget> {
@@ -2016,6 +2041,7 @@ impl AppState {
         tab.events = events;
         tab.loading = loading;
         tab.error = error;
+        tab.rebuild_timeline(&self.action_history);
         self.workbench
             .open_tab(WorkbenchTabState::ResourceEvents(tab));
         self.focus = Focus::Workbench;
@@ -2206,34 +2232,37 @@ impl AppState {
                 }
                 _ => AppAction::None,
             },
-            WorkbenchTabState::ResourceEvents(tab) => match key.code {
-                KeyCode::Esc => AppAction::EscapePressed,
-                KeyCode::Char('j') | KeyCode::Down => {
-                    tab.scroll = tab.scroll.saturating_add(1);
-                    AppAction::None
+            WorkbenchTabState::ResourceEvents(tab) => {
+                let max_scroll = tab.timeline.len().saturating_sub(1);
+                match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.scroll = tab.scroll.saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.scroll = 0;
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        tab.scroll = max_scroll;
+                        AppAction::None
+                    }
+                    KeyCode::PageDown => {
+                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::PageUp => {
+                        tab.scroll = tab.scroll.saturating_sub(10);
+                        AppAction::None
+                    }
+                    _ => AppAction::None,
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    tab.scroll = tab.scroll.saturating_sub(1);
-                    AppAction::None
-                }
-                KeyCode::Char('g') => {
-                    tab.scroll = 0;
-                    AppAction::None
-                }
-                KeyCode::Char('G') => {
-                    tab.scroll = tab.events.len().saturating_sub(1);
-                    AppAction::None
-                }
-                KeyCode::PageDown => {
-                    tab.scroll = tab.scroll.saturating_add(10);
-                    AppAction::None
-                }
-                KeyCode::PageUp => {
-                    tab.scroll = tab.scroll.saturating_sub(10);
-                    AppAction::None
-                }
-                _ => AppAction::None,
-            },
+            }
             WorkbenchTabState::PodLogs(tab) => match key.code {
                 KeyCode::Esc if !tab.viewer.searching => AppAction::EscapePressed,
                 KeyCode::Char('k') | KeyCode::Up => {

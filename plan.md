@@ -25,6 +25,7 @@ Current milestone status:
 - Milestone 10: completed
 - Milestone 11: completed
 - Milestone 12: completed
+- Milestone 13: completed
 
 Completion notes:
 
@@ -51,7 +52,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 552 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 602 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -151,7 +152,7 @@ KubecTUI already has:
 - per-view loading state with explicit loading/refreshing/ready/empty/error states
 - responsive layouts with sidebar + content + workbench split
 - shared sorting across workloads and pods with ascending/descending toggle
-- bottom workbench with 8 persistent tab types (ActionHistory, YAML, Events, PodLogs, WorkloadLogs, Exec, PortForward, Relations)
+- bottom workbench with 8 persistent tab types (ActionHistory, YAML, Timeline, PodLogs, WorkloadLogs, Exec, PortForward, Relations)
 - workbench maximize (`z` to fullscreen, Esc to restore), resizable height (8-40 lines)
 - pod logs with container picker, "All Containers" option, follow mode
 - workload-level log aggregation with pod/container/text filtering
@@ -842,7 +843,21 @@ Make problem-centered operations first-class.
 
 ### Status
 
-Planned
+Completed
+
+### What shipped
+
+- Unified per-resource Timeline tab (upgraded from Events tab) merging K8s events with action history entries
+- Chronological sorting with timestamps displayed on every line (HH:MM:SS in local timezone)
+- 5-minute correlation window: K8s events following a user action are visually marked with `~` prefix in accent2 color
+- User actions rendered with `>>>` prefix in accent color with status badges (OK/PENDING/ERROR)
+- Timeline auto-rebuilds when action history changes, scoped to the affected resource's tab only
+- Sort tiebreaker: Actions sort before Events at equal timestamps for deterministic correlation
+- Scroll bounds clamped after rebuild to prevent stale scroll positions
+- Render optimization: only visible window lines built per frame (O(visible) not O(n))
+- `truncate_message` returns `Cow<str>` for zero-alloc fast path, handles edge cases (max_chars < 4, Unicode)
+- Events capped at MAX_TIMELINE_EVENTS=200 per tab to bound memory
+- 20 timeline tests + 10 truncate_message tests covering merge, sort, correlation (within/outside/boundary/overlapping/same-timestamp), filtering, status variants, edge cases
 
 ### Goal
 
@@ -1041,7 +1056,7 @@ This is the execution order.
 ## P3 (Current)
 
 - Milestone 12: Issue Center ✅
-- Milestone 13: Timeline & Correlation
+- Milestone 13: Timeline & Correlation ✅
 - Milestone 14: View Personalization
 
 ## P4
@@ -1052,7 +1067,7 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M11 are complete. The next real implementation work should pick from the remaining gaps/milestones (e.g., CRD management, batch actions, multi-cluster, or other P1/P2 items).
+M0-M13 are complete. The next milestone is M14: View Personalization (persisted sort, columns, workspace preferences).
 
 Do not start next with:
 
@@ -1239,7 +1254,8 @@ The correct path is:
 - close discoverability and QoL gaps (done)
 - add clipboard and export (done)
 - add enhanced detail, action palette (done)
-- add node operations, issues
+- add node operations, issues (done)
+- add timeline and event correlation (done)
 - preserve speed at every step
 
 This milestone plan is now the canonical implementation roadmap.

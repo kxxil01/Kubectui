@@ -136,6 +136,10 @@ impl ActionHistoryState {
         self.entries.get(index)
     }
 
+    pub fn find_by_id(&self, id: u64) -> Option<&ActionHistoryEntry> {
+        self.entries.iter().find(|e| e.id == id)
+    }
+
     fn trim_to_limit(&mut self) {
         while self.entries.len() > MAX_ACTION_HISTORY_ENTRIES {
             self.entries.pop_back();

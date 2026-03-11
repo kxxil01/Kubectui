@@ -1,8 +1,10 @@
 //! Canonical workbench state for long-lived bottom-pane surfaces.
 
 use crate::{
+    action_history::ActionHistoryState,
     app::{LogsViewerState, ResourceRef},
     k8s::client::EventInfo,
+    timeline::{TimelineEntry, build_timeline},
     ui::components::port_forward_dialog::PortForwardDialog,
 };
 
@@ -11,6 +13,7 @@ pub const MIN_WORKBENCH_HEIGHT: u16 = 8;
 pub const MAX_WORKBENCH_HEIGHT: u16 = 40;
 pub const MAX_WORKLOAD_LOG_LINES: usize = 5_000;
 pub const MAX_EXEC_OUTPUT_LINES: usize = 5_000;
+pub const MAX_TIMELINE_EVENTS: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkbenchTabKind {
@@ -29,7 +32,7 @@ impl WorkbenchTabKind {
         match self {
             WorkbenchTabKind::ActionHistory => "History",
             WorkbenchTabKind::ResourceYaml => "YAML",
-            WorkbenchTabKind::ResourceEvents => "Events",
+            WorkbenchTabKind::ResourceEvents => "Timeline",
             WorkbenchTabKind::PodLogs => "Logs",
             WorkbenchTabKind::WorkloadLogs => "Workload Logs",
             WorkbenchTabKind::Exec => "Exec",
@@ -103,6 +106,7 @@ impl ResourceYamlTabState {
 pub struct ResourceEventsTabState {
     pub resource: ResourceRef,
     pub events: Vec<EventInfo>,
+    pub timeline: Vec<TimelineEntry>,
     pub scroll: usize,
     pub loading: bool,
     pub error: Option<String>,
@@ -113,9 +117,25 @@ impl ResourceEventsTabState {
         Self {
             resource,
             events: Vec::new(),
+            timeline: Vec::new(),
             scroll: 0,
             loading: true,
             error: None,
+        }
+    }
+
+    /// Rebuild the merged timeline from current events + action history.
+    pub fn rebuild_timeline(&mut self, history: &ActionHistoryState) {
+        // Cap events to avoid unbounded growth from noisy controllers.
+        if self.events.len() > MAX_TIMELINE_EVENTS {
+            let drain = self.events.len() - MAX_TIMELINE_EVENTS;
+            self.events.drain(..drain);
+        }
+        self.timeline = build_timeline(&self.events, history.entries(), &self.resource);
+        // Clamp scroll so it doesn't exceed the new timeline length.
+        let max = self.timeline.len().saturating_sub(1);
+        if self.scroll > max {
+            self.scroll = max;
         }
     }
 }

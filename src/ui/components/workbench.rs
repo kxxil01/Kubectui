@@ -1,5 +1,7 @@
 //! Bottom workbench renderer.
 
+use std::borrow::Cow;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     prelude::{Frame, Modifier, Style},
@@ -107,7 +109,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             )]),
             Line::from(""),
             Line::from("  Open a resource tab with:"),
-            Line::from("  [y] YAML  [v] Events  [l] Logs  [x] Exec  [f] Port-Forward"),
+            Line::from("  [y] YAML  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward"),
             Line::from(""),
             Line::from("  [H] opens action history."),
             Line::from("  [b] closes the workbench, [Ctrl+W] closes the active tab."),
@@ -265,6 +267,8 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
 }
 
 fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &WorkbenchTab) {
+    use crate::timeline::TimelineEntry;
+
     let theme = default_theme();
     let WorkbenchTabState::ResourceEvents(tab_state) = &tab.state else {
         return;
@@ -272,7 +276,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
 
     if tab_state.loading {
         frame.render_widget(
-            Paragraph::new(Span::styled(" Loading events...", theme.inactive_style())),
+            Paragraph::new(Span::styled(" Loading timeline...", theme.inactive_style())),
             area,
         );
         return;
@@ -289,10 +293,10 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
         return;
     }
 
-    if tab_state.events.is_empty() {
+    if tab_state.timeline.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled(
-                " No events for this resource",
+                " No timeline entries for this resource",
                 theme.inactive_style(),
             )),
             area,
@@ -300,35 +304,109 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
         return;
     }
 
-    let lines: Vec<Line> = tab_state
-        .events
+    let total = tab_state.timeline.len();
+    let visible_height = area.height.saturating_sub(1) as usize;
+    let start = scroll.min(total.saturating_sub(1));
+    let end = (start + visible_height).min(total);
+
+    // Only build Line objects for the visible window to avoid per-frame allocations
+    // for off-screen entries.
+    let lines: Vec<Line> = tab_state.timeline[start..end]
         .iter()
-        .map(|event| {
-            let badge = if event.event_type.eq_ignore_ascii_case("warning") {
-                Span::styled(" WARN ", theme.badge_warning_style())
-            } else {
-                Span::styled(" OK ", theme.badge_success_style())
-            };
-            Line::from(vec![
-                badge,
-                Span::raw(" "),
-                Span::styled(
-                    format!("{} (x{}) ", event.reason, event.count),
-                    Style::default().add_modifier(Modifier::BOLD).fg(theme.fg),
-                ),
-                Span::styled(event.message.clone(), Style::default().fg(theme.fg_dim)),
-            ])
+        .map(|entry| match entry {
+            TimelineEntry::Event {
+                event,
+                correlated_action_idx,
+            } => {
+                let prefix = if correlated_action_idx.is_some() {
+                    Span::styled("  ~ ", Style::default().fg(theme.accent2))
+                } else {
+                    Span::raw("    ")
+                };
+                let badge = if event.event_type.eq_ignore_ascii_case("warning") {
+                    Span::styled(" WARN ", theme.badge_warning_style())
+                } else {
+                    Span::styled(" OK ", theme.badge_success_style())
+                };
+                let ts = event
+                    .last_timestamp
+                    .with_timezone(&chrono::Local)
+                    .format("%H:%M:%S")
+                    .to_string();
+                Line::from(vec![
+                    prefix,
+                    badge,
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("{} (x{}) ", event.reason, event.count),
+                        Style::default().add_modifier(Modifier::BOLD).fg(theme.fg),
+                    ),
+                    Span::styled(
+                        truncate_message(&event.message, 60),
+                        Style::default().fg(theme.fg_dim),
+                    ),
+                    Span::styled(format!("  {ts}"), theme.muted_style()),
+                ])
+            }
+            TimelineEntry::Action {
+                kind,
+                status,
+                message,
+                started_at,
+                ..
+            } => {
+                let status_badge = match status {
+                    ActionStatus::Pending => Span::styled(" PENDING ", theme.badge_warning_style()),
+                    ActionStatus::Succeeded => Span::styled(" OK ", theme.badge_success_style()),
+                    ActionStatus::Failed => Span::styled(" ERROR ", theme.badge_error_style()),
+                };
+                let ts = started_at
+                    .with_timezone(&chrono::Local)
+                    .format("%H:%M:%S")
+                    .to_string();
+                Line::from(vec![
+                    Span::styled(
+                        ">>> ",
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    status_badge,
+                    Span::raw(" "),
+                    Span::styled(
+                        format!("{} ", kind.label()),
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(truncate_message(message, 60), Style::default().fg(theme.fg)),
+                    Span::styled(format!("  {ts}"), theme.muted_style()),
+                ])
+            }
         })
         .collect();
 
-    let visible_height = area.height.saturating_sub(1) as usize;
-    let start = scroll.min(lines.len().saturating_sub(1));
-    let end = (start + visible_height).min(lines.len());
-    frame.render_widget(
-        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
-        area,
-    );
-    render_scrollbar(frame, area, lines.len(), start);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    render_scrollbar(frame, area, total, start);
+}
+
+/// Truncate a message to `max_chars` for timeline display, appending "..." if truncated.
+/// Returns `Cow::Borrowed` when no truncation is needed to avoid allocation.
+fn truncate_message(msg: &str, max_chars: usize) -> Cow<'_, str> {
+    // Fast path: if byte length fits, char length fits too (ASCII-heavy messages).
+    if msg.len() <= max_chars {
+        return Cow::Borrowed(msg);
+    }
+    let char_count = msg.chars().count();
+    if char_count <= max_chars {
+        Cow::Borrowed(msg)
+    } else if max_chars < 4 {
+        // Too small for "..." suffix — just take first max_chars characters.
+        Cow::Owned(msg.chars().take(max_chars).collect())
+    } else {
+        let truncated: String = msg.chars().take(max_chars - 3).collect();
+        Cow::Owned(format!("{truncated}..."))
+    }
 }
 
 fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: usize) {
@@ -734,4 +812,78 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize
         }),
         &mut state,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::truncate_message;
+
+    #[test]
+    fn short_message_unchanged() {
+        assert_eq!(truncate_message("hello", 60).as_ref(), "hello");
+    }
+
+    #[test]
+    fn exact_length_unchanged() {
+        let msg = "a".repeat(60);
+        assert_eq!(truncate_message(&msg, 60).as_ref(), msg);
+    }
+
+    #[test]
+    fn one_over_truncated() {
+        let msg = "a".repeat(61);
+        let result = truncate_message(&msg, 60);
+        assert!(result.ends_with("..."));
+        assert_eq!(result.chars().count(), 60);
+    }
+
+    #[test]
+    fn empty_string() {
+        assert_eq!(truncate_message("", 60).as_ref(), "");
+    }
+
+    #[test]
+    fn multibyte_chars_counted_correctly() {
+        // 10 multi-byte chars (each 3 bytes in UTF-8) = byte len 30 > max_chars 15
+        // but char count 10 <= max_chars 15, so no truncation needed
+        let msg = "\u{00e9}".repeat(10); // é repeated 10 times
+        assert_eq!(truncate_message(&msg, 15).as_ref(), msg);
+    }
+
+    #[test]
+    fn multibyte_chars_truncated_on_char_boundary() {
+        // 20 multi-byte chars, truncate to max 10 chars → 7 chars + "..."
+        let msg = "\u{00e9}".repeat(20);
+        let result = truncate_message(&msg, 10);
+        assert!(result.ends_with("..."));
+        assert_eq!(result.chars().count(), 10);
+    }
+
+    #[test]
+    fn borrowed_when_short() {
+        let result = truncate_message("short", 60);
+        assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn very_small_max_chars_no_ellipsis() {
+        // max_chars < 4: too small for "...", just truncate to max_chars
+        let result = truncate_message("hello world", 2);
+        assert_eq!(result.as_ref(), "he");
+        assert_eq!(result.chars().count(), 2);
+    }
+
+    #[test]
+    fn max_chars_zero() {
+        let result = truncate_message("hello", 0);
+        assert_eq!(result.as_ref(), "");
+    }
+
+    #[test]
+    fn max_chars_three_uses_ellipsis() {
+        // max_chars == 4 is the smallest that can fit "x..."
+        let result = truncate_message("hello world", 4);
+        assert_eq!(result.as_ref(), "h...");
+        assert_eq!(result.chars().count(), 4);
+    }
 }
