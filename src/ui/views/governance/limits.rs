@@ -1,5 +1,10 @@
 //! LimitRanges list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -21,6 +26,66 @@ use crate::{
         table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
     },
 };
+
+// ── LimitRange derived cell cache ───────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LimitRangeDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct LimitRangeDerivedCell {
+    specs_count: String,
+    types_summary: String,
+    age: String,
+}
+
+type LimitRangeDerivedCacheValue = Arc<Vec<LimitRangeDerivedCell>>;
+static LIMIT_RANGE_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(LimitRangeDerivedCacheKey, LimitRangeDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_limit_range_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> LimitRangeDerivedCacheValue {
+    let key = LimitRangeDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.limit_ranges, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = LIMIT_RANGE_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&lr_idx| {
+                let lr = &snapshot.limit_ranges[lr_idx];
+                LimitRangeDerivedCell {
+                    specs_count: format_small_int(lr.limits.len() as i64).into_owned(),
+                    types_summary: limit_types_summary(lr),
+                    age: format_age(lr.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = LIMIT_RANGE_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 pub fn render_limit_ranges(
     frame: &mut Frame,
@@ -95,6 +160,8 @@ pub fn render_limit_ranges(
     .height(1)
     .style(theme.header_style());
 
+    let derived = cached_limit_range_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -106,6 +173,20 @@ pub fn render_limit_ranges(
             } else {
                 theme.row_alt_style()
             };
+            let (specs_count, types_summary, age): (Cow<'_, str>, Cow<'_, str>, Cow<'_, str>) =
+                if let Some(cell) = derived.get(idx) {
+                    (
+                        Cow::Borrowed(cell.specs_count.as_str()),
+                        Cow::Borrowed(cell.types_summary.as_str()),
+                        Cow::Borrowed(cell.age.as_str()),
+                    )
+                } else {
+                    (
+                        format_small_int(lr.limits.len() as i64),
+                        Cow::Owned(limit_types_summary(lr)),
+                        Cow::Owned(format_age(lr.age)),
+                    )
+                };
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {}", lr.name),
@@ -115,15 +196,9 @@ pub fn render_limit_ranges(
                     lr.namespace.clone(),
                     Style::default().fg(theme.fg_dim),
                 )),
-                Cell::from(Span::styled(
-                    format_small_int(lr.limits.len() as i64),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    limit_types_summary(lr),
-                    Style::default().fg(theme.accent2),
-                )),
-                Cell::from(Span::styled(format_age(lr.age), theme.inactive_style())),
+                Cell::from(Span::styled(specs_count, Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(types_summary, Style::default().fg(theme.accent2))),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
         })
