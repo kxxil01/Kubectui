@@ -3,12 +3,13 @@
 //! Computes per-resource issues from snapshot data (no new API calls).
 //! Results are cached by `snapshot_version` and reused across frames.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::app::ResourceRef;
 use crate::k8s::dtos::AlertSeverity;
 use crate::state::ClusterSnapshot;
+use crate::ui::contains_ci;
 
 const MAX_ISSUES: usize = 500;
 
@@ -64,6 +65,31 @@ pub struct ClusterIssue {
     pub resource_ref: ResourceRef,
 }
 
+impl ClusterIssue {
+    /// Returns `true` if any text field matches the query (case-insensitive).
+    pub fn matches_query(&self, query: &str) -> bool {
+        contains_ci(self.category.label(), query)
+            || contains_ci(self.resource_kind, query)
+            || contains_ci(&self.resource_name, query)
+            || contains_ci(&self.namespace, query)
+            || contains_ci(&self.message, query)
+    }
+}
+
+/// Returns filtered issue indices matching the search query.
+/// Used by both the render path and the `selected_resource` action path.
+pub fn filtered_issue_indices(issues: &[ClusterIssue], query: &str) -> Vec<usize> {
+    if query.is_empty() {
+        (0..issues.len()).collect()
+    } else {
+        issues
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, issue)| issue.matches_query(query).then_some(idx))
+            .collect()
+    }
+}
+
 #[allow(clippy::type_complexity)]
 static ISSUE_CACHE: LazyLock<Mutex<Option<(u64, Arc<Vec<ClusterIssue>>)>>> =
     LazyLock::new(|| Mutex::new(None));
@@ -72,7 +98,7 @@ static ISSUE_CACHE: LazyLock<Mutex<Option<(u64, Arc<Vec<ClusterIssue>>)>>> =
 pub fn compute_issues(snapshot: &ClusterSnapshot) -> Arc<Vec<ClusterIssue>> {
     let version = snapshot.snapshot_version;
     {
-        let guard = ISSUE_CACHE.lock().unwrap();
+        let guard = ISSUE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         if let Some((cached_ver, ref issues)) = *guard
             && cached_ver == version
         {
@@ -82,7 +108,7 @@ pub fn compute_issues(snapshot: &ClusterSnapshot) -> Arc<Vec<ClusterIssue>> {
 
     let issues = Arc::new(detect_issues(snapshot));
     {
-        let mut guard = ISSUE_CACHE.lock().unwrap();
+        let mut guard = ISSUE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         *guard = Some((version, Arc::clone(&issues)));
     }
     issues
@@ -146,8 +172,11 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         }
     }
 
-    // 3. PendingPod
-    for pod in &snapshot.pods {
+    // 3. PendingPod (skip pods already categorised above)
+    for (idx, pod) in snapshot.pods.iter().enumerate() {
+        if seen_pod_indices.contains(&idx) {
+            continue;
+        }
         if pod.status.eq_ignore_ascii_case("pending") {
             let age_secs = pod
                 .created_at
@@ -170,8 +199,11 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         }
     }
 
-    // 4. FailedPod
-    for pod in &snapshot.pods {
+    // 4. FailedPod (skip pods already categorised above)
+    for (idx, pod) in snapshot.pods.iter().enumerate() {
+        if seen_pod_indices.contains(&idx) {
+            continue;
+        }
         if pod.status.eq_ignore_ascii_case("failed") {
             issues.push(ClusterIssue {
                 severity: AlertSeverity::Error,
@@ -335,26 +367,41 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         }
     }
 
-    // 10. ServiceNoEndpoints
+    // 10. ServiceNoEndpoints (O(S+E) via HashMap)
+    let ep_map: HashMap<(&str, &str), &crate::k8s::dtos::EndpointInfo> = snapshot
+        .endpoints
+        .iter()
+        .map(|ep| ((ep.name.as_str(), ep.namespace.as_str()), ep))
+        .collect();
+    let endpoints_loaded = !snapshot.endpoints.is_empty() || snapshot.secondary_resources_loaded;
     for svc in &snapshot.services {
         if svc.type_ == "ExternalName" {
             continue;
         }
-        if let Some(ep) = snapshot
-            .endpoints
-            .iter()
-            .find(|ep| ep.name == svc.name && ep.namespace == svc.namespace)
-            && ep.addresses.is_empty()
-        {
-            issues.push(ClusterIssue {
-                severity: AlertSeverity::Warning,
-                category: IssueCategory::ServiceNoEndpoints,
-                resource_kind: "Service",
-                resource_name: svc.name.clone(),
-                namespace: svc.namespace.clone(),
-                message: "Service has no ready endpoints".to_string(),
-                resource_ref: ResourceRef::Service(svc.name.clone(), svc.namespace.clone()),
-            });
+        match ep_map.get(&(svc.name.as_str(), svc.namespace.as_str())) {
+            Some(ep) if ep.addresses.is_empty() => {
+                issues.push(ClusterIssue {
+                    severity: AlertSeverity::Warning,
+                    category: IssueCategory::ServiceNoEndpoints,
+                    resource_kind: "Service",
+                    resource_name: svc.name.clone(),
+                    namespace: svc.namespace.clone(),
+                    message: "Service has no ready endpoints".to_string(),
+                    resource_ref: ResourceRef::Service(svc.name.clone(), svc.namespace.clone()),
+                });
+            }
+            None if endpoints_loaded => {
+                issues.push(ClusterIssue {
+                    severity: AlertSeverity::Warning,
+                    category: IssueCategory::ServiceNoEndpoints,
+                    resource_kind: "Service",
+                    resource_name: svc.name.clone(),
+                    namespace: svc.namespace.clone(),
+                    message: "No Endpoints object found for service".to_string(),
+                    resource_ref: ResourceRef::Service(svc.name.clone(), svc.namespace.clone()),
+                });
+            }
+            _ => {}
         }
     }
 
@@ -756,5 +803,326 @@ mod tests {
         let a = compute_issues(&snap);
         let b = compute_issues(&snap);
         assert!(Arc::ptr_eq(&a, &b));
+    }
+
+    #[test]
+    fn totally_empty_snapshot_no_issues() {
+        let snap = empty_snapshot();
+        let issues = detect_issues(&snap);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn err_image_pull_detected() {
+        let mut snap = empty_snapshot();
+        snap.pods.push(PodInfo {
+            name: "api-1".into(),
+            namespace: "default".into(),
+            waiting_reasons: vec!["ErrImagePull".into()],
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].category, IssueCategory::ImagePullFailure);
+        assert!(issues[0].message.contains("ErrImagePull"));
+    }
+
+    #[test]
+    fn create_container_config_error_detected() {
+        let mut snap = empty_snapshot();
+        snap.pods.push(PodInfo {
+            name: "api-2".into(),
+            namespace: "default".into(),
+            waiting_reasons: vec!["CreateContainerConfigError".into()],
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].category, IssueCategory::ImagePullFailure);
+        assert!(issues[0].message.contains("CreateContainerConfigError"));
+    }
+
+    #[test]
+    fn pvc_lost_is_error_severity() {
+        let mut snap = empty_snapshot();
+        snap.pvcs.push(PvcInfo {
+            name: "data-lost".into(),
+            namespace: "default".into(),
+            status: "Lost".into(),
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].category, IssueCategory::StorageIssue);
+        assert_eq!(issues[0].severity, AlertSeverity::Error);
+        assert!(issues[0].message.contains("Lost"));
+    }
+
+    #[test]
+    fn pv_released_is_warning_severity() {
+        let mut snap = empty_snapshot();
+        snap.pvs.push(PvInfo {
+            name: "pv-released".into(),
+            status: "Released".into(),
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].category, IssueCategory::StorageIssue);
+        assert_eq!(issues[0].severity, AlertSeverity::Warning);
+        assert!(issues[0].message.contains("Released"));
+    }
+
+    #[test]
+    fn zero_replica_deployment_not_flagged() {
+        let mut snap = empty_snapshot();
+        snap.deployments.push(DeploymentInfo {
+            name: "scaled-down".into(),
+            namespace: "default".into(),
+            desired_replicas: 0,
+            ready_replicas: 0,
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn zero_replica_statefulset_not_flagged() {
+        let mut snap = empty_snapshot();
+        snap.statefulsets.push(StatefulSetInfo {
+            name: "scaled-down-sts".into(),
+            namespace: "default".into(),
+            desired_replicas: 0,
+            ready_replicas: 0,
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn crashloop_pod_not_double_counted_as_pending() {
+        let mut snap = empty_snapshot();
+        snap.pods.push(PodInfo {
+            name: "crash-pending".into(),
+            namespace: "default".into(),
+            status: "Pending".into(),
+            waiting_reasons: vec!["CrashLoopBackOff".into()],
+            created_at: Some(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].category, IssueCategory::CrashLoopBackOff);
+    }
+
+    #[test]
+    fn crashloop_pod_not_double_counted_as_failed() {
+        let mut snap = empty_snapshot();
+        snap.pods.push(PodInfo {
+            name: "crash-failed".into(),
+            namespace: "default".into(),
+            status: "Failed".into(),
+            waiting_reasons: vec!["CrashLoopBackOff".into()],
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].category, IssueCategory::CrashLoopBackOff);
+    }
+
+    #[test]
+    fn image_pull_pod_not_double_counted_as_pending() {
+        let mut snap = empty_snapshot();
+        snap.pods.push(PodInfo {
+            name: "img-pending".into(),
+            namespace: "default".into(),
+            status: "Pending".into(),
+            waiting_reasons: vec!["ImagePullBackOff".into()],
+            created_at: Some(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].category, IssueCategory::ImagePullFailure);
+    }
+
+    #[test]
+    fn flux_message_none_uses_status_fallback() {
+        let mut snap = empty_snapshot();
+        snap.flux_resources.push(FluxResourceInfo {
+            name: "no-msg".into(),
+            namespace: Some("flux-system".into()),
+            kind: "Kustomization".into(),
+            group: "kustomize.toolkit.fluxcd.io".into(),
+            version: "v1".into(),
+            plural: "kustomizations".into(),
+            status: "False".into(),
+            suspended: false,
+            message: None,
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].message.contains("Status: False"));
+    }
+
+    #[test]
+    fn service_no_endpoint_object_detected_when_endpoints_loaded() {
+        let mut snap = empty_snapshot();
+        snap.secondary_resources_loaded = true;
+        snap.services.push(ServiceInfo {
+            name: "orphan-svc".into(),
+            namespace: "default".into(),
+            type_: "ClusterIP".into(),
+            ..Default::default()
+        });
+        // No matching endpoint object at all
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].category, IssueCategory::ServiceNoEndpoints);
+        assert!(issues[0].message.contains("No Endpoints object"));
+    }
+
+    #[test]
+    fn service_no_endpoint_object_not_flagged_when_endpoints_not_loaded() {
+        let mut snap = empty_snapshot();
+        snap.secondary_resources_loaded = false;
+        // No endpoints loaded at all — don't flag missing endpoint objects
+        snap.services.push(ServiceInfo {
+            name: "orphan-svc".into(),
+            namespace: "default".into(),
+            type_: "ClusterIP".into(),
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn service_with_ready_endpoints_not_flagged() {
+        let mut snap = empty_snapshot();
+        snap.services.push(ServiceInfo {
+            name: "healthy-svc".into(),
+            namespace: "default".into(),
+            type_: "ClusterIP".into(),
+            ..Default::default()
+        });
+        snap.endpoints.push(EndpointInfo {
+            name: "healthy-svc".into(),
+            namespace: "default".into(),
+            addresses: vec!["10.0.0.1".into()],
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert!(issues.is_empty());
+    }
+
+    #[test]
+    fn cache_invalidates_on_version_change() {
+        let mut snap = empty_snapshot();
+        snap.snapshot_version = 9999;
+        let a = compute_issues(&snap);
+
+        snap.snapshot_version = 10000;
+        snap.pods.push(PodInfo {
+            name: "fail".into(),
+            namespace: "default".into(),
+            status: "Failed".into(),
+            ..Default::default()
+        });
+        let b = compute_issues(&snap);
+
+        assert!(!Arc::ptr_eq(&a, &b));
+        assert!(a.is_empty());
+        assert_eq!(b.len(), 1);
+    }
+
+    #[test]
+    fn node_pid_pressure_detected() {
+        let mut snap = empty_snapshot();
+        snap.nodes.push(NodeInfo {
+            name: "node-pid".into(),
+            ready: true,
+            pid_pressure: true,
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].message.contains("PID"));
+    }
+
+    #[test]
+    fn node_network_unavailable_detected() {
+        let mut snap = empty_snapshot();
+        snap.nodes.push(NodeInfo {
+            name: "node-net".into(),
+            ready: true,
+            network_unavailable: true,
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        assert_eq!(issues.len(), 1);
+        assert!(issues[0].message.contains("Network"));
+    }
+
+    #[test]
+    fn matches_query_method() {
+        let issue = ClusterIssue {
+            severity: AlertSeverity::Error,
+            category: IssueCategory::CrashLoopBackOff,
+            resource_kind: "Pod",
+            resource_name: "web-0".into(),
+            namespace: "production".into(),
+            message: "Container in CrashLoopBackOff".into(),
+            resource_ref: ResourceRef::Pod("web-0".into(), "production".into()),
+        };
+        assert!(issue.matches_query("web"));
+        assert!(issue.matches_query("prod"));
+        assert!(issue.matches_query("CrashLoop"));
+        assert!(issue.matches_query("Pod"));
+        assert!(issue.matches_query("Container"));
+        assert!(!issue.matches_query("nonexistent"));
+    }
+
+    #[test]
+    fn filtered_issue_indices_empty_query_returns_all() {
+        let mut snap = empty_snapshot();
+        snap.pods.push(PodInfo {
+            name: "fail-1".into(),
+            namespace: "default".into(),
+            status: "Failed".into(),
+            ..Default::default()
+        });
+        snap.pods.push(PodInfo {
+            name: "fail-2".into(),
+            namespace: "default".into(),
+            status: "Failed".into(),
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        let indices = filtered_issue_indices(&issues, "");
+        assert_eq!(indices.len(), issues.len());
+    }
+
+    #[test]
+    fn filtered_issue_indices_filters_correctly() {
+        let mut snap = empty_snapshot();
+        snap.pods.push(PodInfo {
+            name: "web-fail".into(),
+            namespace: "default".into(),
+            status: "Failed".into(),
+            ..Default::default()
+        });
+        snap.nodes.push(NodeInfo {
+            name: "node-bad".into(),
+            ready: false,
+            ..Default::default()
+        });
+        let issues = detect_issues(&snap);
+        let indices = filtered_issue_indices(&issues, "node");
+        assert_eq!(indices.len(), 1);
+        assert_eq!(issues[indices[0]].resource_kind, "Node");
     }
 }

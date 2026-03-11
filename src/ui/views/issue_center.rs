@@ -12,11 +12,13 @@ use ratatui::{
 
 use crate::{
     k8s::dtos::AlertSeverity,
-    state::{ClusterSnapshot, issues::compute_issues},
+    state::{
+        ClusterSnapshot,
+        issues::{compute_issues, filtered_issue_indices},
+    },
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window,
+        loading_or_empty_message, responsive_table_widths, table_viewport_rows, table_window,
     },
 };
 
@@ -33,22 +35,7 @@ pub fn render_issues(
     let query = search.trim();
     let all_issues = compute_issues(cluster);
 
-    let indices: Vec<usize> = if query.is_empty() {
-        (0..all_issues.len()).collect()
-    } else {
-        all_issues
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, issue)| {
-                (contains_ci(issue.category.label(), query)
-                    || contains_ci(issue.resource_kind, query)
-                    || contains_ci(&issue.resource_name, query)
-                    || contains_ci(&issue.namespace, query)
-                    || contains_ci(&issue.message, query))
-                .then_some(idx)
-            })
-            .collect()
-    };
+    let indices = filtered_issue_indices(&all_issues, query);
 
     if indices.is_empty() {
         let msg = loading_or_empty_message(
