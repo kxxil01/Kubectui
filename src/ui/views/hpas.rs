@@ -1,5 +1,10 @@
 //! HorizontalPodAutoscaler list view.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -20,6 +25,65 @@ use crate::{
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
     },
 };
+
+// ── HPA derived cell cache ──────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HpaDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct HpaDerivedCell {
+    min: String,
+    max: String,
+    replicas: String,
+}
+
+type HpaDerivedCacheValue = Arc<Vec<HpaDerivedCell>>;
+static HPA_DERIVED_CACHE: LazyLock<Mutex<Option<(HpaDerivedCacheKey, HpaDerivedCacheValue)>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+fn cached_hpa_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> HpaDerivedCacheValue {
+    let key = HpaDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.hpas, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = HPA_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&hpa_idx| {
+                let hpa = &snapshot.hpas[hpa_idx];
+                HpaDerivedCell {
+                    min: format_small_int(i64::from(hpa.min_replicas.unwrap_or(1))).into_owned(),
+                    max: format_small_int(i64::from(hpa.max_replicas)).into_owned(),
+                    replicas: format!("{}/{}", hpa.current_replicas, hpa.desired_replicas),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = HPA_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 pub fn render_hpas(
     frame: &mut Frame,
@@ -85,6 +149,8 @@ pub fn render_hpas(
     .style(theme.header_style())
     .height(1);
 
+    let derived = cached_hpa_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -96,8 +162,23 @@ pub fn render_hpas(
             } else {
                 theme.row_alt_style()
             };
-            let min = hpa.min_replicas.unwrap_or(1);
-            let replicas = format!("{}/{}", hpa.current_replicas, hpa.desired_replicas);
+            let (min, max, replicas): (Cow<'_, str>, Cow<'_, str>, Cow<'_, str>) =
+                if let Some(cell) = derived.get(idx) {
+                    (
+                        Cow::Borrowed(cell.min.as_str()),
+                        Cow::Borrowed(cell.max.as_str()),
+                        Cow::Borrowed(cell.replicas.as_str()),
+                    )
+                } else {
+                    (
+                        format_small_int(i64::from(hpa.min_replicas.unwrap_or(1))),
+                        format_small_int(i64::from(hpa.max_replicas)),
+                        Cow::Owned(format!(
+                            "{}/{}",
+                            hpa.current_replicas, hpa.desired_replicas
+                        )),
+                    )
+                };
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {}", hpa.name),
@@ -111,14 +192,8 @@ pub fn render_hpas(
                     hpa.reference.clone(),
                     Style::default().fg(theme.accent2),
                 )),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(min)),
-                    Style::default().fg(theme.info),
-                )),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(hpa.max_replicas)),
-                    Style::default().fg(theme.info),
-                )),
+                Cell::from(Span::styled(min, Style::default().fg(theme.info))),
+                Cell::from(Span::styled(max, Style::default().fg(theme.info))),
                 Cell::from(Span::styled(replicas, Style::default().fg(theme.warning))),
             ])
             .style(row_style)

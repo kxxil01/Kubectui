@@ -1,5 +1,10 @@
 //! PriorityClasses list view.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -20,6 +25,64 @@ use crate::{
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
     },
 };
+
+// ── PriorityClass derived cell cache ────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PriorityClassDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PriorityClassDerivedCell {
+    value: String,
+    description_truncated: String,
+}
+
+type PriorityClassDerivedCacheValue = Arc<Vec<PriorityClassDerivedCell>>;
+static PRIORITY_CLASS_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(PriorityClassDerivedCacheKey, PriorityClassDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_priority_class_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> PriorityClassDerivedCacheValue {
+    let key = PriorityClassDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.priority_classes, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = PRIORITY_CLASS_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&pc_idx| {
+                let pc = &snapshot.priority_classes[pc_idx];
+                PriorityClassDerivedCell {
+                    value: format_small_int(i64::from(pc.value)).into_owned(),
+                    description_truncated: pc.description.chars().take(60).collect(),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = PRIORITY_CLASS_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 pub fn render_priority_classes(
     frame: &mut Frame,
@@ -80,6 +143,8 @@ pub fn render_priority_classes(
     .style(theme.header_style())
     .height(1);
 
+    let derived = cached_priority_class_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -96,15 +161,24 @@ pub fn render_priority_classes(
             } else {
                 ""
             };
+            let (value, desc): (Cow<'_, str>, Cow<'_, str>) =
+                if let Some(cell) = derived.get(idx) {
+                    (
+                        Cow::Borrowed(cell.value.as_str()),
+                        Cow::Borrowed(cell.description_truncated.as_str()),
+                    )
+                } else {
+                    (
+                        format_small_int(i64::from(priority_class.value)),
+                        Cow::Owned(priority_class.description.chars().take(60).collect()),
+                    )
+                };
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {}", priority_class.name),
                     Style::default().fg(theme.fg),
                 )),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(priority_class.value)),
-                    Style::default().fg(theme.info),
-                )),
+                Cell::from(Span::styled(value, Style::default().fg(theme.info))),
                 Cell::from(Span::styled(
                     default_label,
                     if priority_class.global_default {
@@ -113,14 +187,7 @@ pub fn render_priority_classes(
                         Style::default().fg(theme.muted)
                     },
                 )),
-                Cell::from(Span::styled(
-                    priority_class
-                        .description
-                        .chars()
-                        .take(60)
-                        .collect::<String>(),
-                    Style::default().fg(theme.fg_dim),
-                )),
+                Cell::from(Span::styled(desc, Style::default().fg(theme.fg_dim))),
             ])
             .style(row_style)
         })

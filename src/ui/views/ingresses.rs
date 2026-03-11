@@ -1,5 +1,10 @@
 //! Ingresses list view.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -20,6 +25,70 @@ use crate::{
         loading_or_empty_message, table_viewport_rows, table_window,
     },
 };
+
+// ── Ingress derived cell cache ──────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IngressDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct IngressDerivedCell {
+    hosts: String,
+    address: String,
+    class: String,
+}
+
+type IngressDerivedCacheValue = Arc<Vec<IngressDerivedCell>>;
+static INGRESS_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(IngressDerivedCacheKey, IngressDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_ingress_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> IngressDerivedCacheValue {
+    let key = IngressDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.ingresses, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = INGRESS_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&ing_idx| {
+                let ing = &snapshot.ingresses[ing_idx];
+                IngressDerivedCell {
+                    hosts: if ing.hosts.is_empty() {
+                        "*".to_string()
+                    } else {
+                        ing.hosts.join(",")
+                    },
+                    address: ing.address.as_deref().unwrap_or("<pending>").to_string(),
+                    class: ing.class.as_deref().unwrap_or("<none>").to_string(),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = INGRESS_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 pub fn render_ingresses(
     frame: &mut Frame,
@@ -93,6 +162,8 @@ pub fn render_ingresses(
     .style(theme.header_style())
     .height(1);
 
+    let derived = cached_ingress_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -104,13 +175,25 @@ pub fn render_ingresses(
             } else {
                 theme.row_alt_style()
             };
-            let hosts = if ingress.hosts.is_empty() {
-                "*".to_string()
+            let (hosts, class, address) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.hosts.as_str()),
+                    Cow::Borrowed(cell.class.as_str()),
+                    Cow::Borrowed(cell.address.as_str()),
+                )
             } else {
-                ingress.hosts.join(",")
+                (
+                    Cow::Owned(if ingress.hosts.is_empty() {
+                        "*".to_string()
+                    } else {
+                        ingress.hosts.join(",")
+                    }),
+                    Cow::Owned(ingress.class.as_deref().unwrap_or("<none>").to_string()),
+                    Cow::Owned(
+                        ingress.address.as_deref().unwrap_or("<pending>").to_string(),
+                    ),
+                )
             };
-            let address = ingress.address.as_deref().unwrap_or("<pending>");
-            let class = ingress.class.as_deref().unwrap_or("<none>");
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {}", ingress.name),
@@ -120,15 +203,9 @@ pub fn render_ingresses(
                     ingress.namespace.clone(),
                     Style::default().fg(theme.fg_dim),
                 )),
-                Cell::from(Span::styled(
-                    class.to_string(),
-                    Style::default().fg(theme.info),
-                )),
+                Cell::from(Span::styled(class, Style::default().fg(theme.info))),
                 Cell::from(Span::styled(hosts, Style::default().fg(theme.accent2))),
-                Cell::from(Span::styled(
-                    address.to_string(),
-                    Style::default().fg(theme.warning),
-                )),
+                Cell::from(Span::styled(address, Style::default().fg(theme.warning))),
             ])
             .style(row_style)
         })

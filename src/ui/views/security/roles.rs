@@ -20,7 +20,69 @@ use crate::{
         table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
     },
 };
-use std::sync::{Arc, LazyLock, Mutex};
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
+// ── Role derived cell cache ────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RoleDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct RoleDerivedCell {
+    rules_count: String,
+    age: String,
+}
+
+type RoleDerivedCacheValue = Arc<Vec<RoleDerivedCell>>;
+static ROLE_DERIVED_CACHE: LazyLock<Mutex<Option<(RoleDerivedCacheKey, RoleDerivedCacheValue)>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+fn cached_role_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> RoleDerivedCacheValue {
+    let key = RoleDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.roles, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = ROLE_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&role_idx| {
+                let role = &snapshot.roles[role_idx];
+                RoleDerivedCell {
+                    rules_count: format_small_int(role.rules.len() as i64).into_owned(),
+                    age: format_age(role.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = ROLE_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
+
+// ── Role rules detail cache ────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RoleRulesCacheKey {
@@ -108,6 +170,8 @@ pub fn render_roles(
     .height(1)
     .style(theme.header_style());
 
+    let derived = cached_role_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -121,17 +185,26 @@ pub fn render_roles(
             } else {
                 theme.row_alt_style()
             };
+            let (rules_count, age): (Cow<'_, str>, Cow<'_, str>) =
+                if let Some(cell) = derived.get(idx) {
+                    (
+                        Cow::Borrowed(cell.rules_count.as_str()),
+                        Cow::Borrowed(cell.age.as_str()),
+                    )
+                } else {
+                    (
+                        format_small_int(role.rules.len() as i64),
+                        Cow::Owned(format_age(role.age)),
+                    )
+                };
             Row::new(vec![
                 Cell::from(Line::from(vec![
                     Span::styled("  ", name_style),
                     Span::styled(role.name.as_str(), name_style),
                 ])),
                 Cell::from(Span::styled(role.namespace.as_str(), dim_style)),
-                Cell::from(Span::styled(
-                    format_small_int(role.rules.len() as i64),
-                    Style::default().fg(theme.accent2),
-                )),
-                Cell::from(Span::styled(format_age(role.age), theme.inactive_style())),
+                Cell::from(Span::styled(rules_count, Style::default().fg(theme.accent2))),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
         })

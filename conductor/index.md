@@ -13,7 +13,7 @@ Navigation hub for project context.
 
 ## Active Tracks
 
-<!-- Auto-populated by /conductor:new-track -->
+- [ ] [cached-cells_20260312](./tracks/cached-cells_20260312/index.md) — Per-View Cached Formatted Cells
 
 ## Getting Started
 
