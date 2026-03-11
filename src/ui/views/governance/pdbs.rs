@@ -1,5 +1,10 @@
 //! PodDisruptionBudgets list rendering.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -21,6 +26,74 @@ use crate::{
         table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
     },
 };
+
+// ── PDB derived cell cache ──────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PdbDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PdbDerivedCell {
+    policy: String,
+    healthy: String,
+    disruptions: String,
+    age: String,
+}
+
+type PdbDerivedCacheValue = Arc<Vec<PdbDerivedCell>>;
+static PDB_DERIVED_CACHE: LazyLock<Mutex<Option<(PdbDerivedCacheKey, PdbDerivedCacheValue)>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+fn cached_pdb_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> PdbDerivedCacheValue {
+    let key = PdbDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(
+            &snapshot.pod_disruption_budgets,
+            snapshot.snapshot_version,
+        ),
+    };
+
+    if let Ok(cache) = PDB_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&pdb_idx| {
+                let pdb = &snapshot.pod_disruption_budgets[pdb_idx];
+                PdbDerivedCell {
+                    policy: pdb
+                        .min_available
+                        .clone()
+                        .or_else(|| pdb.max_unavailable.clone())
+                        .unwrap_or_else(|| "-".to_string()),
+                    healthy: format!("{}/{}", pdb.current_healthy, pdb.desired_healthy),
+                    disruptions: format_small_int(i64::from(pdb.disruptions_allowed)).into_owned(),
+                    age: format_age(pdb.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = PDB_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 pub fn render_pdbs(
     frame: &mut Frame,
@@ -94,6 +167,8 @@ pub fn render_pdbs(
     .height(1)
     .style(theme.header_style());
 
+    let derived = cached_pdb_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -106,6 +181,26 @@ pub fn render_pdbs(
             } else {
                 theme.row_alt_style()
             };
+            let (policy, healthy, disruptions, age) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.policy.as_str()),
+                    Cow::Borrowed(cell.healthy.as_str()),
+                    Cow::Borrowed(cell.disruptions.as_str()),
+                    Cow::Borrowed(cell.age.as_str()),
+                )
+            } else {
+                (
+                    Cow::Owned(
+                        pdb.min_available
+                            .clone()
+                            .or_else(|| pdb.max_unavailable.clone())
+                            .unwrap_or_else(|| "-".to_string()),
+                    ),
+                    Cow::Owned(format!("{}/{}", pdb.current_healthy, pdb.desired_healthy)),
+                    format_small_int(i64::from(pdb.disruptions_allowed)),
+                    Cow::Owned(format_age(pdb.age)),
+                )
+            };
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {}", pdb.name),
@@ -115,22 +210,10 @@ pub fn render_pdbs(
                     pdb.namespace.clone(),
                     Style::default().fg(theme.fg_dim),
                 )),
-                Cell::from(Span::styled(
-                    pdb.min_available
-                        .clone()
-                        .or_else(|| pdb.max_unavailable.clone())
-                        .unwrap_or_else(|| "-".to_string()),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    format!("{}/{}", pdb.current_healthy, pdb.desired_healthy),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(pdb.disruptions_allowed)),
-                    disrupt_style,
-                )),
-                Cell::from(Span::styled(format_age(pdb.age), theme.inactive_style())),
+                Cell::from(Span::styled(policy, Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(healthy, Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(disruptions, disrupt_style)),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
         })
