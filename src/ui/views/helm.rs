@@ -1,5 +1,10 @@
 //! Helm releases view.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Margin, Rect},
     prelude::{Color, Frame, Style},
@@ -20,6 +25,73 @@ use crate::{
         loading_or_empty_message, table_viewport_rows, table_window,
     },
 };
+
+// ── Helm Release derived cell cache ─────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct HelmReleaseDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct HelmReleaseDerivedCell {
+    chart_display: String,
+    revision: String,
+    updated: String,
+}
+
+type HelmReleaseDerivedCacheValue = Arc<Vec<HelmReleaseDerivedCell>>;
+static HELM_RELEASE_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(HelmReleaseDerivedCacheKey, HelmReleaseDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_helm_release_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> HelmReleaseDerivedCacheValue {
+    let key = HelmReleaseDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.helm_releases, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = HELM_RELEASE_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&rel_idx| {
+                let rel = &snapshot.helm_releases[rel_idx];
+                HelmReleaseDerivedCell {
+                    chart_display: if rel.chart_version.is_empty() {
+                        rel.chart.clone()
+                    } else {
+                        format!("{}-{}", rel.chart, rel.chart_version)
+                    },
+                    revision: rel.revision.to_string(),
+                    updated: rel
+                        .updated
+                        .map(|ts| ts.format("%Y-%m-%d %H:%M").to_string())
+                        .unwrap_or_else(|| "-".to_string()),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = HELM_RELEASE_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 /// Renders the Helm releases table.
 pub fn render_helm_releases(
@@ -97,6 +169,8 @@ pub fn render_helm_releases(
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
 
+    let derived = cached_helm_release_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -118,15 +192,27 @@ pub fn render_helm_releases(
                 _ => Style::default().fg(theme.fg_dim),
             };
 
-            let updated = release
-                .updated
-                .map(|ts| ts.format("%Y-%m-%d %H:%M").to_string())
-                .unwrap_or_else(|| "-".to_string());
-
-            let chart_display = if release.chart_version.is_empty() {
-                release.chart.clone()
+            let (chart_display, revision, updated) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.chart_display.as_str()),
+                    Cow::Borrowed(cell.revision.as_str()),
+                    Cow::Borrowed(cell.updated.as_str()),
+                )
             } else {
-                format!("{}-{}", release.chart, release.chart_version)
+                (
+                    Cow::Owned(if release.chart_version.is_empty() {
+                        release.chart.clone()
+                    } else {
+                        format!("{}-{}", release.chart, release.chart_version)
+                    }),
+                    Cow::Owned(release.revision.to_string()),
+                    Cow::Owned(
+                        release
+                            .updated
+                            .map(|ts| ts.format("%Y-%m-%d %H:%M").to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                    ),
+                )
             };
 
             Row::new(vec![
@@ -138,11 +224,12 @@ pub fn render_helm_releases(
                     release.namespace.clone(),
                     Style::default().fg(theme.accent2),
                 )),
-                Cell::from(chart_display).style(Style::default().fg(theme.fg_dim)),
-                Cell::from(release.chart_version.clone()).style(Style::default().fg(theme.fg_dim)),
+                Cell::from(Span::from(chart_display)).style(Style::default().fg(theme.fg_dim)),
+                Cell::from(release.chart_version.clone())
+                    .style(Style::default().fg(theme.fg_dim)),
                 Cell::from(release.status.clone()).style(status_style),
-                Cell::from(release.revision.to_string()).style(Style::default().fg(theme.fg_dim)),
-                Cell::from(updated).style(Style::default().fg(theme.fg_dim)),
+                Cell::from(Span::from(revision)).style(Style::default().fg(theme.fg_dim)),
+                Cell::from(Span::from(updated)).style(Style::default().fg(theme.fg_dim)),
             ])
             .style(row_style)
         })
