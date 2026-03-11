@@ -19,17 +19,17 @@ Eliminate semaphore contention between wave 1 (core) and wave 2 (secondary) by g
 
 ### Tasks
 
-- [ ] Task 1.1: Add `SECONDARY_FETCH_SEMAPHORE` static (4 permits) alongside existing `RESOURCE_FETCH_SEMAPHORE` in `state/mod.rs`
-- [ ] Task 1.2: Add a `semaphore` parameter to `fetch_with_timeout()` to select which semaphore to use (`state/mod.rs:1133`)
-- [ ] Task 1.3: Update wave 1 `tokio::join!` calls to pass `&RESOURCE_FETCH_SEMAPHORE` (lines 1354-1370)
-- [ ] Task 1.4: Update wave 2 `tokio::join!` calls to pass `&SECONDARY_FETCH_SEMAPHORE` (lines 1375-1406)
-- [ ] Task 1.5: Rename `RESOURCE_FETCH_SEMAPHORE` → `CORE_FETCH_SEMAPHORE` for clarity and update `MAX_CONCURRENT_RESOURCE_FETCHES` constant
+- [x] Task 1.1: Add `SECONDARY_FETCH_SEMAPHORE` static (4 permits) alongside existing `RESOURCE_FETCH_SEMAPHORE` in `state/mod.rs`
+- [x] Task 1.2: Add a `semaphore` parameter to `fetch_with_timeout()` to select which semaphore to use (`state/mod.rs:1133`)
+- [x] Task 1.3: Update wave 1 `tokio::join!` calls to pass `&CORE_FETCH_SEMAPHORE` (lines 1354-1370)
+- [x] Task 1.4: Update wave 2 `tokio::join!` calls to pass `&SECONDARY_FETCH_SEMAPHORE` (lines 1375-1406)
+- [x] Task 1.5: Rename `RESOURCE_FETCH_SEMAPHORE` → `CORE_FETCH_SEMAPHORE` for clarity and update `MAX_CONCURRENT_RESOURCE_FETCHES` constant
 
 ### Verification
 
-- [ ] All tests pass
-- [ ] Clippy clean
-- [ ] No functional regressions (same data fetched, same error fallback behavior)
+- [x] All tests pass (626 passing)
+- [x] Clippy clean
+- [x] No functional regressions (same data fetched, same error fallback behavior)
 
 ## Phase 2: Arc-Wrap ClusterSnapshot
 
