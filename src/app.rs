@@ -3174,6 +3174,13 @@ impl AppState {
                 self.set_or_toggle_pod_sort(PodSortColumn::Age);
                 AppAction::None
             }
+            KeyCode::Char('1')
+                if self.detail_view.is_none()
+                    && self.view.supports_shared_sort(WorkloadSortColumn::Age) =>
+            {
+                self.set_or_toggle_workload_sort(WorkloadSortColumn::Age);
+                AppAction::None
+            }
             KeyCode::Char('2') if self.detail_view.is_none() && self.view == AppView::Pods => {
                 self.set_or_toggle_pod_sort(PodSortColumn::Status);
                 AppAction::None

@@ -71,7 +71,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Sort (Other Views)",
         &[
             ("n", "Sort by name"),
-            ("a", "Sort by age"),
+            ("a / 1", "Sort by age"),
             ("0", "Clear sort"),
         ],
     ),
