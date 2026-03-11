@@ -166,6 +166,7 @@ pub fn render_nodes(
         if node.disk_pressure {
             status_spans.push(Span::styled("  ⚠ Disk", warn_style));
         }
+        let mut status_spans = Some(status_spans);
 
         let row_style = if idx.is_multiple_of(2) {
             Style::default().bg(theme.bg)
@@ -180,7 +181,7 @@ pub fn render_nodes(
                     Span::styled("  ", name_style),
                     Span::styled(node.name.as_str(), name_style),
                 ])),
-                "status" => Cell::from(Line::from(status_spans.clone())),
+                "status" => Cell::from(Line::from(status_spans.take().unwrap_or_default())),
                 "roles" => Cell::from(Span::styled(node.role.as_str(), accent_style)),
                 "cpu" => Cell::from(Span::styled(
                     node.cpu_allocatable.as_deref().unwrap_or("N/A"),

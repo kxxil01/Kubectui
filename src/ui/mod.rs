@@ -103,44 +103,20 @@ pub(crate) fn table_window(total: usize, selected: usize, viewport_rows: usize) 
     }
 }
 
+/// Delegates to [`responsive_table_widths_vec`] and converts back to a fixed-size array.
 pub(crate) fn responsive_table_widths<const N: usize>(
     area_width: u16,
     wide: [Constraint; N],
 ) -> [Constraint; N] {
-    let usable_width = area_width.saturating_sub(3);
-    let ideal_total = wide
-        .iter()
-        .map(|constraint| constraint_ideal_width(*constraint))
-        .sum::<u16>();
-
-    if usable_width >= ideal_total {
-        return wide;
-    }
-
-    let mut percentages = [0u16; N];
-    let total_weight = ideal_total.max(1) as u32;
-    let mut assigned = 0u16;
-    let mut remainders = [(0u32, 0usize); N];
-
-    for (idx, constraint) in wide.iter().copied().enumerate() {
-        let ideal = u32::from(constraint_ideal_width(constraint).max(1));
-        let scaled = ideal * 100;
-        let percentage = (scaled / total_weight) as u16;
-        percentages[idx] = percentage;
-        assigned = assigned.saturating_add(percentage);
-        remainders[idx] = (scaled % total_weight, idx);
-    }
-
-    remainders.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
-    let remaining = 100u16.saturating_sub(assigned);
-    for idx in 0..usize::from(remaining) {
-        percentages[remainders[idx % N].1] = percentages[remainders[idx % N].1].saturating_add(1);
-    }
-
-    std::array::from_fn(|idx| Constraint::Percentage(percentages[idx]))
+    let vec = responsive_table_widths_vec(area_width, &wide);
+    debug_assert_eq!(vec.len(), N, "responsive_table_widths_vec length mismatch");
+    std::array::from_fn(|idx| vec[idx])
 }
 
-/// Like [`responsive_table_widths`] but accepts and returns `Vec<Constraint>`.
+/// Proportionally scales column constraints to fit the available width.
+///
+/// If the ideal total fits, returns the input unchanged. Otherwise converts
+/// to percentage-based constraints using largest-remainder allocation.
 pub(crate) fn responsive_table_widths_vec(area_width: u16, wide: &[Constraint]) -> Vec<Constraint> {
     let n = wide.len();
     if n == 0 {

@@ -19,6 +19,11 @@ pub struct ViewPreferences {
     /// Column IDs to hide.
     #[serde(default)]
     pub hidden_columns: Vec<String>,
+    /// Column IDs to explicitly un-hide (overrides `hidden_columns` from lower layers).
+    /// Useful for cluster-level prefs to re-show columns hidden globally.
+    /// Currently settable via config file only; no UI action writes this yet.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub shown_columns: Vec<String>,
     /// Custom column ordering. `None` = default order.
     #[serde(default)]
     pub column_order: Option<Vec<String>>,
@@ -30,6 +35,7 @@ impl Default for ViewPreferences {
             sort_column: None,
             sort_ascending: true,
             hidden_columns: Vec::new(),
+            shown_columns: Vec::new(),
             column_order: None,
         }
     }
@@ -49,29 +55,64 @@ pub struct ClusterPreferences {
     pub views: HashMap<String, ViewPreferences>,
 }
 
-/// Resolves the effective preferences for a view by checking
-/// cluster-specific → global → defaults.
+/// Resolves the effective preferences for a view by merging
+/// defaults ← global ← cluster-specific (field-level merge).
+///
+/// Each layer only overrides fields that differ from defaults:
+/// - `sort_column`: overridden if `Some`
+/// - `sort_ascending`: overridden if not the default (`true`)
+/// - `hidden_columns`: union of all layers
+/// - `column_order`: overridden if `Some`
 pub fn resolve_view_preferences(
     view_key: &str,
     global: &Option<UserPreferences>,
     clusters: &Option<HashMap<String, ClusterPreferences>>,
     current_context: Option<&str>,
 ) -> ViewPreferences {
-    // Try cluster-specific first
+    let mut result = ViewPreferences::default();
+
+    // Apply global layer
+    if let Some(global) = global
+        && let Some(prefs) = global.views.get(view_key)
+    {
+        merge_view_preferences(&mut result, prefs);
+    }
+
+    // Apply cluster-specific layer on top
     if let Some(ctx) = current_context
         && let Some(clusters) = clusters
         && let Some(cluster) = clusters.get(ctx)
         && let Some(prefs) = cluster.views.get(view_key)
     {
-        return prefs.clone();
+        merge_view_preferences(&mut result, prefs);
     }
-    // Fall through to global
-    if let Some(global) = global
-        && let Some(prefs) = global.views.get(view_key)
-    {
-        return prefs.clone();
+
+    result
+}
+
+/// Merges `overlay` fields into `base`, overriding only non-default values.
+///
+/// - `shown_columns` in the overlay removes entries from `base.hidden_columns`
+/// - `hidden_columns` in the overlay are unioned into `base.hidden_columns`
+fn merge_view_preferences(base: &mut ViewPreferences, overlay: &ViewPreferences) {
+    if overlay.sort_column.is_some() {
+        base.sort_column = overlay.sort_column.clone();
+        base.sort_ascending = overlay.sort_ascending;
     }
-    ViewPreferences::default()
+    // Apply shown_columns first: un-hide columns from lower layers
+    if !overlay.shown_columns.is_empty() {
+        base.hidden_columns
+            .retain(|c| !overlay.shown_columns.contains(c));
+    }
+    // Then union hidden_columns
+    for col in &overlay.hidden_columns {
+        if !base.hidden_columns.contains(col) {
+            base.hidden_columns.push(col.clone());
+        }
+    }
+    if overlay.column_order.is_some() {
+        base.column_order = overlay.column_order.clone();
+    }
 }
 
 #[cfg(test)]
@@ -104,7 +145,7 @@ mod tests {
     }
 
     #[test]
-    fn resolve_cluster_overrides_global() {
+    fn resolve_cluster_overrides_sort_preserves_hidden() {
         let mut global = UserPreferences::default();
         global.views.insert(
             "pods".into(),
@@ -126,9 +167,65 @@ mod tests {
         let mut clusters = HashMap::new();
         clusters.insert("prod".into(), cluster);
         let result = resolve_view_preferences("pods", &Some(global), &Some(clusters), Some("prod"));
+        // Cluster overrides sort
         assert_eq!(result.sort_column.as_deref(), Some("status"));
-        // cluster override replaces entire ViewPreferences, not field-merge
         assert!(result.sort_ascending);
+        // Global hidden_columns are preserved via field-level merge
+        assert!(result.hidden_columns.contains(&"namespace".to_string()));
+    }
+
+    #[test]
+    fn resolve_hidden_columns_union_across_layers() {
+        let mut global = UserPreferences::default();
+        global.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                hidden_columns: vec!["namespace".into()],
+                ..Default::default()
+            },
+        );
+        let mut cluster = ClusterPreferences::default();
+        cluster.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                hidden_columns: vec!["age".into()],
+                ..Default::default()
+            },
+        );
+        let mut clusters = HashMap::new();
+        clusters.insert("prod".into(), cluster);
+        let result = resolve_view_preferences("pods", &Some(global), &Some(clusters), Some("prod"));
+        assert!(result.hidden_columns.contains(&"namespace".to_string()));
+        assert!(result.hidden_columns.contains(&"age".to_string()));
+        assert_eq!(result.hidden_columns.len(), 2);
+    }
+
+    #[test]
+    fn resolve_shown_columns_unhides_from_global() {
+        let mut global = UserPreferences::default();
+        global.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                hidden_columns: vec!["namespace".into(), "age".into()],
+                ..Default::default()
+            },
+        );
+        let mut cluster = ClusterPreferences::default();
+        cluster.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                shown_columns: vec!["namespace".into()],
+                ..Default::default()
+            },
+        );
+        let mut clusters = HashMap::new();
+        clusters.insert("prod".into(), cluster);
+        let result = resolve_view_preferences("pods", &Some(global), &Some(clusters), Some("prod"));
+        // "namespace" was un-hidden by cluster's shown_columns
+        assert!(!result.hidden_columns.contains(&"namespace".to_string()));
+        // "age" remains hidden
+        assert!(result.hidden_columns.contains(&"age".to_string()));
+        assert_eq!(result.hidden_columns.len(), 1);
     }
 
     #[test]
@@ -158,6 +255,7 @@ mod tests {
             sort_column: Some("restarts".into()),
             sort_ascending: false,
             hidden_columns: vec!["namespace".into(), "image".into()],
+            shown_columns: Vec::new(),
             column_order: Some(vec!["name".into(), "status".into(), "age".into()]),
         };
         let json = serde_json::to_string(&vp).unwrap();

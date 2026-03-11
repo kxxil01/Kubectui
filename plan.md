@@ -53,7 +53,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 624 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 626 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -903,17 +903,20 @@ Completed
 
 ### What shipped
 
-- ViewPreferences model with sort_column, sort_ascending, hidden_columns, column_order
-- Global + per-cluster preference hierarchy with resolution fallback (cluster → global → defaults)
-- Column registry (ColumnDef) for 23 views with hideable/non-hideable flags
+- ViewPreferences model with sort_column, sort_ascending, hidden_columns, shown_columns, column_order
+- Field-level preference merge (defaults ← global ← cluster) with shown_columns un-hide mechanism
+- Cluster-aware preference routing: writes go to cluster-specific prefs when active, else global
+- Column registry (ColumnDef) for 23 views with hideable/non-hideable flags, title-case labels
 - Column toggle via action palette (`:` then search "columns", checkbox-style `[x]`/`[ ]` toggle)
 - Sort persistence: sort preferences saved per-view and restored on view switch
+- Sort clear targets most-specific level only (cluster if present, else global)
 - Dynamic column rendering for Pods, Deployments, Nodes (column-driven headers, rows, constraints)
 - Nav group collapse persistence across sessions
 - Config dirty flag with batched saves in event loop
 - Context name tracking on context switch for per-cluster preference resolution
 - Backward-compatible JSON config expansion (all new fields use `#[serde(default)]`)
-- 22 new tests across preferences, columns, sort persistence, config round-trip
+- Help overlay updated with sort keybindings for non-pod views
+- 24 new tests across preferences, columns, sort persistence, config round-trip
 
 ### Goal
 

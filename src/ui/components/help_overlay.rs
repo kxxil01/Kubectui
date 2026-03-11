@@ -68,6 +68,14 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Sort (Other Views)",
+        &[
+            ("n", "Sort by name"),
+            ("a", "Sort by age"),
+            ("0", "Clear sort"),
+        ],
+    ),
+    (
         "Workbench (focused)",
         &[
             ("z", "Maximize / restore"),
