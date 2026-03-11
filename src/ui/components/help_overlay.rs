@@ -43,7 +43,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Detail View",
         &[
             ("y", "View YAML"),
-            ("v", "View events"),
+            ("v", "View timeline"),
             ("l", "View logs"),
             ("x", "Exec into pod"),
             ("f", "Port forward"),

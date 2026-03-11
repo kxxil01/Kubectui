@@ -11,5 +11,6 @@ pub mod export;
 pub mod k8s;
 pub mod policy;
 pub mod state;
+pub mod timeline;
 pub mod ui;
 pub mod workbench;
