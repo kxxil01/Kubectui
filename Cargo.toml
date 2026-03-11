@@ -1,7 +1,13 @@
 [package]
 name = "kubectui"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2024"
+description = "A keyboard-first terminal UI for Kubernetes operations"
+license = "MIT"
+repository = "https://github.com/kxxil01/Kubectui"
+readme = "README.md"
+keywords = ["kubernetes", "tui", "terminal", "kubectl", "k8s"]
+categories = ["command-line-utilities"]
 
 [dependencies]
 ratatui = "0.30"
@@ -26,6 +32,18 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
+
+[[bench]]
+name = "dashboard"
+harness = false
+
+[[bench]]
+name = "filter_sort"
+harness = false
+
+[[bench]]
+name = "format_helpers"
+harness = false
 
 [profile.release]
 opt-level = 3
