@@ -306,6 +306,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn start_forward_binds_ephemeral_port() {
         let svc = service().await;
         let target = PortForwardTarget::new("default", "pod-a", 8080);
@@ -321,6 +322,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn start_forward_rejects_duplicate_id() {
         let svc = service().await;
         let target = PortForwardTarget::new("default", "pod-b", 9090);
@@ -338,6 +340,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn get_list_and_stop_tunnel_round_trip() {
         let svc = service().await;
         let target = PortForwardTarget::new("default", "pod-c", 7070);
@@ -363,6 +366,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn stop_all_clears_multiple_tunnels() {
         let svc = service().await;
 
@@ -381,6 +385,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn create_tunnel_async_returns_pod_not_found_for_missing_pod() {
         let svc = service().await;
         let target = PortForwardTarget::new("default", "pod-that-does-not-exist", 8080);

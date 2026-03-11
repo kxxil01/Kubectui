@@ -315,6 +315,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn execute_scale_rejects_invalid_replica_count_and_sends_no_progress() {
         let client = Arc::new(
             K8sClient::connect()
@@ -336,6 +337,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn execute_scale_reports_api_error_when_deployment_missing() {
         let client = Arc::new(
             K8sClient::connect()
