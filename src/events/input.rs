@@ -135,6 +135,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
                 logs_tab.viewer.scroll_offset = logs_tab.viewer.lines.len().saturating_sub(1);
+                logs_tab.viewer.follow_mode = true;
                 return true;
             }
             false

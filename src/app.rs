@@ -2593,7 +2593,7 @@ impl AppState {
                         }
                         KeyCode::Char('G') => {
                             tab.scroll = filtered_len.saturating_sub(1);
-                            tab.follow_mode = false;
+                            tab.follow_mode = true;
                             AppAction::None
                         }
                         KeyCode::PageDown => {
