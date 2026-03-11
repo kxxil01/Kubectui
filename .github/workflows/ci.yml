@@ -62,7 +62,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.os }})
-    needs: test
+    needs: [fmt, clippy, test]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
