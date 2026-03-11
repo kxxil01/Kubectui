@@ -462,6 +462,79 @@ pub fn render_pvs(
     render_table_scrollbar(frame, area, total, selected);
 }
 
+// ── StorageClass derived cell cache ─────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StorageClassDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct StorageClassDerivedCell {
+    default_label: &'static str,
+    reclaim: String,
+    binding: String,
+    expand: &'static str,
+}
+
+type StorageClassDerivedCacheValue = Arc<Vec<StorageClassDerivedCell>>;
+static STORAGE_CLASS_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(StorageClassDerivedCacheKey, StorageClassDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_storage_class_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> StorageClassDerivedCacheValue {
+    let key = StorageClassDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(
+            &snapshot.storage_classes,
+            snapshot.snapshot_version,
+        ),
+    };
+
+    if let Ok(cache) = STORAGE_CLASS_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&sc_idx| {
+                let sc = &snapshot.storage_classes[sc_idx];
+                StorageClassDerivedCell {
+                    default_label: if sc.is_default { "(default)" } else { "" },
+                    reclaim: sc.reclaim_policy.as_deref().unwrap_or("Delete").to_string(),
+                    binding: sc
+                        .volume_binding_mode
+                        .as_deref()
+                        .unwrap_or("Immediate")
+                        .to_string(),
+                    expand: if sc.allow_volume_expansion {
+                        "✓"
+                    } else {
+                        ""
+                    },
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = STORAGE_CLASS_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
+
 pub fn render_storage_classes(
     frame: &mut Frame,
     area: Rect,
@@ -527,6 +600,8 @@ pub fn render_storage_classes(
     .style(theme.header_style())
     .height(1);
 
+    let derived = cached_storage_class_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -538,21 +613,42 @@ pub fn render_storage_classes(
             } else {
                 theme.row_alt_style()
             };
-            let default_label = if storage_class.is_default {
-                "(default)"
-            } else {
-                ""
-            };
-            let reclaim = storage_class.reclaim_policy.as_deref().unwrap_or("Delete");
-            let binding = storage_class
-                .volume_binding_mode
-                .as_deref()
-                .unwrap_or("Immediate");
-            let expand = if storage_class.allow_volume_expansion {
-                "✓"
-            } else {
-                ""
-            };
+            let (default_label, reclaim, binding, expand) =
+                if let Some(cell) = derived.get(idx) {
+                    (
+                        cell.default_label,
+                        Cow::Borrowed(cell.reclaim.as_str()),
+                        Cow::Borrowed(cell.binding.as_str()),
+                        cell.expand,
+                    )
+                } else {
+                    (
+                        if storage_class.is_default {
+                            "(default)"
+                        } else {
+                            ""
+                        },
+                        Cow::Owned(
+                            storage_class
+                                .reclaim_policy
+                                .as_deref()
+                                .unwrap_or("Delete")
+                                .to_string(),
+                        ),
+                        Cow::Owned(
+                            storage_class
+                                .volume_binding_mode
+                                .as_deref()
+                                .unwrap_or("Immediate")
+                                .to_string(),
+                        ),
+                        if storage_class.allow_volume_expansion {
+                            "✓"
+                        } else {
+                            ""
+                        },
+                    )
+                };
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {} {}", storage_class.name, default_label),
@@ -562,14 +658,8 @@ pub fn render_storage_classes(
                     storage_class.provisioner.clone(),
                     Style::default().fg(theme.accent2),
                 )),
-                Cell::from(Span::styled(
-                    reclaim.to_string(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    binding.to_string(),
-                    Style::default().fg(theme.info),
-                )),
+                Cell::from(Span::styled(reclaim, Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(binding, Style::default().fg(theme.info))),
                 Cell::from(Span::styled(expand, Style::default().fg(theme.success))),
             ])
             .style(row_style)
