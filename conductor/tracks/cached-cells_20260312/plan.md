@@ -3,7 +3,7 @@
 **Track ID:** cached-cells_20260312
 **Spec:** [spec.md](./spec.md)
 **Created:** 2026-03-12
-**Status:** [~] In Progress
+**Status:** [x] Complete
 
 ## Overview
 
@@ -71,24 +71,24 @@ Extend cache to resource-heavy views that lack it.
 
 ### Tasks
 
-- [ ] Task 4.1: Run 5-run baseline profiling (pre-patch)
-- [ ] Task 4.2: Run 5-run candidate profiling (with all caches)
-- [ ] Task 4.3: Compare medians for `render`, `sidebar`, `header` and per-view hotspots
-- [ ] Task 4.4: Revert any view cache that regresses
+- [x] Task 4.1: Run 5-run baseline profiling (pre-patch)
+- [x] Task 4.2: Run 5-run candidate profiling (with all caches)
+- [x] Task 4.3: Compare medians for `render`, `sidebar`, `header` and per-view hotspots
+- [x] Task 4.4: Revert any view cache that regresses — none needed, no regressions
 
 ### Verification
 
-- [ ] Global `render` median improves
-- [ ] No critical hotspot regresses materially
-- [ ] All acceptance criteria met
+- [x] Global `render` median improves (297.220ms → 292.974ms, -1.43%)
+- [x] No critical hotspot regresses materially (max noise: pods +0.1ms)
+- [x] All acceptance criteria met
 
 ## Final Verification
 
-- [ ] All acceptance criteria met
-- [ ] Tests passing (`cargo test --all-targets --all-features`)
-- [ ] Clippy clean (`cargo clippy --all-targets --all-features -- -D warnings`)
-- [ ] Performance profiling validates improvement
-- [ ] Ready for review
+- [x] All acceptance criteria met
+- [x] Tests passing (`cargo test --all-targets --all-features`) — 626 tests
+- [x] Clippy clean (`cargo clippy --all-targets --all-features -- -D warnings`)
+- [x] Performance profiling validates improvement (-1.43% render, -2.20% sidebar)
+- [x] Ready for review
 
 ---
 
