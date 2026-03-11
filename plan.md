@@ -27,6 +27,16 @@ Current milestone status:
 - Milestone 12: completed
 - Milestone 13: completed
 - Milestone 14: completed
+- Milestone 16: not started
+- Milestone 17: not started
+- Milestone 18: not started
+- Milestone 19: not started
+- Milestone 20: not started
+- Milestone 21: not started
+- Milestone 22: not started
+- Milestone 23: not started
+- Milestone 24: not started
+- Milestone 25: not started
 
 Completion notes:
 
@@ -343,17 +353,136 @@ Needed:
 - issue center with grouped problem categories
 - action-oriented issue drilldown
 
-## Gap K: Weak persistent personalization
+## Gap K: Weak persistent personalization (addressed in M14)
+
+Addressed by Milestone 14 (View Personalization):
+
+- per-view saved sort with cluster-specific overrides
+- per-view column visibility toggle via action palette
+- context-aware preference hierarchy (global ← cluster)
+
+## Gap L: Secret management friction
 
 Current issue:
 
-- users cannot fully shape and retain their workspace
+- viewing Secret values requires manual base64 decode outside the TUI
+- editing Secrets requires manual encode + YAML apply
 
 Needed:
 
-- per-view saved sort
-- per-view columns
-- context-aware preferences
+- automatic decode/encode in Secret detail view
+- masking for shoulder-surfing protection
+
+## Gap M: No resource bookmarks
+
+Current issue:
+
+- in large clusters, repeatedly navigating to the same critical resources
+- no way to pin frequently-accessed resources
+
+Needed:
+
+- per-cluster bookmarks with instant jump
+- bookmark persistence across sessions
+
+## Gap N: Weak CronJob observability
+
+Current issue:
+
+- CronJob → Job → Pod chain requires manual navigation
+- no unified execution history view
+
+Needed:
+
+- CronJob execution history panel
+- next-run-time display
+- suspend/resume capability
+
+## Gap O: No ephemeral container debugging
+
+Current issue:
+
+- exec fails on distroless/minimal containers with no shell
+- users must leave TUI for `kubectl debug`
+
+Needed:
+
+- ephemeral debug container launcher with image presets
+- automatic shell session after container creation
+
+## Gap P: No Helm rollback from TUI
+
+Current issue:
+
+- Helm releases are viewable but not actionable
+- rollback requires leaving TUI for helm CLI
+
+Needed:
+
+- revision history display
+- one-key rollback with confirmation
+- values diff between revisions
+
+## Gap Q: No resource utilization visibility
+
+Current issue:
+
+- no actual CPU/memory usage data in pod or node views
+- right-sizing requires external tools
+
+Needed:
+
+- metrics-server integration
+- usage vs. requests vs. limits comparison
+- over/under-provisioning indicators
+
+## Gap R: No configuration drift detection
+
+Current issue:
+
+- no way to see what changed since last declarative apply
+- drift diagnosis requires manual kubectl diff
+
+Needed:
+
+- live vs. last-applied diff view
+- noise-filtered rendering
+
+## Gap S: No custom action extensibility
+
+Current issue:
+
+- all actions are built-in; teams cannot add custom workflows
+- users must leave TUI for team-specific operations
+
+Needed:
+
+- config-based plugin system for custom actions
+- variable substitution with resource context
+
+## Gap T: No preventive misconfiguration detection
+
+Current issue:
+
+- Issue Center catches runtime problems but not latent misconfigurations
+- best-practice violations go unnoticed until they cause incidents
+
+Needed:
+
+- rule-based resource sanitizer
+- health report view
+
+## Gap U: NetworkPolicy is incomprehensible
+
+Current issue:
+
+- NetworkPolicy YAML is hard to reason about
+- no way to answer "can pod A reach pod B?"
+
+Needed:
+
+- effective policy visualization per pod
+- connectivity query tool
 
 ---
 
@@ -1022,6 +1151,587 @@ Keep the app fast as the workbench and workflow surface grow.
 
 ---
 
+## Milestone 16: Secret Decoded View & Editor
+
+### Status
+
+Not started
+
+### Goal
+
+Eliminate the base64 encode/decode friction that plagues every K8s operator working with Secrets.
+
+### Why this matters
+
+Managing Secrets requires `kubectl get secret -o jsonpath | base64 --decode` per field, manual re-encoding with `echo -n | base64`, and careful YAML formatting. This is error-prone (newline bugs, encoding mistakes) and tedious for Secrets with many keys. No TUI tool handles this well — this is a clear differentiator.
+
+### Scope
+
+- automatic base64 decoding of Secret data fields in detail/YAML view
+- dedicated "Decoded" tab in workbench alongside raw YAML
+- inline editing of decoded values with automatic re-encoding on save
+- masking toggle (show/hide decoded values for shoulder-surfing protection)
+
+### Tasks
+
+1. Add Secret detection in detail view: when resource is a Secret, offer a "Decoded" workbench tab.
+2. Implement base64 decode pass on all `data` fields, display as key-value pairs.
+3. Add masking toggle (`m` key) to show/hide decoded values (default: masked with `****`).
+4. Add decoded value editing: select a key, edit value, auto-encode back to base64 on save.
+5. Handle edge cases: binary data (show hex preview), empty values, invalid base64.
+6. Add action palette integration: "View decoded secrets" action for Secret resources.
+7. Update help overlay with new keybindings.
+8. Add tests for decode/encode round-trip, masking, binary detection, edge cases.
+
+### Deliverables
+
+- frictionless Secret inspection and editing
+
+### Risks
+
+- displaying decoded secrets in plain text (mitigated by masking default)
+- binary data that doesn't decode to valid UTF-8
+
+### Guardrails
+
+- default to masked view to prevent accidental exposure
+- clearly indicate when a value contains binary data
+- re-encode must produce byte-identical output for unchanged values
+
+### Acceptance Criteria
+
+- users can inspect Secret values without leaving the TUI or running base64 commands
+- editing a Secret value and saving produces correct base64 encoding
+- shoulder-surfing protection is on by default
+
+---
+
+## Milestone 17: Resource Bookmarks
+
+### Status
+
+Not started
+
+### Goal
+
+Let users pin critical resources for instant access in large clusters.
+
+### Why this matters
+
+In clusters with hundreds of resources, engineers repeatedly navigate to the same handful of critical deployments, configmaps, or services. Currently this requires navigating through the sidebar hierarchy each time. Lens users cite "quickly getting to my stuff" as a key UX advantage. k9s GitHub issues (#3595) surface the same pain point — people want to refocus on resources of interest without full navigation.
+
+### Scope
+
+- bookmark any resource from detail view or list view
+- dedicated Bookmarks view accessible from sidebar and action palette
+- per-cluster bookmark persistence (using existing preferences system)
+- one-key jump to bookmarked resource
+
+### Tasks
+
+1. Add `BookmarkEntry` model: resource kind, name, namespace, cluster context, timestamp.
+2. Add bookmark storage to `ClusterPreferences` (persisted per-cluster).
+3. Add `B` keybinding in list/detail view to toggle bookmark on selected resource.
+4. Add Bookmarks sidebar entry under a new "Pinned" group (or top of Overview group).
+5. Render bookmarks as a table: kind icon, name, namespace, age since bookmarked.
+6. Enter on a bookmark navigates to the resource's view and selects it (or opens detail).
+7. Add action palette entries: "Bookmark resource", "View bookmarks".
+8. Add bookmark indicator in list views (subtle icon/marker on bookmarked resources).
+9. Add tests for bookmark CRUD, persistence round-trip, navigation.
+
+### Deliverables
+
+- instant access to critical resources across sessions
+
+### Risks
+
+- bookmark staleness (resource deleted but bookmark persists)
+- UI clutter if users bookmark too many resources
+
+### Guardrails
+
+- indicate stale bookmarks (resource not found) with dimmed/strikethrough styling
+- cap bookmarks at 50 per cluster to prevent list bloat
+- one-key remove from bookmarks view
+
+### Acceptance Criteria
+
+- users can bookmark a resource, close the app, reopen, and jump to it instantly
+- stale bookmarks are clearly indicated, not silently broken
+
+---
+
+## Milestone 18: CronJob/Job Management Panel
+
+### Status
+
+Not started
+
+### Goal
+
+Provide a unified view connecting CronJobs to their execution history, status, and logs.
+
+### Why this matters
+
+CronJob management (database backups, cleanup scripts, report generation) is a daily task for operations teams. The current app can trigger CronJobs and view jobs as list views, but there is no unified view linking a CronJob to its execution history. Engineers currently piece together `kubectl get jobs --selector`, find the pod, then check logs — a multi-step navigation that a dedicated panel collapses into one screen.
+
+### Scope
+
+- CronJob detail panel showing execution history (last N jobs)
+- per-job status, duration, pod count, and completion percentage
+- next scheduled run time (parsed from cron expression)
+- one-key access to failed job's pod logs
+- suspend/resume CronJob toggle
+
+### Tasks
+
+1. Add cron expression parser for next-run-time display (use `cron` crate or manual parser).
+2. Add Job-to-CronJob linking via ownerReferences in existing snapshot data.
+3. Add "History" section in CronJob detail view: table of child Jobs sorted by creation time.
+4. Show per-job: status (Complete/Failed/Active), duration, completions (succeeded/total), pod count.
+5. Add `Enter` on a history job row to jump to that Job's detail (and its pod logs).
+6. Add suspend/resume toggle (`S` key) via PATCH to `.spec.suspend`.
+7. Add next-run-time display in CronJob detail header.
+8. Record suspend/resume in action history.
+9. Add action palette: "Suspend CronJob", "Resume CronJob".
+10. Update help overlay.
+11. Add tests for cron parsing, job linking, suspend/resume lifecycle.
+
+### Deliverables
+
+- unified CronJob observability and management
+
+### Risks
+
+- cron expression edge cases (non-standard extensions)
+- large job history for frequently-running CronJobs
+
+### Guardrails
+
+- cap displayed history to 20 most recent jobs
+- cron parser handles standard 5-field expressions; show "N/A" for unparseable expressions
+- suspend/resume uses standard confirmation pattern
+
+### Acceptance Criteria
+
+- users can see a CronJob's recent execution history, identify failures, and access logs without manual kubectl
+- suspend/resume is a one-key operation with confirmation
+
+---
+
+## Milestone 19: Ephemeral Debug Container Launcher
+
+### Status
+
+Not started
+
+### Goal
+
+Support modern Kubernetes debugging for distroless and minimal container images.
+
+### Why this matters
+
+Production containers increasingly use distroless or scratch-based images that lack shells and debugging tools. `kubectl debug` with ephemeral containers (stable since K8s 1.25) is the modern answer, but the command syntax is verbose. This is critical for debugging networking issues (netshoot gives tcpdump, curl, nslookup in-cluster). It complements the existing exec/shell capability for cases where exec fails because no shell exists.
+
+### Scope
+
+- ephemeral debug container dialog with image preset picker
+- common debug images: busybox, nicolaka/netshoot, alpine, ubuntu
+- optional process namespace sharing for process-level debugging
+- launch directly into shell session in the ephemeral container
+- reuse existing exec/shell workbench tab infrastructure
+
+### Tasks
+
+1. Add `DebugContainerDialog` state model with image selection and options.
+2. Add preset image picker: busybox (lightweight), netshoot (networking), alpine (general), ubuntu (full), custom.
+3. Add process namespace targeting toggle (share PID namespace with target container).
+4. Implement ephemeral container creation via Kubernetes API (pods/ephemeralcontainers subresource).
+5. After container is running, open exec session into the debug container (reuse ExecTabState).
+6. Add `D` keybinding in pod detail view to launch debug dialog (when pod is running).
+7. Add action palette: "Debug container" for pod resources.
+8. Record debug container creation in action history.
+9. Update help overlay.
+10. Add tests for dialog state, API payload construction, image presets.
+
+### Deliverables
+
+- first-class debugging for minimal/distroless containers
+
+### Risks
+
+- ephemeral containers require K8s 1.25+ (feature gate check needed)
+- debug container images may not be pullable in restricted environments
+
+### Guardrails
+
+- detect K8s version and show clear error if ephemeral containers are unsupported
+- allow custom image input for restricted registries
+- warn user that debug containers persist until pod restart
+
+### Acceptance Criteria
+
+- users can attach a debug container to a running pod and get a shell in under 5 seconds
+- networking debugging (tcpdump, curl) works via netshoot preset
+
+---
+
+## Milestone 20: Helm Release History & Rollback
+
+### Status
+
+Not started
+
+### Goal
+
+Make Helm rollback a one-key operation during incidents.
+
+### Why this matters
+
+Helm rollback is one of the most time-critical operations during incidents. Currently engineers must leave the TUI, run `helm history`, identify the target revision, then run `helm rollback`. The app already lists Helm releases but cannot act on them beyond viewing. Adding history + rollback makes KubecTUI a viable incident response tool.
+
+### Scope
+
+- revision history panel for any Helm release
+- per-revision: revision number, chart version, app version, status, timestamp, description
+- one-key rollback to a selected revision with confirmation
+- values diff between any two revisions
+
+### Tasks
+
+1. Add Helm history fetching: shell out to `helm history <release> -n <namespace> --output json`.
+2. Add `HelmHistoryTabState` for workbench with revision table.
+3. Render revision table: revision, chart, app version, status, updated, description.
+4. Add `Enter` on a revision to show values diff against current revision.
+5. Implement values diff: `helm get values --revision N` for both revisions, compute unified diff.
+6. Add rollback action: `R` on a selected revision → confirmation dialog → `helm rollback <release> <revision>`.
+7. Record rollback in action history.
+8. Add action palette: "Helm history", "Helm rollback".
+9. Add diff rendering in workbench (reuse or extend YAML tab with diff highlighting).
+10. Update help overlay.
+11. Add tests for revision parsing, diff computation, rollback command construction.
+
+### Deliverables
+
+- incident-speed Helm rollback from inside the TUI
+
+### Risks
+
+- requires `helm` CLI available on PATH
+- Helm 2 vs Helm 3 compatibility (Helm 2 is EOL; target Helm 3 only)
+
+### Guardrails
+
+- detect `helm` availability at startup; disable Helm actions if missing
+- rollback confirmation shows what will change (current revision → target revision)
+- Helm 3 only; show clear error message for Helm 2 clusters
+
+### Acceptance Criteria
+
+- users can identify a bad release, view its history, and rollback in under 30 seconds
+- values diff helps users confirm which revision to rollback to
+
+---
+
+## Milestone 21: Resource Utilization Overlay
+
+### Status
+
+Not started
+
+### Goal
+
+Surface actual CPU/memory usage alongside requests and limits to enable right-sizing decisions.
+
+### Why this matters
+
+Right-sizing is consistently the #1 cost optimization lever in Kubernetes. Teams overspend 2-3x on compute because resource requests are set-and-forget. The dashboard shows node-level gauges, but there is no pod-level usage-vs-requests comparison. Engineers currently need external tools (kubectl top, Prometheus, KRR) to identify waste.
+
+### Scope
+
+- per-pod CPU/memory usage columns (actual vs. requested vs. limit)
+- per-node utilization summary (allocated vs. capacity vs. actual)
+- visual indicators: color-coded usage bars or percentage with threshold coloring
+- namespace-level aggregation view (total requested vs. actual)
+
+### Tasks
+
+1. Add metrics-server API client (`metrics.k8s.io/v1beta1` for PodMetrics and NodeMetrics).
+2. Detect metrics-server availability; gracefully degrade if unavailable.
+3. Add usage columns to pods table: CPU (actual/request/limit), Memory (actual/request/limit).
+4. Add usage overlay to nodes table: CPU allocated%, Memory allocated%, actual usage%.
+5. Color-code usage: green (<70%), yellow (70-90%), red (>90% of request/limit).
+6. Add namespace utilization summary in dashboard: total CPU/mem requested vs. actual.
+7. Add "Top Pods" quick view: pods sorted by CPU or memory usage (like `kubectl top pods`).
+8. Periodic refresh of metrics data (every 30s, separate from main resource refresh).
+9. Add columns to column registry (hideable, default off to avoid clutter for non-metrics clusters).
+10. Update help overlay and action palette.
+11. Add tests for metrics parsing, color threshold logic, graceful degradation.
+
+### Deliverables
+
+- inline resource utilization visibility without leaving the TUI
+
+### Risks
+
+- metrics-server not installed in all clusters
+- metrics data is point-in-time, not averaged (can be misleading)
+- additional API calls increase cluster load
+
+### Guardrails
+
+- metrics columns default to hidden; users opt in via column toggle
+- clearly label as "current" not "average" to set correct expectations
+- 30s refresh interval, not every frame
+- graceful "No metrics available" when metrics-server is absent
+
+### Acceptance Criteria
+
+- users can identify over/under-provisioned pods at a glance
+- node utilization is visible without running `kubectl top nodes`
+- works silently when metrics-server is absent (no errors, columns just hidden)
+
+---
+
+## Milestone 22: Resource Diff View (Live vs. Last Applied)
+
+### Status
+
+Not started
+
+### Goal
+
+Detect configuration drift by showing what changed since the last declarative apply.
+
+### Why this matters
+
+Configuration drift is a top-3 operational concern. When something breaks, the first question is "what changed?" The `kubectl.kubernetes.io/last-applied-configuration` annotation exists on most resources but no TUI tool surfaces this as a diff. ArgoCD does this for GitOps-managed resources, but many resources are managed via `kubectl apply` or Helm outside of GitOps.
+
+### Scope
+
+- diff between live resource state and last-applied-configuration annotation
+- unified diff rendering with add/remove/change highlighting
+- noise filtering: exclude auto-managed fields (resourceVersion, generation, managedFields, status)
+- available from detail view and action palette
+
+### Tasks
+
+1. Extract `last-applied-configuration` annotation from resource YAML.
+2. Parse both live and last-applied into structured form.
+3. Implement field-level diff with noise filtering (exclude system-managed fields).
+4. Render unified diff in a workbench tab with green/red highlighting.
+5. Add `D` keybinding in detail view (or `d` if available) to open diff tab.
+6. Handle resources without last-applied annotation: show "No baseline — resource may be managed by Helm, server-side apply, or created imperatively."
+7. Add action palette: "View config drift" / "Diff live vs. applied".
+8. Update help overlay.
+9. Add tests for diff computation, field filtering, annotation parsing, edge cases.
+
+### Deliverables
+
+- instant configuration drift detection
+
+### Risks
+
+- last-applied annotation may be absent (server-side apply uses managedFields instead)
+- diff noise from Kubernetes-managed fields
+
+### Guardrails
+
+- filter system fields aggressively to reduce noise
+- support both client-side apply (annotation) and server-side apply (managedFields) where feasible
+- clearly indicate when no baseline is available
+
+### Acceptance Criteria
+
+- users can answer "has this resource been manually edited?" in one keypress
+- drift is clearly highlighted with minimal noise
+
+---
+
+## Milestone 23: Plugin / Custom Action System
+
+### Status
+
+Not started
+
+### Goal
+
+Let teams extend the action palette with custom operational workflows.
+
+### Why this matters
+
+This is k9s's most powerful extensibility feature and consistently cited as why power users stick with k9s. Every team has custom workflows — opening a resource in Grafana, running diagnostic scripts, triggering CI pipelines. No two teams' workflows are the same. The action palette already provides the UI framework; plugins extend the action catalog.
+
+### Scope
+
+- YAML config file defining custom actions
+- variable substitution: `$NAME`, `$NAMESPACE`, `$KIND`, `$CONTEXT`, `$LABELS`
+- resource type filtering (action only appears for matching resources)
+- execution modes: background (capture output), foreground (terminal handoff), silent (fire and forget)
+- custom keyboard shortcuts (optional)
+
+### Tasks
+
+1. Define plugin config schema: `~/.config/kubectui/plugins.yaml` (or `plugins/` directory).
+2. Implement plugin loader: parse YAML, validate schema, register actions.
+3. Add plugin actions to action palette filtered by resource type.
+4. Implement variable substitution engine with shell-safe escaping.
+5. Add three execution modes:
+   - `background`: run command, capture output in workbench tab
+   - `foreground`: hand off terminal (like existing YAML edit)
+   - `silent`: run command, show success/failure in status bar
+6. Add plugin output workbench tab for background mode.
+7. Record plugin executions in action history.
+8. Hot-reload plugins on config file change (watch with notify).
+9. Ship example plugins: "Open in Grafana", "Copy connection string", "Run diagnostic".
+10. Add tests for config parsing, variable substitution, resource type matching, execution modes.
+
+### Deliverables
+
+- team-customizable operational workflows without app modifications
+
+### Risks
+
+- arbitrary command execution (security concern)
+- plugin config errors causing crashes
+
+### Guardrails
+
+- plugins run with user's permissions only (no privilege escalation)
+- invalid plugin configs logged and skipped, not fatal
+- confirmation dialog for destructive-tagged plugins
+- document security model clearly
+
+### Acceptance Criteria
+
+- a team can add a custom "Open in Grafana" action that appears for Deployments/StatefulSets
+- plugin actions feel native — same palette, same history, same keybinding system
+
+---
+
+## Milestone 24: Resource Sanitizer / Best Practice Linter
+
+### Status
+
+Not started
+
+### Goal
+
+Catch latent misconfigurations in resources that appear healthy but violate best practices.
+
+### Why this matters
+
+80% of Kubernetes incidents stem from misconfigurations, not infrastructure failures. The Issue Center detects runtime problems (CrashLoopBackOff, pending pods). A sanitizer catches _latent_ problems — resources that are running fine today but are one restart away from trouble. This is k9s's "Popeye" integration — one of its most distinctive features that no other TUI replicates.
+
+### Scope
+
+- configurable rule set scanning deployed resources
+- categories: resource limits, probes, security context, image tags, PDB coverage, naked pods, port mismatches
+- dedicated "Health Report" view with per-resource severity scores
+- integration with Issue Center (sanitizer findings appear alongside runtime issues)
+
+### Tasks
+
+1. Define rule engine model: `SanitizeRule` with category, severity, resource matcher, check function.
+2. Implement core rules:
+   - Missing CPU/memory requests or limits
+   - Missing liveness/readiness probes
+   - Running as root (securityContext.runAsNonRoot not set)
+   - Using `:latest` tag or no tag
+   - hostNetwork/hostPID/hostIPC enabled
+   - Missing PodDisruptionBudget for Deployments with replicas > 1
+   - Naked pods (no owning controller)
+   - Service port → container port mismatches
+   - Unused ConfigMaps/Secrets (not referenced by any pod)
+3. Add "Health Report" sidebar view with findings table: severity, category, resource, message.
+4. Add per-resource sanitizer badge in list views (optional, hideable column).
+5. Compute findings from snapshot data (no new API calls); cache by snapshot_version.
+6. Allow rule suppression via annotations (`kubectui.io/ignore: latest-tag,no-probes`).
+7. Add action palette: "View health report", "Sanitize cluster".
+8. Update help overlay.
+9. Add tests for each rule, annotation suppression, caching, edge cases.
+
+### Deliverables
+
+- preventive misconfiguration detection
+
+### Risks
+
+- false positives creating noise and alert fatigue
+- rule maintenance burden
+
+### Guardrails
+
+- start with high-confidence rules only (no speculative checks)
+- all rules must be individually suppressible
+- severity levels: critical (security), warning (reliability), info (best practice)
+- cap findings at 500 to match Issue Center
+
+### Acceptance Criteria
+
+- users can identify misconfigured resources before they cause incidents
+- false positive rate is low enough that the feature is trusted
+
+---
+
+## Milestone 25: Network Policy Visualizer
+
+### Status
+
+Not started
+
+### Goal
+
+Make NetworkPolicy debugging comprehensible — show who can talk to whom.
+
+### Why this matters
+
+NetworkPolicy YAML is notoriously hard to reason about. Label selectors, namespace selectors, the implicit "deny all if any policy selects you" behavior, and overlapping policies create a mental model that even experienced engineers struggle with. No TUI tool offers NetworkPolicy visualization. Web-based tools (networkpolicy.io, Cilium editor) are disconnected from live cluster state.
+
+### Scope
+
+- per-pod effective policy view: which policies apply, what traffic is allowed/denied
+- per-namespace isolation summary: default deny status, policy count
+- ingress/egress rule breakdown with resolved pod/namespace targets
+- text-based connectivity graph (reuse relationship explorer rendering)
+- "Can pod A reach pod B?" query tool
+
+### Tasks
+
+1. Implement NetworkPolicy selector resolution: match policies to pods via label selectors.
+2. Compute effective ingress/egress rules per pod from all matching policies.
+3. Resolve peer selectors to actual pods/namespaces for concrete display.
+4. Render per-pod policy view as tree: Policy → Direction (Ingress/Egress) → Rule → Peers + Ports.
+5. Add namespace isolation summary: "Default: Allow All" vs "Default: Deny (N policies active)".
+6. Add "Can reach?" dialog: select source pod and target pod, show allow/deny verdict with explaining policy.
+7. Use relationship explorer tree rendering for policy → pod connectivity graph.
+8. Add action palette: "View network policies", "Check connectivity".
+9. Add `N` keybinding in pod detail for quick policy view.
+10. Update help overlay.
+11. Add tests for selector matching, isolation computation, multi-policy resolution, edge cases.
+
+### Deliverables
+
+- comprehensible NetworkPolicy debugging without external tools
+
+### Risks
+
+- NetworkPolicy spec complexity (especially with egress and namespace selectors)
+- CNI plugins may not enforce NetworkPolicies (tool shows policy intent, not enforcement)
+
+### Guardrails
+
+- clearly state "shows policy intent, not CNI enforcement" in the UI
+- handle clusters with no NetworkPolicies gracefully ("No network policies — all traffic allowed")
+- focus on readability over completeness; complex multi-policy scenarios get simplified view
+
+### Acceptance Criteria
+
+- users can answer "why can't pod A reach pod B?" from within the TUI
+- NetworkPolicy rules are displayed in human-readable form, not raw YAML selectors
+
+---
+
 ## Milestone Dependencies
 
 These dependencies are strict unless there is a compelling reason to revise the plan.
@@ -1044,6 +1754,16 @@ These dependencies are strict unless there is a compelling reason to revise the 
 | 13 Timeline | 2, 3 | depends on workbench events/history |
 | 14 Persistence | 1, 2, 9 | should persist stable user workflows, not temporary ones |
 | 15 Performance Track | all | parallel quality track across all milestones |
+| 16 Secret Decoded View | 0, 2 | needs YAML view infrastructure and detail model |
+| 17 Resource Bookmarks | 14 | needs persistence infrastructure |
+| 18 CronJob/Job Management | 0, 1 | needs workbench and action model |
+| 19 Ephemeral Debug Container | 4 | needs exec/shell session infrastructure |
+| 20 Helm History & Rollback | 0, 3 | needs action history and workbench |
+| 21 Resource Utilization | 0 | needs metrics API integration |
+| 22 Resource Diff View | 0, 2 | needs YAML view infrastructure |
+| 23 Plugin / Custom Actions | 9 | needs action palette framework |
+| 24 Resource Sanitizer | 12 | builds on issue center model |
+| 25 Network Policy Visualizer | 10 | builds on relationship explorer infrastructure |
 
 ---
 
@@ -1077,7 +1797,29 @@ This is the execution order.
 - Milestone 13: Timeline & Correlation ✅
 - Milestone 14: View Personalization ✅
 
-## P4
+## P4 (Next)
+
+- Milestone 16: Secret Decoded View & Editor
+- Milestone 17: Resource Bookmarks
+- Milestone 18: CronJob/Job Management Panel
+
+## P5
+
+- Milestone 19: Ephemeral Debug Container Launcher
+- Milestone 20: Helm Release History & Rollback
+- Milestone 21: Resource Utilization Overlay
+
+## P6
+
+- Milestone 22: Resource Diff View
+- Milestone 23: Plugin / Custom Action System
+- Milestone 24: Resource Sanitizer / Best Practice Linter
+
+## P7
+
+- Milestone 25: Network Policy Visualizer
+
+## Continuous
 
 - Milestone 15: Performance Track remains continuous and parallel, not deferred
 
@@ -1085,13 +1827,11 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M14 are complete. The next milestone is M15: Performance Track (virtualization, caching, instrumentation).
+M0-M14 are complete. The next milestone is M16: Secret Decoded View & Editor — the highest-impact, lowest-effort feature that every K8s operator will use daily.
 
 Do not start next with:
 
 - AI features
-- plugin systems
-- batch actions
 - visual graph experiments that don't fit TUI constraints
 - desktop-style interaction patterns
 
@@ -1113,6 +1853,8 @@ Examples:
 - capability tables
 - persistence model
 - keybinding registry
+- plugin config schema
+- sanitizer rule engine
 
 Rules:
 
@@ -1132,6 +1874,9 @@ Examples:
 - timeline view
 - issue center rendering
 - sidebar resource counts
+- secret decoded tab
+- health report view
+- network policy tree
 
 Rules:
 
@@ -1166,6 +1911,9 @@ Examples:
 - exec
 - reconcile/status follow-up
 - event correlation
+- metrics-server polling
+- helm CLI execution
+- ephemeral container creation
 
 Rules:
 
@@ -1182,6 +1930,8 @@ Examples:
 - workbench height
 - sort persistence
 - column persistence
+- bookmark persistence
+- plugin config loading
 
 Rules:
 
@@ -1222,13 +1972,13 @@ A milestone is done only when:
 These are valid ideas, but they are not current milestone priorities:
 
 - AI assistant features
-- extension marketplace or plugin framework
+- extension marketplace (plugin system in M23 is config-based, not a marketplace)
 - desktop-like window choreography
-- advanced diff/merge editor beyond practical YAML workflows
 - visually complex graph canvases
 - integrated Prometheus metric graphs (sparklines possible in later milestone)
-- Helm chart installation workflow
+- Helm chart installation workflow (M20 covers history/rollback, not installation)
 - CSV export of table views
+- batch operations (multi-select delete, scale, restart)
 
 They should not distract from the milestone order above.
 
@@ -1274,6 +2024,10 @@ The correct path is:
 - add node operations, issues (done)
 - add timeline and event correlation (done)
 - add view personalization and workspace persistence (done)
+- close daily workflow friction (secrets, bookmarks, cronjob management)
+- unlock modern debugging patterns (ephemeral containers, Helm rollback, utilization)
+- add drift detection and extensibility (diff view, plugins, sanitizer)
+- complete network visibility (policy visualizer)
 - preserve speed at every step
 
 This milestone plan is now the canonical implementation roadmap.
