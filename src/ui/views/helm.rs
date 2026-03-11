@@ -225,8 +225,7 @@ pub fn render_helm_releases(
                     Style::default().fg(theme.accent2),
                 )),
                 Cell::from(Span::from(chart_display)).style(Style::default().fg(theme.fg_dim)),
-                Cell::from(release.chart_version.clone())
-                    .style(Style::default().fg(theme.fg_dim)),
+                Cell::from(release.chart_version.clone()).style(Style::default().fg(theme.fg_dim)),
                 Cell::from(release.status.clone()).style(status_style),
                 Cell::from(Span::from(revision)).style(Style::default().fg(theme.fg_dim)),
                 Cell::from(Span::from(updated)).style(Style::default().fg(theme.fg_dim)),

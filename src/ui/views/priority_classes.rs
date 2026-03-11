@@ -161,18 +161,17 @@ pub fn render_priority_classes(
             } else {
                 ""
             };
-            let (value, desc): (Cow<'_, str>, Cow<'_, str>) =
-                if let Some(cell) = derived.get(idx) {
-                    (
-                        Cow::Borrowed(cell.value.as_str()),
-                        Cow::Borrowed(cell.description_truncated.as_str()),
-                    )
-                } else {
-                    (
-                        format_small_int(i64::from(priority_class.value)),
-                        Cow::Owned(priority_class.description.chars().take(60).collect()),
-                    )
-                };
+            let (value, desc): (Cow<'_, str>, Cow<'_, str>) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.value.as_str()),
+                    Cow::Borrowed(cell.description_truncated.as_str()),
+                )
+            } else {
+                (
+                    format_small_int(i64::from(priority_class.value)),
+                    Cow::Owned(priority_class.description.chars().take(60).collect()),
+                )
+            };
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {}", priority_class.name),

@@ -43,7 +43,12 @@ struct ClusterRoleBindingDerivedCell {
 
 type ClusterRoleBindingDerivedCacheValue = Arc<Vec<ClusterRoleBindingDerivedCell>>;
 static CLUSTER_ROLE_BINDING_DERIVED_CACHE: LazyLock<
-    Mutex<Option<(ClusterRoleBindingDerivedCacheKey, ClusterRoleBindingDerivedCacheValue)>>,
+    Mutex<
+        Option<(
+            ClusterRoleBindingDerivedCacheKey,
+            ClusterRoleBindingDerivedCacheValue,
+        )>,
+    >,
 > = LazyLock::new(|| Mutex::new(None));
 
 fn cached_cluster_role_binding_derived(
@@ -216,7 +221,10 @@ pub fn render_cluster_role_bindings(
                     Span::styled(rb.name.as_str(), name_style),
                 ])),
                 Cell::from(Span::styled(role_ref, Style::default().fg(theme.accent2))),
-                Cell::from(Span::styled(subjects_count, Style::default().fg(theme.fg_dim))),
+                Cell::from(Span::styled(
+                    subjects_count,
+                    Style::default().fg(theme.fg_dim),
+                )),
                 Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
