@@ -190,7 +190,11 @@ pub fn render_ingresses(
                     }),
                     Cow::Owned(ingress.class.as_deref().unwrap_or("<none>").to_string()),
                     Cow::Owned(
-                        ingress.address.as_deref().unwrap_or("<pending>").to_string(),
+                        ingress
+                            .address
+                            .as_deref()
+                            .unwrap_or("<pending>")
+                            .to_string(),
                     ),
                 )
             };
