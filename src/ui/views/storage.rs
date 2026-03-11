@@ -1,5 +1,10 @@
 //! Storage views: PVCs, PVs, StorageClasses.
 
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -21,6 +26,69 @@ use crate::{
         workload_sort_suffix,
     },
 };
+
+// ── PVC derived cell cache ──────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PvcDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PvcDerivedCell {
+    capacity: String,
+    access_modes: String,
+    storage_class: String,
+}
+
+type PvcDerivedCacheValue = Arc<Vec<PvcDerivedCell>>;
+static PVC_DERIVED_CACHE: LazyLock<Mutex<Option<(PvcDerivedCacheKey, PvcDerivedCacheValue)>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+fn cached_pvc_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> PvcDerivedCacheValue {
+    let key = PvcDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.pvcs, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = PVC_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&pvc_idx| {
+                let pvc = &snapshot.pvcs[pvc_idx];
+                PvcDerivedCell {
+                    capacity: pvc.capacity.as_deref().unwrap_or("-").to_string(),
+                    access_modes: if pvc.access_modes.is_empty() {
+                        "-".to_string()
+                    } else {
+                        pvc.access_modes.join(",")
+                    },
+                    storage_class: pvc.storage_class.as_deref().unwrap_or("-").to_string(),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = PVC_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
 
 pub fn render_pvcs(
     frame: &mut Frame,
@@ -88,6 +156,8 @@ pub fn render_pvcs(
     .style(theme.header_style())
     .height(1);
 
+    let derived = cached_pvc_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -104,12 +174,22 @@ pub fn render_pvcs(
                 "Pending" => theme.badge_warning_style(),
                 _ => theme.badge_error_style(),
             };
-            let capacity = pvc.capacity.as_deref().unwrap_or("-");
-            let sc = pvc.storage_class.as_deref().unwrap_or("-");
-            let modes = if pvc.access_modes.is_empty() {
-                "-".to_string()
+            let (capacity, modes, sc) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.capacity.as_str()),
+                    Cow::Borrowed(cell.access_modes.as_str()),
+                    Cow::Borrowed(cell.storage_class.as_str()),
+                )
             } else {
-                pvc.access_modes.join(",")
+                (
+                    Cow::Owned(pvc.capacity.as_deref().unwrap_or("-").to_string()),
+                    Cow::Owned(if pvc.access_modes.is_empty() {
+                        "-".to_string()
+                    } else {
+                        pvc.access_modes.join(",")
+                    }),
+                    Cow::Owned(pvc.storage_class.as_deref().unwrap_or("-").to_string()),
+                )
             };
 
             Row::new(vec![
@@ -122,15 +202,9 @@ pub fn render_pvcs(
                     Style::default().fg(theme.fg_dim),
                 )),
                 Cell::from(Span::styled(pvc.status.clone(), status_style)),
-                Cell::from(Span::styled(
-                    capacity.to_string(),
-                    Style::default().fg(theme.info),
-                )),
+                Cell::from(Span::styled(capacity, Style::default().fg(theme.info))),
                 Cell::from(Span::styled(modes, Style::default().fg(theme.accent2))),
-                Cell::from(Span::styled(
-                    sc.to_string(),
-                    Style::default().fg(theme.fg_dim),
-                )),
+                Cell::from(Span::styled(sc, Style::default().fg(theme.fg_dim))),
             ])
             .style(row_style)
         })
