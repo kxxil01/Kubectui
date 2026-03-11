@@ -57,7 +57,6 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenCommandPalette => {
-            app_state.refresh_palette_columns();
             app_state.command_palette.open();
             true
         }

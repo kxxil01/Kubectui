@@ -1923,6 +1923,20 @@ impl AppState {
         self.save_sort_to_preferences(view_key);
     }
 
+    /// Returns a mutable reference to the `ViewPreferences` for the given view key,
+    /// writing to cluster-specific prefs when a context is active and cluster prefs
+    /// already exist for that context, otherwise writing to global prefs.
+    fn view_prefs_mut(&mut self, view_key: &str) -> &mut crate::preferences::ViewPreferences {
+        if let Some(ctx) = &self.current_context_name
+            && let Some(clusters) = &mut self.cluster_preferences
+            && let Some(cluster) = clusters.get_mut(ctx)
+        {
+            return cluster.views.entry(view_key.to_string()).or_default();
+        }
+        let global = self.preferences.get_or_insert_with(Default::default);
+        global.views.entry(view_key.to_string()).or_default()
+    }
+
     /// Toggles a column's visibility in user preferences for the current view.
     fn toggle_column_visibility(&mut self, column_id: &str) {
         let view_key = crate::columns::view_key(self.view);
@@ -1938,8 +1952,7 @@ impl AppState {
             return;
         }
 
-        let global = self.preferences.get_or_insert_with(Default::default);
-        let vp = global.views.entry(view_key.to_string()).or_default();
+        let vp = self.view_prefs_mut(view_key);
         if let Some(pos) = vp.hidden_columns.iter().position(|c| c == column_id) {
             vp.hidden_columns.remove(pos);
         } else {
@@ -2037,13 +2050,28 @@ impl AppState {
             },
         };
 
-        let global = self.preferences.get_or_insert_with(Default::default);
         if let Some(col) = sort_column {
-            let vp = global.views.entry(view_key.to_string()).or_default();
+            let vp = self.view_prefs_mut(view_key);
             vp.sort_column = Some(col.to_string());
             vp.sort_ascending = sort_ascending;
-        } else if let Some(vp) = global.views.get_mut(view_key) {
-            vp.sort_column = None;
+        } else {
+            // Clear sort at the most-specific level only
+            let cleared_cluster = if let Some(ctx) = &self.current_context_name
+                && let Some(clusters) = &mut self.cluster_preferences
+                && let Some(cluster) = clusters.get_mut(ctx)
+                && let Some(vp) = cluster.views.get_mut(view_key)
+            {
+                vp.sort_column = None;
+                true
+            } else {
+                false
+            };
+            if !cleared_cluster
+                && let Some(global) = &mut self.preferences
+                && let Some(vp) = global.views.get_mut(view_key)
+            {
+                vp.sort_column = None;
+            }
         }
         self.needs_config_save = true;
     }
@@ -4288,7 +4316,7 @@ mod tests {
                 sort_column: Some("restarts".into()),
                 sort_ascending: false,
                 hidden_columns: vec!["namespace".into()],
-                column_order: None,
+                ..Default::default()
             },
         );
         app.preferences = Some(global);
