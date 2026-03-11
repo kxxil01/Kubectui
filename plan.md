@@ -24,6 +24,7 @@ Current milestone status:
 - Milestone 9: completed
 - Milestone 10: completed
 - Milestone 11: completed
+- Milestone 12: completed
 
 Completion notes:
 
@@ -35,6 +36,8 @@ Completion notes:
 - Milestone 5 added multi-pod and workload-level logs with per-pod/container/text filtering, follow mode, "All Containers" picker in pod logs, and workload log aggregation from deployments/statefulsets/daemonsets.
 
 - Milestone 10 shipped the Relationship Explorer: workbench-hosted Relations tab with 6 resolver chains (owner, service backends, ingress backends, storage bindings, RBAC bindings, Flux lineage), indented expand/collapse tree with connectors, `w` keybinding from detail view, action palette integration, and Enter-to-jump navigation to related resources.
+
+- Milestone 12 shipped the Issue Center: a problem-first view with 11 detection categories (CrashLoopBackOff, ImagePullFailure, pending/failed pods, node not-ready/pressure, degraded workloads, storage issues, Flux reconcile failures, services with no endpoints, failed jobs). Issues are computed from snapshot data (no new API calls), cached by snapshot_version, sorted by severity, capped at 500. Searchable table with Enter→jump-to-detail, dashboard health summary shows issue count.
 
 - Milestone 11 shipped Node Operations: cordon (`c`), uncordon (`u`), and drain (`D`) for Kubernetes nodes. Cordon/uncordon execute immediately with optimistic cache updates. Drain shows a confirmation dialog with force-drain option (`F`). Node list status column now shows SchedulingDisabled for cordoned nodes. All three operations are available via the action palette and recorded in action history.
 
@@ -48,7 +51,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 517 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 552 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -728,7 +731,7 @@ Let users move through the cluster by dependency and ownership, not just by reso
 
 ### Status
 
-Planned
+Completed
 
 ### Goal
 
@@ -779,7 +782,7 @@ Support high-value node lifecycle actions safely.
 
 ### Status
 
-Planned
+Completed
 
 ### Goal
 
@@ -1031,13 +1034,13 @@ This is the execution order.
 - Milestone 8: Enhanced Detail
 - Milestone 9: Action Palette v2
 
-## P2 (Current)
+## P2 (Completed)
 - Milestone 10: Relationship Explorer ✅
-- Milestone 11: Node Operations
+- Milestone 11: Node Operations ✅
 
-## P3
+## P3 (Current)
 
-- Milestone 12: Issue Center
+- Milestone 12: Issue Center ✅
 - Milestone 13: Timeline & Correlation
 - Milestone 14: View Personalization
 
