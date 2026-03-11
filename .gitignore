@@ -25,6 +25,9 @@ debug/
 # Logs
 *.log
 
+# Claude Code (local settings only; .claude/settings.json is shared)
+.claude/settings.local.json
+
 # OS
 Thumbs.db
 .DS_Store
