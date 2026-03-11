@@ -215,6 +215,62 @@ pub fn render_config_maps(
     );
 }
 
+// ── Secret derived cell cache ───────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SecretDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct SecretDerivedCell {
+    data_count: String,
+}
+
+type SecretDerivedCacheValue = Arc<Vec<SecretDerivedCell>>;
+static SECRET_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(SecretDerivedCacheKey, SecretDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_secret_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> SecretDerivedCacheValue {
+    let key = SecretDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.secrets, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = SECRET_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&secret_idx| {
+                let secret = &snapshot.secrets[secret_idx];
+                SecretDerivedCell {
+                    data_count: format_small_int(secret.data_count as i64).into_owned(),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = SECRET_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
+
 pub fn render_secrets(
     frame: &mut Frame,
     area: Rect,
@@ -277,6 +333,8 @@ pub fn render_secrets(
     .height(1)
     .style(theme.header_style());
 
+    let derived = cached_secret_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -287,6 +345,11 @@ pub fn render_secrets(
                 Style::default().bg(theme.bg)
             } else {
                 theme.row_alt_style()
+            };
+            let data_count: Cow<'_, str> = if let Some(cell) = derived.get(idx) {
+                Cow::Borrowed(cell.data_count.as_str())
+            } else {
+                format_small_int(secret.data_count as i64)
             };
             Row::new(vec![
                 Cell::from(Span::styled(
@@ -301,10 +364,7 @@ pub fn render_secrets(
                     secret.type_.clone(),
                     Style::default().fg(theme.warning),
                 )),
-                Cell::from(Span::styled(
-                    format_small_int(secret.data_count as i64),
-                    Style::default().fg(theme.info),
-                )),
+                Cell::from(Span::styled(data_count, Style::default().fg(theme.info))),
             ])
             .style(row_style)
         })
