@@ -3,10 +3,24 @@
 ## Scope
 This file governs `/Users/ilham/Developer/Kubectui` and all subdirectories.
 
+## Communication
+- Be concise and direct. Lead with the answer, not the reasoning.
+- Use bullet points for lists. Skip unnecessary preamble.
+- Don't explain what you're about to do — just do it.
+
+## Environment
+- macOS, VS Code, zsh
+- Rust toolchain (stable), cargo
+
 ## Primary Goals
 1. Keep the app correct and stable (no functional regressions).
 2. Improve render-path speed and responsiveness.
 3. Keep UI/UX flow intact while optimizing.
+
+## Code Style
+- Prefer explicit, readable code over dense one-liners.
+- No commented-out code — delete it.
+- Self-documenting code over excessive comments.
 
 ## Engineering Standards (Rust)
 - Prefer safe Rust; isolate any `unsafe` behind minimal, documented abstractions.
@@ -109,10 +123,13 @@ Run all of the following:
 
 ## Git Rules
 - **NEVER push directly to main.** All changes must go through: new branch → open PR → merge PR to main.
+- **Never add `Co-Authored-By` lines to commit messages.** Commit as the user only.
 - Branch naming: `fix/description`, `feat/description`, `chore/description`, `refactor/description`
 - Use `gh pr create` to open PRs, `gh pr merge --squash --delete-branch` to merge.
 - This ensures an accountable changelog via PR history.
 - Use Conventional Commits (`feat:`, `fix:`, `chore:`, `refactor:`, `perf:`, `docs:`, `test:`).
+- Write commit messages in imperative mood ("add feature" not "added feature").
+- Keep commit subject lines under 72 characters.
 - Keep commits scoped to one measurable objective.
 - Ask before any destructive git action.
 - Ask before force-push (never default to force).
