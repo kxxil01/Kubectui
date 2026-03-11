@@ -41,7 +41,7 @@ use kubectui::{
         workload_logs::{MAX_WORKLOAD_LOG_STREAMS, resolve_workload_log_targets},
     },
     policy::{DetailAction, ResourceActionContext},
-    state::{ClusterSnapshot, GlobalState, RefreshOptions},
+    state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions},
     ui,
     workbench::{WorkbenchTabKey, WorkbenchTabState},
 };
@@ -57,6 +57,10 @@ async fn main() -> Result<()> {
     //   --profile-render
     //   --profile-output <dir>
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("kubectui {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     if args.iter().any(|a| a == "--help" || a == "-h") {
         println!("KubecTUI — keyboard-driven terminal UI for Kubernetes\n");
         println!("USAGE: kubectui [OPTIONS]\n");
@@ -64,6 +68,7 @@ async fn main() -> Result<()> {
         println!("  --theme <name>  Set color theme (dark, nord, dracula, catppuccin, light)");
         println!("  --profile-render  Enable render profiling (frame timings + folded stacks)");
         println!("  --profile-output <dir>  Profile output directory (default: target/profiles)");
+        println!("  --version, -V   Show version");
         println!("  --help, -h      Show this help message");
         return Ok(());
     }
@@ -1023,7 +1028,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 if !namespaces.iter().any(|ns| ns == &selected_namespace) {
                     app.set_namespace("all".to_string());
                     startup_namespace_scope = None;
-                    save_config(&app);
+                    app.needs_config_save = true;
                     app.set_error(format!(
                         "Namespace '{selected_namespace}' not found. Switched to 'all'."
                     ));
@@ -1125,9 +1130,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     // Track consecutive refresh failures for backoff
     let mut consecutive_refresh_failures: u32 = 0;
     let mut backoff_until: Option<Instant> = None;
+    let mut last_config_save: Option<Instant> = None;
     let mut auto_refresh_count: u64 = 0;
     let mut status_message_clear_at: Option<Instant> = None;
     let mut pending_palette_action: Option<AppAction> = None;
+    let mut pending_context_switch: Option<(String, tokio::task::JoinHandle<Result<K8sClient>>)> =
+        None;
 
     let mut event_stream = EventStream::new();
 
@@ -1387,7 +1395,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         .any(|ns| ns == &previously_selected_namespace);
                                 if !namespace_still_exists {
                                     app.set_namespace("all".to_string());
-                                    save_config(&app);
+                                    app.needs_config_save = true;
                                     app.set_error(format!(
                                         "Namespace '{previously_selected_namespace}' not found. Switched to 'all'."
                                     ));
@@ -2003,6 +2011,67 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
+            // Background context switch completed (TLS handshake finished)
+            result = async {
+                match &mut pending_context_switch {
+                    Some((_, handle)) => handle.await,
+                    None => std::future::pending().await,
+                }
+            } => {
+                if let Some((ctx, _)) = pending_context_switch.take() {
+                    match result {
+                        Ok(Ok(new_client)) => {
+                            // Context-bound long-lived services must be rebuilt to avoid
+                            // continuing background work against the previous cluster.
+                            let _ = coordinator.shutdown().await;
+                            for (_, handle) in exec_sessions.drain() {
+                                let _ = handle.cancel_tx.send(());
+                            }
+                            workload_log_sessions.clear();
+                            port_forwarder.stop_all().await;
+                            app.tunnel_registry.update_tunnels(Vec::new());
+
+                            client = new_client;
+                            app.current_context_name = Some(ctx.clone());
+                            coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
+                            port_forwarder =
+                                PortForwarderService::new(std::sync::Arc::new(client.clone()));
+                            // Invalidate stale async results from the previous client/context.
+                            refresh_state.context_generation =
+                                refresh_state.context_generation.wrapping_add(1);
+                            abort_in_flight_refresh(&mut refresh_state);
+                            refresh_state.queued_refresh = None;
+                            delete_in_flight_id = None;
+                            status_message_clear_at = None;
+                            app.clear_status();
+                            needs_redraw = true;
+
+                            request_refresh(
+                                &refresh_tx,
+                                &mut global_state,
+                                &client,
+                                namespace_scope(app.get_namespace()).map(str::to_string),
+                                refresh_options_for_view(app.view(), app.view().is_fluxcd(), true),
+                                &mut refresh_state,
+                                &mut snapshot_dirty,
+                            );
+                        }
+                        Ok(Err(err)) => {
+                            global_state.set_phase(DataPhase::Error);
+                            snapshot_dirty = true;
+                            needs_redraw = true;
+                            app.set_error(format!("Failed to connect to context '{ctx}': {err:#}"));
+                        }
+                        Err(join_err) => {
+                            global_state.set_phase(DataPhase::Error);
+                            snapshot_dirty = true;
+                            needs_redraw = true;
+                            app.set_error(format!("Context switch task panicked: {join_err}"));
+                        }
+                    }
+                }
+            }
+
             trigger = deferred_refresh_rx.recv() => {
                 if let Some(trigger) = trigger {
                     if trigger.context_generation != refresh_state.context_generation {
@@ -2234,7 +2303,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     }
                     apply_action(action, &mut app);
-                    save_config(&app);
+                    app.needs_config_save = true;
                 }
                 AppAction::OpenNamespacePicker => {
                     app.set_available_namespaces(global_state.namespaces().to_vec());
@@ -2315,57 +2384,27 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
                 AppAction::SelectContext(ctx) => {
                     app.close_context_picker();
-                    match K8sClient::connect_with_context(&ctx).await {
-                        Ok(new_client) => {
-                            // Context-bound long-lived services must be rebuilt to avoid
-                            // continuing background work against the previous cluster.
-                            let _ = coordinator.shutdown().await;
-                            for (_, handle) in exec_sessions.drain() {
-                                let _ = handle.cancel_tx.send(());
-                            }
-                            workload_log_sessions.clear();
-                            port_forwarder.stop_all().await;
-                            app.tunnel_registry.update_tunnels(Vec::new());
+                    // Show loading state immediately; TLS handshake runs in background.
+                    global_state.begin_loading_transition(true);
+                    app.selected_idx = 0;
+                    app.detail_view = None;
+                    app.workbench.close_resource_tabs();
+                    snapshot_dirty = true;
+                    needs_redraw = true;
 
-                            client = new_client;
-                            app.current_context_name = Some(ctx.clone());
-                            coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
-                            port_forwarder =
-                                PortForwarderService::new(std::sync::Arc::new(client.clone()));
-                            global_state.begin_loading_transition(true);
-                            app.selected_idx = 0;
-                            // Invalidate stale async results from the previous client/context.
-                            refresh_state.context_generation =
-                                refresh_state.context_generation.wrapping_add(1);
-                            abort_in_flight_refresh(&mut refresh_state);
-                            refresh_state.queued_refresh = None;
-                            delete_in_flight_id = None;
-                            status_message_clear_at = None;
-                            app.clear_status();
-                            snapshot_dirty = true;
-                            app.detail_view = None;
-                            app.workbench.close_resource_tabs();
-
-                            request_refresh(
-                                &refresh_tx,
-                                &mut global_state,
-                                &client,
-                                namespace_scope(app.get_namespace()).map(str::to_string),
-                                refresh_options_for_view(app.view(), app.view().is_fluxcd(), true),
-                                &mut refresh_state,
-                                &mut snapshot_dirty,
-                            );
-                        }
-                        Err(err) => {
-                            app.set_error(format!("Failed to connect to context '{ctx}': {err:#}"));
-                        }
-                    }
+                    let ctx_clone = ctx.clone();
+                    pending_context_switch = Some((
+                        ctx,
+                        tokio::spawn(
+                            async move { K8sClient::connect_with_context(&ctx_clone).await },
+                        ),
+                    ));
                 }
                 AppAction::SelectNamespace(namespace) => {
                     app.set_namespace(namespace);
                     app.selected_idx = 0;
                     app.close_namespace_picker();
-                    save_config(&app);
+                    app.needs_config_save = true;
                     // Invalidate stale async results from previous namespace selections.
                     refresh_state.context_generation =
                         refresh_state.context_generation.wrapping_add(1);
@@ -3982,7 +4021,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
                 AppAction::CycleTheme => {
                     apply_action(AppAction::CycleTheme, &mut app);
-                    save_config(&app);
+                    app.needs_config_save = true;
                 }
                 other => {
                     apply_action(other, &mut app);
@@ -3997,12 +4036,22 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 pending_palette_action = None;
             }
 
-            // Persist preferences when dirty flag is set
+            // Persist preferences when dirty flag is set (debounced to at most once per second)
             if app.needs_config_save {
-                app.needs_config_save = false;
-                save_config(&app);
+                let should_save =
+                    last_config_save.is_none_or(|t| t.elapsed() >= Duration::from_secs(1));
+                if should_save {
+                    app.needs_config_save = false;
+                    save_config(&app);
+                    last_config_save = Some(Instant::now());
+                }
             }
         }
+    }
+
+    // Final flush: persist any pending config changes before exit
+    if app.needs_config_save {
+        save_config(&app);
     }
 
     for (_, handle) in exec_sessions.drain() {
@@ -4654,11 +4703,35 @@ async fn fetch_detail_view(
     resource: ResourceRef,
 ) -> Result<DetailViewState> {
     let metadata = metadata_for_resource(snapshot, &resource);
-    let kind = resource.kind().to_ascii_lowercase();
-    let name = resource.name().to_string();
-    let namespace = resource.namespace().map(str::to_owned);
+    let sections = sections_for_resource(snapshot, &resource);
 
-    let yaml = match &resource {
+    // Run YAML, events, and metrics fetches concurrently (no dependencies between them).
+    let (yaml, events, (pod_metrics, node_metrics, metrics_unavailable_message)) = tokio::join!(
+        fetch_detail_yaml(client, &resource),
+        fetch_detail_events(client, &resource),
+        fetch_detail_metrics(client, &resource),
+    );
+
+    Ok(DetailViewState {
+        resource: Some(resource),
+        metadata,
+        yaml,
+        events,
+        sections,
+        pod_metrics,
+        node_metrics,
+        metrics_unavailable_message,
+        loading: false,
+        error: None,
+        scale_dialog: None,
+        probe_panel: None,
+        confirm_delete: false,
+        confirm_drain: false,
+    })
+}
+
+async fn fetch_detail_yaml(client: &K8sClient, resource: &ResourceRef) -> Option<String> {
+    match resource {
         ResourceRef::CustomResource {
             group,
             version,
@@ -4670,19 +4743,25 @@ async fn fetch_detail_view(
             .fetch_custom_resource_yaml(group, version, kind, plural, name, namespace.as_deref())
             .await
             .ok(),
-        ResourceRef::HelmRelease(name, ns) => {
-            // Helm releases are stored as Secrets — fetch the latest revision secret
-            client.fetch_helm_release_yaml(name, ns).await.ok()
+        ResourceRef::HelmRelease(name, ns) => client.fetch_helm_release_yaml(name, ns).await.ok(),
+        _ => {
+            let kind = resource.kind().to_ascii_lowercase();
+            let name = resource.name();
+            let namespace = resource.namespace();
+            client
+                .fetch_resource_yaml(&kind, name, namespace)
+                .await
+                .ok()
         }
-        _ => client
-            .fetch_resource_yaml(&kind, &name, namespace.as_deref())
-            .await
-            .ok(),
-    };
+    }
+}
 
-    let events = match &resource {
+async fn fetch_detail_events(
+    client: &K8sClient,
+    resource: &ResourceRef,
+) -> Vec<kubectui::k8s::events::EventInfo> {
+    match resource {
         ResourceRef::Pod(name, ns) => client.fetch_pod_events(name, ns).await.unwrap_or_default(),
-        // Fetch events for namespaced workload and config resources
         ResourceRef::Deployment(name, ns)
         | ResourceRef::StatefulSet(name, ns)
         | ResourceRef::DaemonSet(name, ns)
@@ -4701,9 +4780,18 @@ async fn fetch_detail_view(
                 .unwrap_or_default()
         }
         _ => Vec::new(),
-    };
+    }
+}
 
-    let (pod_metrics, node_metrics, metrics_unavailable_message) = match &resource {
+async fn fetch_detail_metrics(
+    client: &K8sClient,
+    resource: &ResourceRef,
+) -> (
+    Option<kubectui::k8s::dtos::PodMetricsInfo>,
+    Option<kubectui::k8s::dtos::NodeMetricsInfo>,
+    Option<String>,
+) {
+    match resource {
         ResourceRef::Pod(name, ns) => match client.fetch_pod_metrics(name, ns).await {
             Ok(Some(metrics)) => (Some(metrics), None, None),
             Ok(None) => (
@@ -4729,26 +4817,7 @@ async fn fetch_detail_view(
             Err(err) => (None, None, Some(format!("metrics unavailable: {err}"))),
         },
         _ => (None, None, None),
-    };
-
-    let sections = sections_for_resource(snapshot, &resource);
-
-    Ok(DetailViewState {
-        resource: Some(resource),
-        metadata,
-        yaml,
-        events,
-        sections,
-        pod_metrics,
-        node_metrics,
-        metrics_unavailable_message,
-        loading: false,
-        error: None,
-        scale_dialog: None,
-        probe_panel: None,
-        confirm_delete: false,
-        confirm_drain: false,
-    })
+    }
 }
 
 fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> DetailMetadata {

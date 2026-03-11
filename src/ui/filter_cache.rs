@@ -31,6 +31,27 @@ struct FilterCache {
 }
 
 impl FilterCache {
+    /// Fast path: check if the most-recently-used entry matches without allocating a key.
+    fn get_mru(
+        &mut self,
+        query: &str,
+        snapshot_version: u64,
+        data_fingerprint: u64,
+        variant: u64,
+    ) -> Option<Arc<Vec<usize>>> {
+        let last = self.order.back()?;
+        if last.query == query
+            && last.snapshot_version == snapshot_version
+            && last.data_fingerprint == data_fingerprint
+            && last.variant == variant
+        {
+            self.hits = self.hits.saturating_add(1);
+            self.map.get(last).cloned()
+        } else {
+            None
+        }
+    }
+
     fn get(&mut self, key: &FilterCacheKey) -> Option<Arc<Vec<usize>>> {
         let value = self.map.get(key).cloned();
         if value.is_some() {
@@ -111,13 +132,21 @@ where
     F: FnOnce(&str) -> Vec<usize>,
 {
     let query = query.trim();
+    let shard = &FILTER_CACHE_SHARDS[view.index()];
+
+    // MRU fast path: avoids allocating a String key on repeated same-query lookups
+    if let Ok(mut cache) = shard.lock()
+        && let Some(hit) = cache.get_mru(query, snapshot_version, data_fingerprint, variant)
+    {
+        return hit;
+    }
+
     let key = FilterCacheKey {
         query: query.to_string(),
         snapshot_version,
         data_fingerprint,
         variant,
     };
-    let shard = &FILTER_CACHE_SHARDS[view.index()];
 
     if let Ok(mut cache) = shard.lock()
         && let Some(hit) = cache.get(&key)
