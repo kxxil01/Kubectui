@@ -9,6 +9,7 @@ mod coordinator_tests {
     use tokio::sync::mpsc;
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn test_coordinator_creation() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
@@ -22,6 +23,7 @@ mod coordinator_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn test_coordinator_multiple_probes() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
@@ -44,6 +46,7 @@ mod coordinator_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn test_coordinator_start_stop_probe() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
@@ -75,6 +78,7 @@ mod coordinator_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn test_coordinator_idempotent_start_probe() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
@@ -108,6 +112,7 @@ mod coordinator_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn test_coordinator_multiple_log_streams() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
@@ -152,6 +157,7 @@ mod coordinator_tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires live K8s cluster"]
     async fn test_coordinator_shutdown_cleanup() {
         let (update_tx, _update_rx) = mpsc::channel(4096);
         let client = kubectui::k8s::client::K8sClient::connect()
