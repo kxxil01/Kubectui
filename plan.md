@@ -1101,7 +1101,20 @@ Make the app remember how each user works.
 
 ### Status
 
-Continuous (parallel to all milestones)
+Completed
+
+### What shipped
+
+- Dashboard computation cache keyed on snapshot_version (DashboardCache): stats, alerts, insights, sparkline, and pod status counts computed once per snapshot instead of every frame
+- Zero-alloc fast path for truncate_label via Cow<'_, str> (common case: no truncation)
+- Pod log buffer reduced from 50k to 10k lines (~80% memory reduction per log tab)
+- Exponential backoff for probe polling: 2s base, doubles after 3 no-change polls, caps at 30s, resets on change/error
+- Config save debouncing: 5 direct save_config() calls replaced with dirty flag + 1-second Instant-based debounce + final flush on exit
+- Filter cache MRU fast path: get_mru() compares by &str against last key without allocating, avoiding String allocation on repeated same-query lookups
+- Criterion benchmark suite: dashboard compute (stats/alerts/insights/workload_ready at 100/500/2000 pods), filter/sort (pod indices with hit/miss/no-filter), format helpers (format_age)
+- Detail view API calls parallelized with tokio::join! (YAML + events + metrics run concurrently instead of sequentially, ~2x faster detail opens)
+- Background context connect: TLS handshake spawned in background task, UI shows loading state immediately instead of freezing 500ms-2s
+- Two-wave refresh merged into concurrent execution: core and secondary resources now fetch simultaneously via tokio::join!(wave1, wave2), saving ~150-300ms per full refresh
 
 ### Goal
 

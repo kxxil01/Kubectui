@@ -3,24 +3,19 @@
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tokio::time::interval;
 
 use super::UpdateMessage;
 use crate::k8s::client::K8sClient;
 use crate::k8s::probes::extract_probes_from_pod;
 
-/// Poll probes for a pod at regular intervals (2 seconds).
+const BASE_INTERVAL_SECS: u64 = 2;
+const MAX_INTERVAL_SECS: u64 = 30;
+const NO_CHANGE_THRESHOLD: u32 = 3;
+
+/// Poll probes for a pod with adaptive backoff.
 ///
-/// This task continuously fetches the pod and extracts its probe configuration.
-/// When the configuration changes, it sends an update to the main event loop.
-///
-/// # Arguments
-///
-/// * `client` - K8s client for API calls
-/// * `pod_name` - Name of the pod to monitor
-/// * `namespace` - Namespace of the pod
-/// * `update_tx` - Channel to send updates
-/// * `mut cancel_rx` - Receiver for cancellation signal
+/// Starts at 2s intervals. After 3 consecutive no-change polls, doubles the
+/// interval up to 30s. Any change or error resets to 2s.
 pub async fn poll_probes_loop(
     client: Arc<K8sClient>,
     pod_name: String,
@@ -28,12 +23,13 @@ pub async fn poll_probes_loop(
     update_tx: mpsc::Sender<UpdateMessage>,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
-    let mut ticker = interval(Duration::from_secs(2));
     let mut last_probes: Option<Vec<(String, crate::k8s::probes::ContainerProbes)>> = None;
+    let mut interval_secs = BASE_INTERVAL_SECS;
+    let mut no_change_count: u32 = 0;
 
     loop {
         tokio::select! {
-            _ = ticker.tick() => {
+            () = tokio::time::sleep(Duration::from_secs(interval_secs)) => {
                 match fetch_and_compare_probes(&client, &pod_name, &namespace, &last_probes).await {
                     Ok((probes, changed)) => {
                         if changed {
@@ -43,10 +39,16 @@ pub async fn poll_probes_loop(
                                 probes: probes.clone(),
                             };
                             if update_tx.send(msg).await.is_err() {
-                                // Channel closed, exit task
                                 break;
                             }
                             last_probes = Some(probes);
+                            interval_secs = BASE_INTERVAL_SECS;
+                            no_change_count = 0;
+                        } else {
+                            no_change_count += 1;
+                            if no_change_count >= NO_CHANGE_THRESHOLD {
+                                interval_secs = (interval_secs * 2).min(MAX_INTERVAL_SECS);
+                            }
                         }
                     }
                     Err(e) => {
@@ -56,14 +58,14 @@ pub async fn poll_probes_loop(
                             error: e.to_string(),
                         };
                         if update_tx.send(msg).await.is_err() {
-                            // Channel closed, exit task
                             break;
                         }
+                        interval_secs = BASE_INTERVAL_SECS;
+                        no_change_count = 0;
                     }
                 }
             }
             _ = &mut cancel_rx => {
-                // Cancellation signal received
                 break;
             }
         }

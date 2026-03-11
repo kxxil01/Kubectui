@@ -1021,7 +1021,7 @@ pub enum ActiveComponent {
 
 /// Maximum number of log lines retained in the viewer buffer.
 /// Older lines are dropped when this limit is exceeded.
-pub const MAX_LOG_LINES: usize = 50_000;
+pub const MAX_LOG_LINES: usize = 10_000;
 
 /// In-detail logs viewer state.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

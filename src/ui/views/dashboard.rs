@@ -1,6 +1,8 @@
 //! Dashboard renderer — rich overview with health, saturation, and alerts.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
+use std::sync::{LazyLock, Mutex};
 
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -21,6 +23,96 @@ use crate::{
     ui::{components::default_theme, theme::Theme},
 };
 
+// ── dashboard computation cache ──────────────────────────────────────────────
+
+struct DashboardCache {
+    version: u64,
+    stats: DashboardStats,
+    alerts: Vec<AlertItem>,
+    insights: DashboardInsights,
+    workload_pct: u8,
+    spark_data: Vec<u64>,
+    status_counts: (usize, usize, usize, usize, usize),
+}
+
+static DASHBOARD_CACHE: LazyLock<Mutex<Option<DashboardCache>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+type StatusCounts = (usize, usize, usize, usize, usize);
+type DashboardData = (
+    DashboardStats,
+    Vec<AlertItem>,
+    DashboardInsights,
+    u8,
+    Vec<u64>,
+    StatusCounts,
+);
+
+fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
+    let mut guard = DASHBOARD_CACHE.lock().unwrap();
+    if let Some(ref c) = *guard
+        && c.version == snapshot.snapshot_version
+    {
+        return (
+            c.stats,
+            c.alerts.clone(),
+            c.insights.clone(),
+            c.workload_pct,
+            c.spark_data.clone(),
+            c.status_counts,
+        );
+    }
+
+    let stats = compute_dashboard_stats(snapshot);
+    let alerts = compute_alerts(snapshot);
+    let insights = compute_dashboard_insights(snapshot);
+    let workload_pct = compute_workload_ready_percent(snapshot);
+
+    // Pre-compute sparkline and status counts
+    let mut ns_counts: BTreeMap<&str, u64> = BTreeMap::new();
+    for pod in &snapshot.pods {
+        *ns_counts.entry(pod.namespace.as_str()).or_default() += 1;
+    }
+    let spark_data: Vec<u64> = ns_counts.values().copied().collect();
+
+    let (mut running, mut pending, mut failed, mut succeeded) = (0usize, 0usize, 0usize, 0usize);
+    for pod in &snapshot.pods {
+        if pod.status.eq_ignore_ascii_case("running") {
+            running += 1;
+        } else if pod.status.eq_ignore_ascii_case("pending") {
+            pending += 1;
+        } else if pod.status.eq_ignore_ascii_case("failed") {
+            failed += 1;
+        } else if pod.status.eq_ignore_ascii_case("succeeded") {
+            succeeded += 1;
+        }
+    }
+    let other = snapshot
+        .pods
+        .len()
+        .saturating_sub(running + pending + failed + succeeded);
+    let status_counts = (running, pending, failed, succeeded, other);
+
+    *guard = Some(DashboardCache {
+        version: snapshot.snapshot_version,
+        stats,
+        alerts: alerts.clone(),
+        insights: insights.clone(),
+        workload_pct,
+        spark_data: spark_data.clone(),
+        status_counts,
+    });
+
+    (
+        stats,
+        alerts,
+        insights,
+        workload_pct,
+        spark_data,
+        status_counts,
+    )
+}
+
 // ── metric parsing helpers ────────────────────────────────────────────────────
 
 fn gauge_severity_style(theme: &Theme, percent: u8) -> Style {
@@ -33,15 +125,15 @@ fn gauge_severity_style(theme: &Theme, percent: u8) -> Style {
     }
 }
 
-fn truncate_label(s: &str, max_chars: usize) -> String {
+fn truncate_label(s: &str, max_chars: usize) -> Cow<'_, str> {
     if s.chars().count() <= max_chars {
-        return s.to_string();
+        Cow::Borrowed(s)
+    } else if max_chars <= 3 {
+        Cow::Owned(".".repeat(max_chars))
+    } else {
+        let kept: String = s.chars().take(max_chars - 3).collect();
+        Cow::Owned(format!("{kept}..."))
     }
-    if max_chars <= 3 {
-        return ".".repeat(max_chars);
-    }
-    let kept: String = s.chars().take(max_chars - 3).collect();
-    format!("{kept}...")
 }
 
 // ── top-level render ──────────────────────────────────────────────────────────
@@ -49,10 +141,8 @@ fn truncate_label(s: &str, max_chars: usize) -> String {
 /// Renders the dashboard view.
 pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot) {
     let theme = default_theme();
-    let stats = compute_dashboard_stats(snapshot);
-    let alerts = compute_alerts(snapshot);
-    let insights = compute_dashboard_insights(snapshot);
-    let workload_pct = compute_workload_ready_percent(snapshot);
+    let (stats, alerts, insights, workload_pct, spark_data, status_counts) =
+        cached_dashboard(snapshot);
 
     // Layout:
     //  row 0 (8)  : cluster info | health summary
@@ -100,7 +190,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
         .split(rows[3]);
 
     render_resource_counts(frame, summary_cols[0], &stats, &theme);
-    render_pod_sparkline(frame, summary_cols[1], snapshot, &theme);
+    render_pod_sparkline(frame, summary_cols[1], &spark_data, status_counts, &theme);
     render_alerts(frame, rows[4], &alerts, &theme);
 }
 
@@ -554,31 +644,14 @@ fn render_hot_nodes(frame: &mut Frame, area: Rect, insights: &DashboardInsights,
 
 // ── pod status sparkline ──────────────────────────────────────────────────────
 
-fn render_pod_sparkline(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, theme: &Theme) {
-    // Build a per-namespace pod count sparkline (sorted by namespace name)
-    let mut ns_counts: BTreeMap<&str, u64> = BTreeMap::new();
-    for pod in &snapshot.pods {
-        *ns_counts.entry(pod.namespace.as_str()).or_default() += 1;
-    }
-    let spark_data: Vec<u64> = ns_counts.values().copied().collect();
-
-    // Pod status breakdown as text lines (single pass to avoid repeated scans)
-    let (mut running, mut pending, mut failed, mut succeeded) = (0usize, 0usize, 0usize, 0usize);
-    for pod in &snapshot.pods {
-        if pod.status.eq_ignore_ascii_case("running") {
-            running += 1;
-        } else if pod.status.eq_ignore_ascii_case("pending") {
-            pending += 1;
-        } else if pod.status.eq_ignore_ascii_case("failed") {
-            failed += 1;
-        } else if pod.status.eq_ignore_ascii_case("succeeded") {
-            succeeded += 1;
-        }
-    }
-    let other = snapshot
-        .pods
-        .len()
-        .saturating_sub(running + pending + failed + succeeded);
+fn render_pod_sparkline(
+    frame: &mut Frame,
+    area: Rect,
+    spark_data: &[u64],
+    status_counts: (usize, usize, usize, usize, usize),
+    theme: &Theme,
+) {
+    let (running, pending, failed, succeeded, other) = status_counts;
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -595,7 +668,7 @@ fn render_pod_sparkline(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
                 .border_style(theme.border_style())
                 .style(Style::default().bg(theme.bg)),
         )
-        .data(&spark_data)
+        .data(spark_data)
         .style(Style::default().fg(theme.accent));
 
     frame.render_widget(sparkline, rows[0]);

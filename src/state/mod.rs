@@ -1116,6 +1116,14 @@ impl GlobalState {
         self.publish_snapshot();
     }
 
+    /// Overrides the snapshot phase (e.g. to mark an error after a failed
+    /// background context switch).
+    pub fn set_phase(&mut self, phase: DataPhase) {
+        self.snapshot.phase = phase;
+        self.snapshot_dirty = true;
+        self.publish_snapshot();
+    }
+
     /// Per-resource fetch timeout in seconds.
     const FETCH_TIMEOUT_SECS: u64 = 10;
     /// Retry transient transport failures before surfacing errors.
@@ -1316,117 +1324,156 @@ impl GlobalState {
             }
         };
 
-        let (
-            nodes_res,
-            pods_res,
-            services_res,
-            deployments_res,
-            statefulsets_res,
-            daemonsets_res,
-            replicasets_res,
-            replication_controllers_res,
-            jobs_res,
-            cronjobs_res,
-            namespace_list_res,
-            flux_resources_res,
-            cluster_info_res,
-            events_res,
-        ) = tokio::join!(
-            Self::fetch_with_timeout("nodes", || client.fetch_nodes()),
-            Self::fetch_with_timeout("pods", || client.fetch_pods(namespace)),
-            Self::fetch_with_timeout("services", || client.fetch_services(namespace)),
-            Self::fetch_with_timeout("deployments", || client.fetch_deployments(namespace)),
-            Self::fetch_with_timeout("statefulsets", || client.fetch_statefulsets(namespace)),
-            Self::fetch_with_timeout("daemonsets", || client.fetch_daemonsets(namespace)),
-            Self::fetch_with_timeout("replicasets", || client.fetch_replicasets(namespace)),
-            Self::fetch_with_timeout("replicationcontrollers", || client
-                .fetch_replication_controllers(namespace)),
-            Self::fetch_with_timeout("jobs", || client.fetch_jobs(namespace)),
-            Self::fetch_with_timeout("cronjobs", || client.fetch_cronjobs(namespace)),
-            Self::fetch_with_timeout("namespacelist", || client.fetch_namespace_list()),
-            flux_fetch,
-            cluster_info_fetch,
-            events_fetch,
-        );
+        // Capture previous secondary resource data for fallback when skipped.
+        let prev_resource_quotas = self.snapshot.resource_quotas.clone();
+        let prev_limit_ranges = self.snapshot.limit_ranges.clone();
+        let prev_pdbs = self.snapshot.pod_disruption_budgets.clone();
+        let prev_service_accounts = self.snapshot.service_accounts.clone();
+        let prev_roles = self.snapshot.roles.clone();
+        let prev_role_bindings = self.snapshot.role_bindings.clone();
+        let prev_cluster_roles = self.snapshot.cluster_roles.clone();
+        let prev_cluster_role_bindings = self.snapshot.cluster_role_bindings.clone();
+        let prev_crds = self.snapshot.custom_resource_definitions.clone();
+        let prev_endpoints = self.snapshot.endpoints.clone();
+        let prev_ingresses = self.snapshot.ingresses.clone();
+        let prev_ingress_classes = self.snapshot.ingress_classes.clone();
+        let prev_network_policies = self.snapshot.network_policies.clone();
+        let prev_config_maps = self.snapshot.config_maps.clone();
+        let prev_secrets = self.snapshot.secrets.clone();
+        let prev_hpas = self.snapshot.hpas.clone();
+        let prev_pvcs = self.snapshot.pvcs.clone();
+        let prev_pvs = self.snapshot.pvs.clone();
+        let prev_storage_classes = self.snapshot.storage_classes.clone();
+        let prev_priority_classes = self.snapshot.priority_classes.clone();
+        let prev_helm_releases = self.snapshot.helm_releases.clone();
+        let prev_node_metrics = self.snapshot.node_metrics.clone();
 
-        let (
-            resource_quotas_res,
-            limit_ranges_res,
-            pod_disruption_budgets_res,
-            service_accounts_res,
-            roles_res,
-            role_bindings_res,
-            cluster_roles_res,
-            cluster_role_bindings_res,
-            custom_resource_definitions_res,
-            endpoints_res,
-            ingresses_res,
-            ingress_classes_res,
-            network_policies_res,
-            config_maps_res,
-            secrets_res,
-            hpas_res,
-            pvcs_res,
-            pvs_res,
-            storage_classes_res,
-            priority_classes_res,
-            helm_releases_res,
-            node_metrics_res,
-        ) = if include_secondary_resources {
+        // Wave 1 (core resources) and wave 2 (secondary) run concurrently.
+        // The RESOURCE_FETCH_SEMAPHORE (8 permits) provides backpressure.
+        let wave1 = async {
             tokio::join!(
-                Self::fetch_with_timeout("resourcequotas", || client
-                    .fetch_resource_quotas(namespace)),
-                Self::fetch_with_timeout("limitranges", || client.fetch_limit_ranges(namespace)),
-                Self::fetch_with_timeout("pdbs", || client.fetch_pod_disruption_budgets(namespace)),
-                Self::fetch_with_timeout("serviceaccounts", || client
-                    .fetch_service_accounts(namespace)),
-                Self::fetch_with_timeout("roles", || client.fetch_roles(namespace)),
-                Self::fetch_with_timeout("rolebindings", || client.fetch_role_bindings(namespace)),
-                Self::fetch_with_timeout("clusterroles", || client.fetch_cluster_roles()),
-                Self::fetch_with_timeout("clusterrolebindings", || client
-                    .fetch_cluster_role_bindings()),
-                Self::fetch_with_timeout("crds", || client.fetch_custom_resource_definitions()),
-                Self::fetch_with_timeout("endpoints", || client.fetch_endpoints(namespace)),
-                Self::fetch_with_timeout("ingresses", || client.fetch_ingresses(namespace)),
-                Self::fetch_with_timeout("ingressclasses", || client.fetch_ingress_classes()),
-                Self::fetch_with_timeout("networkpolicies", || client
-                    .fetch_network_policies(namespace)),
-                Self::fetch_with_timeout("configmaps", || client.fetch_config_maps(namespace)),
-                Self::fetch_with_timeout("secrets", || client.fetch_secrets(namespace)),
-                Self::fetch_with_timeout("hpas", || client.fetch_hpas(namespace)),
-                Self::fetch_with_timeout("pvcs", || client.fetch_pvcs(namespace)),
-                Self::fetch_with_timeout("pvs", || client.fetch_pvs()),
-                Self::fetch_with_timeout("storageclasses", || client.fetch_storage_classes()),
-                Self::fetch_with_timeout("priorityclasses", || client.fetch_priority_classes()),
-                Self::fetch_with_timeout("helmreleases", || client.fetch_helm_releases(namespace)),
-                Self::fetch_with_timeout("nodemetrics", || client.fetch_all_node_metrics()),
-            )
-        } else {
-            (
-                Ok(self.snapshot.resource_quotas.clone()),
-                Ok(self.snapshot.limit_ranges.clone()),
-                Ok(self.snapshot.pod_disruption_budgets.clone()),
-                Ok(self.snapshot.service_accounts.clone()),
-                Ok(self.snapshot.roles.clone()),
-                Ok(self.snapshot.role_bindings.clone()),
-                Ok(self.snapshot.cluster_roles.clone()),
-                Ok(self.snapshot.cluster_role_bindings.clone()),
-                Ok(self.snapshot.custom_resource_definitions.clone()),
-                Ok(self.snapshot.endpoints.clone()),
-                Ok(self.snapshot.ingresses.clone()),
-                Ok(self.snapshot.ingress_classes.clone()),
-                Ok(self.snapshot.network_policies.clone()),
-                Ok(self.snapshot.config_maps.clone()),
-                Ok(self.snapshot.secrets.clone()),
-                Ok(self.snapshot.hpas.clone()),
-                Ok(self.snapshot.pvcs.clone()),
-                Ok(self.snapshot.pvs.clone()),
-                Ok(self.snapshot.storage_classes.clone()),
-                Ok(self.snapshot.priority_classes.clone()),
-                Ok(self.snapshot.helm_releases.clone()),
-                Ok(self.snapshot.node_metrics.clone()),
+                Self::fetch_with_timeout("nodes", || client.fetch_nodes()),
+                Self::fetch_with_timeout("pods", || client.fetch_pods(namespace)),
+                Self::fetch_with_timeout("services", || client.fetch_services(namespace)),
+                Self::fetch_with_timeout("deployments", || client.fetch_deployments(namespace)),
+                Self::fetch_with_timeout("statefulsets", || client.fetch_statefulsets(namespace)),
+                Self::fetch_with_timeout("daemonsets", || client.fetch_daemonsets(namespace)),
+                Self::fetch_with_timeout("replicasets", || client.fetch_replicasets(namespace)),
+                Self::fetch_with_timeout("replicationcontrollers", || client
+                    .fetch_replication_controllers(namespace)),
+                Self::fetch_with_timeout("jobs", || client.fetch_jobs(namespace)),
+                Self::fetch_with_timeout("cronjobs", || client.fetch_cronjobs(namespace)),
+                Self::fetch_with_timeout("namespacelist", || client.fetch_namespace_list()),
+                flux_fetch,
+                cluster_info_fetch,
+                events_fetch,
             )
         };
+
+        let wave2 = async {
+            if include_secondary_resources {
+                tokio::join!(
+                    Self::fetch_with_timeout("resourcequotas", || client
+                        .fetch_resource_quotas(namespace)),
+                    Self::fetch_with_timeout("limitranges", || client
+                        .fetch_limit_ranges(namespace)),
+                    Self::fetch_with_timeout("pdbs", || client
+                        .fetch_pod_disruption_budgets(namespace)),
+                    Self::fetch_with_timeout("serviceaccounts", || client
+                        .fetch_service_accounts(namespace)),
+                    Self::fetch_with_timeout("roles", || client.fetch_roles(namespace)),
+                    Self::fetch_with_timeout("rolebindings", || client
+                        .fetch_role_bindings(namespace)),
+                    Self::fetch_with_timeout("clusterroles", || client.fetch_cluster_roles()),
+                    Self::fetch_with_timeout("clusterrolebindings", || client
+                        .fetch_cluster_role_bindings()),
+                    Self::fetch_with_timeout("crds", || client.fetch_custom_resource_definitions()),
+                    Self::fetch_with_timeout("endpoints", || client.fetch_endpoints(namespace)),
+                    Self::fetch_with_timeout("ingresses", || client.fetch_ingresses(namespace)),
+                    Self::fetch_with_timeout("ingressclasses", || client.fetch_ingress_classes()),
+                    Self::fetch_with_timeout("networkpolicies", || client
+                        .fetch_network_policies(namespace)),
+                    Self::fetch_with_timeout("configmaps", || client.fetch_config_maps(namespace)),
+                    Self::fetch_with_timeout("secrets", || client.fetch_secrets(namespace)),
+                    Self::fetch_with_timeout("hpas", || client.fetch_hpas(namespace)),
+                    Self::fetch_with_timeout("pvcs", || client.fetch_pvcs(namespace)),
+                    Self::fetch_with_timeout("pvs", || client.fetch_pvs()),
+                    Self::fetch_with_timeout("storageclasses", || client.fetch_storage_classes()),
+                    Self::fetch_with_timeout("priorityclasses", || client.fetch_priority_classes()),
+                    Self::fetch_with_timeout("helmreleases", || client
+                        .fetch_helm_releases(namespace)),
+                    Self::fetch_with_timeout("nodemetrics", || client.fetch_all_node_metrics()),
+                )
+            } else {
+                (
+                    Ok(prev_resource_quotas),
+                    Ok(prev_limit_ranges),
+                    Ok(prev_pdbs),
+                    Ok(prev_service_accounts),
+                    Ok(prev_roles),
+                    Ok(prev_role_bindings),
+                    Ok(prev_cluster_roles),
+                    Ok(prev_cluster_role_bindings),
+                    Ok(prev_crds),
+                    Ok(prev_endpoints),
+                    Ok(prev_ingresses),
+                    Ok(prev_ingress_classes),
+                    Ok(prev_network_policies),
+                    Ok(prev_config_maps),
+                    Ok(prev_secrets),
+                    Ok(prev_hpas),
+                    Ok(prev_pvcs),
+                    Ok(prev_pvs),
+                    Ok(prev_storage_classes),
+                    Ok(prev_priority_classes),
+                    Ok(prev_helm_releases),
+                    Ok(prev_node_metrics),
+                )
+            }
+        };
+
+        let (
+            (
+                nodes_res,
+                pods_res,
+                services_res,
+                deployments_res,
+                statefulsets_res,
+                daemonsets_res,
+                replicasets_res,
+                replication_controllers_res,
+                jobs_res,
+                cronjobs_res,
+                namespace_list_res,
+                flux_resources_res,
+                cluster_info_res,
+                events_res,
+            ),
+            (
+                resource_quotas_res,
+                limit_ranges_res,
+                pod_disruption_budgets_res,
+                service_accounts_res,
+                roles_res,
+                role_bindings_res,
+                cluster_roles_res,
+                cluster_role_bindings_res,
+                custom_resource_definitions_res,
+                endpoints_res,
+                ingresses_res,
+                ingress_classes_res,
+                network_policies_res,
+                config_maps_res,
+                secrets_res,
+                hpas_res,
+                pvcs_res,
+                pvs_res,
+                storage_classes_res,
+                priority_classes_res,
+                helm_releases_res,
+                node_metrics_res,
+            ),
+        ) = tokio::join!(wave1, wave2);
 
         let mut errors = Vec::new();
 
