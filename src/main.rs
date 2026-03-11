@@ -4112,22 +4112,7 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
         AppView::Issues => {
             let issues = kubectui::state::issues::compute_issues(snapshot);
             let query = q.trim();
-            let indices: Vec<usize> = if query.is_empty() {
-                (0..issues.len()).collect()
-            } else {
-                issues
-                    .iter()
-                    .enumerate()
-                    .filter_map(|(i, issue)| {
-                        (contains_ci(issue.category.label(), query)
-                            || contains_ci(issue.resource_kind, query)
-                            || contains_ci(&issue.resource_name, query)
-                            || contains_ci(&issue.namespace, query)
-                            || contains_ci(&issue.message, query))
-                        .then_some(i)
-                    })
-                    .collect()
-            };
+            let indices = kubectui::state::issues::filtered_issue_indices(&issues, query);
             filtered_index(&indices, idx).map(|i| issues[i].resource_ref.clone())
         }
         AppView::Nodes => {
