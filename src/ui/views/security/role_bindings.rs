@@ -20,7 +20,72 @@ use crate::{
         table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
     },
 };
-use std::sync::{Arc, LazyLock, Mutex};
+use std::{
+    borrow::Cow,
+    sync::{Arc, LazyLock, Mutex},
+};
+
+// ── RoleBinding derived cell cache ─────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RoleBindingDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct RoleBindingDerivedCell {
+    role_ref: String,
+    subjects_count: String,
+    age: String,
+}
+
+type RoleBindingDerivedCacheValue = Arc<Vec<RoleBindingDerivedCell>>;
+static ROLE_BINDING_DERIVED_CACHE: LazyLock<
+    Mutex<Option<(RoleBindingDerivedCacheKey, RoleBindingDerivedCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_role_binding_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> RoleBindingDerivedCacheValue {
+    let key = RoleBindingDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.role_bindings, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = ROLE_BINDING_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&rb_idx| {
+                let rb = &snapshot.role_bindings[rb_idx];
+                RoleBindingDerivedCell {
+                    role_ref: format!("{}/{}", rb.role_ref_kind, rb.role_ref_name),
+                    subjects_count: format_small_int(rb.subjects.len() as i64).into_owned(),
+                    age: format_age(rb.age),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = ROLE_BINDING_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
+
+// ── RoleBinding subjects detail cache ──────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RoleBindingSubjectsCacheKey {
@@ -112,6 +177,8 @@ pub fn render_role_bindings(
     .height(1)
     .style(theme.header_style());
 
+    let derived = cached_role_binding_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -125,21 +192,29 @@ pub fn render_role_bindings(
             } else {
                 theme.row_alt_style()
             };
+            let (role_ref, subjects_count, age): (Cow<'_, str>, Cow<'_, str>, Cow<'_, str>) =
+                if let Some(cell) = derived.get(idx) {
+                    (
+                        Cow::Borrowed(cell.role_ref.as_str()),
+                        Cow::Borrowed(cell.subjects_count.as_str()),
+                        Cow::Borrowed(cell.age.as_str()),
+                    )
+                } else {
+                    (
+                        Cow::Owned(format!("{}/{}", rb.role_ref_kind, rb.role_ref_name)),
+                        format_small_int(rb.subjects.len() as i64),
+                        Cow::Owned(format_age(rb.age)),
+                    )
+                };
             Row::new(vec![
                 Cell::from(Line::from(vec![
                     Span::styled("  ", name_style),
                     Span::styled(rb.name.as_str(), name_style),
                 ])),
                 Cell::from(Span::styled(rb.namespace.as_str(), dim_style)),
-                Cell::from(Span::styled(
-                    format!("{}/{}", rb.role_ref_kind, rb.role_ref_name),
-                    Style::default().fg(theme.accent2),
-                )),
-                Cell::from(Span::styled(
-                    format_small_int(rb.subjects.len() as i64),
-                    dim_style,
-                )),
-                Cell::from(Span::styled(format_age(rb.age), theme.inactive_style())),
+                Cell::from(Span::styled(role_ref, Style::default().fg(theme.accent2))),
+                Cell::from(Span::styled(subjects_count, dim_style)),
+                Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)
         })
