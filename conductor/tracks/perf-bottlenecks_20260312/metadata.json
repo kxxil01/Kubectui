@@ -2,18 +2,18 @@
   "id": "perf-bottlenecks_20260312",
   "title": "Real Performance Bottlenecks",
   "type": "bug",
-  "status": "in_progress",
+  "status": "complete",
   "created": "2026-03-12",
   "updated": "2026-03-12",
   "current_phase": 3,
-  "current_task": "3.1",
+  "current_task": "3.4",
   "phases": {
     "total": 3,
-    "completed": 2
+    "completed": 3
   },
   "tasks": {
     "total": 17,
-    "completed": 15
+    "completed": 17
   },
   "commits": [
     "de81b19 perf: separate fetch semaphores for core and secondary resources",

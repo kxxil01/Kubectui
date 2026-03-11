@@ -14,7 +14,7 @@ Navigation hub for project context.
 ## Active Tracks
 
 - [x] [cached-cells_20260312](./tracks/cached-cells_20260312/index.md) — Per-View Cached Formatted Cells
-- [ ] [perf-bottlenecks_20260312](./tracks/perf-bottlenecks_20260312/index.md) — Real Performance Bottlenecks
+- [x] [perf-bottlenecks_20260312](./tracks/perf-bottlenecks_20260312/index.md) — Real Performance Bottlenecks
 
 ## Getting Started
 
