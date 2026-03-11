@@ -241,6 +241,71 @@ pub fn render_pvcs(
     render_table_scrollbar(frame, area, total, selected);
 }
 
+// ── PV derived cell cache ───────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PvDerivedCacheKey {
+    query: String,
+    snapshot_version: u64,
+    data_fingerprint: u64,
+}
+
+#[derive(Debug, Clone)]
+struct PvDerivedCell {
+    capacity: String,
+    access_modes: String,
+    claim: String,
+    storage_class: String,
+}
+
+type PvDerivedCacheValue = Arc<Vec<PvDerivedCell>>;
+static PV_DERIVED_CACHE: LazyLock<Mutex<Option<(PvDerivedCacheKey, PvDerivedCacheValue)>>> =
+    LazyLock::new(|| Mutex::new(None));
+
+fn cached_pv_derived(
+    snapshot: &ClusterSnapshot,
+    query: &str,
+    indices: &[usize],
+) -> PvDerivedCacheValue {
+    let key = PvDerivedCacheKey {
+        query: query.to_string(),
+        snapshot_version: snapshot.snapshot_version,
+        data_fingerprint: data_fingerprint(&snapshot.pvs, snapshot.snapshot_version),
+    };
+
+    if let Ok(cache) = PV_DERIVED_CACHE.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(
+        indices
+            .iter()
+            .map(|&pv_idx| {
+                let pv = &snapshot.pvs[pv_idx];
+                PvDerivedCell {
+                    capacity: pv.capacity.as_deref().unwrap_or("-").to_string(),
+                    access_modes: if pv.access_modes.is_empty() {
+                        "-".to_string()
+                    } else {
+                        pv.access_modes.join(",")
+                    },
+                    claim: pv.claim.as_deref().unwrap_or("-").to_string(),
+                    storage_class: pv.storage_class.as_deref().unwrap_or("-").to_string(),
+                }
+            })
+            .collect::<Vec<_>>(),
+    );
+
+    if let Ok(mut cache) = PV_DERIVED_CACHE.lock() {
+        *cache = Some((key, built.clone()));
+    }
+
+    built
+}
+
 pub fn render_pvs(
     frame: &mut Frame,
     area: Rect,
@@ -308,6 +373,8 @@ pub fn render_pvs(
     .style(theme.header_style())
     .height(1);
 
+    let derived = cached_pv_derived(cluster, query, &indices);
+
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -324,13 +391,24 @@ pub fn render_pvs(
                 "Available" => theme.badge_warning_style(),
                 _ => theme.badge_error_style(),
             };
-            let capacity = pv.capacity.as_deref().unwrap_or("-");
-            let sc = pv.storage_class.as_deref().unwrap_or("-");
-            let claim = pv.claim.as_deref().unwrap_or("-");
-            let modes = if pv.access_modes.is_empty() {
-                "-".to_string()
+            let (capacity, modes, claim, sc) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.capacity.as_str()),
+                    Cow::Borrowed(cell.access_modes.as_str()),
+                    Cow::Borrowed(cell.claim.as_str()),
+                    Cow::Borrowed(cell.storage_class.as_str()),
+                )
             } else {
-                pv.access_modes.join(",")
+                (
+                    Cow::Owned(pv.capacity.as_deref().unwrap_or("-").to_string()),
+                    Cow::Owned(if pv.access_modes.is_empty() {
+                        "-".to_string()
+                    } else {
+                        pv.access_modes.join(",")
+                    }),
+                    Cow::Owned(pv.claim.as_deref().unwrap_or("-").to_string()),
+                    Cow::Owned(pv.storage_class.as_deref().unwrap_or("-").to_string()),
+                )
             };
 
             Row::new(vec![
@@ -338,24 +416,15 @@ pub fn render_pvs(
                     format!("  {}", pv.name),
                     Style::default().fg(theme.fg),
                 )),
-                Cell::from(Span::styled(
-                    capacity.to_string(),
-                    Style::default().fg(theme.info),
-                )),
+                Cell::from(Span::styled(capacity, Style::default().fg(theme.info))),
                 Cell::from(Span::styled(modes, Style::default().fg(theme.accent2))),
                 Cell::from(Span::styled(
                     pv.reclaim_policy.clone(),
                     Style::default().fg(theme.fg_dim),
                 )),
                 Cell::from(Span::styled(pv.status.clone(), status_style)),
-                Cell::from(Span::styled(
-                    claim.to_string(),
-                    Style::default().fg(theme.warning),
-                )),
-                Cell::from(Span::styled(
-                    sc.to_string(),
-                    Style::default().fg(theme.fg_dim),
-                )),
+                Cell::from(Span::styled(claim, Style::default().fg(theme.warning))),
+                Cell::from(Span::styled(sc, Style::default().fg(theme.fg_dim))),
             ])
             .style(row_style)
         })
