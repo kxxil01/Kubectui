@@ -254,7 +254,8 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
         .collect();
 
     let visible_height = area.height.saturating_sub(1) as usize;
-    let start = scroll.min(lines.len().saturating_sub(1));
+    let max_start = lines.len().saturating_sub(visible_height);
+    let start = scroll.min(max_start);
     let end = (start + visible_height).min(lines.len());
     let body = if start < end {
         lines[start..end].to_vec()
@@ -306,7 +307,8 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
 
     let total = tab_state.timeline.len();
     let visible_height = area.height.saturating_sub(1) as usize;
-    let start = scroll.min(total.saturating_sub(1));
+    let max_start = total.saturating_sub(visible_height);
+    let start = scroll.min(max_start);
     let end = (start + visible_height).min(total);
 
     // Only build Line objects for the visible window to avoid per-frame allocations
@@ -541,7 +543,8 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
         })
         .collect();
     let visible_height = log_area.height.saturating_sub(1) as usize;
-    let start = scroll.min(lines.len().saturating_sub(1));
+    let max_start = lines.len().saturating_sub(visible_height);
+    let start = scroll.min(max_start);
     let end = (start + visible_height).min(lines.len());
     frame.render_widget(
         Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
@@ -675,7 +678,8 @@ fn render_workload_logs_tab(
         })
         .collect();
     let visible_height = sections[1].height.saturating_sub(1) as usize;
-    let start = tab.scroll.min(lines.len().saturating_sub(1));
+    let max_start = lines.len().saturating_sub(visible_height);
+    let start = tab.scroll.min(max_start);
     let end = (start + visible_height).min(lines.len());
     frame.render_widget(
         Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
@@ -775,7 +779,8 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             )));
         }
         let visible_height = sections[1].height.saturating_sub(1) as usize;
-        let start = tab.scroll.min(lines.len().saturating_sub(1));
+        let max_start = lines.len().saturating_sub(visible_height);
+        let start = tab.scroll.min(max_start);
         let end = (start + visible_height).min(lines.len());
         frame.render_widget(
             Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
