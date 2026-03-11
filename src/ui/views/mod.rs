@@ -14,6 +14,7 @@ pub mod governance;
 pub mod helm;
 pub mod hpas;
 pub mod ingresses;
+pub mod issue_center;
 pub mod jobs;
 pub mod namespaces;
 pub mod network_policies;

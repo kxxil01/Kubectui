@@ -153,12 +153,15 @@ pub enum AppView {
     RoleBindings,
     // Custom Resources
     Extensions,
+    // Issue Center
+    Issues,
 }
 
 impl AppView {
-    const ORDER: [AppView; 46] = [
+    const ORDER: [AppView; 47] = [
         // Overview
         AppView::Dashboard,
+        AppView::Issues,
         AppView::Nodes,
         AppView::Namespaces,
         AppView::Events,
@@ -265,6 +268,7 @@ impl AppView {
             AppView::ClusterRoleBindings => "Cluster Role Bindings",
             AppView::RoleBindings => "Role Bindings",
             AppView::Extensions => "Definitions",
+            AppView::Issues => "Issues",
         }
     }
 
@@ -317,6 +321,7 @@ impl AppView {
             AppView::ClusterRoleBindings => "󰌋",
             AppView::RoleBindings => "󰌋",
             AppView::Extensions => "󰏗",
+            AppView::Issues => "󰀬",
         }
     }
 
@@ -369,6 +374,7 @@ impl AppView {
             AppView::ClusterRoleBindings => "  󰌋 Cluster Role Bindings",
             AppView::RoleBindings => "  󰌋 Role Bindings",
             AppView::Extensions => "  󰏗 Definitions",
+            AppView::Issues => "  󰀬 Issues",
         }
     }
 
@@ -421,13 +427,14 @@ impl AppView {
             AppView::ClusterRoleBindings => "view.cluster_role_bindings",
             AppView::RoleBindings => "view.role_bindings",
             AppView::Extensions => "view.extensions",
+            AppView::Issues => "view.issues",
         }
     }
 
     /// Returns the NavGroup this view belongs to.
     pub const fn group(self) -> NavGroup {
         match self {
-            AppView::Dashboard | AppView::Nodes => NavGroup::Overview,
+            AppView::Dashboard | AppView::Issues | AppView::Nodes => NavGroup::Overview,
             AppView::Pods
             | AppView::Deployments
             | AppView::StatefulSets
@@ -515,7 +522,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 46] {
+    pub const fn tabs() -> &'static [AppView; 47] {
         &Self::ORDER
     }
 }
@@ -1143,6 +1150,7 @@ const SIDEBAR_GROUPS: &[(NavGroup, &[AppView])] = &[
         NavGroup::Overview,
         &[
             AppView::Dashboard,
+            AppView::Issues,
             AppView::Nodes,
             AppView::Namespaces,
             AppView::Events,
@@ -3168,6 +3176,7 @@ mod tests {
         let mut app = AppState::default();
         let expected = [
             // Overview
+            AppView::Issues,
             AppView::Nodes,
             AppView::Namespaces,
             AppView::Events,

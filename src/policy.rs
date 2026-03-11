@@ -249,7 +249,8 @@ impl AppView {
             AppView::Dashboard
             | AppView::PortForwarding
             | AppView::HelmCharts
-            | AppView::Extensions => PERSISTENCE_NONE,
+            | AppView::Extensions
+            | AppView::Issues => PERSISTENCE_NONE,
             AppView::Pods
             | AppView::Nodes
             | AppView::Services

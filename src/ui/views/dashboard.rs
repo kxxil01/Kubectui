@@ -55,7 +55,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
     let workload_pct = compute_workload_ready_percent(snapshot);
 
     // Layout:
-    //  row 0 (7)  : cluster info | health summary
+    //  row 0 (8)  : cluster info | health summary
     //  row 1 (5)  : node-ready | pod-running | workload-ready gauges
     //  row 2 (9)  : node utilization summary | hottest nodes
     //  row 3 (7)  : resource counts | pod status distribution
@@ -63,7 +63,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(7),
+            Constraint::Length(8),
             Constraint::Length(5),
             Constraint::Length(9),
             Constraint::Length(7),
@@ -77,7 +77,14 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
         .split(rows[0]);
 
     render_cluster_info(frame, top_cols[0], snapshot, &theme);
-    render_cluster_health_summary(frame, top_cols[1], &stats, &insights, &theme);
+    render_cluster_health_summary(
+        frame,
+        top_cols[1],
+        &stats,
+        &insights,
+        snapshot.issue_count,
+        &theme,
+    );
     render_health_gauges(frame, rows[1], &stats, workload_pct, &theme);
 
     let node_rows = Layout::default()
@@ -165,6 +172,7 @@ fn render_cluster_health_summary(
     area: Rect,
     stats: &DashboardStats,
     insights: &DashboardInsights,
+    issue_count: usize,
     theme: &Theme,
 ) {
     let (health_label, health_style) = match insights.health_state {
@@ -209,6 +217,17 @@ fn render_cluster_health_summary(
                     insights.metrics_reported_nodes, insights.utilization_nodes
                 ),
                 Style::default().fg(theme.accent2),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("  Issues    ", theme.inactive_style()),
+            Span::styled(
+                format!("{issue_count}"),
+                if issue_count > 0 {
+                    theme.badge_warning_style()
+                } else {
+                    theme.badge_success_style()
+                },
             ),
         ]),
     ];
