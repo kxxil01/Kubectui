@@ -1,0 +1,67 @@
+<h2>Relationship Tree Layout</h2>
+<p class="subtitle">How should the relationship tree render in the workbench tab?</p>
+
+<div class="options">
+  <div class="option" data-choice="a" onclick="toggleSelect(this)">
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Indented Tree (like file explorer)</h3>
+      <p>Classic tree with indent levels, expand/collapse markers, and resource info on each line</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header" style="font-size:13px;padding:4px 8px">Relations: nginx-deployment (Deployment)</div>
+        <div class="mockup-body" style="font-family:monospace;font-size:13px;line-height:1.6;padding:12px;background:#1a1a2e;color:#e0e0e0">
+<span style="color:#888">▼</span> <span style="color:#7ecfff">Deployment</span> nginx-deployment <span style="color:#666">default</span> <span style="color:#5c5">Ready</span>
+  <span style="color:#888">▼</span> <span style="color:#7ecfff">ReplicaSet</span> nginx-deployment-7fb96c846b <span style="color:#666">default</span> <span style="color:#5c5">3/3</span>
+    <span style="color:#888">├</span> <span style="color:#c9f">Pod</span> nginx-deployment-7fb96c846b-abc12 <span style="color:#5c5">Running</span>
+    <span style="color:#888">├</span> <span style="color:#c9f">Pod</span> nginx-deployment-7fb96c846b-def34 <span style="color:#5c5">Running</span>
+    <span style="color:#888">└</span> <span style="color:#c9f">Pod</span> nginx-deployment-7fb96c846b-ghi56 <span style="color:#5c5">Running</span>
+  <span style="color:#888">▶</span> <span style="color:#7ecfff">ReplicaSet</span> nginx-deployment-5d4b8c7f9 <span style="color:#666">default</span> <span style="color:#888">0/0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b" onclick="toggleSelect(this)">
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Bidirectional Tree (up + down from root)</h3>
+      <p>Shows both "owned by" (upward) and "owns/selects" (downward) from the focused resource</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header" style="font-size:13px;padding:4px 8px">Relations: nginx-deployment-7fb96c846b-abc12 (Pod)</div>
+        <div class="mockup-body" style="font-family:monospace;font-size:13px;line-height:1.6;padding:12px;background:#1a1a2e;color:#e0e0e0">
+<span style="color:#f80">── Owners ──────────────────────────────────</span>
+  <span style="color:#7ecfff">Deployment</span> nginx-deployment <span style="color:#666">default</span>
+    <span style="color:#7ecfff">ReplicaSet</span> nginx-deployment-7fb96c846b <span style="color:#666">default</span>
+<span style="color:#0af">── This Resource ────────────────────────────</span>
+  <span style="color:#c9f;font-weight:bold">Pod</span> <span style="font-weight:bold">nginx-deployment-7fb96c846b-abc12</span> <span style="color:#5c5">Running</span>
+<span style="color:#f80">── Selected By ──────────────────────────────</span>
+  <span style="color:#fc5">Service</span> nginx-svc <span style="color:#666">default</span> <span style="color:#888">(selector: app=nginx)</span>
+    <span style="color:#fc5">Ingress</span> nginx-ingress <span style="color:#666">default</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="c" onclick="toggleSelect(this)">
+    <div class="letter">C</div>
+    <div class="content">
+      <h3>Chain View (left-to-right flow)</h3>
+      <p>Shows relationship chains as horizontal flows, one chain per section</p>
+      <div class="mockup" style="margin-top:12px">
+        <div class="mockup-header" style="font-size:13px;padding:4px 8px">Relations: nginx-svc (Service)</div>
+        <div class="mockup-body" style="font-family:monospace;font-size:13px;line-height:1.6;padding:12px;background:#1a1a2e;color:#e0e0e0">
+<span style="color:#f80">── Ingress Chain ────────────────────────────</span>
+  <span style="color:#fc5">Ingress</span> nginx-ingress <span style="color:#888">→</span> <span style="color:#fc5;font-weight:bold">Service</span> <span style="font-weight:bold">nginx-svc</span>
+
+<span style="color:#f80">── Backend Pods ─────────────────────────────</span>
+  <span style="color:#fc5;font-weight:bold">Service</span> <span style="font-weight:bold">nginx-svc</span> <span style="color:#888">→</span> <span style="color:#7ecfff">Endpoints</span> nginx-svc
+    <span style="color:#888">├→</span> <span style="color:#c9f">Pod</span> nginx-abc12 <span style="color:#5c5">Running</span>
+    <span style="color:#888">├→</span> <span style="color:#c9f">Pod</span> nginx-def34 <span style="color:#5c5">Running</span>
+    <span style="color:#888">└→</span> <span style="color:#c9f">Pod</span> nginx-ghi56 <span style="color:#5c5">Running</span>
+
+<span style="color:#f80">── PVC Bindings (none) ──────────────────────</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
