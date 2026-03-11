@@ -41,21 +41,21 @@ Eliminate the deep clone of `GlobalState` (30+ Vec fields) at every refresh cycl
 
 ### Tasks
 
-- [ ] Task 2.1: Change `GlobalState.snapshot` from `ClusterSnapshot` to `Arc<ClusterSnapshot>` (`state/mod.rs:572`)
-- [ ] Task 2.2: Update `GlobalState` accessor methods — `snapshot()` returns `&ClusterSnapshot` via Arc deref, `snapshot_mut()` uses `Arc::make_mut`
-- [ ] Task 2.3: Update `refresh_with_options` to use `Arc::make_mut(&mut self.snapshot)` at the start for mutation, then assign fields as before
-- [ ] Task 2.4: Update `keep_prev_vec_on_error` fallback reads — these reference `&self.snapshot.X` which still works through Arc deref
-- [ ] Task 2.5: Update `publish_snapshot` to use the existing `arc_snapshot` field (or consolidate — the two fields may be redundant now)
-- [ ] Task 2.6: Update `remove_deleted_resource` and other mutation sites to use `Arc::make_mut`
-- [ ] Task 2.7: Update `begin_loading_transition` and other snapshot-mutating methods to use `Arc::make_mut`
-- [ ] Task 2.8: Verify `RefreshAsyncResult.result: Result<GlobalState, String>` still works — the returned GlobalState now carries the Arc (cheap to move back)
+- [x] Task 2.1: Change `GlobalState.snapshot` from `ClusterSnapshot` to `Arc<ClusterSnapshot>` (`state/mod.rs:572`)
+- [x] Task 2.2: Update `GlobalState` accessor methods — `snapshot()` returns `Arc<ClusterSnapshot>` clone, removed redundant `arc_snapshot` field
+- [x] Task 2.3: Update `refresh_with_options` to use `Arc::make_mut(&mut self.snapshot)` at the start for mutation, then assign fields as before
+- [x] Task 2.4: Update `keep_prev_vec_on_error` fallback reads — these reference `&self.snapshot.X` which still works through Arc deref
+- [x] Task 2.5: Removed `arc_snapshot` field — `publish_snapshot` now uses `Arc::make_mut` directly on `self.snapshot`
+- [x] Task 2.6: Update `remove_deleted_resource` and other mutation sites to use `Arc::make_mut`
+- [x] Task 2.7: Update `begin_loading_transition` and other snapshot-mutating methods to use `Arc::make_mut`
+- [x] Task 2.8: Verify `RefreshAsyncResult.result: Result<GlobalState, String>` still works — the returned GlobalState now carries the Arc (cheap to move back)
 
 ### Verification
 
-- [ ] All tests pass
-- [ ] Clippy clean
-- [ ] `global_state.clone()` at line 887 no longer deep-copies Vec fields (verified by checking Arc refcount behavior)
-- [ ] No stale data — mutations correctly trigger `Arc::make_mut` clone-on-write
+- [x] All tests pass (626 passing)
+- [x] Clippy clean
+- [x] `global_state.clone()` no longer deep-copies Vec fields — Arc refcount bump only
+- [x] No stale data — mutations correctly trigger `Arc::make_mut` clone-on-write
 
 ## Phase 3: Performance Validation
 
