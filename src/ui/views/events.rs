@@ -169,18 +169,17 @@ pub fn render_events(
             } else {
                 theme.badge_success_style()
             };
-            let (count, msg): (Cow<'_, str>, Cow<'_, str>) =
-                if let Some(cell) = derived.get(idx) {
-                    (
-                        Cow::Borrowed(cell.count.as_str()),
-                        Cow::Borrowed(cell.message_truncated.as_str()),
-                    )
-                } else {
-                    (
-                        format_small_int(i64::from(ev.count)),
-                        Cow::Owned(ev.message.chars().take(60).collect()),
-                    )
-                };
+            let (count, msg): (Cow<'_, str>, Cow<'_, str>) = if let Some(cell) = derived.get(idx) {
+                (
+                    Cow::Borrowed(cell.count.as_str()),
+                    Cow::Borrowed(cell.message_truncated.as_str()),
+                )
+            } else {
+                (
+                    format_small_int(i64::from(ev.count)),
+                    Cow::Owned(ev.message.chars().take(60).collect()),
+                )
+            };
             Row::new(vec![
                 Cell::from(Span::styled(ev.type_.clone(), type_style)),
                 Cell::from(ev.namespace.clone()),

@@ -197,7 +197,10 @@ pub fn render_limit_ranges(
                     Style::default().fg(theme.fg_dim),
                 )),
                 Cell::from(Span::styled(specs_count, Style::default().fg(theme.fg_dim))),
-                Cell::from(Span::styled(types_summary, Style::default().fg(theme.accent2))),
+                Cell::from(Span::styled(
+                    types_summary,
+                    Style::default().fg(theme.accent2),
+                )),
                 Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)

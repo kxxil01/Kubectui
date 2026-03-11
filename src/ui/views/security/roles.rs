@@ -203,7 +203,10 @@ pub fn render_roles(
                     Span::styled(role.name.as_str(), name_style),
                 ])),
                 Cell::from(Span::styled(role.namespace.as_str(), dim_style)),
-                Cell::from(Span::styled(rules_count, Style::default().fg(theme.accent2))),
+                Cell::from(Span::styled(
+                    rules_count,
+                    Style::default().fg(theme.accent2),
+                )),
                 Cell::from(Span::styled(age, theme.inactive_style())),
             ])
             .style(row_style)

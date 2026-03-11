@@ -173,10 +173,7 @@ pub fn render_hpas(
                     (
                         format_small_int(i64::from(hpa.min_replicas.unwrap_or(1))),
                         format_small_int(i64::from(hpa.max_replicas)),
-                        Cow::Owned(format!(
-                            "{}/{}",
-                            hpa.current_replicas, hpa.desired_replicas
-                        )),
+                        Cow::Owned(format!("{}/{}", hpa.current_replicas, hpa.desired_replicas)),
                     )
                 };
             Row::new(vec![

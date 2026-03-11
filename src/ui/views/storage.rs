@@ -492,10 +492,7 @@ fn cached_storage_class_derived(
     let key = StorageClassDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
-        data_fingerprint: data_fingerprint(
-            &snapshot.storage_classes,
-            snapshot.snapshot_version,
-        ),
+        data_fingerprint: data_fingerprint(&snapshot.storage_classes, snapshot.snapshot_version),
     };
 
     if let Ok(cache) = STORAGE_CLASS_DERIVED_CACHE.lock()
@@ -518,11 +515,7 @@ fn cached_storage_class_derived(
                         .as_deref()
                         .unwrap_or("Immediate")
                         .to_string(),
-                    expand: if sc.allow_volume_expansion {
-                        "✓"
-                    } else {
-                        ""
-                    },
+                    expand: if sc.allow_volume_expansion { "✓" } else { "" },
                 }
             })
             .collect::<Vec<_>>(),
@@ -613,42 +606,41 @@ pub fn render_storage_classes(
             } else {
                 theme.row_alt_style()
             };
-            let (default_label, reclaim, binding, expand) =
-                if let Some(cell) = derived.get(idx) {
-                    (
-                        cell.default_label,
-                        Cow::Borrowed(cell.reclaim.as_str()),
-                        Cow::Borrowed(cell.binding.as_str()),
-                        cell.expand,
-                    )
-                } else {
-                    (
-                        if storage_class.is_default {
-                            "(default)"
-                        } else {
-                            ""
-                        },
-                        Cow::Owned(
-                            storage_class
-                                .reclaim_policy
-                                .as_deref()
-                                .unwrap_or("Delete")
-                                .to_string(),
-                        ),
-                        Cow::Owned(
-                            storage_class
-                                .volume_binding_mode
-                                .as_deref()
-                                .unwrap_or("Immediate")
-                                .to_string(),
-                        ),
-                        if storage_class.allow_volume_expansion {
-                            "✓"
-                        } else {
-                            ""
-                        },
-                    )
-                };
+            let (default_label, reclaim, binding, expand) = if let Some(cell) = derived.get(idx) {
+                (
+                    cell.default_label,
+                    Cow::Borrowed(cell.reclaim.as_str()),
+                    Cow::Borrowed(cell.binding.as_str()),
+                    cell.expand,
+                )
+            } else {
+                (
+                    if storage_class.is_default {
+                        "(default)"
+                    } else {
+                        ""
+                    },
+                    Cow::Owned(
+                        storage_class
+                            .reclaim_policy
+                            .as_deref()
+                            .unwrap_or("Delete")
+                            .to_string(),
+                    ),
+                    Cow::Owned(
+                        storage_class
+                            .volume_binding_mode
+                            .as_deref()
+                            .unwrap_or("Immediate")
+                            .to_string(),
+                    ),
+                    if storage_class.allow_volume_expansion {
+                        "✓"
+                    } else {
+                        ""
+                    },
+                )
+            };
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {} {}", storage_class.name, default_label),
