@@ -16,14 +16,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
-        table_window, workload_sort_header, workload_sort_suffix,
+        table_window,
+        views::filtering::filtered_service_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -32,6 +33,7 @@ struct ServiceDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -64,21 +66,7 @@ pub fn render_services(
         snapshot.snapshot_version,
         data_fingerprint(&snapshot.services, snapshot.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &snapshot.services,
-                q,
-                sort,
-                |svc, needle| {
-                    contains_ci(&svc.name, needle)
-                        || contains_ci(&svc.namespace, needle)
-                        || contains_ci(&svc.type_, needle)
-                },
-                |svc| svc.name.as_str(),
-                |svc| svc.namespace.as_str(),
-                |svc| svc.age,
-            )
-        },
+        |q| filtered_service_indices(&snapshot.services, q, sort),
     );
 
     if indices.is_empty() {
@@ -118,7 +106,7 @@ pub fn render_services(
     .height(1)
     .style(theme.header_style());
 
-    let derived = cached_service_derived(snapshot, query, indices.as_ref());
+    let derived = cached_service_derived(snapshot, query, indices.as_ref(), cache_variant);
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -219,11 +207,13 @@ fn cached_service_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> ServiceDerivedCacheValue {
     let key = ServiceDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.services, snapshot.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = SERVICE_DERIVED_CACHE.lock()

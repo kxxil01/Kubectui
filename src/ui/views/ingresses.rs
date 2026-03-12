@@ -20,9 +20,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
         loading_or_empty_message, table_viewport_rows, table_window,
+        views::filtering::{filtered_ingress_class_indices, filtered_ingress_indices},
     },
 };
 
@@ -104,31 +104,7 @@ pub fn render_ingresses(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.ingresses, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.ingresses.len()).collect();
-            }
-            cluster
-                .ingresses
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, ingress)| {
-                    let host_matches = ingress.hosts.iter().any(|host| contains_ci(host, q));
-                    (contains_ci(&ingress.name, q)
-                        || contains_ci(&ingress.namespace, q)
-                        || ingress
-                            .class
-                            .as_ref()
-                            .is_some_and(|class| contains_ci(class, q))
-                        || ingress
-                            .address
-                            .as_ref()
-                            .is_some_and(|address| contains_ci(address, q))
-                        || host_matches)
-                        .then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_ingress_indices(&cluster.ingresses, q),
     );
 
     if indices.is_empty() {
@@ -273,21 +249,7 @@ pub fn render_ingress_classes(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.ingress_classes, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.ingress_classes.len()).collect();
-            }
-            cluster
-                .ingress_classes
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, ingress_class)| {
-                    (contains_ci(&ingress_class.name, q)
-                        || contains_ci(&ingress_class.controller, q))
-                    .then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_ingress_class_indices(&cluster.ingress_classes, q),
     );
 
     if indices.is_empty() {

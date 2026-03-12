@@ -1,7 +1,6 @@
 //! Global state management for KubecTUI.
 
 pub mod alerts;
-pub mod filters;
 pub mod issues;
 pub mod port_forward;
 
@@ -119,6 +118,7 @@ pub struct ClusterSnapshot {
     pub storage_classes: Vec<StorageClassInfo>,
     pub namespace_list: Vec<NamespaceInfo>,
     pub events: Vec<K8sEventInfo>,
+    pub events_last_error: Option<String>,
     pub priority_classes: Vec<PriorityClassInfo>,
     pub helm_releases: Vec<HelmReleaseInfo>,
     pub flux_resources: Vec<FluxResourceInfo>,
@@ -171,6 +171,7 @@ impl Default for ClusterSnapshot {
             storage_classes: Vec::new(),
             namespace_list: Vec::new(),
             events: Vec::new(),
+            events_last_error: None,
             priority_classes: Vec::new(),
             helm_releases: Vec::new(),
             flux_resources: Vec::new(),
@@ -589,7 +590,6 @@ pub struct RefreshOptions {
     pub include_flux: bool,
     pub include_cluster_info: bool,
     pub include_secondary_resources: bool,
-    pub include_events: bool,
 }
 
 impl Default for RefreshOptions {
@@ -598,7 +598,6 @@ impl Default for RefreshOptions {
             include_flux: true,
             include_cluster_info: true,
             include_secondary_resources: true,
-            include_events: true,
         }
     }
 }
@@ -1067,11 +1066,67 @@ impl GlobalState {
         if options.include_flux {
             changed |= self.mark_views_requested(FLUX_REFRESH_VIEWS);
         }
-        if options.include_events {
-            changed |= self.mark_views_requested(EVENT_REFRESH_VIEWS);
-        }
         changed |= self.set_view_load_state(AppView::PortForwarding, ViewLoadState::Ready);
 
+        if changed {
+            self.snapshot_dirty = true;
+            self.publish_snapshot();
+        }
+    }
+
+    pub fn mark_events_refresh_requested(&mut self) -> bool {
+        let mut changed = self.mark_views_requested(EVENT_REFRESH_VIEWS);
+        {
+            let snap = Arc::make_mut(&mut self.snapshot);
+            if snap.events_last_error.take().is_some() {
+                changed = true;
+            }
+        }
+        if changed {
+            self.snapshot_dirty = true;
+            self.publish_snapshot();
+        }
+        changed
+    }
+
+    pub fn apply_events_update(&mut self, events: Vec<K8sEventInfo>) {
+        let mut changed = false;
+        {
+            let snap = Arc::make_mut(&mut self.snapshot);
+            if snap.events != events {
+                snap.events = events;
+                snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+                changed = true;
+            }
+            if snap.events_last_error.take().is_some() {
+                changed = true;
+            }
+            let slot = &mut snap.view_load_states[AppView::Events.index()];
+            if *slot != ViewLoadState::Ready {
+                *slot = ViewLoadState::Ready;
+                changed = true;
+            }
+        }
+
+        if changed {
+            self.snapshot_dirty = true;
+            self.publish_snapshot();
+        }
+    }
+
+    pub fn fail_events_refresh(&mut self, error: impl Into<String>) {
+        let error = error.into();
+        let mut changed = false;
+        {
+            let snap = Arc::make_mut(&mut self.snapshot);
+            if snap.events_last_error.as_deref() != Some(error.as_str()) {
+                snap.events_last_error = Some(error);
+                changed = true;
+            }
+        }
+        if self.set_view_load_state(AppView::Events, ViewLoadState::Ready) {
+            changed = true;
+        }
         if changed {
             self.snapshot_dirty = true;
             self.publish_snapshot();
@@ -1087,9 +1142,6 @@ impl GlobalState {
         }
         if options.include_flux {
             changed |= self.set_many_view_load_states(FLUX_REFRESH_VIEWS, ViewLoadState::Ready);
-        }
-        if options.include_events {
-            changed |= self.set_many_view_load_states(EVENT_REFRESH_VIEWS, ViewLoadState::Ready);
         }
         changed |= self.set_view_load_state(AppView::PortForwarding, ViewLoadState::Ready);
 
@@ -1303,11 +1355,9 @@ impl GlobalState {
 
         let prev_flux_resources = snap.flux_resources.clone();
         let prev_cluster_info = snap.cluster_info.clone();
-        let prev_events = snap.events.clone();
         let include_flux = options.include_flux;
         let include_cluster_info = options.include_cluster_info;
         let include_secondary_resources = options.include_secondary_resources;
-        let include_events = options.include_events;
         let flux_fetch = async move {
             if include_flux {
                 Self::fetch_with_timeout("fluxresources", &CORE_FETCH_SEMAPHORE, || {
@@ -1327,16 +1377,6 @@ impl GlobalState {
                 .map(Some)
             } else {
                 Ok(None)
-            }
-        };
-        let events_fetch = async move {
-            if include_events {
-                Self::fetch_with_timeout("events", &CORE_FETCH_SEMAPHORE, || {
-                    client.fetch_events(namespace)
-                })
-                .await
-            } else {
-                Ok(prev_events)
             }
         };
 
@@ -1393,7 +1433,6 @@ impl GlobalState {
                     .fetch_namespace_list()),
                 flux_fetch,
                 cluster_info_fetch,
-                events_fetch,
             )
         };
 
@@ -1497,7 +1536,6 @@ impl GlobalState {
                 namespace_list_res,
                 flux_resources_res,
                 cluster_info_res,
-                events_res,
             ),
             (
                 resource_quotas_res,
@@ -1684,8 +1722,6 @@ impl GlobalState {
             &mut errors,
         );
         self.namespaces = Self::namespace_names_from_list(&namespace_list);
-        let events =
-            Self::keep_prev_vec_on_error(events_res, &self.snapshot.events, "events", &mut errors);
         let priority_classes = Self::keep_prev_vec_on_error(
             priority_classes_res,
             &self.snapshot.priority_classes,
@@ -1789,7 +1825,6 @@ impl GlobalState {
             snap.pvs = pvs;
             snap.storage_classes = storage_classes;
             snap.namespace_list = namespace_list;
-            snap.events = events;
             snap.priority_classes = priority_classes;
             snap.helm_releases = helm_releases;
             snap.flux_resources = flux_resources;
@@ -2583,7 +2618,6 @@ mod tests {
                     include_flux: false,
                     include_cluster_info: true,
                     include_secondary_resources: true,
-                    include_events: true,
                 },
             )
             .await
@@ -2604,7 +2638,6 @@ mod tests {
             include_flux: true,
             include_cluster_info: true,
             include_secondary_resources: false,
-            include_events: true,
         });
         let pending_snapshot = state.snapshot();
         assert_eq!(
@@ -2628,7 +2661,6 @@ mod tests {
                     include_flux: true,
                     include_cluster_info: true,
                     include_secondary_resources: false,
-                    include_events: true,
                 },
             )
             .await
@@ -2656,7 +2688,6 @@ mod tests {
                     include_flux: true,
                     include_cluster_info: true,
                     include_secondary_resources: true,
-                    include_events: true,
                 },
             )
             .await

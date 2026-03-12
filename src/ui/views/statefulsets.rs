@@ -16,14 +16,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_image, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        table_viewport_rows, table_window,
+        views::filtering::filtered_statefulset_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -32,6 +33,7 @@ struct StatefulSetDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -64,20 +66,7 @@ pub fn render_statefulsets(
         cluster.snapshot_version,
         data_fingerprint(&cluster.statefulsets, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.statefulsets,
-                q,
-                sort,
-                |ss, needle| {
-                    contains_ci(&ss.name, needle)
-                        || contains_ci(ss.image.as_deref().unwrap_or_default(), needle)
-                },
-                |ss| ss.name.as_str(),
-                |ss| ss.namespace.as_str(),
-                |ss| ss.age,
-            )
-        },
+        |q| filtered_statefulset_indices(&cluster.statefulsets, q, sort),
     );
 
     if indices.is_empty() {
@@ -116,7 +105,7 @@ pub fn render_statefulsets(
     ])
     .height(1)
     .style(theme.header_style());
-    let derived = cached_statefulset_derived(cluster, query, indices.as_ref());
+    let derived = cached_statefulset_derived(cluster, query, indices.as_ref(), cache_variant);
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -220,11 +209,13 @@ fn cached_statefulset_derived(
     cluster: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> StatefulSetDerivedCacheValue {
     let key = StatefulSetDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.statefulsets, cluster.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = STATEFULSET_DERIVED_CACHE.lock()

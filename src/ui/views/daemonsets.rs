@@ -16,15 +16,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_image, format_small_int, loading_or_empty_message,
-        responsive_table_widths, table_viewport_rows, table_window, workload_sort_header,
-        workload_sort_suffix,
+        responsive_table_widths, table_viewport_rows, table_window,
+        views::filtering::filtered_daemonset_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -33,6 +33,7 @@ struct DaemonSetDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -64,26 +65,7 @@ pub fn render_daemonsets(
         cluster.snapshot_version,
         data_fingerprint(&cluster.daemonsets, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.daemonsets,
-                q,
-                sort,
-                |ds, needle| {
-                    let label_match = ds
-                        .labels
-                        .iter()
-                        .any(|(key, value)| contains_ci(key, needle) || contains_ci(value, needle));
-                    contains_ci(&ds.name, needle)
-                        || contains_ci(&ds.selector, needle)
-                        || contains_ci(ds.image.as_deref().unwrap_or_default(), needle)
-                        || label_match
-                },
-                |ds| ds.name.as_str(),
-                |ds| ds.namespace.as_str(),
-                |ds| ds.age,
-            )
-        },
+        |q| filtered_daemonset_indices(&cluster.daemonsets, q, sort),
     );
 
     if indices.is_empty() {
@@ -123,7 +105,7 @@ pub fn render_daemonsets(
     ])
     .height(1)
     .style(theme.header_style());
-    let derived = cached_daemonset_derived(cluster, query, indices.as_ref());
+    let derived = cached_daemonset_derived(cluster, query, indices.as_ref(), cache_variant);
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
         .enumerate()
@@ -234,11 +216,13 @@ fn cached_daemonset_derived(
     cluster: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> DaemonSetDerivedCacheValue {
     let key = DaemonSetDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.daemonsets, cluster.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = DAEMONSET_DERIVED_CACHE.lock()

@@ -16,14 +16,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        table_viewport_rows, table_window,
+        views::filtering::filtered_resource_quota_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -34,6 +35,7 @@ struct ResourceQuotaDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -53,11 +55,13 @@ fn cached_resource_quota_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> ResourceQuotaDerivedCacheValue {
     let key = ResourceQuotaDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.resource_quotas, snapshot.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = RESOURCE_QUOTA_DERIVED_CACHE.lock()
@@ -106,20 +110,7 @@ pub fn render_resource_quotas(
         cluster.snapshot_version,
         data_fingerprint(&cluster.resource_quotas, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.resource_quotas,
-                q,
-                sort,
-                |rq, needle| {
-                    let hard_key_match = rq.hard.keys().any(|key| contains_ci(key, needle));
-                    contains_ci(&rq.name, needle) || hard_key_match
-                },
-                |rq| rq.name.as_str(),
-                |rq| rq.namespace.as_str(),
-                |rq| rq.age,
-            )
-        },
+        |q| filtered_resource_quota_indices(&cluster.resource_quotas, q, sort),
     );
 
     let theme = default_theme();
@@ -160,7 +151,7 @@ pub fn render_resource_quotas(
     .height(1)
     .style(theme.header_style());
 
-    let derived = cached_resource_quota_derived(cluster, query, &indices);
+    let derived = cached_resource_quota_derived(cluster, query, &indices, cache_variant);
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()

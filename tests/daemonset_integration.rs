@@ -5,8 +5,15 @@ mod common;
 use common::MockDataSource;
 use kubectui::k8s::dtos::DaemonSetInfo;
 use kubectui::state::ClusterSnapshot;
-use kubectui::state::filters::filter_daemonsets;
+use kubectui::ui::views::filtering::filtered_daemonset_indices;
 use std::collections::BTreeMap;
+
+fn filtered_daemonsets<'a>(items: &'a [DaemonSetInfo], query: &str) -> Vec<&'a DaemonSetInfo> {
+    filtered_daemonset_indices(items, query, None)
+        .into_iter()
+        .map(|idx| &items[idx])
+        .collect()
+}
 
 /// Tests complete daemonset workflow: fetch, filter, sort, render.
 #[test]
@@ -67,12 +74,12 @@ fn test_daemonset_complete_workflow() {
     ];
 
     // Simulate filtering for monitoring namespace
-    let monitoring_daemonsets = filter_daemonsets(&mock.daemonsets, "", Some("monitoring"));
+    let monitoring_daemonsets = filtered_daemonsets(&mock.daemonsets, "monitoring");
     assert_eq!(monitoring_daemonsets.len(), 1);
     assert_eq!(monitoring_daemonsets[0].name, "prometheus-exporter");
 
     // Simulate filtering by search query
-    let by_prom = filter_daemonsets(&mock.daemonsets, "prom", None);
+    let by_prom = filtered_daemonsets(&mock.daemonsets, "prom");
     assert_eq!(by_prom.len(), 1);
     assert_eq!(by_prom[0].name, "prometheus-exporter");
 
@@ -152,16 +159,16 @@ fn test_daemonset_namespace_filtering_comprehensive() {
         },
     ];
 
-    let monitoring = filter_daemonsets(&daemonsets, "", Some("monitoring"));
+    let monitoring = filtered_daemonsets(&daemonsets, "monitoring");
     assert_eq!(monitoring.len(), 2);
 
-    let logging = filter_daemonsets(&daemonsets, "", Some("logging"));
+    let logging = filtered_daemonsets(&daemonsets, "logging");
     assert_eq!(logging.len(), 1);
 
-    let kube_system = filter_daemonsets(&daemonsets, "", Some("kube-system"));
+    let kube_system = filtered_daemonsets(&daemonsets, "kube-system");
     assert_eq!(kube_system.len(), 1);
 
-    let all = filter_daemonsets(&daemonsets, "", None);
+    let all = filtered_daemonsets(&daemonsets, "");
     assert_eq!(all.len(), 4);
 }
 
@@ -198,21 +205,21 @@ fn test_daemonset_complex_search() {
     ];
 
     // Search by image registry
-    let prom_results = filter_daemonsets(&daemonsets, "prom/", None);
+    let prom_results = filtered_daemonsets(&daemonsets, "prom/");
     assert_eq!(prom_results.len(), 1);
     assert_eq!(prom_results[0].name, "prometheus-node-exporter");
 
     // Search by component label
-    let prometheus_results = filter_daemonsets(&daemonsets, "prometheus", None);
+    let prometheus_results = filtered_daemonsets(&daemonsets, "prometheus");
     assert_eq!(prometheus_results.len(), 1);
     assert_eq!(prometheus_results[0].name, "prometheus-node-exporter");
 
     // Search by release label
-    let stack_results = filter_daemonsets(&daemonsets, "stack", None);
+    let stack_results = filtered_daemonsets(&daemonsets, "stack");
     assert_eq!(stack_results.len(), 2);
 
-    // Combined namespace and search
-    let monitoring_exporter = filter_daemonsets(&daemonsets, "exporter", Some("monitoring"));
+    // Search by namespace substring
+    let monitoring_exporter = filtered_daemonsets(&daemonsets, "monitoring");
     assert_eq!(monitoring_exporter.len(), 1);
     assert_eq!(monitoring_exporter[0].name, "prometheus-node-exporter");
 }
@@ -239,7 +246,7 @@ fn test_daemonset_update_strategies() {
     assert_eq!(daemonsets[1].update_strategy, "OnDelete");
 
     // Verify strategies are preserved through filtering
-    let filtered = filter_daemonsets(&daemonsets, "", None);
+    let filtered = filtered_daemonsets(&daemonsets, "");
     assert_eq!(filtered[0].update_strategy, "RollingUpdate");
     assert_eq!(filtered[1].update_strategy, "OnDelete");
 }
@@ -335,6 +342,6 @@ fn test_daemonset_labels_preservation() {
 
     // Verify labels survive filtering
     let daemonsets = vec![ds];
-    let filtered = filter_daemonsets(&daemonsets, "", None);
+    let filtered = filtered_daemonsets(&daemonsets, "");
     assert_eq!(filtered[0].labels.len(), 3);
 }

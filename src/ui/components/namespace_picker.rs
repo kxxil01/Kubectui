@@ -1,7 +1,7 @@
 //! Namespace picker modal component.
 
 use crate::ui::contains_ci;
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Style},
@@ -94,12 +94,30 @@ impl NamespacePicker {
                 }
                 NamespacePickerAction::None
             }
+            KeyCode::Char('j') if key.modifiers == KeyModifiers::NONE => {
+                let len = self.filtered_namespaces().len();
+                if len > 0 {
+                    self.selected_index = (self.selected_index + 1) % len;
+                }
+                NamespacePickerAction::None
+            }
+            KeyCode::Char('k') if key.modifiers == KeyModifiers::NONE => {
+                let len = self.filtered_namespaces().len();
+                if len > 0 {
+                    self.selected_index = if self.selected_index == 0 {
+                        len - 1
+                    } else {
+                        self.selected_index - 1
+                    };
+                }
+                NamespacePickerAction::None
+            }
             KeyCode::Backspace => {
                 self.search_query.pop();
                 self.selected_index = 0;
                 NamespacePickerAction::None
             }
-            KeyCode::Char(c) => {
+            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE => {
                 self.search_query.push(c);
                 self.selected_index = 0;
                 NamespacePickerAction::None
@@ -279,6 +297,22 @@ mod tests {
         assert_eq!(picker.selected_index(), 1);
 
         picker.handle_key(KeyEvent::from(KeyCode::Up));
+        assert_eq!(picker.selected_index(), 0);
+    }
+
+    #[test]
+    fn test_namespace_picker_vim_navigation() {
+        let mut picker = NamespacePicker::new(vec![
+            "all".to_string(),
+            "default".to_string(),
+            "kube-system".to_string(),
+        ]);
+        picker.open();
+
+        picker.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        assert_eq!(picker.selected_index(), 1);
+
+        picker.handle_key(KeyEvent::from(KeyCode::Char('k')));
         assert_eq!(picker.selected_index(), 0);
     }
 

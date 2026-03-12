@@ -43,6 +43,7 @@ pub use crate::k8s::{
 };
 
 const MAX_EVENTS_LIST_LIMIT: u32 = 1000;
+const MAX_RECENT_EVENTS_ITEMS: usize = 250;
 
 /// Configured Kubernetes client wrapper.
 #[derive(Clone)]
@@ -1905,6 +1906,7 @@ impl K8sClient {
             .collect();
         // Sort by last_seen descending
         events.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        events.truncate(MAX_RECENT_EVENTS_ITEMS);
         Ok(events)
     }
 

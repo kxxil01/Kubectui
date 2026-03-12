@@ -16,14 +16,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        table_viewport_rows, table_window,
+        views::filtering::filtered_limit_range_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -34,6 +35,7 @@ struct LimitRangeDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -52,11 +54,13 @@ fn cached_limit_range_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> LimitRangeDerivedCacheValue {
     let key = LimitRangeDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.limit_ranges, snapshot.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = LIMIT_RANGE_DERIVED_CACHE.lock()
@@ -103,23 +107,7 @@ pub fn render_limit_ranges(
         cluster.snapshot_version,
         data_fingerprint(&cluster.limit_ranges, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.limit_ranges,
-                q,
-                sort,
-                |lr, needle| {
-                    let type_match = lr
-                        .limits
-                        .iter()
-                        .any(|spec| contains_ci(&spec.type_, needle));
-                    contains_ci(&lr.name, needle) || type_match
-                },
-                |lr| lr.name.as_str(),
-                |lr| lr.namespace.as_str(),
-                |lr| lr.age,
-            )
-        },
+        |q| filtered_limit_range_indices(&cluster.limit_ranges, q, sort),
     );
 
     let theme = default_theme();
@@ -160,7 +148,7 @@ pub fn render_limit_ranges(
     .height(1)
     .style(theme.header_style());
 
-    let derived = cached_limit_range_derived(cluster, query, &indices);
+    let derived = cached_limit_range_derived(cluster, query, &indices, cache_variant);
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()

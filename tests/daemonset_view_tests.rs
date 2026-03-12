@@ -4,8 +4,15 @@ mod common;
 
 use common::MockDataSource;
 use kubectui::k8s::dtos::DaemonSetInfo;
-use kubectui::state::filters::filter_daemonsets;
+use kubectui::ui::views::filtering::filtered_daemonset_indices;
 use std::collections::BTreeMap;
+
+fn filtered_daemonsets<'a>(items: &'a [DaemonSetInfo], query: &str) -> Vec<&'a DaemonSetInfo> {
+    filtered_daemonset_indices(items, query, None)
+        .into_iter()
+        .map(|idx| &items[idx])
+        .collect()
+}
 
 /// Tests that daemonset list filters by namespace correctly.
 #[test]
@@ -51,13 +58,13 @@ fn test_daemonset_view_namespace_filtering() {
     ];
 
     // Filter for monitoring namespace
-    let monitoring_ds = filter_daemonsets(&mock.daemonsets, "", Some("monitoring"));
+    let monitoring_ds = filtered_daemonsets(&mock.daemonsets, "monitoring");
     assert_eq!(monitoring_ds.len(), 1);
     assert_eq!(monitoring_ds[0].name, "prometheus-agent");
     assert_eq!(monitoring_ds[0].namespace, "monitoring");
 
     // Filter for logging namespace
-    let logging_ds = filter_daemonsets(&mock.daemonsets, "", Some("logging"));
+    let logging_ds = filtered_daemonsets(&mock.daemonsets, "logging");
     assert_eq!(logging_ds.len(), 1);
     assert_eq!(logging_ds[0].name, "fluent-bit");
 }
@@ -169,17 +176,17 @@ fn test_daemonset_search_multiple_fields() {
     ];
 
     // Search by name
-    let by_name = filter_daemonsets(&items, "exporter", None);
+    let by_name = filtered_daemonsets(&items, "exporter");
     assert_eq!(by_name.len(), 1);
     assert_eq!(by_name[0].name, "node-exporter");
 
     // Search by image
-    let by_image = filter_daemonsets(&items, "prom", None);
+    let by_image = filtered_daemonsets(&items, "prom");
     assert_eq!(by_image.len(), 1);
     assert_eq!(by_image[0].name, "node-exporter");
 
     // Search by selector
-    let by_selector = filter_daemonsets(&items, "component", None);
+    let by_selector = filtered_daemonsets(&items, "component");
     assert_eq!(by_selector.len(), 1);
     assert_eq!(by_selector[0].name, "fluent-collector");
 }
@@ -303,12 +310,12 @@ fn test_daemonset_multiple_label_search() {
     ];
 
     // Search for specific version
-    let v2_only = filter_daemonsets(&items, "2.1", None);
+    let v2_only = filtered_daemonsets(&items, "2.1");
     assert_eq!(v2_only.len(), 1);
     assert_eq!(v2_only[0].name, "fluent-bit-v2");
 
     // Search for team label
-    let by_team = filter_daemonsets(&items, "platform", None);
+    let by_team = filtered_daemonsets(&items, "platform");
     assert_eq!(by_team.len(), 1);
     assert_eq!(by_team[0].name, "fluent-bit-v2");
 }

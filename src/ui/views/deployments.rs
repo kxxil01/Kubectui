@@ -16,19 +16,16 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     columns::ColumnDef,
-    state::{
-        ClusterSnapshot,
-        filters::{DeploymentHealth, deployment_health_from_ready},
-    },
+    state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_image, format_small_int, loading_or_empty_message,
-        responsive_table_widths_vec, table_viewport_rows, table_window, workload_sort_header,
-        workload_sort_suffix,
+        responsive_table_widths_vec, table_viewport_rows, table_window,
+        views::filtering::filtered_deployment_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -37,6 +34,7 @@ struct DeploymentDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -70,19 +68,7 @@ pub fn render_deployments(
         snapshot.snapshot_version,
         data_fingerprint(&snapshot.deployments, snapshot.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &snapshot.deployments,
-                q,
-                sort,
-                |deploy, needle| {
-                    contains_ci(&deploy.name, needle) || contains_ci(&deploy.namespace, needle)
-                },
-                |deploy| deploy.name.as_str(),
-                |deploy| deploy.namespace.as_str(),
-                |deploy| deploy.age,
-            )
-        },
+        |q| filtered_deployment_indices(&snapshot.deployments, q, sort),
     );
 
     if indices.is_empty() {
@@ -125,7 +111,7 @@ pub fn render_deployments(
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
-    let derived = cached_deployment_derived(snapshot, query, indices.as_ref());
+    let derived = cached_deployment_derived(snapshot, query, indices.as_ref(), cache_variant);
 
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &deploy_idx) in indices[window.start..window.end].iter().enumerate() {
@@ -225,15 +211,41 @@ fn health_style(health: DeploymentHealth, theme: &crate::ui::theme::Theme) -> St
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeploymentHealth {
+    Healthy,
+    Degraded,
+    Failed,
+}
+
+pub fn deployment_health_from_ready(ready: &str) -> DeploymentHealth {
+    let Some((ready_count, desired_count)) = ready.split_once('/') else {
+        return DeploymentHealth::Degraded;
+    };
+    let ready = ready_count.trim().parse::<u32>().unwrap_or(0);
+    let desired = desired_count.trim().parse::<u32>().unwrap_or(0);
+    if desired == 0 {
+        DeploymentHealth::Healthy
+    } else if ready == 0 {
+        DeploymentHealth::Failed
+    } else if ready >= desired {
+        DeploymentHealth::Healthy
+    } else {
+        DeploymentHealth::Degraded
+    }
+}
+
 fn cached_deployment_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> DeploymentDerivedCacheValue {
     let key = DeploymentDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.deployments, snapshot.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = DEPLOYMENT_DERIVED_CACHE.lock()

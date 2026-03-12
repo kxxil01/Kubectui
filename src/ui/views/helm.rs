@@ -15,7 +15,6 @@ use ratatui::{
     },
 };
 
-use crate::ui::contains_ci;
 use crate::{
     app::AppView,
     state::ClusterSnapshot,
@@ -23,6 +22,7 @@ use crate::{
         components::{active_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         loading_or_empty_message, table_viewport_rows, table_window,
+        views::filtering::{filtered_helm_release_indices, filtered_helm_repo_indices},
     },
 };
 
@@ -109,22 +109,7 @@ pub fn render_helm_releases(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.helm_releases, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.helm_releases.len()).collect();
-            }
-            cluster
-                .helm_releases
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, release)| {
-                    (contains_ci(&release.name, q)
-                        || contains_ci(&release.namespace, q)
-                        || contains_ci(&release.chart, q))
-                    .then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_helm_release_indices(&cluster.helm_releases, q),
     );
 
     let header = Row::new([
@@ -281,19 +266,7 @@ pub fn render_helm_repos(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.helm_repositories, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.helm_repositories.len()).collect();
-            }
-            cluster
-                .helm_repositories
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, repo)| {
-                    (contains_ci(&repo.name, q) || contains_ci(&repo.url, q)).then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_helm_repo_indices(&cluster.helm_repositories, q),
     );
 
     let header = Row::new([
