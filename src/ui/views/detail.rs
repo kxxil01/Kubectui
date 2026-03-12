@@ -4,13 +4,19 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Cell, Clear, HighlightSpacing, Paragraph, Row, Table,
+        TableState, Wrap,
+    },
 };
 
 use crate::{
     app::DetailViewState,
-    ui::components::{
-        default_theme, probe_panel::render_probe_panel, scale_dialog::render_scale_dialog,
+    ui::{
+        components::{
+            default_theme, probe_panel::render_probe_panel, scale_dialog::render_scale_dialog,
+        },
+        format_age, table_window,
     },
 };
 
@@ -357,6 +363,14 @@ fn render_inspection_panel(frame: &mut Frame, area: Rect, detail_state: &DetailV
         return;
     }
 
+    if matches!(
+        detail_state.resource.as_ref(),
+        Some(crate::app::ResourceRef::CronJob(_, _))
+    ) {
+        render_cronjob_history_panel(frame, inner, detail_state);
+        return;
+    }
+
     let yaml_lines = detail_state
         .yaml
         .as_ref()
@@ -429,6 +443,160 @@ fn render_inspection_panel(frame: &mut Frame, area: Rect, detail_state: &DetailV
     ];
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
+fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
+    let theme = default_theme();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(3)])
+        .split(area);
+
+    let mut primary_hint = vec![
+        Span::styled(" [j/k] ", theme.keybind_key_style()),
+        Span::styled("Select run  ", theme.keybind_desc_style()),
+        Span::styled("[Enter] ", theme.keybind_key_style()),
+        Span::styled("Open Job", theme.keybind_desc_style()),
+    ];
+    if detail_state.supports_action(crate::policy::DetailAction::Logs) {
+        primary_hint.extend([
+            Span::styled("  [l] ", theme.keybind_key_style()),
+            Span::styled("Logs for selected Job", theme.keybind_desc_style()),
+        ]);
+    }
+
+    let mut secondary_hint = Vec::new();
+    if detail_state.supports_action(crate::policy::DetailAction::Trigger) {
+        secondary_hint.extend([
+            Span::styled(" [T] ", theme.keybind_key_style()),
+            Span::styled("Trigger run", theme.keybind_desc_style()),
+        ]);
+    }
+    if detail_state.supports_action(crate::policy::DetailAction::SuspendCronJob)
+        || detail_state.supports_action(crate::policy::DetailAction::ResumeCronJob)
+    {
+        if !secondary_hint.is_empty() {
+            secondary_hint.push(Span::raw("  "));
+        }
+        secondary_hint.extend([
+            Span::styled("[S] ", theme.keybind_key_style()),
+            Span::styled("Pause/resume schedule", theme.keybind_desc_style()),
+        ]);
+    }
+
+    let hints = vec![
+        Line::from(primary_hint),
+        Line::from(if secondary_hint.is_empty() {
+            vec![Span::styled(
+                " No actions available",
+                theme.inactive_style(),
+            )]
+        } else {
+            secondary_hint
+        }),
+    ];
+    frame.render_widget(Paragraph::new(hints).wrap(Wrap { trim: false }), rows[0]);
+
+    if detail_state.cronjob_history.is_empty() {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(""),
+                Line::from(Span::styled(
+                    " No recent Jobs for this CronJob yet.",
+                    theme.inactive_style(),
+                )),
+                Line::from(Span::styled(
+                    " Trigger it with [T] to seed the execution history.",
+                    theme.inactive_style(),
+                )),
+            ])
+            .wrap(Wrap { trim: false }),
+            rows[1],
+        );
+        return;
+    }
+
+    let total = detail_state.cronjob_history.len();
+    let selected = detail_state
+        .cronjob_history_selected
+        .min(total.saturating_sub(1));
+    let viewport_rows = usize::from(rows[1].height.saturating_sub(1)).max(1);
+    let window = table_window(total, selected, viewport_rows);
+    let header = Row::new([
+        Cell::from(Span::styled("Job", theme.header_style())),
+        Cell::from(Span::styled("Status", theme.header_style())),
+        Cell::from(Span::styled("Duration", theme.header_style())),
+        Cell::from(Span::styled("Pods", theme.header_style())),
+        Cell::from(Span::styled("Done", theme.header_style())),
+        Cell::from(Span::styled("Age", theme.header_style())),
+    ])
+    .height(1)
+    .style(theme.header_style());
+
+    let table_rows = detail_state.cronjob_history[window.start..window.end]
+        .iter()
+        .enumerate()
+        .map(|(offset, entry)| {
+            let idx = window.start + offset;
+            let row_style = if idx.is_multiple_of(2) {
+                Style::default().bg(theme.bg)
+            } else {
+                theme.row_alt_style()
+            };
+            let status_style = theme.get_status_style(&entry.status);
+            let pod_style = if entry.failed_pods > 0 {
+                theme.badge_error_style()
+            } else if entry.active_pods > 0 {
+                theme.badge_warning_style()
+            } else {
+                Style::default().fg(theme.fg_dim)
+            };
+
+            Row::new(vec![
+                Cell::from(Span::styled(
+                    entry.job_name.as_str(),
+                    Style::default().fg(theme.fg),
+                )),
+                Cell::from(Span::styled(entry.status.as_str(), status_style)),
+                Cell::from(Span::styled(
+                    entry.duration.as_deref().unwrap_or("-"),
+                    Style::default().fg(theme.fg_dim),
+                )),
+                Cell::from(Span::styled(entry.pod_count.to_string(), pod_style)),
+                Cell::from(Span::styled(
+                    entry
+                        .completion_pct
+                        .map(|pct| format!("{pct}%"))
+                        .unwrap_or_else(|| "-".to_string()),
+                    Style::default().fg(theme.accent2),
+                )),
+                Cell::from(Span::styled(
+                    format_age(entry.age),
+                    Style::default().fg(theme.fg_dim),
+                )),
+            ])
+            .style(row_style)
+        })
+        .collect::<Vec<_>>();
+
+    let mut table_state = TableState::default().with_selected(Some(window.selected));
+    let table = Table::new(
+        table_rows,
+        [
+            Constraint::Percentage(35),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(6),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ],
+    )
+    .header(header)
+    .row_highlight_style(theme.selection_style())
+    .highlight_symbol(theme.highlight_symbol())
+    .highlight_spacing(HighlightSpacing::Always);
+
+    frame.render_stateful_widget(table, rows[1], &mut table_state);
 }
 
 /// Renders resource detail as a centered modal overlay.
@@ -542,6 +710,8 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         render_delete_confirm(frame, popup, detail_state);
     } else if detail_state.confirm_drain {
         render_drain_confirm(frame, popup, detail_state);
+    } else if detail_state.confirm_cronjob_suspend.is_some() {
+        render_cronjob_suspend_confirm(frame, popup, detail_state);
     }
 }
 
@@ -672,6 +842,91 @@ fn render_drain_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailVi
         Span::styled("Drain  ", theme.keybind_desc_style()),
         Span::styled("[F] ", theme.keybind_key_style()),
         Span::styled("Force drain  ", theme.keybind_desc_style()),
+        Span::styled("[Esc] ", theme.keybind_key_style()),
+        Span::styled("Cancel", theme.keybind_desc_style()),
+    ]);
+    frame.render_widget(
+        Paragraph::new(footer).alignment(ratatui::layout::Alignment::Center),
+        rows[1],
+    );
+}
+
+fn render_cronjob_suspend_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
+    let theme = default_theme();
+    let popup = centered_rect(56, 24, parent);
+    frame.render_widget(Clear, popup);
+
+    let suspend = detail_state.confirm_cronjob_suspend.unwrap_or(false);
+    let badge_style = if suspend {
+        theme.badge_warning_style()
+    } else {
+        theme.badge_success_style()
+    };
+    let title = if suspend {
+        " Confirm Pause "
+    } else {
+        " Confirm Resume "
+    };
+
+    let block = Block::default()
+        .title(Span::styled(
+            title,
+            badge_style.add_modifier(Modifier::BOLD),
+        ))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_active_style())
+        .style(Style::default().bg(theme.bg));
+    frame.render_widget(block, popup);
+
+    let inner = Rect {
+        x: popup.x + 1,
+        y: popup.y + 1,
+        width: popup.width.saturating_sub(2),
+        height: popup.height.saturating_sub(2),
+    };
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(2)])
+        .split(inner);
+
+    let cronjob_name = detail_state
+        .resource
+        .as_ref()
+        .map(|r| r.name().to_string())
+        .unwrap_or_else(|| "selected cronjob".to_string());
+    let action_label = if suspend {
+        "Pause schedule"
+    } else {
+        "Resume schedule"
+    };
+    let detail_line = if suspend {
+        " New Jobs will not be scheduled until you resume this CronJob."
+    } else {
+        " Scheduled runs will resume on the next matching cron window."
+    };
+
+    let body = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::styled(format!(" {action_label} "), badge_style),
+            Span::styled(format!("'{cronjob_name}'"), Style::default().fg(theme.fg)),
+            Span::styled(" ?", Style::default().fg(theme.fg)),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(detail_line, theme.inactive_style())),
+    ];
+    frame.render_widget(
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .alignment(ratatui::layout::Alignment::Center),
+        rows[0],
+    );
+
+    let footer = Line::from(vec![
+        Span::styled(" [S] / [y] / [Enter] ", theme.keybind_key_style()),
+        Span::styled(format!("{action_label}  "), theme.keybind_desc_style()),
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
     ]);

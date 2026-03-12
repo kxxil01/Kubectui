@@ -1,12 +1,16 @@
 //! Kubernetes API client wrapper used by KubecTUI.
 
-use std::{collections::BTreeMap, sync::Arc};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::Arc,
+};
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use futures::{StreamExt, stream};
 use k8s_openapi::api::{
     apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet},
+    authorization::v1::{ResourceAttributes, SelfSubjectAccessReview, SelfSubjectAccessReviewSpec},
     autoscaling::v2::HorizontalPodAutoscaler,
     batch::v1::{CronJob, Job},
     core::v1::{
@@ -22,11 +26,22 @@ use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomRe
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::{
     Api, Client, Config,
-    api::{ApiResource, DynamicObject, GroupVersionKind, ListParams, Patch, PatchParams},
+    api::{
+        ApiResource, DynamicObject, GroupVersionKind, ListParams, Patch, PatchParams, PostParams,
+    },
     config::KubeConfigOptions,
 };
 
+use crate::cronjob::cronjob_next_schedule_time;
 use crate::k8s::{events, yaml};
+use crate::{
+    app::ResourceRef,
+    authorization::{
+        ActionAuthorizationMap, DetailActionAuthorization, ResourceAccessCheck,
+        detail_action_requires_authorization,
+    },
+    policy::DetailAction,
+};
 
 pub use crate::k8s::{
     dtos::{
@@ -52,6 +67,7 @@ pub struct K8sClient {
     cluster_url: String,
     cluster_context: Option<String>,
     flux_targets_cache: Arc<tokio::sync::RwLock<Option<Vec<FluxApiTarget>>>>,
+    access_review_cache: Arc<tokio::sync::RwLock<HashMap<ResourceAccessCheck, bool>>>,
 }
 
 impl K8sClient {
@@ -79,6 +95,7 @@ impl K8sClient {
             cluster_url,
             cluster_context,
             flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            access_review_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         })
     }
 
@@ -100,6 +117,7 @@ impl K8sClient {
             cluster_url,
             cluster_context: Some(context.to_string()),
             flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            access_review_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         })
     }
 
@@ -139,10 +157,10 @@ impl K8sClient {
     /// Fetches all nodes from the current cluster.
     pub async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>> {
         let nodes_api: Api<Node> = Api::all(self.client.clone());
-        let list = nodes_api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching Kubernetes nodes")?;
+        let list = list_items_or_empty(&nodes_api, &ListParams::default(), || {
+            "failed fetching Kubernetes nodes".to_string()
+        })
+        .await?;
 
         let nodes = list
             .into_iter()
@@ -359,13 +377,12 @@ impl K8sClient {
     /// Fetches available namespaces sorted alphabetically.
     pub async fn fetch_namespaces(&self) -> Result<Vec<String>> {
         let ns_api: Api<Namespace> = Api::all(self.client.clone());
-        let list = ns_api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching namespaces")?;
+        let list = list_items_or_empty(&ns_api, &ListParams::default(), || {
+            "failed fetching namespaces".to_string()
+        })
+        .await?;
 
         let names: Vec<String> = list
-            .items
             .iter()
             .map(|ns| ns.metadata.name.clone().unwrap_or_default())
             .collect();
@@ -380,16 +397,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = pods_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching pods in namespace '{ns}'")
-                } else {
-                    "failed fetching pods across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&pods_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching pods in namespace '{ns}'")
+            } else {
+                "failed fetching pods across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let pods = list
             .into_iter()
@@ -463,16 +478,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = services_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching services in namespace '{ns}'")
-                } else {
-                    "failed fetching services across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&services_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching services in namespace '{ns}'")
+            } else {
+                "failed fetching services across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let now = Utc::now();
         let services = list
@@ -534,16 +547,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = deployments_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching deployments in namespace '{ns}'")
-                } else {
-                    "failed fetching deployments across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&deployments_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching deployments in namespace '{ns}'")
+            } else {
+                "failed fetching deployments across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let now = Utc::now();
         let deployments = list
@@ -605,16 +616,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = statefulsets_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching statefulsets in namespace '{ns}'")
-                } else {
-                    "failed fetching statefulsets across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&statefulsets_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching statefulsets in namespace '{ns}'")
+            } else {
+                "failed fetching statefulsets across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let now = Utc::now();
         let statefulsets = list
@@ -656,16 +665,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = daemonsets_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching daemonsets in namespace '{ns}'")
-                } else {
-                    "failed fetching daemonsets across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&daemonsets_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching daemonsets in namespace '{ns}'")
+            } else {
+                "failed fetching daemonsets across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let now = Utc::now();
         let daemonsets = list
@@ -732,13 +739,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = api.list(&ListParams::default()).await.with_context(|| {
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
             if let Some(ns) = namespace {
                 format!("failed fetching replicasets in namespace '{ns}'")
             } else {
                 "failed fetching replicasets across all namespaces".to_string()
             }
-        })?;
+        })
+        .await?;
 
         let now = Utc::now();
         let items = list
@@ -790,13 +798,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = api.list(&ListParams::default()).await.with_context(|| {
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
             if let Some(ns) = namespace {
                 format!("failed fetching replicationcontrollers in namespace '{ns}'")
             } else {
                 "failed fetching replicationcontrollers across all namespaces".to_string()
             }
-        })?;
+        })
+        .await?;
 
         let now = Utc::now();
         let items = list
@@ -837,16 +846,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = service_accounts_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching serviceaccounts in namespace '{ns}'")
-                } else {
-                    "failed fetching serviceaccounts across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&service_accounts_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching serviceaccounts in namespace '{ns}'")
+            } else {
+                "failed fetching serviceaccounts across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let now = Utc::now();
         let service_accounts = list
@@ -879,16 +886,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = roles_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching roles in namespace '{ns}'")
-                } else {
-                    "failed fetching roles across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&roles_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching roles in namespace '{ns}'")
+            } else {
+                "failed fetching roles across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let now = Utc::now();
         let roles = list
@@ -929,16 +934,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = role_bindings_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching rolebindings in namespace '{ns}'")
-                } else {
-                    "failed fetching rolebindings across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&role_bindings_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching rolebindings in namespace '{ns}'")
+            } else {
+                "failed fetching rolebindings across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let now = Utc::now();
         let role_bindings = list
@@ -973,10 +976,10 @@ impl K8sClient {
     pub async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>> {
         let cluster_roles_api: Api<ClusterRole> = Api::all(self.client.clone());
 
-        let list = cluster_roles_api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching clusterroles")?;
+        let list = list_items_or_empty(&cluster_roles_api, &ListParams::default(), || {
+            "failed fetching clusterroles".to_string()
+        })
+        .await?;
 
         let now = Utc::now();
         let cluster_roles = list
@@ -1004,10 +1007,10 @@ impl K8sClient {
     pub async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>> {
         let cluster_role_bindings_api: Api<ClusterRoleBinding> = Api::all(self.client.clone());
 
-        let list = cluster_role_bindings_api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching clusterrolebindings")?;
+        let list = list_items_or_empty(&cluster_role_bindings_api, &ListParams::default(), || {
+            "failed fetching clusterrolebindings".to_string()
+        })
+        .await?;
 
         let now = Utc::now();
         let cluster_role_bindings = list
@@ -1041,16 +1044,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = jobs_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching jobs in namespace '{ns}'")
-                } else {
-                    "failed fetching jobs across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&jobs_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching jobs in namespace '{ns}'")
+            } else {
+                "failed fetching jobs across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let now = Utc::now();
         let jobs = list
@@ -1062,6 +1063,7 @@ impl K8sClient {
                 let succeeded = status.and_then(|s| s.succeeded).unwrap_or(0);
                 let failed = status.and_then(|s| s.failed).unwrap_or(0);
                 let active = status.and_then(|s| s.active).unwrap_or(0);
+                let desired_completions = spec.and_then(|s| s.completions).unwrap_or(1);
                 let parallelism = spec.and_then(|s| s.parallelism).unwrap_or(1);
                 let start_time = status.and_then(|s| s.start_time.as_ref()).map(|ts| ts.0);
                 let completion_time = status
@@ -1076,8 +1078,10 @@ impl K8sClient {
                         .namespace
                         .unwrap_or_else(|| "default".to_string()),
                     status: job_status_from_counts(succeeded, failed, active),
-                    completions: format_job_completions(succeeded, parallelism),
+                    completions: format_job_completions(succeeded, desired_completions),
                     duration: format_job_duration(start_time, completion_time),
+                    desired_completions,
+                    succeeded_pods: succeeded,
                     parallelism,
                     active_pods: active,
                     failed_pods: failed,
@@ -1108,16 +1112,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = cronjobs_api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| {
-                if let Some(ns) = namespace {
-                    format!("failed fetching cronjobs in namespace '{ns}'")
-                } else {
-                    "failed fetching cronjobs across all namespaces".to_string()
-                }
-            })?;
+        let list = list_items_or_empty(&cronjobs_api, &ListParams::default(), || {
+            if let Some(ns) = namespace {
+                format!("failed fetching cronjobs in namespace '{ns}'")
+            } else {
+                "failed fetching cronjobs across all namespaces".to_string()
+            }
+        })
+        .await?;
 
         let now = Utc::now();
         let cronjobs = list
@@ -1126,6 +1128,11 @@ impl K8sClient {
                 let spec = cj.spec.as_ref();
                 let status = cj.status.as_ref();
                 let created_at = cj.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+                let schedule = spec
+                    .map(|s| s.schedule.clone())
+                    .unwrap_or_else(|| "<none>".to_string());
+                let timezone = spec.and_then(|s| s.time_zone.clone());
+                let suspend = spec.and_then(|s| s.suspend).unwrap_or(false);
 
                 CronJobInfo {
                     name: cj.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -1133,18 +1140,21 @@ impl K8sClient {
                         .metadata
                         .namespace
                         .unwrap_or_else(|| "default".to_string()),
-                    schedule: spec
-                        .map(|s| s.schedule.clone())
-                        .unwrap_or_else(|| "<none>".to_string()),
-                    timezone: spec.and_then(|s| s.time_zone.clone()),
+                    schedule: schedule.clone(),
+                    timezone: timezone.clone(),
                     last_schedule_time: status
                         .and_then(|s| s.last_schedule_time.as_ref())
                         .map(|ts| ts.0),
-                    next_schedule_time: None,
+                    next_schedule_time: cronjob_next_schedule_time(
+                        &schedule,
+                        timezone.as_deref(),
+                        suspend,
+                        now,
+                    ),
                     last_successful_time: status
                         .and_then(|s| s.last_successful_time.as_ref())
                         .map(|ts| ts.0),
-                    suspend: spec.and_then(|s| s.suspend).unwrap_or(false),
+                    suspend,
                     active_jobs: status
                         .and_then(|s| s.active.as_ref())
                         .map(|v| v.len() as i32)
@@ -1168,13 +1178,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = api.list(&ListParams::default()).await.with_context(|| {
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
             if let Some(ns) = namespace {
                 format!("failed fetching resource quotas in namespace '{ns}'")
             } else {
                 "failed fetching resource quotas across all namespaces".to_string()
             }
-        })?;
+        })
+        .await?;
 
         let now = Utc::now();
         let quotas = list
@@ -1231,13 +1242,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = api.list(&ListParams::default()).await.with_context(|| {
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
             if let Some(ns) = namespace {
                 format!("failed fetching limit ranges in namespace '{ns}'")
             } else {
                 "failed fetching limit ranges across all namespaces".to_string()
             }
-        })?;
+        })
+        .await?;
 
         let now = Utc::now();
         let ranges = list
@@ -1296,13 +1308,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
 
-        let list = api.list(&ListParams::default()).await.with_context(|| {
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
             if let Some(ns) = namespace {
                 format!("failed fetching pod disruption budgets in namespace '{ns}'")
             } else {
                 "failed fetching pod disruption budgets across all namespaces".to_string()
             }
-        })?;
+        })
+        .await?;
 
         let now = Utc::now();
         let pdbs = list
@@ -1343,10 +1356,10 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching endpoints")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching endpoints".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1395,10 +1408,10 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching ingresses")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching ingresses".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1485,10 +1498,10 @@ impl K8sClient {
     /// Fetches IngressClasses.
     pub async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
         let api: Api<IngressClass> = Api::all(self.client.clone());
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching ingress classes")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching ingress classes".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1530,10 +1543,10 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching network policies")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching network policies".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1591,10 +1604,10 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching configmaps")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching configmaps".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1624,10 +1637,10 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching secrets")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching secrets".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1657,10 +1670,10 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching HPAs")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching HPAs".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1697,10 +1710,10 @@ impl K8sClient {
             Some(ns) => Api::namespaced(self.client.clone(), ns),
             None => Api::all(self.client.clone()),
         };
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching PVCs")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching PVCs".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1741,10 +1754,10 @@ impl K8sClient {
     /// Fetches PersistentVolumes.
     pub async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> {
         let api: Api<PersistentVolume> = Api::all(self.client.clone());
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching PVs")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching PVs".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1796,10 +1809,10 @@ impl K8sClient {
     pub async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> {
         use k8s_openapi::api::storage::v1::StorageClass;
         let api: Api<StorageClass> = Api::all(self.client.clone());
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching storage classes")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching storage classes".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1834,10 +1847,10 @@ impl K8sClient {
     /// Fetches Namespaces as NamespaceInfo.
     pub async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
         let api: Api<Namespace> = Api::all(self.client.clone());
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching namespaces")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching namespaces".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1870,7 +1883,14 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
         let lp = ListParams::default().limit(MAX_EVENTS_LIST_LIMIT);
-        let list = api.list(&lp).await.context("failed fetching events")?;
+        let list = list_items_or_empty(&api, &lp, || {
+            if let Some(ns) = namespace {
+                format!("failed fetching events in namespace '{ns}'")
+            } else {
+                "failed fetching events across all namespaces".to_string()
+            }
+        })
+        .await?;
         let now = Utc::now();
         let mut events: Vec<K8sEventInfo> = list
             .into_iter()
@@ -1913,10 +1933,10 @@ impl K8sClient {
     /// Fetches PriorityClasses.
     pub async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
         let api: Api<PriorityClass> = Api::all(self.client.clone());
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching priority classes")?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            "failed fetching priority classes".to_string()
+        })
+        .await?;
         let now = Utc::now();
         Ok(list
             .into_iter()
@@ -1947,10 +1967,10 @@ impl K8sClient {
         &self,
     ) -> Result<Vec<CustomResourceDefinitionInfo>> {
         let crd_api: Api<CustomResourceDefinition> = Api::all(self.client.clone());
-        let list = crd_api
-            .list(&ListParams::default())
-            .await
-            .context("failed fetching custom resource definitions")?;
+        let list = list_items_or_empty(&crd_api, &ListParams::default(), || {
+            "failed fetching custom resource definitions".to_string()
+        })
+        .await?;
 
         let mut crds = Vec::new();
         for crd in list {
@@ -1997,10 +2017,10 @@ impl K8sClient {
             Api::all_with(self.client.clone(), &ar)
         };
 
-        let list = api
-            .list(&ListParams::default())
-            .await
-            .with_context(|| format!("failed fetching custom resources for CRD '{}'", crd.name))?;
+        let list = list_items_or_empty(&api, &ListParams::default(), || {
+            format!("failed fetching custom resources for CRD '{}'", crd.name)
+        })
+        .await?;
 
         let now = Utc::now();
         let mut resources = list
@@ -2036,7 +2056,9 @@ impl K8sClient {
 
         let obj = match api.get(name).await {
             Ok(value) => value,
-            Err(err) if is_metrics_api_unavailable(&err) => return Ok(None),
+            Err(err) if is_metrics_api_unavailable(&err) || is_forbidden_error(&err) => {
+                return Ok(None);
+            }
             Err(err) => {
                 return Err(err).with_context(|| {
                     format!("failed fetching pod metrics for {namespace}/{name}")
@@ -2060,7 +2082,9 @@ impl K8sClient {
 
         let obj = match api.get(name).await {
             Ok(value) => value,
-            Err(err) if is_metrics_api_unavailable(&err) => return Ok(None),
+            Err(err) if is_metrics_api_unavailable(&err) || is_forbidden_error(&err) => {
+                return Ok(None);
+            }
             Err(err) => {
                 return Err(err)
                     .with_context(|| format!("failed fetching node metrics for node '{name}'"));
@@ -2079,13 +2103,14 @@ impl K8sClient {
         let api: Api<DynamicObject> = Api::all_with(self.client.clone(), &ar);
 
         let list = match api.list(&ListParams::default()).await {
-            Ok(l) => l,
-            Err(err) if is_metrics_api_unavailable(&err) => return Ok(Vec::new()),
+            Ok(list) => list.items,
+            Err(err) if is_metrics_api_unavailable(&err) || is_forbidden_error(&err) => {
+                return Ok(Vec::new());
+            }
             Err(err) => return Err(err).context("failed listing node metrics"),
         };
 
         Ok(list
-            .items
             .into_iter()
             .filter_map(|obj| {
                 let name = obj.metadata.name.clone().unwrap_or_default();
@@ -2121,6 +2146,53 @@ impl K8sClient {
             ready_nodes,
             pod_count: pods.len(),
         })
+    }
+
+    pub async fn fetch_detail_action_authorizations(
+        &self,
+        resource: &ResourceRef,
+    ) -> ActionAuthorizationMap {
+        let mut authorizations = ActionAuthorizationMap::new();
+
+        for action in DetailAction::ORDER {
+            if !detail_action_requires_authorization(action) {
+                continue;
+            }
+
+            let checks = resource.authorization_checks(action);
+            if checks.is_empty() {
+                continue;
+            }
+
+            match self.evaluate_access_checks(&checks).await {
+                Some(true) => {
+                    authorizations.insert(action, DetailActionAuthorization::Allowed);
+                }
+                Some(false) => {
+                    authorizations.insert(action, DetailActionAuthorization::Denied);
+                }
+                None => {}
+            }
+        }
+
+        authorizations
+    }
+
+    pub async fn is_detail_action_authorized(
+        &self,
+        resource: &ResourceRef,
+        action: DetailAction,
+    ) -> Option<bool> {
+        if !detail_action_requires_authorization(action) {
+            return Some(true);
+        }
+
+        let checks = resource.authorization_checks(action);
+        if checks.is_empty() {
+            return None;
+        }
+
+        self.evaluate_access_checks(&checks).await
     }
 
     /// Fetches a concrete resource and renders it as YAML.
@@ -2269,6 +2341,37 @@ impl K8sClient {
         Ok(job_name)
     }
 
+    /// Sets `spec.suspend` on a CronJob.
+    pub async fn set_cronjob_suspend(
+        &self,
+        name: &str,
+        namespace: &str,
+        suspend: bool,
+    ) -> Result<()> {
+        let cronjobs: Api<CronJob> = Api::namespaced(self.client.clone(), namespace);
+        let patch = serde_json::json!({
+            "spec": {
+                "suspend": suspend
+            }
+        });
+        let pp = PatchParams {
+            field_manager: Some("kubectui".to_string()),
+            ..PatchParams::default()
+        };
+
+        cronjobs
+            .patch(name, &pp, &Patch::Merge(&patch))
+            .await
+            .with_context(|| {
+                format!(
+                    "failed to {} CronJob '{name}' in namespace '{namespace}'",
+                    if suspend { "suspend" } else { "resume" }
+                )
+            })?;
+
+        Ok(())
+    }
+
     /// Fetches the Helm release secret as YAML.
     ///
     /// Helm v3 stores releases as Secrets named `sh.helm.release.v1.{name}.v{revision}`.
@@ -2283,9 +2386,10 @@ impl K8sClient {
 
         let secrets_api: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
         let lp = ListParams::default().labels(&format!("owner=helm,name={release_name}"));
-        let list = secrets_api.list(&lp).await.with_context(|| {
+        let list = list_items_or_empty(&secrets_api, &lp, || {
             format!("failed fetching Helm release secrets for '{release_name}'")
-        })?;
+        })
+        .await?;
 
         // Find the latest revision (highest version label)
         let latest = list.into_iter().max_by_key(|s| {
@@ -2515,6 +2619,55 @@ impl K8sClient {
 
         Ok(port)
     }
+
+    async fn evaluate_access_checks(&self, checks: &[ResourceAccessCheck]) -> Option<bool> {
+        let mut saw_unknown = false;
+
+        for check in checks {
+            match self.review_access(check).await {
+                Some(true) => {}
+                Some(false) => return Some(false),
+                None => saw_unknown = true,
+            }
+        }
+
+        if saw_unknown { None } else { Some(true) }
+    }
+
+    async fn review_access(&self, check: &ResourceAccessCheck) -> Option<bool> {
+        if let Some(cached) = self.access_review_cache.read().await.get(check).copied() {
+            return Some(cached);
+        }
+
+        let api: Api<SelfSubjectAccessReview> = Api::all(self.client.clone());
+        let review = SelfSubjectAccessReview {
+            spec: SelfSubjectAccessReviewSpec {
+                resource_attributes: Some(ResourceAttributes {
+                    group: check.group.clone(),
+                    name: check.name.clone(),
+                    namespace: check.namespace.clone(),
+                    resource: Some(check.resource.clone()),
+                    subresource: check.subresource.clone(),
+                    verb: Some(check.verb.clone()),
+                    version: None,
+                }),
+                ..SelfSubjectAccessReviewSpec::default()
+            },
+            ..SelfSubjectAccessReview::default()
+        };
+
+        let allowed = match api.create(&PostParams::default(), &review).await {
+            Ok(response) => response.status.as_ref().map(|status| status.allowed),
+            Err(err) if is_forbidden_error(&err) || is_missing_api_error(&err) => None,
+            Err(_) => None,
+        }?;
+
+        self.access_review_cache
+            .write()
+            .await
+            .insert(check.clone(), allowed);
+        Some(allowed)
+    }
 }
 
 fn sort_namespaces(names: Vec<String>) -> Vec<String> {
@@ -2529,6 +2682,22 @@ fn custom_resource_api_resource(crd: &CustomResourceDefinitionInfo) -> ApiResour
     let mut ar = ApiResource::from_gvk(&gvk);
     ar.plural = crd.plural.clone();
     ar
+}
+
+async fn list_items_or_empty<K, C>(api: &Api<K>, params: &ListParams, context: C) -> Result<Vec<K>>
+where
+    K: Clone + std::fmt::Debug + serde::de::DeserializeOwned,
+    C: FnOnce() -> String,
+{
+    match api.list(params).await {
+        Ok(list) => Ok(list.items),
+        Err(err) if is_forbidden_error(&err) => Ok(Vec::new()),
+        Err(err) => Err(err).with_context(context),
+    }
+}
+
+fn is_forbidden_error(err: &kube::Error) -> bool {
+    matches!(err, kube::Error::Api(response) if response.code == 403)
 }
 
 fn is_metrics_api_unavailable(err: &kube::Error) -> bool {
@@ -2944,10 +3113,10 @@ impl K8sClient {
 
         // Helm v3 stores releases as secrets with label owner=helm
         let lp = ListParams::default().labels("owner=helm");
-        let list = secrets_api
-            .list(&lp)
-            .await
-            .context("failed fetching Helm release secrets")?;
+        let list = list_items_or_empty(&secrets_api, &lp, || {
+            "failed fetching Helm release secrets".to_string()
+        })
+        .await?;
 
         let now = chrono::Utc::now();
         let mut releases: Vec<crate::k8s::dtos::HelmReleaseInfo> = list
@@ -3105,7 +3274,11 @@ impl K8sClient {
         let mut ar = ApiResource::from_gvk(&gvk);
         ar.plural = spec.plural.to_string();
         let api: Api<DynamicObject> = Api::all_with(self.client.clone(), &ar);
-        let _ = api.list(&ListParams::default().limit(1)).await?;
+        match api.list(&ListParams::default().limit(1)).await {
+            Ok(_) => {}
+            Err(err) if is_forbidden_error(&err) => {}
+            Err(err) => return Err(err),
+        }
         Ok(())
     }
 
@@ -3128,9 +3301,13 @@ impl K8sClient {
             Api::all_with(self.client.clone(), &ar)
         };
 
-        let list = api.list(&ListParams::default()).await?;
+        let list = match api.list(&ListParams::default()).await {
+            Ok(list) => list.items,
+            Err(err) if is_forbidden_error(&err) => Vec::new(),
+            Err(err) => return Err(err),
+        };
         let now = chrono::Utc::now();
-        let mut resources = Vec::with_capacity(list.items.len());
+        let mut resources = Vec::with_capacity(list.len());
         for item in list {
             let created_at = item.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
             let suspended = item
@@ -3361,6 +3538,7 @@ mod tests {
             cluster_url: "http://127.0.0.1:1".to_string(),
             cluster_context: Some("test".to_string()),
             flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            access_review_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         };
 
         let err = k8s
@@ -3489,5 +3667,24 @@ mod tests {
         });
 
         assert!(!is_metrics_api_unavailable(&err));
+    }
+
+    #[test]
+    fn forbidden_error_detection_only_matches_403() {
+        let forbidden = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "forbidden".to_string(),
+            reason: "Forbidden".to_string(),
+            code: 403,
+        });
+        let timeout = kube::Error::Api(kube::error::ErrorResponse {
+            status: "Failure".to_string(),
+            message: "timeout".to_string(),
+            reason: "Timeout".to_string(),
+            code: 504,
+        });
+
+        assert!(is_forbidden_error(&forbidden));
+        assert!(!is_forbidden_error(&timeout));
     }
 }

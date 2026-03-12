@@ -13,13 +13,13 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use futures::StreamExt;
+use futures::{StreamExt, future::join_all};
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
 use ratatui::{Terminal, backend::CrosstermBackend};
@@ -31,8 +31,12 @@ use kubectui::{
         AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState,
         ResourceRef, load_config, save_config,
     },
+    authorization::DetailActionAuthorization,
     bookmarks::{bookmark_selected_index, resource_exists, selected_bookmark_resource},
     coordinator::{LogStreamStatus, UpdateCoordinator, UpdateMessage},
+    cronjob::{
+        CRONJOB_NEXT_RUN_TIMEZONE_FALLBACK, cronjob_history_entries, preferred_history_index,
+    },
     events::apply_action,
     k8s::{
         client::K8sClient,
@@ -604,6 +608,16 @@ struct TriggerCronJobAsyncResult {
 }
 
 #[derive(Debug)]
+struct SetCronJobSuspendAsyncResult {
+    action_history_id: u64,
+    context_generation: u64,
+    origin_view: AppView,
+    resource_label: String,
+    suspend: bool,
+    result: Result<(), String>,
+}
+
+#[derive(Debug)]
 struct ProbeAsyncResult {
     resource: ResourceRef,
     result: Result<Vec<(String, kubectui::k8s::probes::ContainerProbes)>, String>,
@@ -948,6 +962,8 @@ fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
             | DetailAction::Delete
             | DetailAction::EditYaml
             | DetailAction::Trigger
+            | DetailAction::SuspendCronJob
+            | DetailAction::ResumeCronJob
             | DetailAction::Cordon
             | DetailAction::Uncordon
             | DetailAction::Drain
@@ -970,6 +986,8 @@ fn map_palette_detail_action(action: DetailAction) -> AppAction {
         DetailAction::EditYaml => AppAction::EditYaml,
         DetailAction::Delete => AppAction::DeleteResource,
         DetailAction::Trigger => AppAction::TriggerCronJob,
+        DetailAction::SuspendCronJob => AppAction::ConfirmCronJobSuspend(true),
+        DetailAction::ResumeCronJob => AppAction::ConfirmCronJobSuspend(false),
         DetailAction::ViewRelationships => AppAction::OpenRelationships,
         DetailAction::Cordon => AppAction::CordonNode,
         DetailAction::Uncordon => AppAction::UncordonNode,
@@ -986,6 +1004,7 @@ fn palette_action_requires_loaded_detail(action: &AppAction) -> bool {
             | AppAction::DeleteResource
             | AppAction::EditYaml
             | AppAction::TriggerCronJob
+            | AppAction::ConfirmCronJobSuspend(_)
             | AppAction::CordonNode
             | AppAction::UncordonNode
             | AppAction::ConfirmDrainNode
@@ -1406,6 +1425,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         tokio::sync::mpsc::channel::<FluxReconcileAsyncResult>(16);
     let (trigger_cronjob_tx, mut trigger_cronjob_rx) =
         tokio::sync::mpsc::channel::<TriggerCronJobAsyncResult>(16);
+    let (cronjob_suspend_tx, mut cronjob_suspend_rx) =
+        tokio::sync::mpsc::channel::<SetCronJobSuspendAsyncResult>(16);
     let (node_ops_tx, mut node_ops_rx) = tokio::sync::mpsc::channel::<NodeOpsAsyncResult>(16);
     let mut node_op_in_flight: bool = false;
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
@@ -2184,6 +2205,76 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
             }
 
+            result = cronjob_suspend_rx.recv() => {
+                if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            format!(
+                                "{} cancelled because the active context changed.",
+                                if result.suspend { "Suspend" } else { "Resume" }
+                            ),
+                            true,
+                        );
+                        continue;
+                    }
+
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(()) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!(
+                                    "{} requested for {}.",
+                                    if result.suspend { "Suspend" } else { "Resume" },
+                                    result.resource_label
+                                ),
+                                true,
+                            );
+                            finish_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                format!(
+                                    "{} requested for {}. Refreshing view...",
+                                    if result.suspend { "Suspend" } else { "Resume" },
+                                    result.resource_label
+                                ),
+                                false,
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
+                        }
+                        Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!(
+                                    "{} failed: {err}",
+                                    if result.suspend { "Suspend" } else { "Resume" }
+                                ),
+                                true,
+                            );
+                            status_message_clear_at = None;
+                            app.set_error(format!(
+                                "{} failed: {err}",
+                                if result.suspend { "Suspend" } else { "Resume" }
+                            ));
+                        }
+                    }
+                }
+            }
+
             result = node_ops_rx.recv() => {
                 if let Some(result) = result {
                     if result.context_generation != refresh_state.context_generation {
@@ -2838,11 +2929,22 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.close_namespace_picker();
                 }
                 AppAction::OpenCommandPalette => {
-                    let resource_ctx = app
+                    let resource_ctx = if let Some(resource_ctx) = app
                         .detail_view
                         .as_ref()
                         .and_then(|d| d.resource_action_context())
-                        .or_else(|| selected_resource_context(&app, &cached_snapshot));
+                    {
+                        Some(resource_ctx)
+                    } else if let Some(mut resource_ctx) =
+                        selected_resource_context(&app, &cached_snapshot)
+                    {
+                        resource_ctx.action_authorizations = client
+                            .fetch_detail_action_authorizations(&resource_ctx.resource)
+                            .await;
+                        Some(resource_ctx)
+                    } else {
+                        None
+                    };
                     app.refresh_palette_columns();
                     app.command_palette.open_with_context(resource_ctx);
                 }
@@ -3043,6 +3145,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.set_error("No resource selected for YAML inspection.".to_string());
                         continue;
                     };
+                    if !detail_action_allowed(&app, &client, &resource, DetailAction::ViewYaml)
+                        .await
+                    {
+                        app.set_error(detail_action_denied_message(
+                            DetailAction::ViewYaml,
+                            &resource,
+                        ));
+                        continue;
+                    }
                     let cached_yaml = app
                         .detail_view
                         .as_ref()
@@ -3099,6 +3210,20 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             "Decoded Secret view is only available for Secret resources."
                                 .to_string(),
                         );
+                        continue;
+                    }
+                    if !detail_action_allowed(
+                        &app,
+                        &client,
+                        &resource,
+                        DetailAction::ViewDecodedSecret,
+                    )
+                    .await
+                    {
+                        app.set_error(detail_action_denied_message(
+                            DetailAction::ViewDecodedSecret,
+                            &resource,
+                        ));
                         continue;
                     }
                     let cached_yaml = app
@@ -3265,6 +3390,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.set_error("No resource selected for event inspection.".to_string());
                         continue;
                     };
+                    if !detail_action_allowed(&app, &client, &resource, DetailAction::ViewEvents)
+                        .await
+                    {
+                        app.set_error(detail_action_denied_message(
+                            DetailAction::ViewEvents,
+                            &resource,
+                        ));
+                        continue;
+                    }
                     let cached_events = app
                         .detail_view
                         .as_ref()
@@ -3311,12 +3445,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     let resource = app
                         .detail_view
                         .as_ref()
-                        .and_then(|detail| detail.resource.clone())
+                        .and_then(DetailViewState::selected_logs_resource)
+                        .or_else(|| {
+                            app.detail_view
+                                .as_ref()
+                                .and_then(|detail| detail.resource.clone())
+                        })
                         .or_else(|| selected_resource(&app, &cached_snapshot));
                     let Some(resource) = resource else {
                         app.set_error("No resource selected for logs.".to_string());
                         continue;
                     };
+                    if !detail_action_allowed(&app, &client, &resource, DetailAction::Logs).await {
+                        app.set_error(detail_action_denied_message(DetailAction::Logs, &resource));
+                        continue;
+                    }
                     let Some((pod_name, pod_ns, pod_resource)) = (match &resource {
                         ResourceRef::Pod(pod_name, pod_ns) => {
                             Some((pod_name.clone(), pod_ns.clone(), resource.clone()))
@@ -3424,10 +3567,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         app.set_error("Exec is only available for Pod resources.".to_string());
                         continue;
                     };
+                    let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
+                    if !detail_action_allowed(&app, &client, &resource, DetailAction::Exec).await {
+                        app.set_error(detail_action_denied_message(DetailAction::Exec, &resource));
+                        continue;
+                    }
 
                     let session_id = next_exec_session_id;
                     next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
-                    let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
                     app.detail_view = None;
                     app.open_exec_tab(
                         resource.clone(),
@@ -3827,8 +3974,20 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             continue;
                         }
                     };
+                    let Some(resource) = resource else {
+                        continue;
+                    };
+                    if !detail_action_allowed(&app, &client, &resource, DetailAction::PortForward)
+                        .await
+                    {
+                        app.set_error(detail_action_denied_message(
+                            DetailAction::PortForward,
+                            &resource,
+                        ));
+                        continue;
+                    }
                     app.detail_view = None;
-                    app.open_port_forward_tab(resource, dialog);
+                    app.open_port_forward_tab(Some(resource), dialog);
                     let tunnels = port_forwarder.list_tunnels();
                     app.tunnel_registry.update_tunnels(tunnels.clone());
                     if let Some(tab) = app
@@ -3873,6 +4032,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     });
                     if let Some((resource, name, namespace, kind_label, replicas)) = scale_info {
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Scale)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::Scale,
+                                &resource,
+                            ));
+                            continue;
+                        }
                         let resource_label =
                             format!("{kind_label} '{name}' in namespace '{namespace}'");
                         let origin_view = app.view();
@@ -3942,9 +4110,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         })
                     });
                     if let Some((kind, name, namespace)) = restart_info {
-                        let resource_label =
-                            format!("{} '{}' in namespace '{}'", kind, name, namespace);
-                        let origin_view = app.view();
                         let resource = match kind.as_str() {
                             "deployment" => {
                                 ResourceRef::Deployment(name.clone(), namespace.clone())
@@ -3955,6 +4120,18 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             "daemonset" => ResourceRef::DaemonSet(name.clone(), namespace.clone()),
                             _ => unreachable!("validated restartable resource"),
                         };
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Restart)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::Restart,
+                                &resource,
+                            ));
+                            continue;
+                        }
+                        let resource_label =
+                            format!("{} '{}' in namespace '{}'", kind, name, namespace);
+                        let origin_view = app.view();
                         let action_history_id = app.record_action_pending(
                             ActionKind::Restart,
                             origin_view,
@@ -4000,6 +4177,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                     let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
                     if let Some(resource) = delete_resource {
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Delete)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::Delete,
+                                &resource,
+                            ));
+                            continue;
+                        }
                         if delete_in_flight_id.is_some() {
                             app.set_error("Delete already in progress".to_string());
                             continue;
@@ -4052,6 +4238,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                     let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
                     if let Some(resource) = delete_resource {
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Delete)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::Delete,
+                                &resource,
+                            ));
+                            continue;
+                        }
                         if delete_in_flight_id.is_some() {
                             app.set_error("Delete already in progress".to_string());
                             continue;
@@ -4100,6 +4295,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     });
                     if let Some((name, namespace)) = cronjob_info {
+                        let resource = ResourceRef::CronJob(name.clone(), namespace.clone());
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Trigger)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::Trigger,
+                                &resource,
+                            ));
+                            continue;
+                        }
                         let resource_label = format!("CronJob '{name}'");
                         let origin_view = app.view();
                         let action_history_id = app.record_action_pending(
@@ -4134,6 +4339,81 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         });
                     }
                 }
+                AppAction::ConfirmCronJobSuspend(suspend) => {
+                    if let Some(detail) = &mut app.detail_view
+                        && (detail.supports_action(DetailAction::SuspendCronJob)
+                            || detail.supports_action(DetailAction::ResumeCronJob))
+                    {
+                        detail.confirm_cronjob_suspend = Some(suspend);
+                    }
+                }
+                AppAction::SetCronJobSuspend(suspend) => {
+                    let cronjob_info = app.detail_view.as_ref().and_then(|d| {
+                        if let Some(ResourceRef::CronJob(name, ns)) = &d.resource {
+                            Some((name.clone(), ns.clone()))
+                        } else {
+                            None
+                        }
+                    });
+                    if let Some((name, namespace)) = cronjob_info {
+                        let resource = ResourceRef::CronJob(name.clone(), namespace.clone());
+                        let detail_action = if suspend {
+                            DetailAction::SuspendCronJob
+                        } else {
+                            DetailAction::ResumeCronJob
+                        };
+                        if !detail_action_allowed(&app, &client, &resource, detail_action).await {
+                            app.set_error(detail_action_denied_message(detail_action, &resource));
+                            continue;
+                        }
+                        if let Some(detail) = &mut app.detail_view {
+                            detail.confirm_cronjob_suspend = None;
+                        }
+                        let resource_label = format!("CronJob '{name}'");
+                        let origin_view = app.view();
+                        let action_history_id = app.record_action_pending(
+                            if suspend {
+                                ActionKind::Suspend
+                            } else {
+                                ActionKind::Resume
+                            },
+                            origin_view,
+                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
+                            resource_label.clone(),
+                            format!(
+                                "{}ing {resource_label}...",
+                                if suspend { "Suspend" } else { "Resum" }
+                            ),
+                        );
+                        begin_detail_mutation(
+                            &mut app,
+                            &mut status_message_clear_at,
+                            format!(
+                                "{}ing {resource_label}...",
+                                if suspend { "Suspend" } else { "Resum" }
+                            ),
+                        );
+                        let tx = cronjob_suspend_tx.clone();
+                        let c = client.clone();
+                        let context_generation = refresh_state.context_generation;
+                        tokio::spawn(async move {
+                            let result = c
+                                .set_cronjob_suspend(&name, &namespace, suspend)
+                                .await
+                                .map_err(|e| format!("{e:#}"));
+                            let _ = tx
+                                .send(SetCronJobSuspendAsyncResult {
+                                    action_history_id,
+                                    context_generation,
+                                    origin_view,
+                                    resource_label,
+                                    suspend,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                }
                 AppAction::ConfirmDrainNode => {
                     if let Some(detail) = &mut app.detail_view
                         && detail.supports_action(DetailAction::Drain)
@@ -4150,6 +4430,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     });
                     if let Some(name) = node_name {
+                        let resource = ResourceRef::Node(name.clone());
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Cordon)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::Cordon,
+                                &resource,
+                            ));
+                            continue;
+                        }
                         node_op_in_flight = true;
                         let resource_label = format!("Node '{name}'");
                         let origin_view = app.view();
@@ -4193,6 +4483,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     });
                     if let Some(name) = node_name {
+                        let resource = ResourceRef::Node(name.clone());
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Uncordon)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::Uncordon,
+                                &resource,
+                            ));
+                            continue;
+                        }
                         node_op_in_flight = true;
                         let resource_label = format!("Node '{name}'");
                         let origin_view = app.view();
@@ -4241,6 +4541,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     });
                     if let Some(name) = node_name {
+                        let resource = ResourceRef::Node(name.clone());
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Drain)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::Drain,
+                                &resource,
+                            ));
+                            continue;
+                        }
                         node_op_in_flight = true;
                         let force_label = if force { " (force)" } else { "" };
                         let resource_label = format!("Node '{name}'");
@@ -4430,6 +4740,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     let edit_info = app.detail_view.as_ref().and_then(|d| {
                         d.resource.as_ref().zip(d.yaml.as_ref()).map(|(r, y)| {
                             (
+                                r.clone(),
                                 r.kind().to_ascii_lowercase(),
                                 r.name().to_string(),
                                 r.namespace().map(str::to_owned),
@@ -4438,7 +4749,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         })
                     });
 
-                    if let Some((kind, name, namespace, yaml_content)) = edit_info {
+                    if let Some((resource, kind, name, namespace, yaml_content)) = edit_info {
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::EditYaml)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::EditYaml,
+                                &resource,
+                            ));
+                            continue;
+                        }
                         // Write YAML to a temp file with unique suffix to prevent
                         // symlink attacks from predictable paths.
                         let nonce = std::time::SystemTime::now()
@@ -4631,6 +4951,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         resource_label.clone(),
                         format!("Applying decoded Secret changes to {resource_label}..."),
                     );
+                    if !detail_action_allowed(&app, &client, &resource, DetailAction::EditYaml)
+                        .await
+                    {
+                        app.set_error(detail_action_denied_message(
+                            DetailAction::EditYaml,
+                            &resource,
+                        ));
+                        app.complete_action_history(
+                            action_history_id,
+                            ActionStatus::Failed,
+                            detail_action_denied_message(DetailAction::EditYaml, &resource),
+                            true,
+                        );
+                        continue;
+                    }
                     match client
                         .apply_resource_yaml(&encoded_yaml, &kind, &name, namespace.as_deref())
                         .await
@@ -4840,6 +5175,15 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         let tx = probe_tx.clone();
                         let k = client.get_client();
                         let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
+                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Probes)
+                            .await
+                        {
+                            app.set_error(detail_action_denied_message(
+                                DetailAction::Probes,
+                                &resource,
+                            ));
+                            continue;
+                        }
                         tokio::spawn(async move {
                             let pods_api: Api<Pod> = Api::namespaced(k, &pod_ns);
                             let result = match pods_api.get(&pod_name).await {
@@ -5285,10 +5629,58 @@ fn selected_resource_context(
             .map(|node| node.unschedulable),
         _ => None,
     };
+    let cronjob_suspended = match &resource {
+        ResourceRef::CronJob(name, ns) => snapshot
+            .cronjobs
+            .iter()
+            .find(|cronjob| &cronjob.name == name && &cronjob.namespace == ns)
+            .map(|cronjob| cronjob.suspend),
+        _ => None,
+    };
     Some(ResourceActionContext {
         resource,
         node_unschedulable,
+        cronjob_suspended,
+        cronjob_history_logs_available: false,
+        action_authorizations: Default::default(),
     })
+}
+
+fn cached_detail_action_authorization(
+    app: &AppState,
+    resource: &ResourceRef,
+    action: DetailAction,
+) -> Option<bool> {
+    app.detail_view
+        .as_ref()
+        .filter(|detail| detail.resource.as_ref() == Some(resource))
+        .and_then(|detail| detail.metadata.action_authorizations.get(&action).copied())
+        .map(|status| status == DetailActionAuthorization::Allowed)
+}
+
+async fn detail_action_allowed(
+    app: &AppState,
+    client: &K8sClient,
+    resource: &ResourceRef,
+    action: DetailAction,
+) -> bool {
+    if let Some(allowed) = cached_detail_action_authorization(app, resource, action) {
+        return allowed;
+    }
+
+    client
+        .is_detail_action_authorized(resource, action)
+        .await
+        .unwrap_or(true)
+}
+
+fn detail_action_denied_message(action: DetailAction, resource: &ResourceRef) -> String {
+    format!(
+        "{} is not allowed for {} '{}'.",
+        action.label(),
+        resource.kind(),
+        resource.name()
+    )
 }
 
 fn prepare_bookmark_target(
@@ -5382,6 +5774,9 @@ fn initial_loading_state(resource: ResourceRef, snapshot: &ClusterSnapshot) -> D
         pending_request_id: None,
         metadata,
         loading: true,
+        cronjob_history: Vec::new(),
+        cronjob_history_selected: 0,
+        confirm_cronjob_suspend: None,
         ..DetailViewState::default()
     }
 }
@@ -5391,15 +5786,36 @@ async fn fetch_detail_view(
     snapshot: &ClusterSnapshot,
     resource: ResourceRef,
 ) -> Result<DetailViewState> {
-    let metadata = metadata_for_resource(snapshot, &resource);
+    let mut metadata = metadata_for_resource(snapshot, &resource);
     let sections = sections_for_resource(snapshot, &resource);
+    let (cronjob_history, cronjob_history_selected) = match &resource {
+        ResourceRef::CronJob(name, ns) => snapshot
+            .cronjobs
+            .iter()
+            .find(|cronjob| &cronjob.name == name && &cronjob.namespace == ns)
+            .map(|cronjob| {
+                let history = cronjob_history_entries(cronjob, &snapshot.jobs, &snapshot.pods);
+                let selected = preferred_history_index(&history);
+                (history, selected)
+            })
+            .unwrap_or_default(),
+        _ => (Vec::new(), 0),
+    };
+    let cronjob_history = fetch_cronjob_history_log_access(client, cronjob_history).await;
 
     // Run YAML, events, and metrics fetches concurrently (no dependencies between them).
-    let ((yaml, yaml_error), events, (pod_metrics, node_metrics, metrics_unavailable_message)) = tokio::join!(
+    let (
+        (yaml, yaml_error),
+        events,
+        (pod_metrics, node_metrics, metrics_unavailable_message),
+        action_authorizations,
+    ) = tokio::join!(
         fetch_detail_yaml(client, &resource),
         fetch_detail_events(client, &resource),
         fetch_detail_metrics(client, &resource),
+        client.fetch_detail_action_authorizations(&resource),
     );
+    metadata.action_authorizations = action_authorizations;
 
     Ok(DetailViewState {
         resource: Some(resource),
@@ -5416,10 +5832,36 @@ async fn fetch_detail_view(
         error: None,
         scale_dialog: None,
         probe_panel: None,
+        cronjob_history,
+        cronjob_history_selected,
         confirm_delete: false,
         confirm_drain: false,
+        confirm_cronjob_suspend: None,
         metadata_expanded: false,
     })
+}
+
+async fn fetch_cronjob_history_log_access(
+    client: &K8sClient,
+    mut entries: Vec<kubectui::cronjob::CronJobHistoryEntry>,
+) -> Vec<kubectui::cronjob::CronJobHistoryEntry> {
+    let checks = join_all(entries.iter().map(|entry| async {
+        if entry.live_pod_count <= 0 {
+            return None;
+        }
+
+        let resource = ResourceRef::Job(entry.job_name.clone(), entry.namespace.clone());
+        client
+            .is_detail_action_authorized(&resource, DetailAction::Logs)
+            .await
+    }))
+    .await;
+
+    for (entry, allowed) in entries.iter_mut().zip(checks) {
+        entry.logs_authorized = allowed;
+    }
+
+    entries
 }
 
 async fn fetch_detail_yaml(
@@ -5535,6 +5977,25 @@ fn find_flux_resource<'a>(
         .flux_resources
         .iter()
         .find(|f| f.name == name && f.namespace == *namespace && f.group == group && f.kind == kind)
+}
+
+fn format_detail_time(ts: Option<DateTime<Utc>>) -> String {
+    ts.map(|value| {
+        value
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M:%S")
+            .to_string()
+    })
+    .unwrap_or_else(|| "N/A".to_string())
+}
+
+fn cronjob_timezone_label(timezone: Option<&str>) -> String {
+    timezone
+        .filter(|value| !value.trim().is_empty())
+        .map(ToOwned::to_owned)
+        .unwrap_or_else(|| {
+            format!("controller default ({CRONJOB_NEXT_RUN_TIMEZONE_FALLBACK} estimate)")
+        })
 }
 
 fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> DetailMetadata {
@@ -5728,7 +6189,9 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 .find(|cj| &cj.name == name && &cj.namespace == ns)
                 .map(|cj| {
                     if cj.suspend {
-                        "Suspended".to_string()
+                        "Paused".to_string()
+                    } else if cj.active_jobs > 0 {
+                        format!("Active · {} running", cj.active_jobs)
                     } else {
                         "Active".to_string()
                     }
@@ -5737,6 +6200,11 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 name: name.clone(),
                 namespace: Some(ns.clone()),
                 status,
+                cronjob_suspended: snapshot
+                    .cronjobs
+                    .iter()
+                    .find(|cj| &cj.name == name && &cj.namespace == ns)
+                    .map(|cj| cj.suspend),
                 ..DetailMetadata::default()
             }
         }
@@ -6186,13 +6654,23 @@ fn sections_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
                 vec![
                     "SCHEDULE".to_string(),
                     format!("schedule: {}", cj.schedule),
-                    format!("suspended: {}", cj.suspend),
+                    format!(
+                        "timezone: {}",
+                        cronjob_timezone_label(cj.timezone.as_deref())
+                    ),
+                    format!("state: {}", if cj.suspend { "paused" } else { "active" }),
                     format!("active: {}", cj.active_jobs),
                     format!(
+                        "nextSchedule: {}",
+                        format_detail_time(cj.next_schedule_time)
+                    ),
+                    format!(
                         "lastSchedule: {}",
-                        cj.last_schedule_time
-                            .map(|t| t.to_rfc3339())
-                            .unwrap_or_else(|| "never".to_string())
+                        format_detail_time(cj.last_schedule_time)
+                    ),
+                    format!(
+                        "lastSuccess: {}",
+                        format_detail_time(cj.last_successful_time)
                     ),
                 ]
             })
@@ -6938,6 +7416,21 @@ mod tests {
             map_palette_detail_action(DetailAction::Drain),
             AppAction::ConfirmDrainNode
         );
+    }
+
+    #[test]
+    fn palette_cronjob_suspend_maps_to_confirmation_action() {
+        assert_eq!(
+            map_palette_detail_action(DetailAction::SuspendCronJob),
+            AppAction::ConfirmCronJobSuspend(true)
+        );
+        assert_eq!(
+            map_palette_detail_action(DetailAction::ResumeCronJob),
+            AppAction::ConfirmCronJobSuspend(false)
+        );
+        assert!(palette_action_requires_loaded_detail(
+            &AppAction::ConfirmCronJobSuspend(true)
+        ));
     }
 
     fn test_flux_resource(

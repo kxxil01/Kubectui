@@ -4,10 +4,12 @@
 
 pub mod action_history;
 pub mod app;
+pub mod authorization;
 pub mod bookmarks;
 pub mod clipboard;
 pub mod columns;
 pub mod coordinator;
+pub mod cronjob;
 pub mod events;
 pub mod export;
 pub mod k8s;
