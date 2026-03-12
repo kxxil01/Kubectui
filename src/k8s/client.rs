@@ -2880,6 +2880,53 @@ fn flux_source_url(data: &serde_json::Value) -> Option<String> {
         })
 }
 
+fn flux_parse_conditions(data: &serde_json::Value) -> Vec<crate::k8s::dtos::FluxCondition> {
+    data.pointer("/status/conditions")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .map(|item| crate::k8s::dtos::FluxCondition {
+                    type_: item
+                        .get("type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    status: item
+                        .get("status")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string(),
+                    reason: item
+                        .get("reason")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
+                    message: item
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .map(ToString::to_string),
+                    timestamp: item
+                        .get("lastTransitionTime")
+                        .and_then(|v| v.as_str())
+                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                        .map(|dt| dt.with_timezone(&chrono::Utc)),
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn flux_source_ref(data: &serde_json::Value) -> Option<String> {
+    let source_ref = data.pointer("/spec/sourceRef")?;
+    let kind = source_ref.get("kind").and_then(|v| v.as_str())?;
+    let name = source_ref.get("name").and_then(|v| v.as_str())?;
+    let ns = source_ref
+        .get("namespace")
+        .and_then(|v| v.as_str())
+        .map(|ns| format!(" ({ns})"))
+        .unwrap_or_default();
+    Some(format!("{kind}/{name}{ns}"))
+}
+
 impl K8sClient {
     /// Fetches Helm releases by reading Helm-managed Secrets (owner=helm, type=helm.sh/release.v1).
     /// Decodes the release metadata from the secret's labels without requiring the Helm CLI.
@@ -3092,10 +3139,17 @@ impl K8sClient {
                 .and_then(|value| value.as_bool())
                 .unwrap_or(false);
             let (ready, message) = flux_ready_details(&item.data);
+            let conditions = flux_parse_conditions(&item.data);
             let artifact = flux_artifact_details(&item.data);
             let source_url = flux_source_url(&item.data);
+            let source_ref = flux_source_ref(&item.data);
+            let is_stalled = conditions.iter().any(|c| {
+                c.type_.eq_ignore_ascii_case("Stalled") && c.status.eq_ignore_ascii_case("True")
+            });
             let status = if suspended {
                 "Suspended".to_string()
+            } else if is_stalled {
+                "Stalled".to_string()
             } else {
                 match ready {
                     Some(true) => "Ready".to_string(),
@@ -3103,6 +3157,37 @@ impl K8sClient {
                     None => "Unknown".to_string(),
                 }
             };
+            let last_reconcile_time = item
+                .data
+                .pointer("/status/lastHandledReconcileAt")
+                .and_then(|v| v.as_str())
+                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+                .map(|dt| dt.with_timezone(&chrono::Utc));
+            let last_applied_revision = item
+                .data
+                .pointer("/status/lastAppliedRevision")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let last_attempted_revision = item
+                .data
+                .pointer("/status/lastAttemptedRevision")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let observed_generation = item
+                .data
+                .pointer("/status/observedGeneration")
+                .and_then(|v| v.as_i64());
+            let generation = item.metadata.generation;
+            let interval = item
+                .data
+                .pointer("/spec/interval")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
+            let timeout = item
+                .data
+                .pointer("/spec/timeout")
+                .and_then(|v| v.as_str())
+                .map(ToString::to_string);
             resources.push(crate::k8s::dtos::FluxResourceInfo {
                 name: item
                     .metadata
@@ -3120,6 +3205,15 @@ impl K8sClient {
                 suspended,
                 created_at,
                 age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                conditions,
+                last_reconcile_time,
+                last_applied_revision,
+                last_attempted_revision,
+                observed_generation,
+                generation,
+                source_ref,
+                interval,
+                timeout,
             });
         }
 

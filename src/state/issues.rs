@@ -342,29 +342,44 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         }
     }
 
-    // 9. FluxReconcileFailure
+    // 9. FluxReconcileFailure (Stalled → Error, NotReady → Warning)
     for flux in &snapshot.flux_resources {
-        if !flux.suspended && flux.status != "Ready" {
-            issues.push(ClusterIssue {
-                severity: AlertSeverity::Warning,
-                category: IssueCategory::FluxReconcileFailure,
-                resource_kind: "FluxResource",
-                resource_name: flux.name.clone(),
-                namespace: flux.namespace.clone().unwrap_or_default(),
-                message: flux
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| format!("Status: {}", flux.status)),
-                resource_ref: ResourceRef::CustomResource {
-                    name: flux.name.clone(),
-                    namespace: flux.namespace.clone(),
-                    group: flux.group.clone(),
-                    version: flux.version.clone(),
-                    kind: flux.kind.clone(),
-                    plural: flux.plural.clone(),
-                },
-            });
+        if flux.suspended || flux.status == "Ready" {
+            continue;
         }
+        let is_stalled = flux.status == "Stalled"
+            || flux.conditions.iter().any(|c| {
+                c.type_.eq_ignore_ascii_case("Stalled") && c.status.eq_ignore_ascii_case("True")
+            });
+        issues.push(ClusterIssue {
+            severity: if is_stalled {
+                AlertSeverity::Error
+            } else {
+                AlertSeverity::Warning
+            },
+            category: IssueCategory::FluxReconcileFailure,
+            resource_kind: "FluxResource",
+            resource_name: flux.name.clone(),
+            namespace: flux.namespace.clone().unwrap_or_default(),
+            message: if is_stalled {
+                format!(
+                    "Stalled: {}",
+                    flux.message.as_deref().unwrap_or("reconciliation stalled")
+                )
+            } else {
+                flux.message
+                    .clone()
+                    .unwrap_or_else(|| format!("Status: {}", flux.status))
+            },
+            resource_ref: ResourceRef::CustomResource {
+                name: flux.name.clone(),
+                namespace: flux.namespace.clone(),
+                group: flux.group.clone(),
+                version: flux.version.clone(),
+                kind: flux.kind.clone(),
+                plural: flux.plural.clone(),
+            },
+        });
     }
 
     // 10. ServiceNoEndpoints (O(S+E) via HashMap)
