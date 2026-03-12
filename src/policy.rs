@@ -455,38 +455,48 @@ impl ResourceRef {
     }
 }
 
-impl ResourceActionContext {
-    pub fn supports_action(&self, action: DetailAction) -> bool {
-        let supported = if matches!(action, DetailAction::Logs)
-            && matches!(self.resource, ResourceRef::CronJob(_, _))
-        {
-            self.cronjob_history_logs_available
+fn supports_action_borrowed(
+    resource: &ResourceRef,
+    node_unschedulable: Option<bool>,
+    cronjob_suspended: Option<bool>,
+    cronjob_history_logs_available: bool,
+    action_authorizations: &ActionAuthorizationMap,
+    action: DetailAction,
+) -> bool {
+    let supported =
+        if matches!(action, DetailAction::Logs) && matches!(resource, ResourceRef::CronJob(_, _)) {
+            cronjob_history_logs_available
         } else {
-            self.resource.supports_detail_action(
-                action,
-                self.node_unschedulable,
-                self.cronjob_suspended,
-            )
+            resource.supports_detail_action(action, node_unschedulable, cronjob_suspended)
         };
 
-        if !supported {
-            return false;
-        }
+    if !supported {
+        return false;
+    }
 
-        if matches!(action, DetailAction::Logs)
-            && matches!(self.resource, ResourceRef::CronJob(_, _))
-        {
-            return true;
-        }
+    if matches!(action, DetailAction::Logs) && matches!(resource, ResourceRef::CronJob(_, _)) {
+        return true;
+    }
 
-        if detail_action_requires_authorization(action) {
-            return self
-                .action_authorizations
-                .get(&action)
-                .is_none_or(|status| *status == DetailActionAuthorization::Allowed);
-        }
+    if detail_action_requires_authorization(action) {
+        return action_authorizations
+            .get(&action)
+            .is_none_or(|status| *status == DetailActionAuthorization::Allowed);
+    }
 
-        true
+    true
+}
+
+impl ResourceActionContext {
+    pub fn supports_action(&self, action: DetailAction) -> bool {
+        supports_action_borrowed(
+            &self.resource,
+            self.node_unschedulable,
+            self.cronjob_suspended,
+            self.cronjob_history_logs_available,
+            &self.action_authorizations,
+            action,
+        )
     }
 }
 
@@ -512,7 +522,7 @@ impl DetailViewState {
     }
 
     pub fn supports_action(&self, action: DetailAction) -> bool {
-        let Some(resource) = self.resource_action_context() else {
+        let Some(resource) = self.resource.as_ref() else {
             return false;
         };
 
@@ -549,16 +559,22 @@ impl DetailViewState {
         if action == DetailAction::EditYaml && self.yaml.is_none() {
             return false;
         }
-        if matches!(action, DetailAction::Logs)
-            && matches!(self.resource.as_ref(), Some(ResourceRef::CronJob(_, _)))
-        {
+        if matches!(action, DetailAction::Logs) && matches!(resource, ResourceRef::CronJob(_, _)) {
             return self
                 .selected_cronjob_history()
                 .is_some_and(|entry| entry.has_log_target())
                 && !self.has_blocking_detail_overlay();
         }
 
-        resource.supports_action(action)
+        supports_action_borrowed(
+            resource,
+            self.metadata.node_unschedulable,
+            self.metadata.cronjob_suspended,
+            self.selected_cronjob_history()
+                .is_some_and(|entry| entry.has_log_target()),
+            &self.metadata.action_authorizations,
+            action,
+        )
     }
 
     pub fn footer_actions(&self) -> Vec<DetailAction> {
