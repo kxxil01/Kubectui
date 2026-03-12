@@ -31,6 +31,7 @@ use kubectui::{
         AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState,
         ResourceRef, load_config, save_config,
     },
+    bookmarks::{bookmark_selected_index, resource_exists, selected_bookmark_resource},
     coordinator::{LogStreamStatus, UpdateCoordinator, UpdateMessage},
     events::apply_action,
     k8s::{
@@ -43,6 +44,7 @@ use kubectui::{
         workload_logs::{MAX_WORKLOAD_LOG_STREAMS, resolve_workload_log_targets},
     },
     policy::{DetailAction, ResourceActionContext},
+    secret::{decode_secret_yaml, encode_secret_yaml},
     state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions},
     ui,
     workbench::{WorkbenchTabKey, WorkbenchTabState},
@@ -282,6 +284,35 @@ fn apply_detail_state_to_workbench(app: &mut AppState, request_id: u64, state: &
         events_tab.pending_request_id = None;
         events_tab.rebuild_timeline(&app.action_history);
     }
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::DecodedSecret(resource.clone()))
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
+        && secret_tab.pending_request_id == Some(request_id)
+    {
+        secret_tab.source_yaml = state.yaml.clone();
+        secret_tab.loading = false;
+        secret_tab.pending_request_id = None;
+        secret_tab.error = state.yaml_error.clone().or_else(|| {
+            state
+                .yaml
+                .as_deref()
+                .map(decode_secret_yaml)
+                .transpose()
+                .map(|entries| {
+                    if let Some(entries) = entries {
+                        secret_tab.entries = entries;
+                        secret_tab.clamp_selected();
+                    } else {
+                        secret_tab.entries.clear();
+                        secret_tab.clamp_selected();
+                    }
+                })
+                .err()
+                .map(|err| err.to_string())
+        });
+    }
 }
 
 fn apply_detail_error_to_workbench(
@@ -310,6 +341,17 @@ fn apply_detail_error_to_workbench(
         events_tab.loading = false;
         events_tab.error = Some(error.to_string());
         events_tab.pending_request_id = None;
+    }
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::DecodedSecret(resource.clone()))
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
+        && secret_tab.pending_request_id == Some(request_id)
+    {
+        secret_tab.loading = false;
+        secret_tab.error = Some(error.to_string());
+        secret_tab.pending_request_id = None;
     }
 }
 
@@ -915,6 +957,8 @@ fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
 fn map_palette_detail_action(action: DetailAction) -> AppAction {
     match action {
         DetailAction::ViewYaml => AppAction::OpenResourceYaml,
+        DetailAction::ViewDecodedSecret => AppAction::OpenDecodedSecret,
+        DetailAction::ToggleBookmark => AppAction::ToggleBookmark,
         DetailAction::ViewEvents => AppAction::OpenResourceEvents,
         DetailAction::Logs => AppAction::LogsViewerOpen,
         DetailAction::Exec => AppAction::OpenExec,
@@ -2616,6 +2660,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             app.extension_instance_cursor = 0;
                         }
                         AppAction::None
+                    } else if app.focus == kubectui::app::Focus::Content
+                        && app.view() == AppView::Bookmarks
+                    {
+                        match prepare_bookmark_target(&mut app, &cached_snapshot) {
+                            Ok(resource) => AppAction::OpenDetail(resource),
+                            Err(err) => {
+                                app.set_error(err);
+                                AppAction::None
+                            }
+                        }
                     } else if app.focus == kubectui::app::Focus::Content {
                         selected_resource(&app, &cached_snapshot)
                             .map(AppAction::OpenDetail)
@@ -3028,6 +3082,135 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 })
                                 .await;
                         });
+                    }
+                }
+                AppAction::OpenDecodedSecret => {
+                    let resource = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.clone())
+                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                    let Some(resource) = resource else {
+                        app.set_error("No Secret selected for decoded inspection.".to_string());
+                        continue;
+                    };
+                    if !matches!(resource, ResourceRef::Secret(_, _)) {
+                        app.set_error(
+                            "Decoded Secret view is only available for Secret resources."
+                                .to_string(),
+                        );
+                        continue;
+                    }
+                    let cached_yaml = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| {
+                            (detail.resource.as_ref() == Some(&resource))
+                                .then(|| detail.yaml.clone())
+                        })
+                        .flatten();
+                    let cached_error = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| {
+                            (detail.resource.as_ref() == Some(&resource))
+                                .then(|| detail.yaml_error.clone())
+                        })
+                        .flatten();
+                    let pending_request_id = (cached_yaml.is_none() && cached_error.is_none())
+                        .then(|| next_request_id(&mut detail_request_seq));
+                    app.detail_view = None;
+                    app.open_decoded_secret_tab(
+                        resource.clone(),
+                        cached_yaml.clone(),
+                        cached_error,
+                        pending_request_id,
+                    );
+                    if let Some(tab) = app
+                        .workbench_mut()
+                        .find_tab_mut(&WorkbenchTabKey::DecodedSecret(resource.clone()))
+                        && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
+                        && let Some(yaml) = cached_yaml.as_deref()
+                    {
+                        match decode_secret_yaml(yaml) {
+                            Ok(entries) => {
+                                secret_tab.source_yaml = Some(yaml.to_string());
+                                secret_tab.entries = entries;
+                                secret_tab.loading = false;
+                                secret_tab.error = None;
+                                secret_tab.clamp_selected();
+                            }
+                            Err(err) => {
+                                secret_tab.loading = false;
+                                secret_tab.error = Some(err.to_string());
+                            }
+                        }
+                    }
+                    if let Some(request_id) = pending_request_id {
+                        let client_clone = client.clone();
+                        let snapshot_clone = cached_snapshot.clone();
+                        let tx = detail_tx.clone();
+                        let requested_resource = resource.clone();
+                        tokio::spawn(async move {
+                            let result = fetch_detail_view(
+                                &client_clone,
+                                &snapshot_clone,
+                                requested_resource.clone(),
+                            )
+                            .await
+                            .map_err(|err| err.to_string());
+                            let _ = tx
+                                .send(DetailAsyncResult {
+                                    request_id,
+                                    resource: requested_resource,
+                                    result,
+                                })
+                                .await;
+                        });
+                    }
+                }
+                AppAction::ToggleBookmark => {
+                    let resource = app
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.clone())
+                        .or_else(|| selected_resource(&app, &cached_snapshot));
+                    let Some(resource) = resource else {
+                        app.set_error("No resource selected to bookmark.".to_string());
+                        continue;
+                    };
+
+                    match app.toggle_bookmark(resource.clone()) {
+                        Ok(kubectui::bookmarks::BookmarkToggleResult::Added) => {
+                            app.clear_error();
+                            app.set_status(format!(
+                                "Bookmarked {} '{}'{}.",
+                                resource.kind(),
+                                resource.name(),
+                                resource
+                                    .namespace()
+                                    .map(|namespace| format!(" in namespace '{namespace}'"))
+                                    .unwrap_or_default()
+                            ));
+                        }
+                        Ok(kubectui::bookmarks::BookmarkToggleResult::Removed) => {
+                            app.clear_error();
+                            app.set_status(format!(
+                                "Removed bookmark for {} '{}'{}.",
+                                resource.kind(),
+                                resource.name(),
+                                resource
+                                    .namespace()
+                                    .map(|namespace| format!(" in namespace '{namespace}'"))
+                                    .unwrap_or_default()
+                            ));
+                            if app.view() == AppView::Bookmarks {
+                                app.selected_idx = app
+                                    .selected_idx()
+                                    .min(app.bookmark_count().saturating_sub(1));
+                            }
+                        }
+                        Err(err) => app.set_error(err),
                     }
                 }
                 AppAction::OpenRelationships => {
@@ -4397,6 +4580,121 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
                     }
                 }
+                AppAction::SaveDecodedSecret => {
+                    let decoded_state =
+                        app.workbench()
+                            .active_tab()
+                            .and_then(|tab| match &tab.state {
+                                WorkbenchTabState::DecodedSecret(secret_tab) => Some((
+                                    secret_tab.resource.clone(),
+                                    secret_tab.source_yaml.clone(),
+                                    secret_tab.entries.clone(),
+                                )),
+                                _ => None,
+                            });
+
+                    let Some((resource, source_yaml, entries)) = decoded_state else {
+                        app.set_error(
+                            "Decoded Secret save is only available from the decoded Secret tab."
+                                .to_string(),
+                        );
+                        continue;
+                    };
+                    let Some(source_yaml) = source_yaml else {
+                        app.set_error("Secret YAML is not loaded yet.".to_string());
+                        continue;
+                    };
+                    let encoded_yaml = match encode_secret_yaml(&source_yaml, &entries) {
+                        Ok(encoded_yaml) => encoded_yaml,
+                        Err(err) => {
+                            app.set_error(format!("Failed to encode Secret data: {err:#}"));
+                            continue;
+                        }
+                    };
+                    let kind = resource.kind().to_ascii_lowercase();
+                    let name = resource.name().to_string();
+                    let namespace = resource.namespace().map(str::to_owned);
+                    let origin_view = app.view();
+                    let resource_label = format!(
+                        "{} '{}'{}",
+                        resource.kind(),
+                        name,
+                        namespace
+                            .as_deref()
+                            .map(|ns| format!(" in namespace '{ns}'"))
+                            .unwrap_or_default()
+                    );
+                    let action_history_id = app.record_action_pending(
+                        ActionKind::ApplyYaml,
+                        origin_view,
+                        Some(resource.clone()),
+                        resource_label.clone(),
+                        format!("Applying decoded Secret changes to {resource_label}..."),
+                    );
+                    match client
+                        .apply_resource_yaml(&encoded_yaml, &kind, &name, namespace.as_deref())
+                        .await
+                    {
+                        Ok(()) => {
+                            app.complete_action_history(
+                                action_history_id,
+                                ActionStatus::Succeeded,
+                                format!("Applied decoded Secret changes to {resource_label}."),
+                                true,
+                            );
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::DecodedSecret(resource.clone()))
+                                && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
+                            {
+                                match decode_secret_yaml(&encoded_yaml) {
+                                    Ok(decoded_entries) => {
+                                        secret_tab.source_yaml = Some(encoded_yaml.clone());
+                                        secret_tab.entries = decoded_entries;
+                                        secret_tab.editing = false;
+                                        secret_tab.edit_input.clear();
+                                        secret_tab.error = None;
+                                        secret_tab.loading = false;
+                                        secret_tab.clamp_selected();
+                                    }
+                                    Err(err) => {
+                                        secret_tab.error = Some(err.to_string());
+                                    }
+                                }
+                            }
+                            finish_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                origin_view,
+                                format!(
+                                    "Applied decoded Secret changes to {} '{}'. Refreshing view...",
+                                    resource.kind(),
+                                    name
+                                ),
+                                false,
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
+                        }
+                        Err(err) => {
+                            app.complete_action_history(
+                                action_history_id,
+                                ActionStatus::Failed,
+                                format!("Apply failed: {err:#}"),
+                                true,
+                            );
+                            app.set_error(format!("Apply failed: {err:#}"));
+                        }
+                    }
+                }
                 AppAction::PortForwardCreate((target, config)) => {
                     match port_forwarder.create_tunnel_async(target, config).await {
                         Ok(tunnel_id) => {
@@ -4684,6 +4982,7 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
     let idx = app.selected_idx();
     match app.view() {
         AppView::Dashboard => None,
+        AppView::Bookmarks => selected_bookmark_resource(app.bookmarks(), idx, app.search_query()),
         AppView::Issues => {
             let issues = kubectui::state::issues::compute_issues(snapshot);
             let query = app.search_query().trim();
@@ -4990,6 +5289,44 @@ fn selected_resource_context(
         resource,
         node_unschedulable,
     })
+}
+
+fn prepare_bookmark_target(
+    app: &mut AppState,
+    snapshot: &ClusterSnapshot,
+) -> Result<ResourceRef, String> {
+    let resource = app
+        .selected_bookmark_resource()
+        .ok_or_else(|| "No bookmarked resource is selected.".to_string())?;
+
+    if !resource_exists(snapshot, &resource) {
+        return Err(format!(
+            "Bookmarked {} '{}' is no longer present in the current snapshot.",
+            resource.kind(),
+            resource.name()
+        ));
+    }
+
+    app.search_query.clear();
+    app.is_search_mode = false;
+
+    if let Some(view) = resource.primary_view() {
+        app.view = view;
+        app.focus = kubectui::app::Focus::Content;
+        app.selected_idx = 0;
+        app.apply_sort_from_preferences(kubectui::columns::view_key(view));
+        if let Some(selected_idx) = bookmark_selected_index(
+            view,
+            snapshot,
+            &resource,
+            app.workload_sort(),
+            app.pod_sort(),
+        ) {
+            app.selected_idx = selected_idx;
+        }
+    }
+
+    Ok(resource)
 }
 
 fn selected_flux_reconcile_resource(
@@ -6332,13 +6669,15 @@ mod tests {
         ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
         apply_extension_fetch_result, flux_observed_state, flux_reconcile_progress_observed,
         map_palette_detail_action, normalize_recent_events, palette_action_requires_loaded_detail,
-        process_flux_reconcile_verifications, refresh_options_for_view, selected_extension_crd,
-        selected_flux_reconcile_resource, selected_resource, workbench_follow_streams_to_stop,
+        prepare_bookmark_target, process_flux_reconcile_verifications, refresh_options_for_view,
+        selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
+        workbench_follow_streams_to_stop,
     };
     use chrono::{DateTime, Utc};
     use kubectui::{
         action_history::ActionKind,
         app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
+        bookmarks::BookmarkEntry,
         k8s::dtos::{CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo},
         policy::DetailAction,
         state::ClusterSnapshot,
@@ -6443,6 +6782,61 @@ mod tests {
 
         let selected = selected_resource(&app, &snapshot).expect("selected resource");
         assert_eq!(selected, ResourceRef::Node("worker-a".to_string()));
+    }
+
+    #[test]
+    fn selected_resource_uses_bookmark_view_selection() {
+        let mut app = AppState::default();
+        app.view = AppView::Bookmarks;
+        app.current_context_name = Some("prod".to_string());
+        app.cluster_preferences = Some(std::collections::HashMap::from([(
+            "prod".to_string(),
+            kubectui::preferences::ClusterPreferences {
+                views: std::collections::HashMap::new(),
+                bookmarks: vec![BookmarkEntry {
+                    resource: ResourceRef::Secret("app-secret".to_string(), "default".to_string()),
+                    bookmarked_at_unix: 1,
+                }],
+            },
+        )]));
+
+        let selected = selected_resource(&app, &ClusterSnapshot::default()).expect("bookmark");
+        assert_eq!(
+            selected,
+            ResourceRef::Secret("app-secret".to_string(), "default".to_string())
+        );
+    }
+
+    #[test]
+    fn prepare_bookmark_target_navigates_to_resource_view() {
+        let mut app = AppState::default();
+        app.view = AppView::Bookmarks;
+        app.focus = kubectui::app::Focus::Content;
+        app.current_context_name = Some("prod".to_string());
+        app.cluster_preferences = Some(std::collections::HashMap::from([(
+            "prod".to_string(),
+            kubectui::preferences::ClusterPreferences {
+                views: std::collections::HashMap::new(),
+                bookmarks: vec![BookmarkEntry {
+                    resource: ResourceRef::Secret("app-secret".to_string(), "default".to_string()),
+                    bookmarked_at_unix: 1,
+                }],
+            },
+        )]));
+        app.search_query = "app".to_string();
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.secrets.push(kubectui::k8s::dtos::SecretInfo {
+            name: "app-secret".to_string(),
+            namespace: "default".to_string(),
+            ..Default::default()
+        });
+
+        let target = prepare_bookmark_target(&mut app, &snapshot).expect("bookmark target");
+        assert_eq!(target.kind(), "Secret");
+        assert_eq!(app.view, AppView::Secrets);
+        assert_eq!(app.selected_idx, 0);
+        assert!(app.search_query.is_empty());
     }
 
     #[test]

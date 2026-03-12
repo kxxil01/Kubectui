@@ -17,10 +17,12 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    bookmarks::BookmarkEntry,
     k8s::dtos::FluxResourceInfo,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
@@ -263,10 +265,12 @@ fn cached_formatted_rows(
 }
 
 /// Renders FluxCD view content for a specific FluxCD command style.
+#[allow(clippy::too_many_arguments)]
 pub fn render_flux_resources(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     query: &str,
     view: AppView,
@@ -337,6 +341,7 @@ pub fn render_flux_resources(
         .map(|(local_idx, &resource_idx)| {
             let idx = window.start + local_idx;
             let resource = &formatted_rows[resource_idx];
+            let raw_resource = &cluster.flux_resources[resource_idx];
             let detail = match mode {
                 FluxMode::Artifacts => resource.artifact.as_str(),
                 FluxMode::HelmRepositories => resource.source_url.as_str(),
@@ -353,10 +358,20 @@ pub fn render_flux_resources(
                 resource.status.clone()
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", resource.name),
+                bookmarked_name_cell(
+                    &ResourceRef::CustomResource {
+                        name: raw_resource.name.clone(),
+                        namespace: raw_resource.namespace.clone(),
+                        group: raw_resource.group.clone(),
+                        version: raw_resource.version.clone(),
+                        kind: raw_resource.kind.clone(),
+                        plural: raw_resource.plural.clone(),
+                    },
+                    bookmarks,
+                    resource.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     resource.namespace.as_str(),
                     Style::default().fg(theme.fg_dim),

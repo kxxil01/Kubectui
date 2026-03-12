@@ -17,10 +17,12 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState},
+    app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
+    bookmarks::BookmarkEntry,
     columns::ColumnDef,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, loading_or_empty_message_no_search, responsive_table_widths_vec,
@@ -49,10 +51,12 @@ static NODE_DERIVED_CACHE: LazyLock<Mutex<Option<(NodeDerivedCacheKey, NodeDeriv
     LazyLock::new(|| Mutex::new(None));
 
 /// Renders the nodes table with stateful selection, scrollbar, and theme-aware styling.
+#[allow(clippy::too_many_arguments)]
 pub fn render_nodes(
     frame: &mut Frame,
     area: Rect,
     snapshot: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
@@ -157,10 +161,13 @@ pub fn render_nodes(
         let cells: Vec<Cell> = visible_columns
             .iter()
             .map(|col| match col.id {
-                "name" => Cell::from(Line::from(vec![
-                    Span::styled("  ", name_style),
-                    Span::styled(node.name.as_str(), name_style),
-                ])),
+                "name" => bookmarked_name_cell(
+                    &ResourceRef::Node(node.name.clone()),
+                    bookmarks,
+                    node.name.as_str(),
+                    name_style,
+                    &theme,
+                ),
                 "status" => Cell::from(Line::from(status_spans.take().unwrap_or_default())),
                 "roles" => Cell::from(Span::styled(node.role.as_str(), accent_style)),
                 "cpu" => Cell::from(Span::styled(

@@ -32,6 +32,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("r", "Refresh data"),
             ("Ctrl+y", "Copy resource name"),
             ("Y", "Copy namespace/name"),
+            ("B", "Toggle bookmark for selected resource"),
             ("T", "Cycle theme"),
             ("b", "Toggle workbench"),
             ("[ / ]", "Previous / next workbench tab"),
@@ -43,6 +44,8 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Detail View",
         &[
             ("y", "View YAML"),
+            ("o", "View decoded Secret data"),
+            ("B", "Toggle bookmark"),
             ("v", "View timeline"),
             ("l", "View logs"),
             ("x", "Exec into pod"),
@@ -83,6 +86,23 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("g / G", "Jump to top / bottom"),
             ("PageDown / PageUp", "Scroll by page"),
             ("Esc", "Un-maximize or blur"),
+        ],
+    ),
+    (
+        "Decoded Secret",
+        &[
+            ("m", "Toggle masked / visible values"),
+            ("e / Enter", "Edit selected text value"),
+            ("s", "Save decoded Secret changes"),
+            ("Ctrl+U", "Clear current editor input"),
+            ("Esc", "Cancel edit or return focus"),
+        ],
+    ),
+    (
+        "Bookmarks",
+        &[
+            ("Enter", "Jump to bookmarked resource"),
+            ("B", "Remove bookmark from current cluster"),
         ],
     ),
     (

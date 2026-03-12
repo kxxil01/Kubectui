@@ -11,9 +11,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, ResourceRef},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         loading_or_empty_message, table_viewport_rows, table_window,
@@ -25,6 +27,7 @@ pub fn render_namespaces(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
 ) {
@@ -83,10 +86,13 @@ pub fn render_namespaces(
                 theme.badge_error_style()
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", namespace.name),
+                bookmarked_name_cell(
+                    &ResourceRef::Namespace(namespace.name.clone()),
+                    bookmarks,
+                    namespace.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(namespace.status.clone(), status_style)),
             ])
             .style(row_style)

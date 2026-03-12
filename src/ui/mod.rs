@@ -23,9 +23,10 @@ use std::{
 
 use crate::{
     app::{
-        AppState, AppView, Focus, PodSortColumn, PodSortState, WorkloadSortColumn,
+        AppState, AppView, Focus, PodSortColumn, PodSortState, ResourceRef, WorkloadSortColumn,
         WorkloadSortState, filtered_pod_indices,
     },
+    bookmarks::BookmarkEntry,
     policy::ViewAction,
     state::{ClusterSnapshot, ViewLoadState},
     ui::{
@@ -67,6 +68,29 @@ pub(crate) fn format_small_int(value: i64) -> Cow<'static, str> {
         10 => Cow::Borrowed("10"),
         _ => Cow::Owned(value.to_string()),
     }
+}
+
+pub(crate) fn bookmarked_name_cell<'a>(
+    resource: &ResourceRef,
+    bookmarks: &[BookmarkEntry],
+    name: impl Into<Cow<'a, str>>,
+    name_style: Style,
+    theme: &Theme,
+) -> Cell<'a> {
+    let bookmarked = bookmarks
+        .iter()
+        .any(|bookmark| bookmark.resource == *resource);
+    let marker = if bookmarked { "★ " } else { "  " };
+    let name = name.into();
+    let marker_style = if bookmarked {
+        theme.badge_warning_style()
+    } else {
+        Style::default().fg(theme.fg_dim)
+    };
+    Cell::from(Line::from(vec![
+        Span::styled(marker, marker_style),
+        Span::styled(name, name_style),
+    ]))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -425,7 +449,11 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .iter()
             .filter_map(|item| {
                 if let SidebarItem::View(view) = item {
-                    cluster.resource_count(*view).map(|c| (*view, c))
+                    if *view == AppView::Bookmarks {
+                        Some((*view, app.bookmark_count()))
+                    } else {
+                        cluster.resource_count(*view).map(|c| (*view, c))
+                    }
                 } else {
                     None
                 }
@@ -521,6 +549,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -531,6 +560,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     frame,
                     content,
                     cluster,
+                    app.bookmarks(),
                     app.selected_idx(),
                     app.search_query(),
                     app.pod_sort(),
@@ -541,6 +571,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -550,6 +581,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     frame,
                     content,
                     cluster,
+                    app.bookmarks(),
                     app.selected_idx(),
                     app.search_query(),
                     app.workload_sort(),
@@ -566,6 +598,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -582,6 +615,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.view(),
@@ -591,6 +625,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -598,6 +633,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -605,6 +641,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -612,6 +649,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -626,6 +664,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -633,6 +672,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -640,6 +680,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -647,6 +688,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -654,6 +696,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -662,6 +705,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -670,6 +714,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -678,6 +723,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -685,6 +731,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
             ),
@@ -695,10 +742,19 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
             ),
+            AppView::Bookmarks => views::bookmarks::render_bookmarks(
+                frame,
+                content,
+                cluster,
+                app.bookmarks(),
+                app.selected_idx(),
+                app.search_query(),
+            ),
             AppView::Services => views::services::render_services(
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -707,6 +763,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -716,6 +773,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -724,6 +782,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -732,6 +791,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -740,6 +800,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -748,6 +809,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -756,6 +818,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -764,6 +827,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -772,6 +836,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -781,6 +846,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     frame,
                     content,
                     cluster,
+                    app.bookmarks(),
                     app.selected_idx(),
                     app.search_query(),
                     app.workload_sort(),
@@ -790,6 +856,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -798,6 +865,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -806,6 +874,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 frame,
                 content,
                 cluster,
+                app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
@@ -996,10 +1065,12 @@ fn render_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
     );
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_pods_widget(
     frame: &mut Frame,
     area: ratatui::layout::Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     query: &str,
     pod_sort: Option<PodSortState>,
@@ -1130,10 +1201,13 @@ fn render_pods_widget(
         let cells: Vec<Cell> = visible_columns
             .iter()
             .map(|col| match col.id {
-                "name" => Cell::from(Line::from(vec![
-                    Span::styled("  ", name_style),
-                    Span::styled(pod.name.as_str(), name_style),
-                ])),
+                "name" => bookmarked_name_cell(
+                    &ResourceRef::Pod(pod.name.clone(), pod.namespace.clone()),
+                    bookmarks,
+                    pod.name.as_str(),
+                    name_style,
+                    &theme,
+                ),
                 "namespace" => Cell::from(Span::styled(pod.namespace.as_str(), dim_style)),
                 "ip" => Cell::from(Span::styled(
                     pod.pod_ip.as_deref().unwrap_or("-"),
@@ -1293,6 +1367,7 @@ mod tests {
 
     use crate::{
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
+        bookmarks::BookmarkEntry,
         k8s::dtos::{
             ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo, CustomResourceDefinitionInfo,
             CustomResourceInfo, DaemonSetInfo, DeploymentInfo, FluxResourceInfo, IngressClassInfo,
@@ -1329,6 +1404,40 @@ mod tests {
             ));
         }
         app
+    }
+
+    #[test]
+    fn bookmarked_name_cell_marks_saved_resources() {
+        let theme = default_theme();
+        let resource = ResourceRef::Namespace("prod".to_string());
+        let bookmarks = vec![BookmarkEntry {
+            resource: resource.clone(),
+            bookmarked_at_unix: 0,
+        }];
+
+        let bookmarked = format!(
+            "{:?}",
+            bookmarked_name_cell(
+                &resource,
+                &bookmarks,
+                "prod",
+                Style::default().fg(theme.fg),
+                &theme,
+            )
+        );
+        let plain = format!(
+            "{:?}",
+            bookmarked_name_cell(
+                &resource,
+                &[],
+                "prod",
+                Style::default().fg(theme.fg),
+                &theme,
+            )
+        );
+
+        assert!(bookmarked.contains("★ "));
+        assert!(!plain.contains("★ "));
     }
 
     #[test]

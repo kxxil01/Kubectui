@@ -42,6 +42,11 @@ pub struct ActionEntry {
 
 const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     (DetailAction::ViewYaml, &["yaml", "manifest"]),
+    (
+        DetailAction::ViewDecodedSecret,
+        &["decoded", "decode", "secret data", "reveal"],
+    ),
+    (DetailAction::ToggleBookmark, &["bookmark", "pin", "save"]),
     (DetailAction::ViewEvents, &["events", "event"]),
     (DetailAction::Logs, &["logs", "log"]),
     (DetailAction::Exec, &["exec", "shell", "terminal"]),
@@ -96,6 +101,10 @@ const COMMANDS: &[Command] = &[
     Command {
         view: AppView::Dashboard,
         aliases: &["dashboard", "dash", "home"],
+    },
+    Command {
+        view: AppView::Bookmarks,
+        aliases: &["bookmarks", "bookmark", "saved", "pinned"],
     },
     Command {
         view: AppView::Nodes,
@@ -825,6 +834,36 @@ mod tests {
             entries
                 .iter()
                 .any(|e| matches!(e, PaletteEntry::Action(DetailAction::Scale)))
+        );
+    }
+
+    #[test]
+    fn filtered_secret_query_matches_decoded_action() {
+        let mut palette = CommandPalette::default();
+        let resource = ctx(ResourceRef::Secret("app".into(), "default".into()), None);
+        palette.open_with_context(Some(resource));
+        for c in "decode".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let entries = palette.filtered();
+        assert!(entries.iter().any(|entry| {
+            matches!(entry, PaletteEntry::Action(DetailAction::ViewDecodedSecret))
+        }));
+    }
+
+    #[test]
+    fn filtered_bookmark_query_matches_bookmark_action() {
+        let mut palette = CommandPalette::default();
+        let resource = ctx(ResourceRef::Pod("api".into(), "default".into()), None);
+        palette.open_with_context(Some(resource));
+        for c in "bookmark".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let entries = palette.filtered();
+        assert!(
+            entries.iter().any(|entry| {
+                matches!(entry, PaletteEntry::Action(DetailAction::ToggleBookmark))
+            })
         );
     }
 

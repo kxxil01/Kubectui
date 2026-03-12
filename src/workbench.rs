@@ -4,6 +4,7 @@ use crate::{
     action_history::ActionHistoryState,
     app::{LogsViewerState, ResourceRef},
     k8s::client::EventInfo,
+    secret::DecodedSecretEntry,
     timeline::{TimelineEntry, build_timeline},
     ui::components::port_forward_dialog::PortForwardDialog,
 };
@@ -19,6 +20,7 @@ pub const MAX_TIMELINE_EVENTS: usize = 200;
 pub enum WorkbenchTabKind {
     ActionHistory,
     ResourceYaml,
+    DecodedSecret,
     ResourceEvents,
     PodLogs,
     WorkloadLogs,
@@ -32,6 +34,7 @@ impl WorkbenchTabKind {
         match self {
             WorkbenchTabKind::ActionHistory => "History",
             WorkbenchTabKind::ResourceYaml => "YAML",
+            WorkbenchTabKind::DecodedSecret => "Decoded",
             WorkbenchTabKind::ResourceEvents => "Timeline",
             WorkbenchTabKind::PodLogs => "Logs",
             WorkbenchTabKind::WorkloadLogs => "Workload Logs",
@@ -46,6 +49,7 @@ impl WorkbenchTabKind {
 pub enum WorkbenchTabKey {
     ActionHistory,
     ResourceYaml(ResourceRef),
+    DecodedSecret(ResourceRef),
     ResourceEvents(ResourceRef),
     PodLogs(ResourceRef),
     WorkloadLogs(ResourceRef),
@@ -101,6 +105,57 @@ impl ResourceYamlTabState {
             loading: true,
             error: None,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DecodedSecretTabState {
+    pub resource: ResourceRef,
+    pub pending_request_id: Option<u64>,
+    pub source_yaml: Option<String>,
+    pub entries: Vec<DecodedSecretEntry>,
+    pub selected: usize,
+    pub scroll: usize,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub masked: bool,
+    pub editing: bool,
+    pub edit_input: String,
+}
+
+impl DecodedSecretTabState {
+    pub fn new(resource: ResourceRef) -> Self {
+        Self {
+            resource,
+            pending_request_id: None,
+            source_yaml: None,
+            entries: Vec::new(),
+            selected: 0,
+            scroll: 0,
+            loading: true,
+            error: None,
+            masked: true,
+            editing: false,
+            edit_input: String::new(),
+        }
+    }
+
+    pub fn has_unsaved_changes(&self) -> bool {
+        self.entries.iter().any(DecodedSecretEntry::is_dirty)
+    }
+
+    pub fn selected_entry(&self) -> Option<&DecodedSecretEntry> {
+        self.entries.get(self.selected)
+    }
+
+    pub fn selected_entry_mut(&mut self) -> Option<&mut DecodedSecretEntry> {
+        self.entries.get_mut(self.selected)
+    }
+
+    pub fn clamp_selected(&mut self) {
+        let max = self.entries.len().saturating_sub(1);
+        self.selected = self.selected.min(max);
+        self.scroll = self.scroll.min(max);
     }
 }
 
@@ -399,6 +454,7 @@ impl RelationsTabState {
 pub enum WorkbenchTabState {
     ActionHistory(ActionHistoryTabState),
     ResourceYaml(ResourceYamlTabState),
+    DecodedSecret(DecodedSecretTabState),
     ResourceEvents(ResourceEventsTabState),
     PodLogs(PodLogsTabState),
     WorkloadLogs(WorkloadLogsTabState),
@@ -412,6 +468,7 @@ impl WorkbenchTabState {
         match self {
             Self::ActionHistory(_) => WorkbenchTabKind::ActionHistory,
             Self::ResourceYaml(_) => WorkbenchTabKind::ResourceYaml,
+            Self::DecodedSecret(_) => WorkbenchTabKind::DecodedSecret,
             Self::ResourceEvents(_) => WorkbenchTabKind::ResourceEvents,
             Self::PodLogs(_) => WorkbenchTabKind::PodLogs,
             Self::WorkloadLogs(_) => WorkbenchTabKind::WorkloadLogs,
@@ -425,6 +482,7 @@ impl WorkbenchTabState {
         match self {
             Self::ActionHistory(_) => WorkbenchTabKey::ActionHistory,
             Self::ResourceYaml(tab) => WorkbenchTabKey::ResourceYaml(tab.resource.clone()),
+            Self::DecodedSecret(tab) => WorkbenchTabKey::DecodedSecret(tab.resource.clone()),
             Self::ResourceEvents(tab) => WorkbenchTabKey::ResourceEvents(tab.resource.clone()),
             Self::PodLogs(tab) => WorkbenchTabKey::PodLogs(tab.resource.clone()),
             Self::WorkloadLogs(tab) => WorkbenchTabKey::WorkloadLogs(tab.resource.clone()),
@@ -438,6 +496,7 @@ impl WorkbenchTabState {
         match self {
             Self::ActionHistory(_) => "History".to_string(),
             Self::ResourceYaml(tab) => format!("YAML {}", resource_title(&tab.resource)),
+            Self::DecodedSecret(tab) => format!("Decoded {}", resource_title(&tab.resource)),
             Self::ResourceEvents(tab) => format!("Events {}", resource_title(&tab.resource)),
             Self::PodLogs(tab) => format!("Logs {}", resource_title(&tab.resource)),
             Self::WorkloadLogs(tab) => format!("Logs {}", resource_title(&tab.resource)),

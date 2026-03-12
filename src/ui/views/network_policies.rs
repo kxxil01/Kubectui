@@ -16,9 +16,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, ResourceRef},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
@@ -49,6 +51,7 @@ pub fn render_network_policies(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
 ) {
@@ -119,10 +122,13 @@ pub fn render_network_policies(
                 )
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", policy.name),
+                bookmarked_name_cell(
+                    &ResourceRef::NetworkPolicy(policy.name.clone(), policy.namespace.clone()),
+                    bookmarks,
+                    policy.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     policy.namespace.clone(),
                     Style::default().fg(theme.fg_dim),

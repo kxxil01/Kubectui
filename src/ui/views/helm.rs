@@ -16,9 +16,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, ResourceRef},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         loading_or_empty_message, table_viewport_rows, table_window,
@@ -98,6 +100,7 @@ pub fn render_helm_releases(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search_query: &str,
 ) {
@@ -201,10 +204,13 @@ pub fn render_helm_releases(
             };
 
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", release.name),
+                bookmarked_name_cell(
+                    &ResourceRef::HelmRelease(release.name.clone(), release.namespace.clone()),
+                    bookmarks,
+                    release.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     release.namespace.clone(),
                     Style::default().fg(theme.accent2),

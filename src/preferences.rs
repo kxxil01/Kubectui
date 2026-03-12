@@ -1,5 +1,6 @@
 //! User preference types for view personalization.
 
+use crate::bookmarks::BookmarkEntry;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -53,6 +54,8 @@ pub struct UserPreferences {
 pub struct ClusterPreferences {
     #[serde(default)]
     pub views: HashMap<String, ViewPreferences>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bookmarks: Vec<BookmarkEntry>,
 }
 
 /// Resolves the effective preferences for a view by merging
@@ -273,5 +276,26 @@ mod tests {
         assert!(vp.sort_ascending);
         assert!(vp.hidden_columns.is_empty());
         assert!(vp.column_order.is_none());
+    }
+
+    #[test]
+    fn cluster_preferences_preserve_bookmarks() {
+        let cluster = ClusterPreferences {
+            views: HashMap::new(),
+            bookmarks: vec![BookmarkEntry {
+                resource: crate::app::ResourceRef::Secret(
+                    "app-secret".to_string(),
+                    "default".to_string(),
+                ),
+                bookmarked_at_unix: 123,
+            }],
+        };
+
+        let serialized = serde_json::to_string(&cluster).expect("serialized cluster prefs");
+        let decoded: ClusterPreferences =
+            serde_json::from_str(&serialized).expect("decoded cluster prefs");
+
+        assert_eq!(decoded.bookmarks.len(), 1);
+        assert_eq!(decoded.bookmarks[0].bookmarked_at_unix, 123);
     }
 }

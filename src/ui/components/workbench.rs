@@ -14,6 +14,7 @@ use ratatui::{
 use crate::{
     action_history::{ActionHistoryEntry, ActionStatus},
     app::{AppState, Focus},
+    secret::DecodedSecretValue,
     state::ClusterSnapshot,
     ui::components::default_theme,
     workbench::{WorkbenchTab, WorkbenchTabState},
@@ -141,6 +142,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
         WorkbenchTabState::ResourceYaml(tab) => {
             render_yaml_tab(frame, inner, tab.scroll, active_tab)
         }
+        WorkbenchTabState::DecodedSecret(tab) => render_decoded_secret_tab(frame, inner, tab),
         WorkbenchTabState::ResourceEvents(tab) => {
             render_events_tab(frame, inner, tab.scroll, active_tab)
         }
@@ -166,7 +168,9 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             )]),
             Line::from(""),
             Line::from("  Open a resource tab with:"),
-            Line::from("  [y] YAML  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward"),
+            Line::from(
+                "  [y] YAML  [o] Decoded  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward",
+            ),
             Line::from(""),
             Line::from("  [H] opens action history."),
             Line::from("  [b] closes the workbench, [Ctrl+W] closes the active tab."),
@@ -418,6 +422,160 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
 
     frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), area);
     render_scrollbar(frame, area, total, window.start);
+}
+
+fn render_decoded_secret_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab_state: &crate::workbench::DecodedSecretTabState,
+) {
+    let theme = default_theme();
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(area);
+
+    let visibility = if tab_state.masked {
+        "masked"
+    } else {
+        "visible"
+    };
+    let dirty = if tab_state.has_unsaved_changes() {
+        "  [unsaved changes]"
+    } else {
+        ""
+    };
+    let hint = if tab_state.editing {
+        "[Enter] apply field  [Esc] cancel  [Ctrl+U] clear"
+    } else {
+        "[e] edit  [m] mask  [s] save  [Esc] back"
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!(" {visibility} "), theme.badge_warning_style()),
+            Span::styled(dirty, theme.keybind_desc_style()),
+            Span::raw("  "),
+            Span::styled(hint, theme.keybind_desc_style()),
+        ])),
+        sections[0],
+    );
+
+    if tab_state.loading {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Loading decoded Secret data...",
+                theme.inactive_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if let Some(error) = &tab_state.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Error: {error}"),
+                theme.badge_error_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if tab_state.entries.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Secret has no data entries",
+                theme.inactive_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    let content_area = if tab_state.editing {
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(2)])
+            .split(sections[1]);
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(" edit> ", theme.section_title_style()),
+                Span::raw(tab_state.edit_input.clone()),
+            ]))
+            .block(
+                Block::default()
+                    .borders(Borders::TOP)
+                    .border_style(theme.border_style()),
+            ),
+            split[1],
+        );
+        split[0]
+    } else {
+        sections[1]
+    };
+
+    let total = tab_state.entries.len();
+    let window = centered_window(
+        total,
+        tab_state.selected,
+        content_area.height.max(1) as usize,
+    );
+    let lines: Vec<Line> = tab_state.entries[window.start..window.end]
+        .iter()
+        .enumerate()
+        .map(|(local_idx, entry)| {
+            let selected = window.start + local_idx == tab_state.selected;
+            let row_style = if selected {
+                theme.hover_style()
+            } else {
+                Style::default().fg(theme.fg)
+            };
+            let value_span = match &entry.value {
+                DecodedSecretValue::Text { current, .. } => {
+                    if tab_state.masked {
+                        Span::styled(
+                            format!("[text {} chars] ****", current.chars().count()),
+                            theme.muted_style(),
+                        )
+                    } else {
+                        Span::styled(current.clone(), row_style)
+                    }
+                }
+                DecodedSecretValue::Binary {
+                    byte_len, preview, ..
+                } => Span::styled(
+                    format!("[binary {byte_len} bytes] {preview}"),
+                    theme.muted_style(),
+                ),
+                DecodedSecretValue::InvalidBase64 {
+                    error, replacement, ..
+                } => Span::styled(
+                    replacement
+                        .as_ref()
+                        .map(|value| format!("[repaired] {value}"))
+                        .unwrap_or_else(|| format!("[invalid base64] {error}")),
+                    theme.badge_error_style(),
+                ),
+            };
+
+            Line::from(vec![
+                Span::styled(if selected { "› " } else { "  " }, row_style),
+                Span::styled(
+                    format!("{:<20}", entry.key),
+                    row_style.add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+                value_span,
+            ])
+        })
+        .collect();
+
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        content_area,
+    );
+    render_scrollbar(frame, content_area, total, window.start);
 }
 
 fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &WorkbenchTab) {
