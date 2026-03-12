@@ -65,6 +65,7 @@ Completion notes:
 - Milestone 16 shipped: decoded Secret inspection and editing in the workbench with masked-by-default values, inline edit/save flow with automatic base64 re-encode, binary/invalid-value handling, action palette integration, and regression coverage.
 - Milestone 17 shipped: persistent per-context bookmarks, dedicated Bookmarks view, jump-to-resource navigation, `B` toggle from list/detail, stale bookmark indication, command/help integration, and inline bookmark markers across normal list views.
 - Milestone 18 shipped: CronJob detail now acts as the management panel with next-run display, capped Job execution history, per-run status/duration/pod-count/completion visibility, `Enter` jump into child Job detail, `l` access to selected failed/current Job logs, suspend/resume confirmation on `S`, action palette/help integration, and mutation history coverage.
+- PR #16 hardened the post-M18 surface: canonical RBAC-aware detail/action authorization, graceful forbidden list/discovery degradation, workbench/detail/palette permission preflight, paused CronJob next-run suppression, and CronJob history log gating based on live pods plus log access.
 
 Post-milestone fixes and improvements (shipped after M5):
 
@@ -76,7 +77,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 633 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 508 tests passing on `main`, zero clippy warnings, fmt clean, render profiling check passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -176,7 +177,7 @@ KubecTUI already has:
 - per-view loading state with explicit loading/refreshing/ready/empty/error states
 - responsive layouts with sidebar + content + workbench split
 - shared sorting across workloads and pods with ascending/descending toggle
-- bottom workbench with 8 persistent tab types (ActionHistory, YAML, Timeline, PodLogs, WorkloadLogs, Exec, PortForward, Relations)
+- bottom workbench with 9 persistent tab types (ActionHistory, YAML, Decoded Secret, Timeline, PodLogs, WorkloadLogs, Exec, PortForward, Relations)
 - workbench maximize (`z` to fullscreen, Esc to restore), resizable height (8-40 lines)
 - pod logs with container picker, "All Containers" option, follow mode
 - workload-level log aggregation with pod/container/text filtering
@@ -185,19 +186,28 @@ KubecTUI already has:
 - scaling dialog (deployments/statefulsets)
 - rollout restart
 - delete with multi-key confirmation (D/y/Enter)
-- YAML edit (opens in $EDITOR, applies on save)
+- YAML edit for supported resources (opens in $EDITOR, applies on save)
+- decoded Secret inspection/editing with automatic re-encode
 - Flux reconcile
 - action history with pending/success/error tracking and resource jump-back
-- action palette (`:`) for navigating to any of 46 views AND executing context-aware resource actions (logs, exec, scale, restart, delete, etc.)
+- action palette (`:`) for navigating to any of 46 views, toggling columns, and executing context-aware resource actions
+- permission-aware action gating with RBAC-aware detail/footer/palette visibility and runtime preflight for supported operations
 - context and namespace switching
 - CRD browsing with dynamic instance viewing
 - search mode (`/`) with case-insensitive substring matching
+- help overlay (`?`) with context-specific keybindings
+- bookmarks with a dedicated view and per-context persistence
+- relationship explorer (`w`) for owner, service, ingress, storage, RBAC, and Flux linkage
+- issue center with cached problem-first cluster diagnostics
+- CronJob management panel with next-run state, execution history, selected-run log access, and suspend/resume
+- node cordon / uncordon / drain operations
 - 5 themes (Dark, Nord, Dracula, Catppuccin, Light)
 - probe panel (liveness, readiness, startup probe inspection)
 - dashboard with cluster health gauges, alerts, and workload summaries
+- graceful handling of forbidden list/discovery/metrics reads so restricted RBAC does not break the main UI flow
 - configuration persistence (namespace, theme, workbench state, refresh interval)
 
-This means the next phase should focus on discoverability, operator quality of life, and closing the UX gaps that Lens/Freelens users expect.
+This means the next phase should focus less on baseline operator parity and more on advanced workflows, richer cluster diagnostics, and post-browse operational tooling.
 
 ---
 
@@ -237,87 +247,73 @@ This section documents the key UX patterns from Lens and Freelens that inform ou
 
 ## Gaps To Close
 
-These are the main gaps between the current app and a strong operator workspace, updated with Lens/Freelens research findings.
+These are the main remaining gaps between the current app and a strong operator workspace. Gaps that were already closed by shipped milestones are marked accordingly so this section stays aligned with `main`.
 
-## Gap A: Weak discoverability
+## Gap A: Weak discoverability (baseline addressed)
 
-Current issue:
+Shipped baseline:
 
-- no help screen or keybinding reference
-- users from Lens cannot discover shortcuts without reading source code
-- inline footer hints only cover detail view actions, not global keys
+- `?` help overlay exists and groups keybindings by context
+- action palette, detail footer hints, and workbench tabs expose the primary navigation/actions
+- bookmark, CronJob, relations, and decoded Secret flows are now discoverable from inline surfaces
 
-Needed:
+Remaining improvement space:
 
-- `?` help overlay listing all keybindings organized by context
 - searchable keybinding reference
-- contextual hints that adapt to current focus mode
+- broader contextual hints outside detail view
+- onboarding for first-time users
 
-## Gap B: Incomplete log workflow
+## Gap B: Incomplete log workflow (addressed for current scope)
 
-Current issue:
+Shipped baseline:
 
-- no previous logs for crashed/restarted containers
-- no search/highlight within pod logs
-- no timestamp toggle
-- no log export to file
-- pod logs lack the text filter that workload logs have
-
-Needed:
-
-- previous logs toggle (`--previous` flag)
-- search with highlight in all log views
-- timestamp prefix toggle
+- previous logs toggle (`P`)
+- search/highlight and timestamps in pod logs
 - export/save to file
+- workload logs with pod/container/text filtering
+- CronJob selected-run log access
 
-## Gap C: Missing resource information
+Remaining improvement space:
 
-Current issue:
+- line limits and retention tuning
+- richer log-level parsing/highlighting
+- saved log presets or queries
 
-- pod table lacks IP and Node columns
-- detail view does not show labels, annotations, or environment variables
-- no owner reference links between resources
+## Gap C: Resource information density (materially improved)
 
-Needed:
+Shipped baseline:
 
-- Pod IP and Node columns in pods table
-- labels/annotations section in detail view
-- owner reference display with jump-to navigation
+- detail metadata includes labels, annotations, owner references, and richer status summaries
+- relationship explorer provides resource-to-resource navigation
+- Flux and CronJob details now have dedicated operator-facing sections
 
-## Gap D: No clipboard integration
+Remaining improvement space:
 
-Current issue:
+- environment-variable and container-resource detail density
+- more summarized cross-resource diagnostics in list views
 
-- no way to copy pod names, IPs, YAML snippets, or log lines
+## Gap D: No clipboard integration (addressed)
 
-Needed:
+Shipped baseline:
 
-- yank/copy to system clipboard for selected values
+- clipboard copy for resource name, namespace/name, and log content
+- workbench-oriented copy flows remove the need to leave the TUI for common inspection tasks
 
-## Gap E: Missing node operations
+## Gap E: Missing node operations (addressed)
 
-Current issue:
-
-- node inspection exists but no operational actions
-
-Needed:
+Shipped baseline:
 
 - cordon / uncordon
 - drain with strong confirmation and progress feedback
 
-## Gap F: Missing resource actions
+## Gap F: Missing resource actions (addressed for current baseline)
 
-Current issue:
-
-- no force delete for stuck resources (finalizers)
-- no manual CronJob trigger
-- no inline replica editing (currently modal only)
-
-Needed:
+Shipped baseline:
 
 - force delete option
 - CronJob manual trigger
-- streamlined scaling UX
+- suspend / resume CronJob
+- RBAC-aware gating so unsupported or forbidden actions stop advertising themselves
 
 ## Gap G: Weak sidebar context
 
@@ -390,18 +386,15 @@ Addressed by Milestone 17 (Resource Bookmarks):
 - dedicated Bookmarks view with jump navigation
 - inline bookmark indicators on bookmarked list rows
 
-## Gap N: Weak CronJob observability
+## Gap N: Weak CronJob observability (addressed)
 
-Current issue:
+Shipped baseline:
 
-- CronJob → Job → Pod chain requires manual navigation
-- no unified execution history view
-
-Needed:
-
-- CronJob execution history panel
-- next-run-time display
-- suspend/resume capability
+- CronJob execution history panel with capped recent Jobs
+- next-run / last-run status in detail
+- selected history row jump into child Job detail
+- selected-run log access when live pods and RBAC allow it
+- suspend / resume and trigger actions integrated into detail, help, history, and palette
 
 ## Gap O: No ephemeral container debugging
 
@@ -1843,7 +1836,13 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M14 are complete. The next milestone is M16: Secret Decoded View & Editor — the highest-impact, lowest-effort feature that every K8s operator will use daily.
+M0-M18 are complete. The next milestone is M19: Ephemeral Debug Container Launcher.
+
+Recommended near-term order:
+
+- M19: Ephemeral Debug Container Launcher
+- M20: Helm Release History & Rollback
+- M21: Resource Utilization Overlay
 
 Do not start next with:
 
