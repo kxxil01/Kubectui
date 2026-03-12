@@ -17,9 +17,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState},
+    app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
@@ -53,6 +55,7 @@ pub fn render_cronjobs(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
@@ -137,7 +140,13 @@ pub fn render_cronjobs(
 
         rows.push(
             Row::new(vec![
-                Cell::from(Span::styled(format!("  {}", cj.name), name_style)),
+                bookmarked_name_cell(
+                    &ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone()),
+                    bookmarks,
+                    cj.name.as_str(),
+                    name_style,
+                    &theme,
+                ),
                 Cell::from(Span::styled(cj.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(cj.schedule.as_str(), accent_style)),
                 Cell::from(Span::styled(last_run, dim_style)),

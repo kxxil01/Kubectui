@@ -4,6 +4,7 @@
 
 pub mod action_history;
 pub mod app;
+pub mod bookmarks;
 pub mod clipboard;
 pub mod columns;
 pub mod coordinator;
@@ -12,6 +13,7 @@ pub mod export;
 pub mod k8s;
 pub mod policy;
 pub mod preferences;
+pub mod secret;
 pub mod state;
 pub mod timeline;
 pub mod ui;

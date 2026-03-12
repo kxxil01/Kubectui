@@ -16,9 +16,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, ResourceRef},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         loading_or_empty_message, table_viewport_rows, table_window,
@@ -94,6 +96,7 @@ pub fn render_ingresses(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
 ) {
@@ -175,10 +178,13 @@ pub fn render_ingresses(
                 )
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", ingress.name),
+                bookmarked_name_cell(
+                    &ResourceRef::Ingress(ingress.name.clone(), ingress.namespace.clone()),
+                    bookmarks,
+                    ingress.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     ingress.namespace.clone(),
                     Style::default().fg(theme.fg_dim),
@@ -239,6 +245,7 @@ pub fn render_ingress_classes(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
 ) {
@@ -294,10 +301,13 @@ pub fn render_ingress_classes(
             };
             let default_label = if ingress_class.is_default { "✓" } else { "" };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", ingress_class.name),
+                bookmarked_name_cell(
+                    &ResourceRef::IngressClass(ingress_class.name.clone()),
+                    bookmarks,
+                    ingress_class.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     ingress_class.controller.clone(),
                     Style::default().fg(theme.fg_dim),

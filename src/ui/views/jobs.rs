@@ -16,9 +16,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState},
+    app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
@@ -50,6 +52,7 @@ pub fn render_jobs(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
@@ -129,10 +132,13 @@ pub fn render_jobs(
             };
 
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", job.name),
+                bookmarked_name_cell(
+                    &ResourceRef::Job(job.name.clone(), job.namespace.clone()),
+                    bookmarks,
+                    job.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     job.namespace.clone(),
                     Style::default().fg(theme.fg_dim),

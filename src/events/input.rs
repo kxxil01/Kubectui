@@ -228,7 +228,9 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         AppAction::LogsViewerSelectAllContainers => true,
         AppAction::LogsViewerToggleTimestamps => true,
         AppAction::OpenResourceYaml => true,
+        AppAction::OpenDecodedSecret => true,
         AppAction::OpenResourceEvents => true,
+        AppAction::ToggleBookmark => true,
         AppAction::OpenActionHistory => {
             app_state.open_action_history_tab(true);
             true
@@ -238,6 +240,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.open_port_forward();
             true
         }
+        AppAction::SaveDecodedSecret => true,
         AppAction::PortForwardCreate(_)
         | AppAction::PortForwardRefresh
         | AppAction::PortForwardStop(_) => {

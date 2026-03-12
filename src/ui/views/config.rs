@@ -16,9 +16,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, ResourceRef},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
@@ -86,6 +88,7 @@ pub fn render_config_maps(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
 ) {
@@ -147,10 +150,13 @@ pub fn render_config_maps(
                 format_small_int(cm.data_count as i64)
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", cm.name),
+                bookmarked_name_cell(
+                    &ResourceRef::ConfigMap(cm.name.clone(), cm.namespace.clone()),
+                    bookmarks,
+                    cm.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     cm.namespace.clone(),
                     Style::default().fg(theme.fg_dim),
@@ -263,6 +269,7 @@ pub fn render_secrets(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
 ) {
@@ -325,10 +332,13 @@ pub fn render_secrets(
                 format_small_int(secret.data_count as i64)
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", secret.name),
+                bookmarked_name_cell(
+                    &ResourceRef::Secret(secret.name.clone(), secret.namespace.clone()),
+                    bookmarks,
+                    secret.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     secret.namespace.clone(),
                     Style::default().fg(theme.fg_dim),

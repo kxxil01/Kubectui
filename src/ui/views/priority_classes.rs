@@ -16,9 +16,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, ResourceRef},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
@@ -88,6 +90,7 @@ pub fn render_priority_classes(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
 ) {
@@ -161,10 +164,13 @@ pub fn render_priority_classes(
                 )
             };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", priority_class.name),
+                bookmarked_name_cell(
+                    &ResourceRef::PriorityClass(priority_class.name.clone()),
+                    bookmarks,
+                    priority_class.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(value, Style::default().fg(theme.info))),
                 Cell::from(Span::styled(
                     default_label,

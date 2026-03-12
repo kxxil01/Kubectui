@@ -36,6 +36,8 @@ pub enum RelationshipCapability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DetailAction {
     ViewYaml,
+    ViewDecodedSecret,
+    ToggleBookmark,
     ViewEvents,
     Logs,
     Exec,
@@ -60,8 +62,10 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 16] = [
+    pub const ORDER: [DetailAction; 18] = [
         DetailAction::ViewYaml,
+        DetailAction::ViewDecodedSecret,
+        DetailAction::ToggleBookmark,
         DetailAction::ViewEvents,
         DetailAction::Logs,
         DetailAction::Exec,
@@ -82,6 +86,8 @@ impl DetailAction {
     pub const fn key_hint(self) -> &'static str {
         match self {
             DetailAction::ViewYaml => "[y]",
+            DetailAction::ViewDecodedSecret => "[o]",
+            DetailAction::ToggleBookmark => "[B]",
             DetailAction::ViewEvents => "[v]",
             DetailAction::Logs => "[l]",
             DetailAction::Exec => "[x]",
@@ -102,6 +108,8 @@ impl DetailAction {
     pub const fn label(self) -> &'static str {
         match self {
             DetailAction::ViewYaml => "YAML",
+            DetailAction::ViewDecodedSecret => "Decoded",
+            DetailAction::ToggleBookmark => "Bookmark",
             DetailAction::ViewEvents => "Events",
             DetailAction::Logs => "Logs",
             DetailAction::Exec => "Exec",
@@ -247,6 +255,7 @@ impl AppView {
     pub const fn persistence_capabilities(self) -> &'static [ViewPersistenceCapability] {
         match self {
             AppView::Dashboard
+            | AppView::Bookmarks
             | AppView::PortForwarding
             | AppView::HelmCharts
             | AppView::Extensions
@@ -359,6 +368,8 @@ impl ResourceRef {
     ) -> bool {
         match action {
             DetailAction::ViewYaml | DetailAction::ViewEvents => true,
+            DetailAction::ViewDecodedSecret => matches!(self, ResourceRef::Secret(_, _)),
+            DetailAction::ToggleBookmark => true,
             DetailAction::Logs => matches!(
                 self,
                 ResourceRef::Pod(_, _)
@@ -431,6 +442,8 @@ impl DetailViewState {
         let requires_clear_surface = matches!(
             action,
             DetailAction::ViewYaml
+                | DetailAction::ViewDecodedSecret
+                | DetailAction::ToggleBookmark
                 | DetailAction::ViewEvents
                 | DetailAction::Logs
                 | DetailAction::Exec
@@ -619,6 +632,24 @@ mod tests {
         assert!(!detail.supports_action(DetailAction::ViewYaml));
         assert!(!detail.supports_action(DetailAction::Delete));
         assert!(!detail.supports_action(DetailAction::Cordon));
+    }
+
+    #[test]
+    fn secret_resources_support_decoded_secret_action() {
+        let secret = ResourceRef::Secret("app-secret".to_string(), "default".to_string());
+        let config_map = ResourceRef::ConfigMap("app-config".to_string(), "default".to_string());
+
+        assert!(secret.supports_detail_action(DetailAction::ViewDecodedSecret, None));
+        assert!(!config_map.supports_detail_action(DetailAction::ViewDecodedSecret, None));
+    }
+
+    #[test]
+    fn bookmark_action_is_available_for_resources() {
+        let pod = ResourceRef::Pod("api".to_string(), "default".to_string());
+        let cluster_role = ResourceRef::ClusterRole("admin".to_string());
+
+        assert!(pod.supports_detail_action(DetailAction::ToggleBookmark, None));
+        assert!(cluster_role.supports_detail_action(DetailAction::ToggleBookmark, None));
     }
 
     #[test]

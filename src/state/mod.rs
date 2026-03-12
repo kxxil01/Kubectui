@@ -313,8 +313,8 @@ impl ClusterSnapshot {
                     .count(),
             ),
             AppView::Issues => Some(self.issue_count),
-            // Dashboard and PortForwarding don't have direct collections
-            AppView::Dashboard | AppView::PortForwarding => None,
+            // Dashboard, Bookmarks, and PortForwarding don't have direct collections
+            AppView::Dashboard | AppView::Bookmarks | AppView::PortForwarding => None,
         }
     }
 }
@@ -998,6 +998,7 @@ impl GlobalState {
                     || !self.snapshot.services.is_empty()
                     || !self.snapshot.deployments.is_empty()
             }
+            AppView::Bookmarks => false,
             AppView::Nodes => !self.snapshot.nodes.is_empty(),
             AppView::Namespaces => !self.snapshot.namespace_list.is_empty(),
             AppView::Events => !self.snapshot.events.is_empty(),

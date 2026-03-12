@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     action_history::{ActionHistoryState, ActionHistoryTarget, ActionKind, ActionStatus},
+    bookmarks::{BookmarkEntry, BookmarkToggleResult, selected_bookmark_resource, toggle_bookmark},
     k8s::{
         client::EventInfo,
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodInfo, PodMetricsInfo},
@@ -24,9 +25,9 @@ use crate::{
     },
     ui::contains_ci,
     workbench::{
-        ActionHistoryTabState, DEFAULT_WORKBENCH_HEIGHT, ExecTabState, PodLogsTabState,
-        PortForwardTabState, ResourceEventsTabState, ResourceYamlTabState, WorkbenchState,
-        WorkbenchTabState, WorkloadLogsTabState,
+        ActionHistoryTabState, DEFAULT_WORKBENCH_HEIGHT, DecodedSecretTabState, ExecTabState,
+        PodLogsTabState, PortForwardTabState, ResourceEventsTabState, ResourceYamlTabState,
+        WorkbenchState, WorkbenchTabState, WorkloadLogsTabState,
     },
 };
 
@@ -103,6 +104,7 @@ impl NavGroup {
 pub enum AppView {
     // Overview
     Dashboard,
+    Bookmarks,
     Nodes,
     // Workloads
     Pods,
@@ -162,9 +164,10 @@ pub enum AppView {
 }
 
 impl AppView {
-    const ORDER: [AppView; 47] = [
+    const ORDER: [AppView; 48] = [
         // Overview
         AppView::Dashboard,
+        AppView::Bookmarks,
         AppView::Issues,
         AppView::Nodes,
         AppView::Namespaces,
@@ -227,6 +230,7 @@ impl AppView {
     pub const fn label(self) -> &'static str {
         match self {
             AppView::Dashboard => "Dashboard",
+            AppView::Bookmarks => "Bookmarks",
             AppView::Nodes => "Nodes",
             AppView::Pods => "Pods",
             AppView::Deployments => "Deployments",
@@ -280,6 +284,7 @@ impl AppView {
     pub const fn icon(self) -> &'static str {
         match self {
             AppView::Dashboard => "󰋗",
+            AppView::Bookmarks => "",
             AppView::Nodes => "󰒋",
             AppView::Pods => "󰠳",
             AppView::Deployments => "󰆧",
@@ -333,6 +338,7 @@ impl AppView {
     pub const fn sidebar_text(self) -> &'static str {
         match self {
             AppView::Dashboard => "  󰋗 Dashboard",
+            AppView::Bookmarks => "   Bookmarks",
             AppView::Nodes => "  󰒋 Nodes",
             AppView::Pods => "  󰠳 Pods",
             AppView::Deployments => "  󰆧 Deployments",
@@ -386,6 +392,7 @@ impl AppView {
     pub const fn profiling_key(self) -> &'static str {
         match self {
             AppView::Dashboard => "view.dashboard",
+            AppView::Bookmarks => "view.bookmarks",
             AppView::Nodes => "view.nodes",
             AppView::Pods => "view.pods",
             AppView::Deployments => "view.deployments",
@@ -438,7 +445,9 @@ impl AppView {
     /// Returns the NavGroup this view belongs to.
     pub const fn group(self) -> NavGroup {
         match self {
-            AppView::Dashboard | AppView::Issues | AppView::Nodes => NavGroup::Overview,
+            AppView::Dashboard | AppView::Bookmarks | AppView::Issues | AppView::Nodes => {
+                NavGroup::Overview
+            }
             AppView::Pods
             | AppView::Deployments
             | AppView::StatefulSets
@@ -526,7 +535,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 47] {
+    pub const fn tabs() -> &'static [AppView; 48] {
         &Self::ORDER
     }
 }
@@ -831,7 +840,7 @@ where
 }
 
 /// Logical pointer to a resource selected in the current view.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ResourceRef {
     Node(String),
     Pod(String, String),
@@ -992,6 +1001,47 @@ impl ResourceRef {
             | ResourceRef::RoleBinding(_, ns) => Some(ns),
             ResourceRef::HelmRelease(_, ns) => Some(ns),
             ResourceRef::CustomResource { namespace, .. } => namespace.as_deref(),
+        }
+    }
+
+    pub fn primary_view(&self) -> Option<AppView> {
+        match self {
+            ResourceRef::Node(_) => Some(AppView::Nodes),
+            ResourceRef::Pod(_, _) => Some(AppView::Pods),
+            ResourceRef::Service(_, _) => Some(AppView::Services),
+            ResourceRef::Deployment(_, _) => Some(AppView::Deployments),
+            ResourceRef::StatefulSet(_, _) => Some(AppView::StatefulSets),
+            ResourceRef::DaemonSet(_, _) => Some(AppView::DaemonSets),
+            ResourceRef::ReplicaSet(_, _) => Some(AppView::ReplicaSets),
+            ResourceRef::ReplicationController(_, _) => Some(AppView::ReplicationControllers),
+            ResourceRef::Job(_, _) => Some(AppView::Jobs),
+            ResourceRef::CronJob(_, _) => Some(AppView::CronJobs),
+            ResourceRef::ResourceQuota(_, _) => Some(AppView::ResourceQuotas),
+            ResourceRef::LimitRange(_, _) => Some(AppView::LimitRanges),
+            ResourceRef::PodDisruptionBudget(_, _) => Some(AppView::PodDisruptionBudgets),
+            ResourceRef::Endpoint(_, _) => Some(AppView::Endpoints),
+            ResourceRef::Ingress(_, _) => Some(AppView::Ingresses),
+            ResourceRef::IngressClass(_) => Some(AppView::IngressClasses),
+            ResourceRef::NetworkPolicy(_, _) => Some(AppView::NetworkPolicies),
+            ResourceRef::ConfigMap(_, _) => Some(AppView::ConfigMaps),
+            ResourceRef::Secret(_, _) => Some(AppView::Secrets),
+            ResourceRef::Hpa(_, _) => Some(AppView::HPAs),
+            ResourceRef::PriorityClass(_) => Some(AppView::PriorityClasses),
+            ResourceRef::Pvc(_, _) => Some(AppView::PersistentVolumeClaims),
+            ResourceRef::Pv(_) => Some(AppView::PersistentVolumes),
+            ResourceRef::StorageClass(_) => Some(AppView::StorageClasses),
+            ResourceRef::Namespace(_) => Some(AppView::Namespaces),
+            ResourceRef::Event(_, _) => Some(AppView::Events),
+            ResourceRef::ServiceAccount(_, _) => Some(AppView::ServiceAccounts),
+            ResourceRef::Role(_, _) => Some(AppView::Roles),
+            ResourceRef::RoleBinding(_, _) => Some(AppView::RoleBindings),
+            ResourceRef::ClusterRole(_) => Some(AppView::ClusterRoles),
+            ResourceRef::ClusterRoleBinding(_) => Some(AppView::ClusterRoleBindings),
+            ResourceRef::HelmRelease(_, _) => Some(AppView::HelmReleases),
+            ResourceRef::CustomResource { group, .. } if group.ends_with(".fluxcd.io") => {
+                Some(AppView::FluxCDAll)
+            }
+            ResourceRef::CustomResource { .. } => None,
         }
     }
 }
@@ -1224,6 +1274,7 @@ const SIDEBAR_GROUPS: &[(NavGroup, &[AppView])] = &[
         NavGroup::Overview,
         &[
             AppView::Dashboard,
+            AppView::Bookmarks,
             AppView::Issues,
             AppView::Nodes,
             AppView::Namespaces,
@@ -1391,6 +1442,7 @@ pub enum AppAction {
     LogsViewerSearchNext,
     LogsViewerSearchPrev,
     OpenResourceYaml,
+    OpenDecodedSecret,
     OpenResourceEvents,
     OpenActionHistory,
     OpenExec,
@@ -1437,6 +1489,8 @@ pub enum AppAction {
     CopyResourceFullName,
     CopyLogContent,
     ExportLogs,
+    ToggleBookmark,
+    SaveDecodedSecret,
     PaletteAction {
         action: crate::policy::DetailAction,
         resource: ResourceRef,
@@ -2068,6 +2122,55 @@ impl AppState {
         global.views.entry(view_key.to_string()).or_default()
     }
 
+    fn cluster_prefs_mut(&mut self) -> Option<&mut ClusterPreferences> {
+        let context = self.current_context_name.clone()?;
+        let clusters = self
+            .cluster_preferences
+            .get_or_insert_with(Default::default);
+        Some(clusters.entry(context).or_default())
+    }
+
+    pub fn bookmarks(&self) -> &[BookmarkEntry] {
+        self.current_context_name
+            .as_deref()
+            .and_then(|ctx| {
+                self.cluster_preferences
+                    .as_ref()
+                    .and_then(|clusters| clusters.get(ctx))
+            })
+            .map(|prefs| prefs.bookmarks.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn bookmark_count(&self) -> usize {
+        self.bookmarks().len()
+    }
+
+    pub fn is_bookmarked(&self, resource: &ResourceRef) -> bool {
+        self.bookmarks()
+            .iter()
+            .any(|bookmark| &bookmark.resource == resource)
+    }
+
+    pub fn toggle_bookmark(
+        &mut self,
+        resource: ResourceRef,
+    ) -> Result<BookmarkToggleResult, String> {
+        let Some(cluster_prefs) = self.cluster_prefs_mut() else {
+            return Err(
+                "Current kube context is unavailable; cannot persist cluster bookmarks."
+                    .to_string(),
+            );
+        };
+        let result = toggle_bookmark(&mut cluster_prefs.bookmarks, resource)?;
+        self.needs_config_save = true;
+        Ok(result)
+    }
+
+    pub fn selected_bookmark_resource(&self) -> Option<ResourceRef> {
+        selected_bookmark_resource(self.bookmarks(), self.selected_idx, self.search_query())
+    }
+
     /// Toggles a column's visibility in user preferences for the current view.
     fn toggle_column_visibility(&mut self, column_id: &str) {
         let view_key = crate::columns::view_key(self.view);
@@ -2373,6 +2476,23 @@ impl AppState {
         self.focus = Focus::Workbench;
     }
 
+    pub fn open_decoded_secret_tab(
+        &mut self,
+        resource: ResourceRef,
+        source_yaml: Option<String>,
+        error: Option<String>,
+        pending_request_id: Option<u64>,
+    ) {
+        let mut tab = DecodedSecretTabState::new(resource);
+        tab.source_yaml = source_yaml;
+        tab.loading = tab.source_yaml.is_none() && error.is_none();
+        tab.error = error;
+        tab.pending_request_id = pending_request_id;
+        self.workbench
+            .open_tab(WorkbenchTabState::DecodedSecret(tab));
+        self.focus = Focus::Workbench;
+    }
+
     pub fn open_resource_events_tab(
         &mut self,
         resource: ResourceRef,
@@ -2577,6 +2697,83 @@ impl AppState {
                 }
                 _ => AppAction::None,
             },
+            WorkbenchTabState::DecodedSecret(tab) => {
+                if tab.editing {
+                    match key.code {
+                        KeyCode::Esc => {
+                            tab.editing = false;
+                            tab.edit_input.clear();
+                            AppAction::None
+                        }
+                        KeyCode::Enter => {
+                            let edited = std::mem::take(&mut tab.edit_input);
+                            if let Some(entry) = tab.selected_entry_mut() {
+                                entry.commit_edit(edited);
+                            }
+                            tab.editing = false;
+                            AppAction::None
+                        }
+                        KeyCode::Backspace => {
+                            tab.edit_input.pop();
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.edit_input.clear();
+                            AppAction::None
+                        }
+                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.edit_input.push(c);
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if !tab.entries.is_empty() {
+                                tab.selected =
+                                    (tab.selected + 1).min(tab.entries.len().saturating_sub(1));
+                                tab.scroll = tab.scroll.max(tab.selected.saturating_sub(1));
+                            }
+                            AppAction::None
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            tab.selected = tab.selected.saturating_sub(1);
+                            tab.scroll = tab.scroll.min(tab.selected);
+                            AppAction::None
+                        }
+                        KeyCode::Char('g') => {
+                            tab.selected = 0;
+                            tab.scroll = 0;
+                            AppAction::None
+                        }
+                        KeyCode::Char('G') => {
+                            let max = tab.entries.len().saturating_sub(1);
+                            tab.selected = max;
+                            tab.scroll = max;
+                            AppAction::None
+                        }
+                        KeyCode::Char('m') => {
+                            tab.masked = !tab.masked;
+                            AppAction::None
+                        }
+                        KeyCode::Char('e') | KeyCode::Enter => {
+                            if let Some(entry) = tab.selected_entry()
+                                && let Some(value) = entry.editable_text()
+                            {
+                                tab.edit_input = value.to_string();
+                                tab.editing = true;
+                            }
+                            AppAction::None
+                        }
+                        KeyCode::Char('s') if tab.has_unsaved_changes() => {
+                            AppAction::SaveDecodedSecret
+                        }
+                        _ => AppAction::None,
+                    }
+                }
+            }
             WorkbenchTabState::ResourceEvents(tab) => {
                 let max_scroll = tab.timeline.len().saturating_sub(1);
                 match key.code {
@@ -2923,12 +3120,17 @@ impl AppState {
         let allow_plain_r = match &tab.state {
             WorkbenchTabState::ActionHistory(_)
             | WorkbenchTabState::ResourceYaml(_)
+            | WorkbenchTabState::DecodedSecret(crate::workbench::DecodedSecretTabState {
+                editing: false,
+                ..
+            })
             | WorkbenchTabState::ResourceEvents(_)
             | WorkbenchTabState::Relations(_) => true,
             WorkbenchTabState::PodLogs(tab) => {
                 !tab.viewer.searching && !tab.viewer.picking_container
             }
             WorkbenchTabState::WorkloadLogs(tab) => !tab.editing_text_filter,
+            WorkbenchTabState::DecodedSecret(_) => false,
             WorkbenchTabState::Exec(_) | WorkbenchTabState::PortForward(_) => false,
         };
 
@@ -3155,6 +3357,33 @@ impl AppState {
                 }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::OpenResourceYaml
+            }
+            KeyCode::Char('o')
+                if self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::ViewDecodedSecret)
+                }) || (self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && self.view == AppView::Secrets) =>
+            {
+                AppAction::OpenDecodedSecret
+            }
+            KeyCode::Char('B')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .and_then(|detail| detail.resource.as_ref())
+                    .is_some()
+                    || (self.detail_view.is_none()
+                        && self.focus == Focus::Content
+                        && !matches!(
+                            self.view,
+                            AppView::Dashboard
+                                | AppView::HelmCharts
+                                | AppView::PortForwarding
+                                | AppView::Extensions
+                        )) =>
+            {
+                AppAction::ToggleBookmark
             }
             KeyCode::Char('Y') if self.detail_view.is_none() && self.focus == Focus::Content => {
                 AppAction::CopyResourceFullName
@@ -3637,6 +3866,7 @@ mod tests {
         let mut app = AppState::default();
         let expected = [
             // Overview
+            AppView::Bookmarks,
             AppView::Issues,
             AppView::Nodes,
             AppView::Namespaces,
@@ -4488,6 +4718,78 @@ mod tests {
     }
 
     #[test]
+    fn o_key_opens_decoded_secret_in_secret_detail() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Secret(
+                "app-secret".to_string(),
+                "default".to_string(),
+            )),
+            yaml: Some("kind: Secret".to_string()),
+            ..DetailViewState::default()
+        });
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert_eq!(action, AppAction::OpenDecodedSecret);
+    }
+
+    #[test]
+    fn o_key_opens_decoded_secret_from_secrets_list() {
+        let mut app = AppState::default();
+        app.view = AppView::Secrets;
+        app.focus = Focus::Content;
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert_eq!(action, AppAction::OpenDecodedSecret);
+    }
+
+    #[test]
+    fn o_key_does_not_open_decoded_secret_for_non_secret_detail() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::ConfigMap(
+                "app-config".to_string(),
+                "default".to_string(),
+            )),
+            yaml: Some("kind: ConfigMap".to_string()),
+            ..DetailViewState::default()
+        });
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('o'), KeyModifiers::NONE));
+        assert_eq!(action, AppAction::None);
+    }
+
+    #[test]
+    fn uppercase_b_toggles_bookmark_for_selected_resource() {
+        let mut app = AppState::default();
+        app.view = AppView::Pods;
+        app.focus = Focus::Content;
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
+        assert_eq!(action, AppAction::ToggleBookmark);
+    }
+
+    #[test]
+    fn toggle_bookmark_persists_per_current_context() {
+        let mut app = AppState::default();
+        app.current_context_name = Some("prod".to_string());
+
+        let result = app
+            .toggle_bookmark(ResourceRef::Secret(
+                "app-secret".to_string(),
+                "default".to_string(),
+            ))
+            .expect("bookmark added");
+        assert_eq!(result, BookmarkToggleResult::Added);
+        assert_eq!(app.bookmark_count(), 1);
+        assert!(app.is_bookmarked(&ResourceRef::Secret(
+            "app-secret".to_string(),
+            "default".to_string(),
+        )));
+        assert!(app.needs_config_save);
+    }
+
+    #[test]
     fn apply_sort_from_preferences_pods() {
         use crate::preferences::{UserPreferences, ViewPreferences};
         let mut app = AppState::default();
@@ -4601,6 +4903,10 @@ mod tests {
                 ..Default::default()
             },
         );
+        cluster_prefs.bookmarks.push(BookmarkEntry {
+            resource: ResourceRef::Secret("app-secret".to_string(), "default".to_string()),
+            bookmarked_at_unix: 42,
+        });
         let mut clusters = HashMap::new();
         clusters.insert("prod".into(), cluster_prefs);
         app.cluster_preferences = Some(clusters);
@@ -4621,6 +4927,8 @@ mod tests {
         let prod = clusters.get("prod").unwrap();
         let prod_pods = prod.views.get("pods").unwrap();
         assert_eq!(prod_pods.sort_column.as_deref(), Some("status"));
+        assert_eq!(prod.bookmarks.len(), 1);
+        assert_eq!(prod.bookmarks[0].bookmarked_at_unix, 42);
 
         assert!(loaded.collapsed_groups.contains(&NavGroup::FluxCD));
         assert!(loaded.collapsed_groups.contains(&NavGroup::AccessControl));
