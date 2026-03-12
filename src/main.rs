@@ -690,7 +690,9 @@ fn set_transient_status(
     status_message_clear_at: &mut Option<Instant>,
     message: impl Into<String>,
 ) {
-    app.set_status(message.into());
+    let msg = message.into();
+    app.push_toast(msg.clone(), false);
+    app.set_status(msg);
     *status_message_clear_at =
         Some(Instant::now() + Duration::from_secs(STATUS_MESSAGE_TIMEOUT_SECS));
 }
@@ -1265,7 +1267,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     // Render-skip: only redraw when state actually changed
     let mut needs_redraw = true;
 
-    let mut tick = tokio::time::interval(Duration::from_millis(200));
+    let mut tick = tokio::time::interval(Duration::from_millis(50));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     // Auto-refresh: periodically re-fetch cluster data
@@ -2355,6 +2357,18 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 if status_message_clear_at.is_some_and(|deadline| Instant::now() >= deadline) {
                     app.clear_status();
                     status_message_clear_at = None;
+                    needs_redraw = true;
+                }
+                // Animate spinner during loading/refreshing phases
+                let phase = cached_snapshot.phase;
+                if matches!(phase, DataPhase::Loading | DataPhase::Idle)
+                    || refresh_state.in_flight_id.is_some()
+                {
+                    app.advance_spinner();
+                    needs_redraw = true;
+                }
+                // Expire old toasts
+                if app.expire_toasts() {
                     needs_redraw = true;
                 }
             }
@@ -4878,6 +4892,7 @@ async fn fetch_detail_view(
         probe_panel: None,
         confirm_delete: false,
         confirm_drain: false,
+        metadata_expanded: false,
     })
 }
 

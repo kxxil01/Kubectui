@@ -426,6 +426,12 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs (needs async K8s call)
             true
         }
+        AppAction::ToggleDetailMetadata => {
+            if let Some(detail) = &mut app_state.detail_view {
+                detail.metadata_expanded = !detail.metadata_expanded;
+            }
+            true
+        }
     }
 }
 

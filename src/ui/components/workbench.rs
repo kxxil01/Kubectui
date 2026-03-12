@@ -261,6 +261,108 @@ fn render_action_history_line(
     ])
 }
 
+/// Syntax-highlight a single YAML line into styled spans.
+fn highlight_yaml_line<'a>(line: &'a str, theme: &crate::ui::theme::Theme) -> Vec<Span<'a>> {
+    let trimmed = line.trim_start();
+
+    // Comment lines
+    if trimmed.starts_with('#') {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.muted),
+        )];
+    }
+
+    // Separator lines (---)
+    if trimmed == "---" {
+        return vec![Span::styled(
+            line.to_string(),
+            Style::default().fg(theme.muted),
+        )];
+    }
+
+    // List items: "  - value"
+    if let Some(rest) = trimmed.strip_prefix("- ") {
+        let indent = line.len() - trimmed.len();
+        let mut spans = Vec::with_capacity(3);
+        if indent > 0 {
+            spans.push(Span::raw(&line[..indent]));
+        }
+        spans.push(Span::styled("- ", Style::default().fg(theme.muted)));
+        // Check if the rest is a key: value pair
+        if let Some(colon_pos) = rest.find(": ") {
+            spans.push(Span::styled(
+                rest[..colon_pos].to_string(),
+                Style::default().fg(theme.accent),
+            ));
+            spans.push(Span::styled(": ", Style::default().fg(theme.muted)));
+            spans.extend(highlight_yaml_value(&rest[colon_pos + 2..], theme));
+        } else {
+            spans.push(Span::raw(rest.to_string()));
+        }
+        return spans;
+    }
+
+    // Key: value lines
+    if let Some(colon_pos) = trimmed.find(": ") {
+        let indent = line.len() - trimmed.len();
+        let mut spans = Vec::with_capacity(4);
+        if indent > 0 {
+            spans.push(Span::raw(&line[..indent]));
+        }
+        spans.push(Span::styled(
+            trimmed[..colon_pos].to_string(),
+            Style::default().fg(theme.accent),
+        ));
+        spans.push(Span::styled(": ", Style::default().fg(theme.muted)));
+        spans.extend(highlight_yaml_value(&trimmed[colon_pos + 2..], theme));
+        return spans;
+    }
+
+    // Key-only lines ending with ":"
+    if trimmed.ends_with(':') && !trimmed.is_empty() {
+        let indent = line.len() - trimmed.len();
+        let mut spans = Vec::with_capacity(2);
+        if indent > 0 {
+            spans.push(Span::raw(&line[..indent]));
+        }
+        spans.push(Span::styled(
+            trimmed.to_string(),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ));
+        return spans;
+    }
+
+    // Plain text fallback
+    vec![Span::raw(line.to_string())]
+}
+
+/// Highlight a YAML value based on type (bool, null, number, string).
+fn highlight_yaml_value<'a>(value: &'a str, theme: &crate::ui::theme::Theme) -> Vec<Span<'a>> {
+    let v = value.trim();
+    match v {
+        "true" | "false" => vec![Span::styled(
+            value.to_string(),
+            Style::default().fg(theme.success),
+        )],
+        "null" | "~" => vec![Span::styled(
+            value.to_string(),
+            Style::default().fg(theme.muted),
+        )],
+        _ if v.starts_with('"') || v.starts_with('\'') => vec![Span::styled(
+            value.to_string(),
+            Style::default().fg(theme.warning),
+        )],
+        _ if v.parse::<f64>().is_ok() => vec![Span::styled(
+            value.to_string(),
+            Style::default().fg(theme.accent2),
+        )],
+        _ => vec![Span::raw(value.to_string())],
+    }
+}
+
 fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &WorkbenchTab) {
     let theme = default_theme();
     let WorkbenchTabState::ResourceYaml(tab_state) = &tab.state else {
@@ -302,10 +404,12 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
             .skip(window.start)
             .take(window.end.saturating_sub(window.start))
             .map(|(idx, line)| {
-                Line::from(vec![
-                    Span::styled(format!("{:>4} ", idx + 1), theme.muted_style()),
-                    Span::raw(line.to_string()),
-                ])
+                let mut spans = vec![Span::styled(
+                    format!("{:>4} ", idx + 1),
+                    theme.muted_style(),
+                )];
+                spans.extend(highlight_yaml_line(line, &theme));
+                Line::from(spans)
             })
             .collect()
     } else {
