@@ -8,7 +8,7 @@ pub mod port_forward;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::{collections::HashSet, fmt, sync::LazyLock, time::Duration};
+use std::{collections::HashSet, fmt, sync::Arc, sync::LazyLock, time::Duration};
 use tokio::sync::Semaphore;
 
 use crate::app::{AppView, ResourceRef};
@@ -25,9 +25,12 @@ use crate::k8s::{
     },
 };
 
-const MAX_CONCURRENT_RESOURCE_FETCHES: usize = 8;
-static RESOURCE_FETCH_SEMAPHORE: LazyLock<Semaphore> =
-    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_RESOURCE_FETCHES));
+const MAX_CONCURRENT_CORE_FETCHES: usize = 8;
+const MAX_CONCURRENT_SECONDARY_FETCHES: usize = 4;
+static CORE_FETCH_SEMAPHORE: LazyLock<Semaphore> =
+    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_CORE_FETCHES));
+static SECONDARY_FETCH_SEMAPHORE: LazyLock<Semaphore> =
+    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_SECONDARY_FETCHES));
 
 /// High-level data loading phase for cluster resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -567,11 +570,15 @@ impl ClusterDataSource for K8sClient {
 }
 
 /// Mutable state holder with async refresh operations.
+///
+/// `snapshot` is `Arc<ClusterSnapshot>` so that `GlobalState::clone()` is a
+/// cheap atomic refcount bump instead of deep-copying 30+ `Vec<T>` fields.
+/// When the spawned refresh task needs to mutate the snapshot it calls
+/// `Arc::make_mut`, triggering a copy-on-write clone asynchronously — off the
+/// main event loop.
 #[derive(Debug, Clone, Default)]
 pub struct GlobalState {
-    snapshot: ClusterSnapshot,
-    /// Cached Arc snapshot — only rebuilt when data changes.
-    arc_snapshot: std::sync::Arc<ClusterSnapshot>,
+    snapshot: Arc<ClusterSnapshot>,
     pub namespaces: Vec<String>,
     snapshot_dirty: bool,
 }
@@ -679,20 +686,20 @@ where
 
 impl GlobalState {
     /// Returns a cheap Arc-wrapped snapshot for UI rendering.
-    /// No deep clone — just an Arc pointer bump.
-    pub fn snapshot(&self) -> std::sync::Arc<ClusterSnapshot> {
-        self.arc_snapshot.clone()
+    /// No deep clone — just an Arc refcount bump.
+    pub fn snapshot(&self) -> Arc<ClusterSnapshot> {
+        self.snapshot.clone()
     }
 
-    /// Rebuilds the Arc snapshot from the inner mutable snapshot.
-    /// Called after every successful refresh.
+    /// Recomputes derived fields (issue count) and clears the dirty flag.
+    /// Called after every successful refresh or optimistic mutation.
     fn publish_snapshot(&mut self) {
         if !self.snapshot_dirty {
             return;
         }
         self.snapshot_dirty = false;
-        self.snapshot.issue_count = issues::compute_issues(&self.snapshot).len();
-        self.arc_snapshot = std::sync::Arc::new(self.snapshot.clone());
+        let count = issues::compute_issues(&self.snapshot).len();
+        Arc::make_mut(&mut self.snapshot).issue_count = count;
     }
 
     /// Returns fetched namespaces.
@@ -702,9 +709,10 @@ impl GlobalState {
 
     /// Applies an optimistic node schedulable state change after cordon/uncordon.
     pub fn apply_optimistic_node_schedulable(&mut self, node_name: &str, unschedulable: bool) {
-        if let Some(node) = self.snapshot.nodes.iter_mut().find(|n| n.name == node_name) {
+        let snap = Arc::make_mut(&mut self.snapshot);
+        if let Some(node) = snap.nodes.iter_mut().find(|n| n.name == node_name) {
             node.unschedulable = unschedulable;
-            self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
+            snap.snapshot_version = snap.snapshot_version.saturating_add(1);
             self.snapshot_dirty = true;
             self.publish_snapshot();
         }
@@ -713,171 +721,168 @@ impl GlobalState {
     /// Applies a successful delete locally so the list updates immediately
     /// before the background refresh completes.
     pub fn apply_optimistic_delete(&mut self, resource: &ResourceRef) {
+        let snap = Arc::make_mut(&mut self.snapshot);
         let changed = match resource {
-            ResourceRef::Node(name) => {
-                remove_named(&mut self.snapshot.nodes, |item| &item.name, name)
-            }
+            ResourceRef::Node(name) => remove_named(&mut snap.nodes, |item| &item.name, name),
             ResourceRef::Pod(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.pods,
+                &mut snap.pods,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::Service(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.services,
+                &mut snap.services,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::Deployment(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.deployments,
+                &mut snap.deployments,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::StatefulSet(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.statefulsets,
+                &mut snap.statefulsets,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::DaemonSet(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.daemonsets,
+                &mut snap.daemonsets,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::ReplicaSet(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.replicasets,
+                &mut snap.replicasets,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::ReplicationController(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.replication_controllers,
+                &mut snap.replication_controllers,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::Job(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.jobs,
+                &mut snap.jobs,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::CronJob(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.cronjobs,
+                &mut snap.cronjobs,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::ResourceQuota(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.resource_quotas,
+                &mut snap.resource_quotas,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::LimitRange(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.limit_ranges,
+                &mut snap.limit_ranges,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::PodDisruptionBudget(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.pod_disruption_budgets,
+                &mut snap.pod_disruption_budgets,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::Endpoint(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.endpoints,
+                &mut snap.endpoints,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::Ingress(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.ingresses,
+                &mut snap.ingresses,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::IngressClass(name) => {
-                remove_named(&mut self.snapshot.ingress_classes, |item| &item.name, name)
+                remove_named(&mut snap.ingress_classes, |item| &item.name, name)
             }
             ResourceRef::NetworkPolicy(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.network_policies,
+                &mut snap.network_policies,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::ConfigMap(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.config_maps,
+                &mut snap.config_maps,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::Secret(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.secrets,
+                &mut snap.secrets,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::Hpa(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.hpas,
+                &mut snap.hpas,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::PriorityClass(name) => {
-                remove_named(&mut self.snapshot.priority_classes, |item| &item.name, name)
+                remove_named(&mut snap.priority_classes, |item| &item.name, name)
             }
             ResourceRef::Pvc(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.pvcs,
+                &mut snap.pvcs,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
-            ResourceRef::Pv(name) => remove_named(&mut self.snapshot.pvs, |item| &item.name, name),
+            ResourceRef::Pv(name) => remove_named(&mut snap.pvs, |item| &item.name, name),
             ResourceRef::StorageClass(name) => {
-                remove_named(&mut self.snapshot.storage_classes, |item| &item.name, name)
+                remove_named(&mut snap.storage_classes, |item| &item.name, name)
             }
             ResourceRef::Namespace(name) => {
-                remove_named(&mut self.snapshot.namespace_list, |item| &item.name, name)
+                remove_named(&mut snap.namespace_list, |item| &item.name, name)
             }
             ResourceRef::Event(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.events,
+                &mut snap.events,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::ServiceAccount(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.service_accounts,
+                &mut snap.service_accounts,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::Role(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.roles,
+                &mut snap.roles,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::RoleBinding(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.role_bindings,
+                &mut snap.role_bindings,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
             ),
             ResourceRef::ClusterRole(name) => {
-                remove_named(&mut self.snapshot.cluster_roles, |item| &item.name, name)
+                remove_named(&mut snap.cluster_roles, |item| &item.name, name)
             }
-            ResourceRef::ClusterRoleBinding(name) => remove_named(
-                &mut self.snapshot.cluster_role_bindings,
-                |item| &item.name,
-                name,
-            ),
+            ResourceRef::ClusterRoleBinding(name) => {
+                remove_named(&mut snap.cluster_role_bindings, |item| &item.name, name)
+            }
             ResourceRef::HelmRelease(name, ns) => remove_named_in_namespace(
-                &mut self.snapshot.helm_releases,
+                &mut snap.helm_releases,
                 |item| (&item.name, &item.namespace),
                 name,
                 ns,
@@ -890,8 +895,8 @@ impl GlobalState {
                 kind,
                 plural,
             } => {
-                let before = self.snapshot.flux_resources.len();
-                self.snapshot.flux_resources.retain(|item| {
+                let before = snap.flux_resources.len();
+                snap.flux_resources.retain(|item| {
                     item.name != *name
                         || item.namespace != *namespace
                         || item.group != *group
@@ -899,7 +904,7 @@ impl GlobalState {
                         || item.kind != *kind
                         || item.plural != *plural
                 });
-                before != self.snapshot.flux_resources.len()
+                before != snap.flux_resources.len()
             }
         };
 
@@ -907,27 +912,24 @@ impl GlobalState {
             return;
         }
 
-        self.snapshot.services_count = self.snapshot.services.len();
-        self.snapshot.namespaces_count = self
-            .snapshot
+        snap.services_count = snap.services.len();
+        snap.namespaces_count = snap
             .pods
             .iter()
             .map(|pod| pod.namespace.as_str())
             .chain(
-                self.snapshot
-                    .services
+                snap.services
                     .iter()
                     .map(|service| service.namespace.as_str()),
             )
             .chain(
-                self.snapshot
-                    .deployments
+                snap.deployments
                     .iter()
                     .map(|deployment| deployment.namespace.as_str()),
             )
             .collect::<HashSet<_>>()
             .len();
-        self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
+        snap.snapshot_version = snap.snapshot_version.saturating_add(1);
         self.snapshot_dirty = true;
         self.publish_snapshot();
     }
@@ -935,9 +937,9 @@ impl GlobalState {
     /// Applies a successful scale locally so list views reflect the requested
     /// replica target immediately before the background refresh completes.
     pub fn apply_optimistic_scale(&mut self, resource: &ResourceRef, replicas: i32) {
+        let snap = Arc::make_mut(&mut self.snapshot);
         let changed = match resource {
-            ResourceRef::Deployment(name, ns) => self
-                .snapshot
+            ResourceRef::Deployment(name, ns) => snap
                 .deployments
                 .iter_mut()
                 .find(|item| item.name == *name && item.namespace == *ns)
@@ -949,8 +951,7 @@ impl GlobalState {
                     deployment.ready = format!("{}/{}", deployment.ready_replicas, replicas);
                     true
                 }),
-            ResourceRef::StatefulSet(name, ns) => self
-                .snapshot
+            ResourceRef::StatefulSet(name, ns) => snap
                 .statefulsets
                 .iter_mut()
                 .find(|item| item.name == *name && item.namespace == *ns)
@@ -968,7 +969,7 @@ impl GlobalState {
             return;
         }
 
-        self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
+        snap.snapshot_version = snap.snapshot_version.saturating_add(1);
         self.snapshot_dirty = true;
         self.publish_snapshot();
     }
@@ -1032,7 +1033,7 @@ impl GlobalState {
     }
 
     fn set_view_load_state(&mut self, view: AppView, state: ViewLoadState) -> bool {
-        let slot = &mut self.snapshot.view_load_states[view.index()];
+        let slot = &mut Arc::make_mut(&mut self.snapshot).view_load_states[view.index()];
         if *slot == state {
             return false;
         }
@@ -1103,12 +1104,12 @@ impl GlobalState {
     pub fn begin_loading_transition(&mut self, clear_namespaces: bool) {
         let next_snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
         let cluster_url = self.snapshot.cluster_url.clone();
-        self.snapshot = ClusterSnapshot {
+        self.snapshot = Arc::new(ClusterSnapshot {
             snapshot_version: next_snapshot_version,
             phase: DataPhase::Idle,
             cluster_url,
             ..ClusterSnapshot::default()
-        };
+        });
         if clear_namespaces {
             self.namespaces.clear();
         }
@@ -1119,7 +1120,7 @@ impl GlobalState {
     /// Overrides the snapshot phase (e.g. to mark an error after a failed
     /// background context switch).
     pub fn set_phase(&mut self, phase: DataPhase) {
-        self.snapshot.phase = phase;
+        Arc::make_mut(&mut self.snapshot).phase = phase;
         self.snapshot_dirty = true;
         self.publish_snapshot();
     }
@@ -1130,13 +1131,17 @@ impl GlobalState {
     const TRANSIENT_RETRY_ATTEMPTS: usize = 3;
     const TRANSIENT_RETRY_DELAY_MS: u64 = 150;
 
-    async fn fetch_with_timeout<T, F, Fut>(label: &'static str, make_fut: F) -> Result<T>
+    async fn fetch_with_timeout<T, F, Fut>(
+        label: &'static str,
+        semaphore: &Semaphore,
+        make_fut: F,
+    ) -> Result<T>
     where
         F: Fn() -> Fut,
         Fut: std::future::Future<Output = Result<T>>,
     {
         for attempt in 0..=Self::TRANSIENT_RETRY_ATTEMPTS {
-            let _permit = RESOURCE_FETCH_SEMAPHORE
+            let _permit = semaphore
                 .acquire()
                 .await
                 .map_err(|_| anyhow!("resource fetch coordinator shut down"))?;
@@ -1266,8 +1271,9 @@ impl GlobalState {
         {
             Ok(result) => result,
             Err(_) => {
-                self.snapshot.phase = DataPhase::Error;
-                self.snapshot.last_error = Some("Global refresh timed out (60s)".to_string());
+                let snap = Arc::make_mut(&mut self.snapshot);
+                snap.phase = DataPhase::Error;
+                snap.last_error = Some("Global refresh timed out (60s)".to_string());
                 self.snapshot_dirty = true;
                 self.publish_snapshot();
                 Err(anyhow!("Global refresh timed out (60s)"))
@@ -1288,37 +1294,47 @@ impl GlobalState {
             return Ok(());
         }
 
-        self.snapshot.phase = DataPhase::Loading;
-        self.snapshot.last_error = None;
-        self.snapshot.cluster_url = Some(client.cluster_url().to_string());
+        // Trigger copy-on-write — the deep clone happens here (asynchronously,
+        // off the main event loop) rather than at the GlobalState::clone() site.
+        let snap = Arc::make_mut(&mut self.snapshot);
+        snap.phase = DataPhase::Loading;
+        snap.last_error = None;
+        snap.cluster_url = Some(client.cluster_url().to_string());
 
-        let prev_flux_resources = self.snapshot.flux_resources.clone();
-        let prev_cluster_info = self.snapshot.cluster_info.clone();
-        let prev_events = self.snapshot.events.clone();
+        let prev_flux_resources = snap.flux_resources.clone();
+        let prev_cluster_info = snap.cluster_info.clone();
+        let prev_events = snap.events.clone();
         let include_flux = options.include_flux;
         let include_cluster_info = options.include_cluster_info;
         let include_secondary_resources = options.include_secondary_resources;
         let include_events = options.include_events;
         let flux_fetch = async move {
             if include_flux {
-                Self::fetch_with_timeout("fluxresources", || client.fetch_flux_resources(namespace))
-                    .await
+                Self::fetch_with_timeout("fluxresources", &CORE_FETCH_SEMAPHORE, || {
+                    client.fetch_flux_resources(namespace)
+                })
+                .await
             } else {
                 Ok(prev_flux_resources)
             }
         };
         let cluster_info_fetch = async move {
             if include_cluster_info {
-                Self::fetch_with_timeout("cluster info", || client.fetch_cluster_info())
-                    .await
-                    .map(Some)
+                Self::fetch_with_timeout("cluster info", &CORE_FETCH_SEMAPHORE, || {
+                    client.fetch_cluster_info()
+                })
+                .await
+                .map(Some)
             } else {
                 Ok(None)
             }
         };
         let events_fetch = async move {
             if include_events {
-                Self::fetch_with_timeout("events", || client.fetch_events(namespace)).await
+                Self::fetch_with_timeout("events", &CORE_FETCH_SEMAPHORE, || {
+                    client.fetch_events(namespace)
+                })
+                .await
             } else {
                 Ok(prev_events)
             }
@@ -1348,22 +1364,33 @@ impl GlobalState {
         let prev_helm_releases = self.snapshot.helm_releases.clone();
         let prev_node_metrics = self.snapshot.node_metrics.clone();
 
-        // Wave 1 (core resources) and wave 2 (secondary) run concurrently.
-        // The RESOURCE_FETCH_SEMAPHORE (8 permits) provides backpressure.
+        // Wave 1 (core) and wave 2 (secondary) run concurrently with separate
+        // semaphores: CORE_FETCH_SEMAPHORE (8 permits) and SECONDARY_FETCH_SEMAPHORE
+        // (4 permits). This ensures core resources are never starved by secondary fetches.
         let wave1 = async {
             tokio::join!(
-                Self::fetch_with_timeout("nodes", || client.fetch_nodes()),
-                Self::fetch_with_timeout("pods", || client.fetch_pods(namespace)),
-                Self::fetch_with_timeout("services", || client.fetch_services(namespace)),
-                Self::fetch_with_timeout("deployments", || client.fetch_deployments(namespace)),
-                Self::fetch_with_timeout("statefulsets", || client.fetch_statefulsets(namespace)),
-                Self::fetch_with_timeout("daemonsets", || client.fetch_daemonsets(namespace)),
-                Self::fetch_with_timeout("replicasets", || client.fetch_replicasets(namespace)),
-                Self::fetch_with_timeout("replicationcontrollers", || client
-                    .fetch_replication_controllers(namespace)),
-                Self::fetch_with_timeout("jobs", || client.fetch_jobs(namespace)),
-                Self::fetch_with_timeout("cronjobs", || client.fetch_cronjobs(namespace)),
-                Self::fetch_with_timeout("namespacelist", || client.fetch_namespace_list()),
+                Self::fetch_with_timeout("nodes", &CORE_FETCH_SEMAPHORE, || client.fetch_nodes()),
+                Self::fetch_with_timeout("pods", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_pods(namespace)),
+                Self::fetch_with_timeout("services", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_services(namespace)),
+                Self::fetch_with_timeout("deployments", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_deployments(namespace)),
+                Self::fetch_with_timeout("statefulsets", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_statefulsets(namespace)),
+                Self::fetch_with_timeout("daemonsets", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_daemonsets(namespace)),
+                Self::fetch_with_timeout("replicasets", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_replicasets(namespace)),
+                Self::fetch_with_timeout("replicationcontrollers", &CORE_FETCH_SEMAPHORE, || {
+                    client.fetch_replication_controllers(namespace)
+                }),
+                Self::fetch_with_timeout("jobs", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_jobs(namespace)),
+                Self::fetch_with_timeout("cronjobs", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_cronjobs(namespace)),
+                Self::fetch_with_timeout("namespacelist", &CORE_FETCH_SEMAPHORE, || client
+                    .fetch_namespace_list()),
                 flux_fetch,
                 cluster_info_fetch,
                 events_fetch,
@@ -1373,36 +1400,59 @@ impl GlobalState {
         let wave2 = async {
             if include_secondary_resources {
                 tokio::join!(
-                    Self::fetch_with_timeout("resourcequotas", || client
-                        .fetch_resource_quotas(namespace)),
-                    Self::fetch_with_timeout("limitranges", || client
+                    Self::fetch_with_timeout("resourcequotas", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_resource_quotas(namespace)
+                    }),
+                    Self::fetch_with_timeout("limitranges", &SECONDARY_FETCH_SEMAPHORE, || client
                         .fetch_limit_ranges(namespace)),
-                    Self::fetch_with_timeout("pdbs", || client
+                    Self::fetch_with_timeout("pdbs", &SECONDARY_FETCH_SEMAPHORE, || client
                         .fetch_pod_disruption_budgets(namespace)),
-                    Self::fetch_with_timeout("serviceaccounts", || client
-                        .fetch_service_accounts(namespace)),
-                    Self::fetch_with_timeout("roles", || client.fetch_roles(namespace)),
-                    Self::fetch_with_timeout("rolebindings", || client
+                    Self::fetch_with_timeout("serviceaccounts", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_service_accounts(namespace)
+                    }),
+                    Self::fetch_with_timeout("roles", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_roles(namespace)),
+                    Self::fetch_with_timeout("rolebindings", &SECONDARY_FETCH_SEMAPHORE, || client
                         .fetch_role_bindings(namespace)),
-                    Self::fetch_with_timeout("clusterroles", || client.fetch_cluster_roles()),
-                    Self::fetch_with_timeout("clusterrolebindings", || client
-                        .fetch_cluster_role_bindings()),
-                    Self::fetch_with_timeout("crds", || client.fetch_custom_resource_definitions()),
-                    Self::fetch_with_timeout("endpoints", || client.fetch_endpoints(namespace)),
-                    Self::fetch_with_timeout("ingresses", || client.fetch_ingresses(namespace)),
-                    Self::fetch_with_timeout("ingressclasses", || client.fetch_ingress_classes()),
-                    Self::fetch_with_timeout("networkpolicies", || client
-                        .fetch_network_policies(namespace)),
-                    Self::fetch_with_timeout("configmaps", || client.fetch_config_maps(namespace)),
-                    Self::fetch_with_timeout("secrets", || client.fetch_secrets(namespace)),
-                    Self::fetch_with_timeout("hpas", || client.fetch_hpas(namespace)),
-                    Self::fetch_with_timeout("pvcs", || client.fetch_pvcs(namespace)),
-                    Self::fetch_with_timeout("pvs", || client.fetch_pvs()),
-                    Self::fetch_with_timeout("storageclasses", || client.fetch_storage_classes()),
-                    Self::fetch_with_timeout("priorityclasses", || client.fetch_priority_classes()),
-                    Self::fetch_with_timeout("helmreleases", || client
+                    Self::fetch_with_timeout("clusterroles", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_cluster_roles()),
+                    Self::fetch_with_timeout(
+                        "clusterrolebindings",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_cluster_role_bindings()
+                    ),
+                    Self::fetch_with_timeout("crds", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_custom_resource_definitions()),
+                    Self::fetch_with_timeout("endpoints", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_endpoints(namespace)),
+                    Self::fetch_with_timeout("ingresses", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_ingresses(namespace)),
+                    Self::fetch_with_timeout("ingressclasses", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_ingress_classes()
+                    }),
+                    Self::fetch_with_timeout("networkpolicies", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_network_policies(namespace)
+                    }),
+                    Self::fetch_with_timeout("configmaps", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_config_maps(namespace)),
+                    Self::fetch_with_timeout("secrets", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_secrets(namespace)),
+                    Self::fetch_with_timeout("hpas", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_hpas(namespace)),
+                    Self::fetch_with_timeout("pvcs", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_pvcs(namespace)),
+                    Self::fetch_with_timeout("pvs", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_pvs()),
+                    Self::fetch_with_timeout("storageclasses", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_storage_classes()
+                    }),
+                    Self::fetch_with_timeout("priorityclasses", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_priority_classes()
+                    }),
+                    Self::fetch_with_timeout("helmreleases", &SECONDARY_FETCH_SEMAPHORE, || client
                         .fetch_helm_releases(namespace)),
-                    Self::fetch_with_timeout("nodemetrics", || client.fetch_all_node_metrics()),
+                    Self::fetch_with_timeout("nodemetrics", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_all_node_metrics()),
                 )
             } else {
                 (
@@ -1683,8 +1733,9 @@ impl GlobalState {
             } else {
                 errors.join(" | ")
             };
-            self.snapshot.phase = DataPhase::Error;
-            self.snapshot.last_error = Some(message.clone());
+            let snap = Arc::make_mut(&mut self.snapshot);
+            snap.phase = DataPhase::Error;
+            snap.last_error = Some(message.clone());
             self.snapshot_dirty = true;
             self.publish_snapshot();
             return Err(anyhow!(message));
@@ -1702,60 +1753,66 @@ impl GlobalState {
             .collect::<HashSet<_>>()
             .len();
 
-        self.snapshot.services_count = services.len();
-        self.snapshot.namespaces_count = namespaces_count;
-        self.snapshot.nodes = nodes;
-        self.snapshot.pods = pods;
-        self.snapshot.services = services;
-        self.snapshot.deployments = deployments;
-        self.snapshot.statefulsets = statefulsets;
-        self.snapshot.daemonsets = daemonsets;
-        self.snapshot.replicasets = replicasets;
-        self.snapshot.replication_controllers = replication_controllers;
-        self.snapshot.jobs = jobs;
-        self.snapshot.cronjobs = cronjobs;
-        self.snapshot.resource_quotas = resource_quotas;
-        self.snapshot.limit_ranges = limit_ranges;
-        self.snapshot.pod_disruption_budgets = pod_disruption_budgets;
-        self.snapshot.service_accounts = service_accounts;
-        self.snapshot.roles = roles;
-        self.snapshot.role_bindings = role_bindings;
-        self.snapshot.cluster_roles = cluster_roles;
-        self.snapshot.cluster_role_bindings = cluster_role_bindings;
-        self.snapshot.custom_resource_definitions = custom_resource_definitions;
-        self.snapshot.cluster_info = cluster_info;
-        self.snapshot.endpoints = endpoints;
-        self.snapshot.ingresses = ingresses;
-        self.snapshot.ingress_classes = ingress_classes;
-        self.snapshot.network_policies = network_policies;
-        self.snapshot.config_maps = config_maps;
-        self.snapshot.secrets = secrets;
-        self.snapshot.hpas = hpas;
-        self.snapshot.pvcs = pvcs;
-        self.snapshot.pvs = pvs;
-        self.snapshot.storage_classes = storage_classes;
-        self.snapshot.namespace_list = namespace_list;
-        self.snapshot.events = events;
-        self.snapshot.priority_classes = priority_classes;
-        self.snapshot.helm_releases = helm_releases;
-        self.snapshot.flux_resources = flux_resources;
-        self.snapshot.helm_repositories = crate::k8s::helm::read_helm_repositories();
-        self.snapshot.node_metrics = node_metrics;
-        self.snapshot.secondary_resources_loaded = if include_secondary_resources {
-            true
-        } else {
-            self.snapshot.secondary_resources_loaded
-        };
+        let prev_secondary_loaded = self.snapshot.secondary_resources_loaded;
+        {
+            let snap = Arc::make_mut(&mut self.snapshot);
+            snap.services_count = services.len();
+            snap.namespaces_count = namespaces_count;
+            snap.nodes = nodes;
+            snap.pods = pods;
+            snap.services = services;
+            snap.deployments = deployments;
+            snap.statefulsets = statefulsets;
+            snap.daemonsets = daemonsets;
+            snap.replicasets = replicasets;
+            snap.replication_controllers = replication_controllers;
+            snap.jobs = jobs;
+            snap.cronjobs = cronjobs;
+            snap.resource_quotas = resource_quotas;
+            snap.limit_ranges = limit_ranges;
+            snap.pod_disruption_budgets = pod_disruption_budgets;
+            snap.service_accounts = service_accounts;
+            snap.roles = roles;
+            snap.role_bindings = role_bindings;
+            snap.cluster_roles = cluster_roles;
+            snap.cluster_role_bindings = cluster_role_bindings;
+            snap.custom_resource_definitions = custom_resource_definitions;
+            snap.cluster_info = cluster_info;
+            snap.endpoints = endpoints;
+            snap.ingresses = ingresses;
+            snap.ingress_classes = ingress_classes;
+            snap.network_policies = network_policies;
+            snap.config_maps = config_maps;
+            snap.secrets = secrets;
+            snap.hpas = hpas;
+            snap.pvcs = pvcs;
+            snap.pvs = pvs;
+            snap.storage_classes = storage_classes;
+            snap.namespace_list = namespace_list;
+            snap.events = events;
+            snap.priority_classes = priority_classes;
+            snap.helm_releases = helm_releases;
+            snap.flux_resources = flux_resources;
+            snap.helm_repositories = crate::k8s::helm::read_helm_repositories();
+            snap.node_metrics = node_metrics;
+            snap.secondary_resources_loaded = if include_secondary_resources {
+                true
+            } else {
+                prev_secondary_loaded
+            };
+        }
         self.mark_refresh_completed(options);
-        self.snapshot.snapshot_version = self.snapshot.snapshot_version.saturating_add(1);
-        self.snapshot_dirty = true;
-        self.snapshot.phase = DataPhase::Ready;
-        self.snapshot.last_updated = Some(Utc::now());
-        self.snapshot.last_error = if errors.is_empty() {
+        // Arc refcount is 1 here — make_mut is a no-op pointer return.
+        let snap = Arc::make_mut(&mut self.snapshot);
+        snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+        snap.phase = DataPhase::Ready;
+        snap.last_updated = Some(Utc::now());
+        snap.last_error = if errors.is_empty() {
             None
         } else {
             Some(errors.join(" | "))
         };
+        self.snapshot_dirty = true;
 
         self.publish_snapshot();
 
@@ -2619,7 +2676,8 @@ mod tests {
     #[test]
     fn optimistic_delete_removes_resource_from_snapshot_immediately() {
         let mut state = GlobalState::default();
-        state.snapshot.pods = vec![
+        let snap = Arc::make_mut(&mut state.snapshot);
+        snap.pods = vec![
             PodInfo {
                 name: "pod-a".to_string(),
                 namespace: "default".to_string(),
@@ -2631,19 +2689,19 @@ mod tests {
                 ..PodInfo::default()
             },
         ];
-        state.snapshot.services = vec![ServiceInfo {
+        snap.services = vec![ServiceInfo {
             name: "svc-a".to_string(),
             namespace: "default".to_string(),
             ..ServiceInfo::default()
         }];
-        state.snapshot.deployments = vec![DeploymentInfo {
+        snap.deployments = vec![DeploymentInfo {
             name: "deploy-a".to_string(),
             namespace: "default".to_string(),
             ..DeploymentInfo::default()
         }];
-        state.snapshot.services_count = 1;
-        state.snapshot.namespaces_count = 1;
-        state.snapshot.snapshot_version = 41;
+        snap.services_count = 1;
+        snap.namespaces_count = 1;
+        snap.snapshot_version = 41;
         state.snapshot_dirty = true;
         state.publish_snapshot();
 
@@ -2662,7 +2720,8 @@ mod tests {
     #[test]
     fn optimistic_scale_updates_workload_replica_targets_immediately() {
         let mut state = GlobalState::default();
-        state.snapshot.deployments = vec![DeploymentInfo {
+        let snap = Arc::make_mut(&mut state.snapshot);
+        snap.deployments = vec![DeploymentInfo {
             name: "deploy-a".to_string(),
             namespace: "default".to_string(),
             desired_replicas: 2,
@@ -2670,14 +2729,14 @@ mod tests {
             ready: "1/2".to_string(),
             ..DeploymentInfo::default()
         }];
-        state.snapshot.statefulsets = vec![StatefulSetInfo {
+        snap.statefulsets = vec![StatefulSetInfo {
             name: "db".to_string(),
             namespace: "default".to_string(),
             desired_replicas: 3,
             ready_replicas: 3,
             ..StatefulSetInfo::default()
         }];
-        state.snapshot.snapshot_version = 10;
+        snap.snapshot_version = 10;
         state.snapshot_dirty = true;
         state.publish_snapshot();
 
@@ -2948,18 +3007,19 @@ mod tests {
 
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_fetch = Arc::clone(&calls);
-        let result: Result<i32> = GlobalState::fetch_with_timeout("pods", move || {
-            let calls = Arc::clone(&calls_for_fetch);
-            async move {
-                let attempt = calls.fetch_add(1, Ordering::SeqCst);
-                if attempt == 0 {
-                    Err(anyhow::anyhow!("client error (SendRequest)"))
-                } else {
-                    Ok(7)
+        let result: Result<i32> =
+            GlobalState::fetch_with_timeout("pods", &CORE_FETCH_SEMAPHORE, move || {
+                let calls = Arc::clone(&calls_for_fetch);
+                async move {
+                    let attempt = calls.fetch_add(1, Ordering::SeqCst);
+                    if attempt == 0 {
+                        Err(anyhow::anyhow!("client error (SendRequest)"))
+                    } else {
+                        Ok(7)
+                    }
                 }
-            }
-        })
-        .await;
+            })
+            .await;
 
         assert_eq!(result.expect("transient SendRequest should retry"), 7);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
@@ -2976,7 +3036,7 @@ mod tests {
     #[tokio::test]
     async fn refresh_skips_when_already_loading() {
         let mut state = GlobalState::default();
-        state.snapshot.phase = DataPhase::Loading;
+        Arc::make_mut(&mut state.snapshot).phase = DataPhase::Loading;
         state.snapshot_dirty = true;
         state.publish_snapshot();
         let source = MockDataSource::success().with_delay(100);
@@ -2992,8 +3052,9 @@ mod tests {
     #[test]
     fn begin_loading_transition_keeps_snapshot_version_monotonic() {
         let mut state = GlobalState::default();
-        state.snapshot.snapshot_version = 7;
-        state.snapshot.pods = vec![PodInfo {
+        let snap = Arc::make_mut(&mut state.snapshot);
+        snap.snapshot_version = 7;
+        snap.pods = vec![PodInfo {
             name: "pod-a".to_string(),
             namespace: "default".to_string(),
             ..PodInfo::default()
