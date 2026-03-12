@@ -20,9 +20,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
         loading_or_empty_message, table_viewport_rows, table_window,
+        views::filtering::filtered_endpoint_indices,
     },
 };
 
@@ -58,20 +58,7 @@ pub fn render_endpoints(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.endpoints, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.endpoints.len()).collect();
-            }
-            cluster
-                .endpoints
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, endpoint)| {
-                    (contains_ci(&endpoint.name, q) || contains_ci(&endpoint.namespace, q))
-                        .then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_endpoint_indices(&cluster.endpoints, q),
     );
 
     if indices.is_empty() {

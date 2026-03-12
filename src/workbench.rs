@@ -84,6 +84,7 @@ impl ActionHistoryTabState {
 #[derive(Debug, Clone)]
 pub struct ResourceYamlTabState {
     pub resource: ResourceRef,
+    pub pending_request_id: Option<u64>,
     pub yaml: Option<String>,
     pub scroll: usize,
     pub loading: bool,
@@ -94,6 +95,7 @@ impl ResourceYamlTabState {
     pub fn new(resource: ResourceRef) -> Self {
         Self {
             resource,
+            pending_request_id: None,
             yaml: None,
             scroll: 0,
             loading: true,
@@ -105,6 +107,7 @@ impl ResourceYamlTabState {
 #[derive(Debug, Clone)]
 pub struct ResourceEventsTabState {
     pub resource: ResourceRef,
+    pub pending_request_id: Option<u64>,
     pub events: Vec<EventInfo>,
     pub timeline: Vec<TimelineEntry>,
     pub scroll: usize,
@@ -116,6 +119,7 @@ impl ResourceEventsTabState {
     pub fn new(resource: ResourceRef) -> Self {
         Self {
             resource,
+            pending_request_id: None,
             events: Vec::new(),
             timeline: Vec::new(),
             scroll: 0,
@@ -249,11 +253,7 @@ impl WorkloadLogsTabState {
                 .container_filter
                 .as_ref()
                 .is_none_or(|container| container == &line.container_name)
-            && (self.text_filter.is_empty()
-                || line
-                    .content
-                    .to_ascii_lowercase()
-                    .contains(&self.text_filter.to_ascii_lowercase()))
+            && (self.text_filter.is_empty() || contains_ci_ascii(&line.content, &self.text_filter))
     }
 }
 
@@ -350,6 +350,7 @@ impl PortForwardTabState {
 #[derive(Debug, Clone)]
 pub struct RelationsTabState {
     pub resource: ResourceRef,
+    pub pending_request_id: Option<u64>,
     pub tree: Vec<crate::k8s::relationships::RelationNode>,
     pub cursor: usize,
     pub expanded: std::collections::HashSet<usize>,
@@ -361,6 +362,7 @@ impl RelationsTabState {
     pub fn new(resource: ResourceRef) -> Self {
         Self {
             resource,
+            pending_request_id: None,
             tree: Vec::new(),
             cursor: 0,
             expanded: std::collections::HashSet::new(),
@@ -659,6 +661,20 @@ fn cycle_filter_value(values: &[String], current: Option<&str>) -> Option<String
     }
 }
 
+#[inline]
+fn contains_ci_ascii(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -789,5 +805,20 @@ mod tests {
         ))));
         assert_eq!(first, second);
         assert_eq!(state.tabs.len(), 1);
+    }
+
+    #[test]
+    fn workload_log_filter_matches_case_insensitively() {
+        let tab = WorkloadLogsTabState {
+            text_filter: "error".to_string(),
+            ..WorkloadLogsTabState::new(pod("pod-0"), 1)
+        };
+
+        assert!(tab.matches_filter(&WorkloadLogLine {
+            pod_name: "pod-0".to_string(),
+            container_name: "main".to_string(),
+            content: "ERROR: probe failed".to_string(),
+            is_stderr: true,
+        }));
     }
 }

@@ -17,14 +17,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        table_viewport_rows, table_window,
+        views::filtering::filtered_cronjob_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -33,6 +34,7 @@ struct CronJobDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -64,17 +66,7 @@ pub fn render_cronjobs(
         cluster.snapshot_version,
         data_fingerprint(&cluster.cronjobs, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.cronjobs,
-                q,
-                sort,
-                |cj, needle| contains_ci(&cj.name, needle) || contains_ci(&cj.schedule, needle),
-                |cj| cj.name.as_str(),
-                |cj| cj.namespace.as_str(),
-                |cj| cj.age,
-            )
-        },
+        |q| filtered_cronjob_indices(&cluster.cronjobs, q, sort),
     );
 
     if indices.is_empty() {
@@ -119,7 +111,7 @@ pub fn render_cronjobs(
     let dim_style = Style::default().fg(theme.fg_dim);
     let accent_style = Style::default().fg(theme.accent2);
     let info_style = Style::default().fg(theme.info);
-    let derived = cached_cronjob_derived(cluster, query, indices.as_ref());
+    let derived = cached_cronjob_derived(cluster, query, indices.as_ref(), cache_variant);
 
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &cj_idx) in indices[window.start..window.end].iter().enumerate() {
@@ -229,11 +221,13 @@ fn cached_cronjob_derived(
     cluster: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> CronJobDerivedCacheValue {
     let key = CronJobDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.cronjobs, cluster.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = CRONJOB_DERIVED_CACHE.lock()

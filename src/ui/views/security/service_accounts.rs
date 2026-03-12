@@ -14,14 +14,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        table_viewport_rows, table_window,
+        views::filtering::filtered_service_account_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -30,6 +31,7 @@ struct ServiceAccountDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -64,21 +66,7 @@ pub fn render_service_accounts(
         cluster.snapshot_version,
         data_fingerprint(&cluster.service_accounts, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.service_accounts,
-                q,
-                sort,
-                |sa, needle| {
-                    q.is_empty()
-                        || contains_ci(&sa.name, needle)
-                        || contains_ci(&sa.namespace, needle)
-                },
-                |sa| sa.name.as_str(),
-                |sa| sa.namespace.as_str(),
-                |sa| sa.age,
-            )
-        },
+        |q| filtered_service_account_indices(&cluster.service_accounts, q, sort),
     );
 
     let theme = default_theme();
@@ -120,7 +108,7 @@ pub fn render_service_accounts(
     .height(1)
     .style(theme.header_style());
 
-    let derived = cached_service_account_derived(cluster, query, indices.as_ref());
+    let derived = cached_service_account_derived(cluster, query, indices.as_ref(), cache_variant);
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
 
@@ -226,11 +214,13 @@ fn cached_service_account_derived(
     cluster: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> ServiceAccountDerivedCacheValue {
     let key = ServiceAccountDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.service_accounts, cluster.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = SERVICE_ACCOUNT_DERIVED_CACHE.lock()

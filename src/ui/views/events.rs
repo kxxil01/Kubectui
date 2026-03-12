@@ -20,10 +20,10 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
         table_window,
+        views::filtering::filtered_event_indices,
     },
 };
 
@@ -99,35 +99,35 @@ pub fn render_events(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.events, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.events.len()).collect();
-            }
-            cluster
-                .events
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, ev)| {
-                    (contains_ci(&ev.type_, q)
-                        || contains_ci(&ev.namespace, q)
-                        || contains_ci(&ev.involved_object, q)
-                        || contains_ci(&ev.reason, q)
-                        || contains_ci(&ev.message, q))
-                    .then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_event_indices(&cluster.events, q),
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
-            cluster,
-            AppView::Events,
-            query,
-            "  Loading events...",
-            "  No events found",
-            "  No events match the search query",
-        );
+        let msg = if cluster.events.is_empty() {
+            if let Some(error) = cluster.events_last_error.as_deref() {
+                format!("  Failed to load events: {error}")
+            } else {
+                loading_or_empty_message(
+                    cluster,
+                    AppView::Events,
+                    query,
+                    "  Loading events...",
+                    "  No events found",
+                    "  No events match the search query",
+                )
+                .to_string()
+            }
+        } else {
+            loading_or_empty_message(
+                cluster,
+                AppView::Events,
+                query,
+                "  Loading events...",
+                "  No events found",
+                "  No events match the search query",
+            )
+            .to_string()
+        };
         frame.render_widget(
             Paragraph::new(Span::styled(msg, theme.inactive_style()))
                 .block(default_block("Events")),
@@ -195,10 +195,24 @@ pub fn render_events(
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = if query.is_empty() {
-        format!(" Events ({total}) ")
+        format!(
+            " Events ({total}){} ",
+            match cluster.view_load_state(AppView::Events) {
+                crate::state::ViewLoadState::Refreshing => " [refreshing]",
+                crate::state::ViewLoadState::Loading => " [loading]",
+                _ => "",
+            }
+        )
     } else {
         let all = cluster.events.len();
-        format!(" Events ({total} of {all}) [/{query}]")
+        format!(
+            " Events ({total} of {all}) [/{query}]{}",
+            match cluster.view_load_state(AppView::Events) {
+                crate::state::ViewLoadState::Refreshing => " [refreshing]",
+                crate::state::ViewLoadState::Loading => " [loading]",
+                _ => "",
+            }
+        )
     };
 
     let table = Table::new(

@@ -181,8 +181,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(tab) = app_state.workbench_mut().active_tab_mut()
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                logs_tab.viewer.searching = true;
-                logs_tab.viewer.search_input = logs_tab.viewer.search_query.clone();
+                logs_tab.viewer.open_search();
                 return true;
             }
             false
@@ -191,8 +190,16 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(tab) = app_state.workbench_mut().active_tab_mut()
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                logs_tab.viewer.search_query = logs_tab.viewer.search_input.clone();
-                logs_tab.viewer.searching = false;
+                logs_tab.viewer.commit_search();
+                return true;
+            }
+            false
+        }
+        AppAction::LogsViewerSearchCancel => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
+            {
+                logs_tab.viewer.cancel_search();
                 return true;
             }
             false
@@ -200,20 +207,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         AppAction::LogsViewerSearchNext => {
             if let Some(tab) = app_state.workbench_mut().active_tab_mut()
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
-                && !logs_tab.viewer.search_query.is_empty()
             {
-                let query = logs_tab.viewer.search_query.to_ascii_lowercase();
-                let start = logs_tab.viewer.scroll_offset + 1;
-                if let Some(pos) = logs_tab
-                    .viewer
-                    .lines
-                    .iter()
-                    .skip(start)
-                    .position(|l| l.to_ascii_lowercase().contains(&query))
-                {
-                    logs_tab.viewer.scroll_offset = start + pos;
-                    logs_tab.viewer.follow_mode = false;
-                }
+                logs_tab.viewer.jump_to_next_match();
                 return true;
             }
             false
@@ -221,18 +216,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         AppAction::LogsViewerSearchPrev => {
             if let Some(tab) = app_state.workbench_mut().active_tab_mut()
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
-                && !logs_tab.viewer.search_query.is_empty()
             {
-                let query = logs_tab.viewer.search_query.to_ascii_lowercase();
-                let end = logs_tab.viewer.scroll_offset;
-                if let Some(pos) = logs_tab.viewer.lines[..end]
-                    .iter()
-                    .rev()
-                    .position(|l| l.to_ascii_lowercase().contains(&query))
-                {
-                    logs_tab.viewer.scroll_offset = end - 1 - pos;
-                    logs_tab.viewer.follow_mode = false;
-                }
+                logs_tab.viewer.jump_to_prev_match();
                 return true;
             }
             false
@@ -447,7 +432,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::policy::ResourceActionContext;
+    use crate::{
+        policy::ResourceActionContext,
+        workbench::{PodLogsTabState, WorkbenchTabState},
+    };
 
     #[test]
     fn test_apply_action_none() {
@@ -497,5 +485,58 @@ mod tests {
     fn test_apply_action_open_relationships_returns_true() {
         let mut app = AppState::default();
         assert!(apply_action(AppAction::OpenRelationships, &mut app));
+    }
+
+    #[test]
+    fn logs_viewer_search_cancel_restores_previous_query() {
+        use crate::app::ResourceRef;
+
+        let mut app = AppState::default();
+        let resource = ResourceRef::Pod("pod-0".into(), "default".into());
+        let mut tab = PodLogsTabState::new(resource);
+        tab.viewer.searching = true;
+        tab.viewer.search_query = "ready".into();
+        tab.viewer.search_input = "rea".into();
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(tab));
+
+        assert!(apply_action(AppAction::LogsViewerSearchCancel, &mut app));
+
+        let WorkbenchTabState::PodLogs(tab) = &app.workbench().active_tab().unwrap().state else {
+            panic!("expected pod logs tab");
+        };
+        assert!(!tab.viewer.searching);
+        assert_eq!(tab.viewer.search_query, "ready");
+        assert_eq!(tab.viewer.search_input, "ready");
+    }
+
+    #[test]
+    fn logs_viewer_search_close_applies_query_and_jumps_to_first_match() {
+        use crate::app::ResourceRef;
+
+        let mut app = AppState::default();
+        let resource = ResourceRef::Pod("pod-0".into(), "default".into());
+        let mut tab = PodLogsTabState::new(resource);
+        tab.viewer.lines = vec![
+            "booting".into(),
+            "ready check pending".into(),
+            "steady state".into(),
+        ];
+        tab.viewer.searching = true;
+        tab.viewer.search_input = "ready".into();
+        tab.viewer.scroll_offset = 2;
+        tab.viewer.follow_mode = true;
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(tab));
+
+        assert!(apply_action(AppAction::LogsViewerSearchClose, &mut app));
+
+        let WorkbenchTabState::PodLogs(tab) = &app.workbench().active_tab().unwrap().state else {
+            panic!("expected pod logs tab");
+        };
+        assert!(!tab.viewer.searching);
+        assert_eq!(tab.viewer.search_query, "ready");
+        assert_eq!(tab.viewer.scroll_offset, 1);
+        assert!(!tab.viewer.follow_mode);
     }
 }

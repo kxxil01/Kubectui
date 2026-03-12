@@ -20,9 +20,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
+        views::filtering::filtered_hpa_indices,
     },
 };
 
@@ -99,22 +99,7 @@ pub fn render_hpas(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.hpas, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.hpas.len()).collect();
-            }
-            cluster
-                .hpas
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, hpa)| {
-                    (contains_ci(&hpa.name, q)
-                        || contains_ci(&hpa.namespace, q)
-                        || contains_ci(&hpa.reference, q))
-                    .then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_hpa_indices(&cluster.hpas, q),
     );
 
     if indices.is_empty() {

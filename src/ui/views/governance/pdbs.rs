@@ -16,14 +16,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        table_viewport_rows, table_window,
+        views::filtering::filtered_pdb_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -34,6 +35,7 @@ struct PdbDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -52,6 +54,7 @@ fn cached_pdb_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> PdbDerivedCacheValue {
     let key = PdbDerivedCacheKey {
         query: query.to_string(),
@@ -60,6 +63,7 @@ fn cached_pdb_derived(
             &snapshot.pod_disruption_budgets,
             snapshot.snapshot_version,
         ),
+        variant,
     };
 
     if let Ok(cache) = PDB_DERIVED_CACHE.lock()
@@ -111,21 +115,7 @@ pub fn render_pdbs(
         cluster.snapshot_version,
         data_fingerprint(&cluster.pod_disruption_budgets, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.pod_disruption_budgets,
-                q,
-                sort,
-                |pdb, needle| {
-                    contains_ci(&pdb.name, needle)
-                        || contains_ci(pdb.min_available.as_deref().unwrap_or_default(), needle)
-                        || contains_ci(pdb.max_unavailable.as_deref().unwrap_or_default(), needle)
-                },
-                |pdb| pdb.name.as_str(),
-                |pdb| pdb.namespace.as_str(),
-                |pdb| pdb.age,
-            )
-        },
+        |q| filtered_pdb_indices(&cluster.pod_disruption_budgets, q, sort),
     );
 
     let theme = default_theme();
@@ -167,7 +157,7 @@ pub fn render_pdbs(
     .height(1)
     .style(theme.header_style());
 
-    let derived = cached_pdb_derived(cluster, query, &indices);
+    let derived = cached_pdb_derived(cluster, query, &indices, cache_variant);
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()

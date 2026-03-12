@@ -9,15 +9,16 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     k8s::dtos::RbacRule,
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        table_viewport_rows, table_window,
+        views::filtering::filtered_role_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 use std::{
@@ -32,6 +33,7 @@ struct RoleDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -48,11 +50,13 @@ fn cached_role_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> RoleDerivedCacheValue {
     let key = RoleDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.roles, snapshot.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = ROLE_DERIVED_CACHE.lock()
@@ -112,21 +116,7 @@ pub fn render_roles(
         cluster.snapshot_version,
         data_fingerprint(&cluster.roles, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.roles,
-                q,
-                sort,
-                |role, needle| {
-                    needle.is_empty()
-                        || contains_ci(&role.name, needle)
-                        || contains_ci(&role.namespace, needle)
-                },
-                |role| role.name.as_str(),
-                |role| role.namespace.as_str(),
-                |role| role.age,
-            )
-        },
+        |q| filtered_role_indices(&cluster.roles, q, sort),
     );
 
     let theme = default_theme();
@@ -170,7 +160,7 @@ pub fn render_roles(
     .height(1)
     .style(theme.header_style());
 
-    let derived = cached_role_derived(cluster, query, &indices);
+    let derived = cached_role_derived(cluster, query, &indices, cache_variant);
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()

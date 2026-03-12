@@ -20,9 +20,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
+        views::filtering::filtered_network_policy_indices,
     },
 };
 
@@ -59,22 +59,7 @@ pub fn render_network_policies(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.network_policies, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.network_policies.len()).collect();
-            }
-            cluster
-                .network_policies
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, policy)| {
-                    (contains_ci(&policy.name, q)
-                        || contains_ci(&policy.namespace, q)
-                        || contains_ci(&policy.pod_selector, q))
-                    .then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_network_policy_indices(&cluster.network_policies, q),
     );
 
     if indices.is_empty() {

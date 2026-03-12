@@ -16,14 +16,16 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        loading_or_empty_message, table_viewport_rows, table_window, workload_sort_header,
-        workload_sort_suffix,
+        loading_or_empty_message, table_viewport_rows, table_window,
+        views::filtering::{
+            filtered_pv_indices, filtered_pvc_indices, filtered_storage_class_indices,
+        },
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -34,6 +36,7 @@ struct PvcDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -51,11 +54,13 @@ fn cached_pvc_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> PvcDerivedCacheValue {
     let key = PvcDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.pvcs, snapshot.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = PVC_DERIVED_CACHE.lock()
@@ -107,17 +112,7 @@ pub fn render_pvcs(
         cluster.snapshot_version,
         data_fingerprint(&cluster.pvcs, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.pvcs,
-                q,
-                sort,
-                |pvc, needle| contains_ci(&pvc.name, needle) || contains_ci(&pvc.namespace, needle),
-                |pvc| pvc.name.as_str(),
-                |pvc| pvc.namespace.as_str(),
-                |_pvc| None,
-            )
-        },
+        |q| filtered_pvc_indices(&cluster.pvcs, q, sort),
     );
 
     if indices.is_empty() {
@@ -156,7 +151,7 @@ pub fn render_pvcs(
     .style(theme.header_style())
     .height(1);
 
-    let derived = cached_pvc_derived(cluster, query, &indices);
+    let derived = cached_pvc_derived(cluster, query, &indices, cache_variant);
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
@@ -248,6 +243,7 @@ struct PvDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -266,11 +262,13 @@ fn cached_pv_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> PvDerivedCacheValue {
     let key = PvDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.pvs, snapshot.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = PV_DERIVED_CACHE.lock()
@@ -323,17 +321,7 @@ pub fn render_pvs(
         cluster.snapshot_version,
         data_fingerprint(&cluster.pvs, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.pvs,
-                q,
-                sort,
-                |pv, needle| contains_ci(&pv.name, needle),
-                |pv| pv.name.as_str(),
-                |_pv| "",
-                |_pv| None,
-            )
-        },
+        |q| filtered_pv_indices(&cluster.pvs, q, sort),
     );
 
     if indices.is_empty() {
@@ -373,7 +361,7 @@ pub fn render_pvs(
     .style(theme.header_style())
     .height(1);
 
-    let derived = cached_pv_derived(cluster, query, &indices);
+    let derived = cached_pv_derived(cluster, query, &indices, cache_variant);
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
@@ -469,6 +457,7 @@ struct StorageClassDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -488,11 +477,13 @@ fn cached_storage_class_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> StorageClassDerivedCacheValue {
     let key = StorageClassDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.storage_classes, snapshot.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = STORAGE_CLASS_DERIVED_CACHE.lock()
@@ -545,17 +536,7 @@ pub fn render_storage_classes(
         cluster.snapshot_version,
         data_fingerprint(&cluster.storage_classes, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.storage_classes,
-                q,
-                sort,
-                |storage_class, needle| contains_ci(&storage_class.name, needle),
-                |storage_class| storage_class.name.as_str(),
-                |_storage_class| "",
-                |_storage_class| None,
-            )
-        },
+        |q| filtered_storage_class_indices(&cluster.storage_classes, q, sort),
     );
 
     if indices.is_empty() {
@@ -593,7 +574,7 @@ pub fn render_storage_classes(
     .style(theme.header_style())
     .height(1);
 
-    let derived = cached_storage_class_derived(cluster, query, &indices);
+    let derived = cached_storage_class_derived(cluster, query, &indices, cache_variant);
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()

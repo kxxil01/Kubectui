@@ -13,14 +13,52 @@ use ratatui::{
 
 use crate::{
     action_history::{ActionHistoryEntry, ActionStatus},
-    app::AppState,
+    app::{AppState, Focus},
     state::ClusterSnapshot,
     ui::components::default_theme,
     workbench::{WorkbenchTab, WorkbenchTabState},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct VisibleWindow {
+    start: usize,
+    end: usize,
+}
+
+#[inline]
+fn scroll_window(total: usize, scroll: usize, viewport_rows: usize) -> VisibleWindow {
+    if total == 0 {
+        return VisibleWindow { start: 0, end: 0 };
+    }
+
+    let visible = viewport_rows.max(1).min(total);
+    let start = scroll.min(total.saturating_sub(visible));
+    VisibleWindow {
+        start,
+        end: start + visible,
+    }
+}
+
+#[inline]
+fn centered_window(total: usize, selected: usize, viewport_rows: usize) -> VisibleWindow {
+    if total == 0 {
+        return VisibleWindow { start: 0, end: 0 };
+    }
+
+    let visible = viewport_rows.max(1).min(total);
+    let start = selected
+        .min(total.saturating_sub(1))
+        .saturating_sub(visible.saturating_sub(1) / 2)
+        .min(total.saturating_sub(visible));
+    VisibleWindow {
+        start,
+        end: start + visible,
+    }
+}
+
 pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster: &ClusterSnapshot) {
     let theme = default_theme();
+    let workbench_focused = app.focus == Focus::Workbench;
 
     let sections = Layout::default()
         .direction(Direction::Vertical)
@@ -41,18 +79,37 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
         .active_tab
         .min(titles.len().saturating_sub(1));
 
-    let title = if app.workbench().maximized {
+    let title = if workbench_focused && app.workbench().maximized {
+        " Workbench ACTIVE [maximized] - Esc exits maximize, Esc again returns to resources "
+    } else if workbench_focused {
+        " Workbench ACTIVE - Esc returns to resources "
+    } else if app.workbench().maximized {
         " Workbench [maximized] "
     } else {
         " Workbench "
     };
+    let border_style = if workbench_focused {
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        theme.border_style()
+    };
+    let title_style = if workbench_focused {
+        Style::default()
+            .fg(theme.bg)
+            .bg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        theme.section_title_style()
+    };
     let tabs = Tabs::new(titles)
         .block(
             Block::default()
-                .title(Span::styled(title, theme.section_title_style()))
+                .title(Span::styled(title, title_style))
                 .borders(Borders::ALL)
                 .border_type(theme.border_type())
-                .border_style(theme.border_style())
+                .border_style(border_style)
                 .style(Style::default().bg(theme.bg_surface)),
         )
         .select(selected)
@@ -69,7 +126,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
     let block = Block::default()
         .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
         .border_type(theme.border_type())
-        .border_style(theme.border_style())
+        .border_style(border_style)
         .style(Style::default().bg(theme.bg));
     let inner = block.inner(sections[1]);
     frame.render_widget(block, sections[1]);
@@ -145,22 +202,17 @@ fn render_action_history_tab(
         return;
     }
 
-    let visible_rows = area.height.max(1) as usize;
-    let start = tab
-        .selected
-        .saturating_sub(visible_rows.saturating_sub(1) / 2)
-        .min(entries.len().saturating_sub(1));
-    let end = (start + visible_rows).min(entries.len());
+    let window = centered_window(entries.len(), tab.selected, area.height.max(1) as usize);
     let lines: Vec<Line> = entries
         .iter()
         .enumerate()
-        .skip(start)
-        .take(end.saturating_sub(start))
+        .skip(window.start)
+        .take(window.end.saturating_sub(window.start))
         .map(|(idx, entry)| render_action_history_line(entry, idx == tab.selected, &theme))
         .collect();
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-    render_scrollbar(frame, area, entries.len(), start);
+    render_scrollbar(frame, area, entries.len(), window.start);
 }
 
 fn render_action_history_line(
@@ -242,29 +294,26 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
         return;
     };
 
-    let lines: Vec<Line> = yaml
-        .lines()
-        .enumerate()
-        .map(|(idx, line)| {
-            Line::from(vec![
-                Span::styled(format!("{:>4} ", idx + 1), theme.muted_style()),
-                Span::raw(line.to_string()),
-            ])
-        })
-        .collect();
-
-    let visible_height = area.height.saturating_sub(1) as usize;
-    let max_start = lines.len().saturating_sub(visible_height);
-    let start = scroll.min(max_start);
-    let end = (start + visible_height).min(lines.len());
-    let body = if start < end {
-        lines[start..end].to_vec()
+    let total = yaml.lines().count();
+    let window = scroll_window(total, scroll, area.height.saturating_sub(1) as usize);
+    let body = if window.start < window.end {
+        yaml.lines()
+            .enumerate()
+            .skip(window.start)
+            .take(window.end.saturating_sub(window.start))
+            .map(|(idx, line)| {
+                Line::from(vec![
+                    Span::styled(format!("{:>4} ", idx + 1), theme.muted_style()),
+                    Span::raw(line.to_string()),
+                ])
+            })
+            .collect()
     } else {
         vec![Line::from("")]
     };
 
     frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), area);
-    render_scrollbar(frame, area, lines.len(), start);
+    render_scrollbar(frame, area, total, window.start);
 }
 
 fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &WorkbenchTab) {
@@ -306,14 +355,11 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
     }
 
     let total = tab_state.timeline.len();
-    let visible_height = area.height.saturating_sub(1) as usize;
-    let max_start = total.saturating_sub(visible_height);
-    let start = scroll.min(max_start);
-    let end = (start + visible_height).min(total);
+    let window = scroll_window(total, scroll, area.height.saturating_sub(1) as usize);
 
     // Only build Line objects for the visible window to avoid per-frame allocations
     // for off-screen entries.
-    let lines: Vec<Line> = tab_state.timeline[start..end]
+    let lines: Vec<Line> = tab_state.timeline[window.start..window.end]
         .iter()
         .map(|entry| match entry {
             TimelineEntry::Event {
@@ -389,7 +435,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
         .collect();
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-    render_scrollbar(frame, area, total, start);
+    render_scrollbar(frame, area, total, window.start);
 }
 
 /// Truncate a message to `max_chars` for timeline display, appending "..." if truncated.
@@ -453,10 +499,12 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
         ));
     }
     status_spans.push(Span::raw("  "));
-    status_spans.push(Span::styled(
-        "[Esc] back  [f] follow  [P] previous  [t] timestamps  [/] search  [n/N] next/prev  [S] save",
-        theme.keybind_desc_style(),
-    ));
+    let hint = if viewer.searching {
+        "[Enter] apply  [Esc] cancel  [Ctrl+U] clear"
+    } else {
+        "[Esc] back  [f] follow  [P] previous  [t] timestamps  [/] search  [n/N] next/prev  [S] save"
+    };
+    status_spans.push(Span::styled(hint, theme.keybind_desc_style()));
 
     frame.render_widget(Paragraph::new(Line::from(status_spans)), sections[0]);
 
@@ -531,8 +579,9 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
         return;
     }
 
-    let lines: Vec<Line> = viewer
-        .lines
+    let total = viewer.lines.len();
+    let window = scroll_window(total, scroll, log_area.height.saturating_sub(1) as usize);
+    let lines: Vec<Line> = viewer.lines[window.start..window.end]
         .iter()
         .map(|line| {
             if !viewer.search_query.is_empty() {
@@ -542,15 +591,8 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
             }
         })
         .collect();
-    let visible_height = log_area.height.saturating_sub(1) as usize;
-    let max_start = lines.len().saturating_sub(visible_height);
-    let start = scroll.min(max_start);
-    let end = (start + visible_height).min(lines.len());
-    frame.render_widget(
-        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
-        log_area,
-    );
-    render_scrollbar(frame, log_area, lines.len(), start);
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
+    render_scrollbar(frame, log_area, total, window.start);
 }
 
 fn highlight_search<'a>(line: &str, query: &str, theme: &crate::ui::theme::Theme) -> Line<'a> {
@@ -620,7 +662,10 @@ fn render_workload_logs_tab(
     ]);
     let hint = if tab.editing_text_filter {
         Line::from(Span::styled(
-            format!(" Editing text filter: {}", tab.filter_input),
+            format!(
+                " Editing text filter: {}  [Enter] apply  [Esc] cancel  [Ctrl+U] clear",
+                tab.filter_input
+            ),
             theme.keybind_desc_style(),
         ))
     } else {
@@ -642,12 +687,12 @@ fn render_workload_logs_tab(
         return;
     }
 
-    let filtered: Vec<&crate::workbench::WorkloadLogLine> = tab
+    let total = tab
         .lines
         .iter()
         .filter(|line| tab.matches_filter(line))
-        .collect();
-    if filtered.is_empty() {
+        .count();
+    if total == 0 {
         let message = tab.notice.as_deref().unwrap_or(if tab.loading {
             " Loading workload logs..."
         } else {
@@ -660,8 +705,17 @@ fn render_workload_logs_tab(
         return;
     }
 
-    let lines: Vec<Line> = filtered
+    let window = scroll_window(
+        total,
+        tab.scroll,
+        sections[1].height.saturating_sub(1) as usize,
+    );
+    let lines: Vec<Line> = tab
+        .lines
         .iter()
+        .filter(|line| tab.matches_filter(line))
+        .skip(window.start)
+        .take(window.end.saturating_sub(window.start))
         .map(|line| {
             let badge = if line.is_stderr {
                 theme.badge_warning_style()
@@ -677,15 +731,11 @@ fn render_workload_logs_tab(
             ])
         })
         .collect();
-    let visible_height = sections[1].height.saturating_sub(1) as usize;
-    let max_start = lines.len().saturating_sub(visible_height);
-    let start = tab.scroll.min(max_start);
-    let end = (start + visible_height).min(lines.len());
     frame.render_widget(
-        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
         sections[1],
     );
-    render_scrollbar(frame, sections[1], lines.len(), start);
+    render_scrollbar(frame, sections[1], total, window.start);
 }
 
 fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTabState) {
@@ -764,29 +814,42 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             sections[1],
         );
     } else {
-        let mut lines: Vec<Line> = tab
-            .lines
-            .iter()
-            .map(|line| Line::from(line.clone()))
-            .collect();
-        if !tab.pending_fragment.is_empty() {
-            lines.push(Line::from(tab.pending_fragment.clone()));
+        let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
+        if total == 0 {
+            frame.render_widget(
+                Paragraph::new(vec![Line::from(Span::styled(
+                    " Waiting for shell output...",
+                    theme.inactive_style(),
+                ))])
+                .wrap(Wrap { trim: false }),
+                sections[1],
+            );
+        } else {
+            let window = scroll_window(
+                total,
+                tab.scroll,
+                sections[1].height.saturating_sub(1) as usize,
+            );
+            let complete_start = window.start.min(tab.lines.len());
+            let complete_end = window.end.min(tab.lines.len());
+            let mut lines: Vec<Line> = tab.lines[complete_start..complete_end]
+                .iter()
+                .map(|line| Line::from(line.clone()))
+                .collect();
+
+            if !tab.pending_fragment.is_empty() {
+                let pending_idx = tab.lines.len();
+                if (window.start..window.end).contains(&pending_idx) {
+                    lines.push(Line::from(tab.pending_fragment.clone()));
+                }
+            }
+
+            frame.render_widget(
+                Paragraph::new(lines).wrap(Wrap { trim: false }),
+                sections[1],
+            );
+            render_scrollbar(frame, sections[1], total, window.start);
         }
-        if lines.is_empty() {
-            lines.push(Line::from(Span::styled(
-                " Waiting for shell output...",
-                theme.inactive_style(),
-            )));
-        }
-        let visible_height = sections[1].height.saturating_sub(1) as usize;
-        let max_start = lines.len().saturating_sub(visible_height);
-        let start = tab.scroll.min(max_start);
-        let end = (start + visible_height).min(lines.len());
-        frame.render_widget(
-            Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
-            sections[1],
-        );
-        render_scrollbar(frame, sections[1], lines.len(), start);
     }
 
     frame.render_widget(
@@ -821,7 +884,7 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize
 
 #[cfg(test)]
 mod tests {
-    use super::truncate_message;
+    use super::{VisibleWindow, centered_window, scroll_window, truncate_message};
 
     #[test]
     fn short_message_unchanged() {
@@ -890,5 +953,21 @@ mod tests {
         let result = truncate_message("hello world", 4);
         assert_eq!(result.as_ref(), "h...");
         assert_eq!(result.chars().count(), 4);
+    }
+
+    #[test]
+    fn scroll_window_clamps_to_bottom() {
+        assert_eq!(
+            scroll_window(10, 99, 3),
+            VisibleWindow { start: 7, end: 10 }
+        );
+    }
+
+    #[test]
+    fn centered_window_keeps_selection_visible() {
+        assert_eq!(
+            centered_window(10, 8, 3),
+            VisibleWindow { start: 7, end: 10 }
+        );
     }
 }

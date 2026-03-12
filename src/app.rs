@@ -20,6 +20,7 @@ use crate::{
         probe_panel::ProbePanelState as ProbePanelComponentState,
         scale_dialog::{ScaleDialogState, ScaleTargetKind},
     },
+    ui::contains_ci,
     workbench::{
         ActionHistoryTabState, DEFAULT_WORKBENCH_HEIGHT, ExecTabState, PodLogsTabState,
         PortForwardTabState, ResourceEventsTabState, ResourceYamlTabState, WorkbenchState,
@@ -61,7 +62,7 @@ impl NavGroup {
             NavGroup::Overview => "󰋗",
             NavGroup::Workloads => "󰆧",
             NavGroup::Network => "󰛳",
-            NavGroup::Config => "�",
+            NavGroup::Config => "󰒓",
             NavGroup::Storage => "󰋊",
             NavGroup::Helm => "󰱥",
             NavGroup::FluxCD => "󰠳",
@@ -79,8 +80,8 @@ impl NavGroup {
             (NavGroup::Workloads, true) => " ▶ 󰆧 Workloads",
             (NavGroup::Network, false) => " ▼ 󰛳 Network",
             (NavGroup::Network, true) => " ▶ 󰛳 Network",
-            (NavGroup::Config, false) => " ▼ � Config",
-            (NavGroup::Config, true) => " ▶ � Config",
+            (NavGroup::Config, false) => " ▼ 󰒓 Config",
+            (NavGroup::Config, true) => " ▶ 󰒓 Config",
             (NavGroup::Storage, false) => " ▼ 󰋊 Storage",
             (NavGroup::Storage, true) => " ▶ 󰋊 Storage",
             (NavGroup::Helm, false) => " ▼ 󰱥 Helm",
@@ -287,7 +288,7 @@ impl AppView {
             AppView::Jobs => "󰃰",
             AppView::CronJobs => "󰔠",
             AppView::Services => "󰛳",
-            AppView::Endpoints => "�",
+            AppView::Endpoints => "󰛳",
             AppView::Ingresses => "󰱓",
             AppView::IngressClasses => "󰱓",
             AppView::NetworkPolicies => "󰒃",
@@ -340,7 +341,7 @@ impl AppView {
             AppView::Jobs => "  󰃰 Jobs",
             AppView::CronJobs => "  󰔠 Cron Jobs",
             AppView::Services => "  󰛳 Services",
-            AppView::Endpoints => "  � Endpoints",
+            AppView::Endpoints => "  󰛳 Endpoints",
             AppView::Ingresses => "  󰱓 Ingresses",
             AppView::IngressClasses => "  󰱓 Ingress Classes",
             AppView::NetworkPolicies => "  󰒃 Network Policies",
@@ -1075,6 +1076,72 @@ impl LogsViewerState {
             self.scroll_offset = self.scroll_offset.saturating_sub(excess);
         }
     }
+
+    pub fn open_search(&mut self) {
+        self.searching = true;
+        self.search_input = self.search_query.clone();
+    }
+
+    pub fn commit_search(&mut self) {
+        self.search_query = self.search_input.clone();
+        self.searching = false;
+        self.jump_to_first_match();
+    }
+
+    pub fn cancel_search(&mut self) {
+        self.search_input = self.search_query.clone();
+        self.searching = false;
+    }
+
+    pub fn jump_to_first_match(&mut self) -> bool {
+        self.find_match_forward(0).is_some_and(|index| {
+            self.scroll_offset = index;
+            self.follow_mode = false;
+            true
+        })
+    }
+
+    pub fn jump_to_next_match(&mut self) -> bool {
+        let start = self.scroll_offset.saturating_add(1);
+        self.find_match_forward(start).is_some_and(|index| {
+            self.scroll_offset = index;
+            self.follow_mode = false;
+            true
+        })
+    }
+
+    pub fn jump_to_prev_match(&mut self) -> bool {
+        if self.scroll_offset == 0 {
+            return false;
+        }
+
+        self.find_match_backward(self.scroll_offset)
+            .is_some_and(|index| {
+                self.scroll_offset = index;
+                self.follow_mode = false;
+                true
+            })
+    }
+
+    fn find_match_forward(&self, start: usize) -> Option<usize> {
+        (!self.search_query.is_empty()).then_some(())?;
+
+        self.lines
+            .iter()
+            .enumerate()
+            .skip(start)
+            .find_map(|(index, line)| contains_ci(line, &self.search_query).then_some(index))
+    }
+
+    fn find_match_backward(&self, end_exclusive: usize) -> Option<usize> {
+        (!self.search_query.is_empty()).then_some(())?;
+
+        self.lines[..end_exclusive]
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, line)| contains_ci(line, &self.search_query).then_some(index))
+    }
 }
 
 /// Active form field in the lightweight port-forward dialog state.
@@ -1122,6 +1189,7 @@ pub struct ProbePanelState {
 #[derive(Debug, Clone, Default)]
 pub struct DetailViewState {
     pub resource: Option<ResourceRef>,
+    pub pending_request_id: Option<u64>,
     pub metadata: DetailMetadata,
     pub yaml: Option<String>,
     pub events: Vec<EventInfo>,
@@ -1314,6 +1382,7 @@ pub enum AppAction {
     LogsViewerPickerDown,
     LogsViewerSearchOpen,
     LogsViewerSearchClose,
+    LogsViewerSearchCancel,
     LogsViewerSearchNext,
     LogsViewerSearchPrev,
     OpenResourceYaml,
@@ -1843,6 +1912,14 @@ impl AppState {
     }
 
     /// Updates the currently displayed custom resource instances for Extensions view.
+    pub fn begin_extension_instances_load(&mut self, crd_name: String) {
+        self.extension_selected_crd = Some(crd_name);
+        self.extension_instances.clear();
+        self.extension_error = None;
+        self.extension_instance_cursor = 0;
+    }
+
+    /// Updates the currently displayed custom resource instances for Extensions view.
     pub fn set_extension_instances(
         &mut self,
         crd_name: String,
@@ -2230,11 +2307,13 @@ impl AppState {
         resource: ResourceRef,
         yaml: Option<String>,
         error: Option<String>,
+        pending_request_id: Option<u64>,
     ) {
         let mut tab = ResourceYamlTabState::new(resource);
         tab.yaml = yaml;
         tab.loading = tab.yaml.is_none() && error.is_none();
         tab.error = error;
+        tab.pending_request_id = pending_request_id;
         self.workbench
             .open_tab(WorkbenchTabState::ResourceYaml(tab));
         self.focus = Focus::Workbench;
@@ -2246,11 +2325,13 @@ impl AppState {
         events: Vec<EventInfo>,
         loading: bool,
         error: Option<String>,
+        pending_request_id: Option<u64>,
     ) {
         let mut tab = ResourceEventsTabState::new(resource);
         tab.events = events;
         tab.loading = loading;
         tab.error = error;
+        tab.pending_request_id = pending_request_id;
         tab.rebuild_timeline(&self.action_history);
         self.workbench
             .open_tab(WorkbenchTabState::ResourceEvents(tab));
@@ -2473,77 +2554,89 @@ impl AppState {
                     _ => AppAction::None,
                 }
             }
-            WorkbenchTabState::PodLogs(tab) => match key.code {
-                KeyCode::Esc if !tab.viewer.searching => AppAction::EscapePressed,
-                KeyCode::Char('k') | KeyCode::Up => {
-                    if tab.viewer.picking_container {
-                        AppAction::LogsViewerPickerUp
-                    } else {
-                        AppAction::LogsViewerScrollUp
+            WorkbenchTabState::PodLogs(tab) => {
+                if tab.viewer.searching {
+                    match key.code {
+                        KeyCode::Esc => AppAction::LogsViewerSearchCancel,
+                        KeyCode::Enter => AppAction::LogsViewerSearchClose,
+                        KeyCode::Backspace => {
+                            tab.viewer.search_input.pop();
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.viewer.search_input.clear();
+                            AppAction::None
+                        }
+                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.viewer.search_input.push(c);
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            if tab.viewer.picking_container {
+                                AppAction::LogsViewerPickerUp
+                            } else {
+                                AppAction::LogsViewerScrollUp
+                            }
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            if tab.viewer.picking_container {
+                                AppAction::LogsViewerPickerDown
+                            } else {
+                                AppAction::LogsViewerScrollDown
+                            }
+                        }
+                        KeyCode::Enter if tab.viewer.picking_container => {
+                            if tab.viewer.container_cursor == 0 && tab.viewer.containers.len() > 1 {
+                                // "All Containers" entry at index 0
+                                AppAction::LogsViewerSelectAllContainers
+                            } else {
+                                // Single container: offset by 1 to skip the "All" entry
+                                let real_idx = if tab.viewer.containers.len() > 1 {
+                                    tab.viewer.container_cursor.saturating_sub(1)
+                                } else {
+                                    tab.viewer.container_cursor
+                                };
+                                tab.viewer
+                                    .containers
+                                    .get(real_idx)
+                                    .cloned()
+                                    .map(AppAction::LogsViewerSelectContainer)
+                                    .unwrap_or(AppAction::None)
+                            }
+                        }
+                        KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
+                        KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
+                        KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
+                        KeyCode::Char('P') if !tab.viewer.picking_container => {
+                            AppAction::LogsViewerTogglePrevious
+                        }
+                        KeyCode::Char('t') if !tab.viewer.picking_container => {
+                            AppAction::LogsViewerToggleTimestamps
+                        }
+                        KeyCode::Char('/') if !tab.viewer.picking_container => {
+                            AppAction::LogsViewerSearchOpen
+                        }
+                        KeyCode::Char('n') if !tab.viewer.picking_container => {
+                            AppAction::LogsViewerSearchNext
+                        }
+                        KeyCode::Char('N') if !tab.viewer.picking_container => {
+                            AppAction::LogsViewerSearchPrev
+                        }
+                        KeyCode::Char('y') if !tab.viewer.picking_container => {
+                            AppAction::CopyLogContent
+                        }
+                        KeyCode::Char('S') if !tab.viewer.picking_container => {
+                            AppAction::ExportLogs
+                        }
+                        _ => AppAction::None,
                     }
                 }
-                KeyCode::Char('j') | KeyCode::Down => {
-                    if tab.viewer.picking_container {
-                        AppAction::LogsViewerPickerDown
-                    } else {
-                        AppAction::LogsViewerScrollDown
-                    }
-                }
-                KeyCode::Enter if tab.viewer.picking_container => {
-                    if tab.viewer.container_cursor == 0 && tab.viewer.containers.len() > 1 {
-                        // "All Containers" entry at index 0
-                        AppAction::LogsViewerSelectAllContainers
-                    } else {
-                        // Single container: offset by 1 to skip the "All" entry
-                        let real_idx = if tab.viewer.containers.len() > 1 {
-                            tab.viewer.container_cursor.saturating_sub(1)
-                        } else {
-                            tab.viewer.container_cursor
-                        };
-                        tab.viewer
-                            .containers
-                            .get(real_idx)
-                            .cloned()
-                            .map(AppAction::LogsViewerSelectContainer)
-                            .unwrap_or(AppAction::None)
-                    }
-                }
-                KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
-                KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
-                KeyCode::Char('f') if !tab.viewer.searching => AppAction::LogsViewerToggleFollow,
-                KeyCode::Char('P') if !tab.viewer.picking_container => {
-                    AppAction::LogsViewerTogglePrevious
-                }
-                KeyCode::Char('t') if !tab.viewer.picking_container && !tab.viewer.searching => {
-                    AppAction::LogsViewerToggleTimestamps
-                }
-                KeyCode::Char('/') if !tab.viewer.searching && !tab.viewer.picking_container => {
-                    AppAction::LogsViewerSearchOpen
-                }
-                KeyCode::Esc if tab.viewer.searching => AppAction::LogsViewerSearchClose,
-                KeyCode::Enter if tab.viewer.searching => AppAction::LogsViewerSearchClose,
-                KeyCode::Char('n') if !tab.viewer.searching && !tab.viewer.picking_container => {
-                    AppAction::LogsViewerSearchNext
-                }
-                KeyCode::Char('N') if !tab.viewer.searching && !tab.viewer.picking_container => {
-                    AppAction::LogsViewerSearchPrev
-                }
-                KeyCode::Backspace if tab.viewer.searching => {
-                    tab.viewer.search_input.pop();
-                    AppAction::None
-                }
-                KeyCode::Char(c) if tab.viewer.searching => {
-                    tab.viewer.search_input.push(c);
-                    AppAction::None
-                }
-                KeyCode::Char('y') if !tab.viewer.searching && !tab.viewer.picking_container => {
-                    AppAction::CopyLogContent
-                }
-                KeyCode::Char('S') if !tab.viewer.searching && !tab.viewer.picking_container => {
-                    AppAction::ExportLogs
-                }
-                _ => AppAction::None,
-            },
+            }
             WorkbenchTabState::WorkloadLogs(tab) => {
                 let filtered_len = tab
                     .lines
@@ -2565,6 +2658,10 @@ impl AppState {
                         }
                         KeyCode::Backspace => {
                             tab.filter_input.pop();
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.filter_input.clear();
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2880,7 +2977,7 @@ impl AppState {
             ActiveComponent::ProbePanel => {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char(' ') => AppAction::ProbeToggleExpand,
+                    KeyCode::Enter | KeyCode::Char(' ') => AppAction::ProbeToggleExpand,
                     KeyCode::Char('j') | KeyCode::Down => AppAction::ProbeSelectNext,
                     KeyCode::Char('k') | KeyCode::Up => AppAction::ProbeSelectPrev,
                     _ => AppAction::None,
@@ -3766,6 +3863,79 @@ mod tests {
     }
 
     #[test]
+    fn pod_logs_search_mode_accepts_shortcut_characters_as_text() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-1".into(), "default".into())),
+            ..DetailViewState::default()
+        });
+        app.open_logs_viewer();
+
+        let Some(tab) = app.workbench.active_tab_mut() else {
+            panic!("expected active workbench tab");
+        };
+        let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+            panic!("expected pod logs tab");
+        };
+        logs_tab.viewer.searching = true;
+        logs_tab.viewer.search_input.clear();
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('g'))),
+            AppAction::None
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('f'))),
+            AppAction::None
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('t'))),
+            AppAction::None
+        );
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("expected active workbench tab");
+        };
+        let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+            panic!("expected pod logs tab");
+        };
+        assert_eq!(logs_tab.viewer.search_input, "gft");
+    }
+
+    #[test]
+    fn workload_logs_filter_mode_supports_ctrl_u_clear() {
+        let mut app = AppState::default();
+        app.workbench
+            .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+                ResourceRef::Pod("pod-1".into(), "default".into()),
+                1,
+            )));
+        app.focus_workbench();
+
+        let Some(tab) = app.workbench.active_tab_mut() else {
+            panic!("expected active workbench tab");
+        };
+        let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state else {
+            panic!("expected workload logs tab");
+        };
+        logs_tab.editing_text_filter = true;
+        logs_tab.filter_input = "error".into();
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL)),
+            AppAction::None
+        );
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("expected active workbench tab");
+        };
+        let WorkbenchTabState::WorkloadLogs(logs_tab) = &tab.state else {
+            panic!("expected workload logs tab");
+        };
+        assert!(logs_tab.filter_input.is_empty());
+    }
+
+    #[test]
     fn filtered_pod_indices_apply_restarts_sort_with_stable_tie_breakers() {
         let mut pods = vec![
             PodInfo {
@@ -4373,5 +4543,13 @@ mod tests {
         assert!(loaded.preferences.is_none());
         assert!(loaded.cluster_preferences.is_none());
         assert!(loaded.collapsed_groups.is_empty());
+    }
+
+    #[test]
+    fn sidebar_icons_do_not_use_replacement_glyphs() {
+        assert!(!NavGroup::Config.icon().contains('\u{fffd}'));
+        assert!(!NavGroup::Config.sidebar_text(false).contains('\u{fffd}'));
+        assert!(!AppView::Endpoints.icon().contains('\u{fffd}'));
+        assert!(!AppView::Endpoints.sidebar_text().contains('\u{fffd}'));
     }
 }
