@@ -49,7 +49,30 @@ use kubectui::{
 /// Main asynchronous runtime entrypoint.
 #[tokio::main]
 async fn main() -> Result<()> {
-    env_logger::init();
+    // Send logs to a file instead of stderr so they don't corrupt the TUI.
+    // kube-rs emits ERROR-level traces for transient connection drops which
+    // would otherwise render on top of the ratatui display.
+    let log_path = dirs::cache_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join("kubectui")
+        .join("kubectui.log");
+    if let Some(parent) = log_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    if let Ok(file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+    {
+        env_logger::Builder::from_default_env()
+            .target(env_logger::Target::Pipe(Box::new(file)))
+            .init();
+    } else {
+        // Fallback: silence logs entirely rather than corrupt the terminal.
+        env_logger::Builder::from_default_env()
+            .filter_level(log::LevelFilter::Off)
+            .init();
+    }
     ui::profiling::init_from_env();
 
     // Simple CLI flags:
