@@ -16,15 +16,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_image, format_small_int, loading_or_empty_message,
-        responsive_table_widths, table_viewport_rows, table_window, workload_sort_header,
-        workload_sort_suffix,
+        responsive_table_widths, table_viewport_rows, table_window,
+        views::filtering::filtered_replicaset_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -33,6 +33,7 @@ struct ReplicaSetDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -63,17 +64,7 @@ pub fn render_replicasets(
         cluster.snapshot_version,
         data_fingerprint(&cluster.replicasets, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.replicasets,
-                q,
-                sort,
-                |rs, needle| contains_ci(&rs.name, needle) || contains_ci(&rs.namespace, needle),
-                |rs| rs.name.as_str(),
-                |rs| rs.namespace.as_str(),
-                |rs| rs.age,
-            )
-        },
+        |q| filtered_replicaset_indices(&cluster.replicasets, q, sort),
     );
 
     if indices.is_empty() {
@@ -116,7 +107,7 @@ pub fn render_replicasets(
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
-    let derived = cached_replicaset_derived(cluster, query, indices.as_ref());
+    let derived = cached_replicaset_derived(cluster, query, indices.as_ref(), cache_variant);
 
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &rs_idx) in indices[window.start..window.end].iter().enumerate() {
@@ -223,11 +214,13 @@ fn cached_replicaset_derived(
     cluster: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> ReplicaSetDerivedCacheValue {
     let key = ReplicaSetDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.replicasets, cluster.snapshot_version),
+        variant,
     };
 
     if let Ok(cache) = REPLICASET_DERIVED_CACHE.lock()

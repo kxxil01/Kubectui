@@ -15,9 +15,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
         loading_or_empty_message, table_viewport_rows, table_window,
+        views::filtering::filtered_namespace_indices,
     },
 };
 
@@ -35,17 +35,7 @@ pub fn render_namespaces(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.namespace_list, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.namespace_list.len()).collect();
-            }
-            cluster
-                .namespace_list
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, namespace)| contains_ci(&namespace.name, q).then_some(idx))
-                .collect()
-        },
+        |q| filtered_namespace_indices(&cluster.namespace_list, q),
     );
 
     if indices.is_empty() {

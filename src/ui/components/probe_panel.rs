@@ -233,7 +233,7 @@ pub fn render_probe_panel(frame: &mut Frame, area: Rect, state: &ProbePanelState
         // Help text
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "↑/↓ or k/j: navigate  Enter/Space: toggle  r: refresh",
+            "↑/↓ or k/j: navigate  Enter/Space: toggle",
             Style::default().fg(Color::DarkGray),
         )));
     }

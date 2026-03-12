@@ -608,7 +608,7 @@ pub struct NamespaceInfo {
 }
 
 /// Lightweight Event view.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct K8sEventInfo {
     pub name: String,
     pub namespace: String,

@@ -28,7 +28,7 @@ use kubectui::{
     action_history::{ActionKind, ActionStatus},
     app::{
         AppAction, AppState, AppView, DetailMetadata, DetailViewState, LogsViewerState,
-        ResourceRef, filtered_pod_indices, filtered_workload_indices, load_config, save_config,
+        ResourceRef, load_config, save_config,
     },
     coordinator::{LogStreamStatus, UpdateCoordinator, UpdateMessage},
     events::apply_action,
@@ -228,7 +228,7 @@ fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
     }
 }
 
-fn apply_detail_state_to_workbench(app: &mut AppState, state: &DetailViewState) {
+fn apply_detail_state_to_workbench(app: &mut AppState, request_id: u64, state: &DetailViewState) {
     let Some(resource) = state.resource.as_ref() else {
         return;
     };
@@ -237,41 +237,54 @@ fn apply_detail_state_to_workbench(app: &mut AppState, state: &DetailViewState) 
         .workbench
         .find_tab_mut(&WorkbenchTabKey::ResourceYaml(resource.clone()))
         && let WorkbenchTabState::ResourceYaml(yaml_tab) = &mut tab.state
+        && yaml_tab.pending_request_id == Some(request_id)
     {
         yaml_tab.yaml = state.yaml.clone();
         yaml_tab.loading = false;
         yaml_tab.error = state.error.clone();
+        yaml_tab.pending_request_id = None;
     }
 
     if let Some(tab) = app
         .workbench
         .find_tab_mut(&WorkbenchTabKey::ResourceEvents(resource.clone()))
         && let WorkbenchTabState::ResourceEvents(events_tab) = &mut tab.state
+        && events_tab.pending_request_id == Some(request_id)
     {
         events_tab.events = state.events.clone();
         events_tab.loading = false;
         events_tab.error = state.error.clone();
+        events_tab.pending_request_id = None;
         events_tab.rebuild_timeline(&app.action_history);
     }
 }
 
-fn apply_detail_error_to_workbench(app: &mut AppState, resource: &ResourceRef, error: &str) {
+fn apply_detail_error_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    error: &str,
+) {
     if let Some(tab) = app
         .workbench
         .find_tab_mut(&WorkbenchTabKey::ResourceYaml(resource.clone()))
         && let WorkbenchTabState::ResourceYaml(yaml_tab) = &mut tab.state
+        && yaml_tab.pending_request_id == Some(request_id)
     {
         yaml_tab.loading = false;
         yaml_tab.error = Some(error.to_string());
+        yaml_tab.pending_request_id = None;
     }
 
     if let Some(tab) = app
         .workbench
         .find_tab_mut(&WorkbenchTabKey::ResourceEvents(resource.clone()))
         && let WorkbenchTabState::ResourceEvents(events_tab) = &mut tab.state
+        && events_tab.pending_request_id == Some(request_id)
     {
         events_tab.loading = false;
         events_tab.error = Some(error.to_string());
+        events_tab.pending_request_id = None;
     }
 }
 
@@ -377,14 +390,23 @@ fn refresh_port_forward_workbench(
     );
 }
 
+fn next_request_id(sequence: &mut u64) -> u64 {
+    *sequence = sequence.wrapping_add(1).max(1);
+    *sequence
+}
+
 fn open_detail_for_resource(
     app: &mut AppState,
     snapshot: &ClusterSnapshot,
     client: &K8sClient,
-    detail_tx: &tokio::sync::mpsc::Sender<(ResourceRef, Result<DetailViewState, String>)>,
+    detail_tx: &tokio::sync::mpsc::Sender<DetailAsyncResult>,
     resource: ResourceRef,
+    detail_request_seq: &mut u64,
 ) {
-    app.detail_view = Some(initial_loading_state(resource.clone(), snapshot));
+    let request_id = next_request_id(detail_request_seq);
+    let mut state = initial_loading_state(resource.clone(), snapshot);
+    state.pending_request_id = Some(request_id);
+    app.detail_view = Some(state);
     let client_clone = client.clone();
     let snapshot_clone = snapshot.clone();
     let tx = detail_tx.clone();
@@ -393,7 +415,13 @@ fn open_detail_for_resource(
         let result = fetch_detail_view(&client_clone, &snapshot_clone, requested_resource.clone())
             .await
             .map_err(|err| err.to_string());
-        let _ = tx.send((requested_resource, result)).await;
+        let _ = tx
+            .send(DetailAsyncResult {
+                request_id,
+                resource: requested_resource,
+                result,
+            })
+            .await;
     });
 }
 
@@ -489,9 +517,8 @@ struct TriggerCronJobAsyncResult {
 
 #[derive(Debug)]
 struct ProbeAsyncResult {
-    pod_name: String,
-    namespace: String,
-    probes: Vec<(String, kubectui::k8s::probes::ContainerProbes)>,
+    resource: ResourceRef,
+    result: Result<Vec<(String, kubectui::k8s::probes::ContainerProbes)>, String>,
 }
 
 #[derive(Debug)]
@@ -512,6 +539,37 @@ struct WorkloadLogsBootstrapResult {
 struct ExtensionFetchResult {
     crd_name: String,
     result: Result<Vec<kubectui::k8s::dtos::CustomResourceInfo>, String>,
+}
+
+#[derive(Debug)]
+struct DetailAsyncResult {
+    request_id: u64,
+    resource: ResourceRef,
+    result: Result<DetailViewState, String>,
+}
+
+#[derive(Debug)]
+struct EventsAsyncResult {
+    request_id: u64,
+    context_generation: u64,
+    requested_namespace: Option<String>,
+    result: Result<Vec<kubectui::k8s::dtos::K8sEventInfo>, String>,
+}
+
+#[derive(Debug)]
+struct RelationsAsyncResult {
+    request_id: u64,
+    resource: ResourceRef,
+    result: Result<Vec<kubectui::k8s::relationships::RelationNode>, String>,
+}
+
+#[derive(Debug, Default)]
+struct EventsFetchRuntimeState {
+    request_seq: u64,
+    in_flight_id: Option<u64>,
+    in_flight_namespace: Option<Option<String>>,
+    in_flight_task: Option<tokio::task::JoinHandle<()>>,
+    queued_namespace: Option<Option<String>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -567,13 +625,13 @@ const FLUX_AUTO_REFRESH_EVERY: u64 = 3;
 const STATUS_MESSAGE_TIMEOUT_SECS: u64 = 12;
 const MUTATION_REFRESH_DELAYS_SECS: &[u64] = &[2, 5];
 const FLUX_RECONCILE_REFRESH_DELAYS_SECS: &[u64] = &[2, 5, 9];
+const MAX_RECENT_EVENTS_CACHE_ITEMS: usize = 250;
 
-fn fast_refresh_options(include_flux: bool, include_events: bool) -> RefreshOptions {
+fn fast_refresh_options(include_flux: bool) -> RefreshOptions {
     RefreshOptions {
         include_flux,
         include_cluster_info: false,
         include_secondary_resources: false,
-        include_events,
     }
 }
 
@@ -655,16 +713,11 @@ fn finish_mutation_success(
     runtime.auto_refresh.reset();
 }
 
-fn full_refresh_options(
-    include_flux: bool,
-    include_cluster_info: bool,
-    include_events: bool,
-) -> RefreshOptions {
+fn full_refresh_options(include_flux: bool, include_cluster_info: bool) -> RefreshOptions {
     RefreshOptions {
         include_flux,
         include_cluster_info,
         include_secondary_resources: true,
-        include_events,
     }
 }
 
@@ -734,6 +787,7 @@ fn view_prefers_secondary_refresh(view: AppView) -> bool {
             | AppView::Jobs
             | AppView::CronJobs
             | AppView::Services
+            | AppView::Events
             | AppView::PortForwarding
             | AppView::HelmCharts
             | AppView::FluxCDAlertProviders
@@ -749,10 +803,6 @@ fn view_prefers_secondary_refresh(view: AppView) -> bool {
     )
 }
 
-fn view_wants_events(view: AppView) -> bool {
-    matches!(view, AppView::Events)
-}
-
 fn view_wants_cluster_info(view: AppView) -> bool {
     matches!(view, AppView::Dashboard)
 }
@@ -762,12 +812,11 @@ fn refresh_options_for_view(
     include_flux: bool,
     force_cluster_info: bool,
 ) -> RefreshOptions {
-    let include_events = view_wants_events(view);
     let include_cluster_info = force_cluster_info || view_wants_cluster_info(view);
-    if view_prefers_secondary_refresh(view) || include_events {
-        full_refresh_options(include_flux, include_cluster_info, include_events)
+    if view_prefers_secondary_refresh(view) {
+        full_refresh_options(include_flux, include_cluster_info)
     } else {
-        fast_refresh_options(include_flux, include_events)
+        fast_refresh_options(include_flux)
     }
 }
 
@@ -871,7 +920,6 @@ fn request_refresh(
         include_cluster_info: options.include_cluster_info,
         include_secondary_resources: options.include_secondary_resources
             || should_queue_secondary_backfill,
-        include_events: options.include_events,
     };
     global_state.mark_refresh_requested(visible_options);
     *snapshot_dirty = true;
@@ -900,7 +948,6 @@ fn request_refresh(
                     include_flux: options.include_flux,
                     include_cluster_info: false,
                     include_secondary_resources: true,
-                    include_events: false,
                 },
                 context_generation: refresh_state.context_generation,
             });
@@ -922,11 +969,6 @@ fn request_refresh(
             .is_some_and(|queued| queued.options.include_secondary_resources)
             || options.include_secondary_resources
             || should_queue_secondary_backfill;
-        let merged_include_events = refresh_state
-            .queued_refresh
-            .as_ref()
-            .is_some_and(|queued| queued.options.include_events)
-            || options.include_events;
         refresh_state.queued_refresh = Some(QueuedRefresh {
             request_id,
             namespace,
@@ -934,11 +976,87 @@ fn request_refresh(
                 include_flux: merged_include_flux,
                 include_cluster_info: merged_include_cluster_info,
                 include_secondary_resources: merged_include_secondary_resources,
-                include_events: merged_include_events,
             },
             context_generation: refresh_state.context_generation,
         });
     }
+}
+
+fn normalize_recent_events(
+    mut events: Vec<kubectui::k8s::dtos::K8sEventInfo>,
+) -> Vec<kubectui::k8s::dtos::K8sEventInfo> {
+    events.sort_by(|left, right| right.last_seen.cmp(&left.last_seen));
+    events.truncate(MAX_RECENT_EVENTS_CACHE_ITEMS);
+    events
+}
+
+fn abort_in_flight_events_fetch(events_state: &mut EventsFetchRuntimeState) {
+    if let Some(task) = events_state.in_flight_task.take() {
+        task.abort();
+    }
+    events_state.in_flight_id = None;
+    events_state.in_flight_namespace = None;
+}
+
+fn spawn_events_fetch_task(
+    events_tx: tokio::sync::mpsc::Sender<EventsAsyncResult>,
+    client: K8sClient,
+    namespace: Option<String>,
+    request_id: u64,
+    context_generation: u64,
+) -> tokio::task::JoinHandle<()> {
+    let requested_namespace = namespace.clone();
+    tokio::spawn(async move {
+        let result = client
+            .fetch_events(namespace.as_deref())
+            .await
+            .map(normalize_recent_events)
+            .map_err(|err| err.to_string());
+        let _ = events_tx
+            .send(EventsAsyncResult {
+                request_id,
+                context_generation,
+                requested_namespace,
+                result,
+            })
+            .await;
+    })
+}
+
+fn request_events_refresh(
+    events_tx: &tokio::sync::mpsc::Sender<EventsAsyncResult>,
+    global_state: &mut GlobalState,
+    client: &K8sClient,
+    namespace: Option<String>,
+    context_generation: u64,
+    events_state: &mut EventsFetchRuntimeState,
+    snapshot_dirty: &mut bool,
+) {
+    if events_state.in_flight_id.is_some() {
+        if events_state.in_flight_namespace == Some(namespace.clone())
+            || events_state.queued_namespace == Some(namespace.clone())
+        {
+            return;
+        }
+        events_state.queued_namespace = Some(namespace);
+        return;
+    }
+
+    if global_state.mark_events_refresh_requested() {
+        *snapshot_dirty = true;
+    }
+
+    events_state.request_seq = events_state.request_seq.wrapping_add(1);
+    let request_id = events_state.request_seq;
+    events_state.in_flight_id = Some(request_id);
+    events_state.in_flight_namespace = Some(namespace.clone());
+    events_state.in_flight_task = Some(spawn_events_fetch_task(
+        events_tx.clone(),
+        client.clone(),
+        namespace,
+        request_id,
+        context_generation,
+    ));
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1052,8 +1170,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let mut coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
 
     // Channel for async detail view fetches — carries the requested resource to prevent stale writes.
-    let (detail_tx, mut detail_rx) =
-        tokio::sync::mpsc::channel::<(ResourceRef, Result<DetailViewState, String>)>(16);
+    let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel::<DetailAsyncResult>(16);
+    let mut detail_request_seq: u64 = 0;
     let (logs_viewer_tx, mut logs_viewer_rx) =
         tokio::sync::mpsc::channel::<LogsViewerAsyncResult>(64);
     let mut logs_viewer_request_seq: u64 = 0;
@@ -1071,10 +1189,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let (node_ops_tx, mut node_ops_rx) = tokio::sync::mpsc::channel::<NodeOpsAsyncResult>(16);
     let mut node_op_in_flight: bool = false;
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
-    let (relations_tx, mut relations_rx) = tokio::sync::mpsc::channel::<(
-        ResourceRef,
-        Result<Vec<kubectui::k8s::relationships::RelationNode>, String>,
-    )>(16);
+    let (relations_tx, mut relations_rx) = tokio::sync::mpsc::channel::<RelationsAsyncResult>(16);
+    let mut relations_request_seq: u64 = 0;
     let (exec_bootstrap_tx, mut exec_bootstrap_rx) =
         tokio::sync::mpsc::channel::<ExecBootstrapResult>(16);
     let (exec_update_tx, mut exec_update_rx) = tokio::sync::mpsc::channel::<ExecEvent>(128);
@@ -1086,6 +1202,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let mut workload_log_sessions: HashMap<u64, Vec<(String, String, String)>> = HashMap::new();
     let (extension_fetch_tx, mut extension_fetch_rx) =
         tokio::sync::mpsc::channel::<ExtensionFetchResult>(16);
+    let (events_tx, mut events_rx) = tokio::sync::mpsc::channel::<EventsAsyncResult>(16);
+    let mut events_state = EventsFetchRuntimeState::default();
 
     // Channel for background data refreshes — namespace switches, manual refresh, auto-refresh
     // all go through here so the UI stays responsive during API calls.
@@ -1105,6 +1223,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
         &mut refresh_state,
         &mut snapshot_dirty,
     );
+    if app.view() == AppView::Events {
+        request_events_refresh(
+            &events_tx,
+            &mut global_state,
+            &client,
+            namespace_scope(app.get_namespace()).map(str::to_string),
+            refresh_state.context_generation,
+            &mut events_state,
+            &mut snapshot_dirty,
+        );
+    }
 
     // Cached snapshot — only re-clone when state is marked dirty
     let mut cached_snapshot = global_state.snapshot();
@@ -1196,21 +1325,32 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
             // Detail view fetch completed in background task
             result = detail_rx.recv() => {
-                if let Some((requested_resource, result)) = result {
+                if let Some(result) = result {
+                    let DetailAsyncResult {
+                        request_id,
+                        resource: requested_resource,
+                        result,
+                    } = result;
                     let detail_still_waiting_for_this = app
                         .detail_view
                         .as_ref()
-                        .and_then(|detail| detail.resource.as_ref())
-                        .is_some_and(|resource| resource == &requested_resource);
+                        .is_some_and(|detail| {
+                            detail.resource.as_ref() == Some(&requested_resource)
+                                && detail.pending_request_id == Some(request_id)
+                        });
                     let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
                         matches!(
                             &tab.state,
                             WorkbenchTabState::ResourceYaml(yaml_tab)
-                                if yaml_tab.resource == requested_resource && yaml_tab.loading
+                                if yaml_tab.resource == requested_resource
+                                    && yaml_tab.loading
+                                    && yaml_tab.pending_request_id == Some(request_id)
                         ) || matches!(
                             &tab.state,
                             WorkbenchTabState::ResourceEvents(events_tab)
-                                if events_tab.resource == requested_resource && events_tab.loading
+                                if events_tab.resource == requested_resource
+                                    && events_tab.loading
+                                    && events_tab.pending_request_id == Some(request_id)
                         )
                     });
                     if !detail_still_waiting_for_this && !workbench_waiting_for_this {
@@ -1219,16 +1359,22 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     needs_redraw = true;
                     match result {
                         Ok(state) => {
-                            apply_detail_state_to_workbench(&mut app, &state);
+                            apply_detail_state_to_workbench(&mut app, request_id, &state);
                             if detail_still_waiting_for_this {
                                 app.detail_view = Some(state);
                             }
                         }
                         Err(err) => {
-                            apply_detail_error_to_workbench(&mut app, &requested_resource, &err);
+                            apply_detail_error_to_workbench(
+                                &mut app,
+                                request_id,
+                                &requested_resource,
+                                &err,
+                            );
                             if detail_still_waiting_for_this {
                                 app.detail_view = Some(DetailViewState {
                                     resource: Some(requested_resource),
+                                    pending_request_id: None,
                                     loading: false,
                                     error: Some(err),
                                     ..DetailViewState::default()
@@ -1412,6 +1558,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                         &mut refresh_state,
                                         &mut snapshot_dirty,
                                     );
+                                    if app.view() == AppView::Events {
+                                        request_events_refresh(
+                                            &events_tx,
+                                            &mut global_state,
+                                            &client,
+                                            None,
+                                            refresh_state.context_generation,
+                                            &mut events_state,
+                                            &mut snapshot_dirty,
+                                        );
+                                    }
                                 } else {
                                     app.clear_error();
                                 }
@@ -1446,6 +1603,51 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             queued.options,
                             queued.request_id,
                             queued.context_generation,
+                        ));
+                    }
+                }
+            }
+
+            result = events_rx.recv() => {
+                if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation
+                        || events_state.in_flight_id != Some(result.request_id)
+                    {
+                        continue;
+                    }
+
+                    events_state.in_flight_id = None;
+                    events_state.in_flight_namespace = None;
+                    events_state.in_flight_task = None;
+                    needs_redraw = true;
+
+                    if result.requested_namespace
+                        == namespace_scope(app.get_namespace()).map(str::to_string)
+                    {
+                        match result.result {
+                            Ok(events) => {
+                                global_state.apply_events_update(events);
+                                snapshot_dirty = true;
+                            }
+                            Err(err) => {
+                                global_state.fail_events_refresh(err.clone());
+                                snapshot_dirty = true;
+                                app.set_error(format!("Events refresh failed: {err}"));
+                            }
+                        }
+                    }
+
+                    if let Some(namespace) = events_state.queued_namespace.take() {
+                        events_state.request_seq = events_state.request_seq.wrapping_add(1);
+                        let request_id = events_state.request_seq;
+                        events_state.in_flight_id = Some(request_id);
+                        events_state.in_flight_namespace = Some(namespace.clone());
+                        events_state.in_flight_task = Some(spawn_events_fetch_task(
+                            events_tx.clone(),
+                            client.clone(),
+                            namespace,
+                            request_id,
+                            refresh_state.context_generation,
                         ));
                     }
                 }
@@ -1969,13 +2171,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             result = probe_rx.recv() => {
                 if let Some(result) = result {
                     needs_redraw = true;
-                    if let Some(detail) = &mut app.detail_view {
+                    if let Some(detail) = &mut app.detail_view
+                        && detail.resource.as_ref() == Some(&result.resource)
+                    {
                         use kubectui::ui::components::probe_panel::ProbePanelState;
-                        detail.probe_panel = Some(ProbePanelState::new(
-                            result.pod_name,
-                            result.namespace,
-                            result.probes,
-                        ));
+                        if let ResourceRef::Pod(pod_name, namespace) = result.resource {
+                            detail.probe_panel = Some(match result.result {
+                                Ok(probes) => ProbePanelState::new(pod_name, namespace, probes),
+                                Err(error) => {
+                                    let mut state =
+                                        ProbePanelState::new(pod_name, namespace, Vec::new());
+                                    state.error = Some(error);
+                                    state
+                                }
+                            });
+                        }
                     }
                 }
             }
@@ -1983,20 +2193,23 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             result = extension_fetch_rx.recv() => {
                 if let Some(result) = result {
                     needs_redraw = true;
-                    match result.result {
-                        Ok(items) => app.set_extension_instances(result.crd_name, items, None),
-                        Err(err) => app.set_extension_instances(result.crd_name, Vec::new(), Some(err)),
-                    }
+                    apply_extension_fetch_result(&mut app, result);
                 }
             }
 
             result = relations_rx.recv() => {
-                if let Some(payload) = result {
-                    let (requested_resource, result): (ResourceRef, Result<Vec<kubectui::k8s::relationships::RelationNode>, String>) = payload;
+                if let Some(result) = result {
+                    let RelationsAsyncResult {
+                        request_id,
+                        resource: requested_resource,
+                        result,
+                    } = result;
                     let tab_key = WorkbenchTabKey::Relations(requested_resource.clone());
                     if let Some(tab) = app.workbench.find_tab_mut(&tab_key)
                         && let WorkbenchTabState::Relations(ref mut state) = tab.state
+                        && state.pending_request_id == Some(request_id)
                     {
+                        state.pending_request_id = None;
                         state.loading = false;
                         match result {
                             Ok(tree) => {
@@ -2040,6 +2253,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             refresh_state.context_generation =
                                 refresh_state.context_generation.wrapping_add(1);
                             abort_in_flight_refresh(&mut refresh_state);
+                            abort_in_flight_events_fetch(&mut events_state);
+                            events_state.queued_namespace = None;
                             refresh_state.queued_refresh = None;
                             delete_in_flight_id = None;
                             status_message_clear_at = None;
@@ -2055,6 +2270,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 &mut refresh_state,
                                 &mut snapshot_dirty,
                             );
+                            if app.view() == AppView::Events {
+                                request_events_refresh(
+                                    &events_tx,
+                                    &mut global_state,
+                                    &client,
+                                    namespace_scope(app.get_namespace()).map(str::to_string),
+                                    refresh_state.context_generation,
+                                    &mut events_state,
+                                    &mut snapshot_dirty,
+                                );
+                            }
                         }
                         Ok(Err(err)) => {
                             global_state.set_phase(DataPhase::Error);
@@ -2077,6 +2303,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     if trigger.context_generation != refresh_state.context_generation {
                         continue;
                     }
+                    let events_namespace = trigger.namespace.clone();
                     request_refresh(
                         &refresh_tx,
                         &mut global_state,
@@ -2086,6 +2313,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &mut refresh_state,
                         &mut snapshot_dirty,
                     );
+                    if trigger.view == AppView::Events {
+                        request_events_refresh(
+                            &events_tx,
+                            &mut global_state,
+                            &client,
+                            events_namespace,
+                            refresh_state.context_generation,
+                            &mut events_state,
+                            &mut snapshot_dirty,
+                        );
+                    }
                 }
             }
 
@@ -2094,13 +2332,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 if status_message_clear_at.is_some_and(|deadline| Instant::now() >= deadline) {
                     app.clear_status();
                     status_message_clear_at = None;
-                    needs_redraw = true;
-                }
-
-                // Only redraw on tick if logs are actively streaming (follow mode)
-                if app.workbench.tabs.iter().any(|tab| {
-                    matches!(&tab.state, WorkbenchTabState::PodLogs(logs_tab) if logs_tab.viewer.follow_mode)
-                }) {
                     needs_redraw = true;
                 }
             }
@@ -2124,6 +2355,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &mut refresh_state,
                         &mut snapshot_dirty,
                     );
+                    if app.view() == AppView::Events {
+                        request_events_refresh(
+                            &events_tx,
+                            &mut global_state,
+                            &client,
+                            namespace_scope(app.get_namespace()).map(str::to_string),
+                            refresh_state.context_generation,
+                            &mut events_state,
+                            &mut snapshot_dirty,
+                        );
+                    }
                 }
             }
 
@@ -2200,10 +2442,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &mut global_state,
                         &client,
                         namespace_scope(app.get_namespace()).map(str::to_string),
-                        full_refresh_options(true, true, true),
+                        full_refresh_options(true, true),
                         &mut refresh_state,
                         &mut snapshot_dirty,
                     );
+                    if app.view() == AppView::Events {
+                        request_events_refresh(
+                            &events_tx,
+                            &mut global_state,
+                            &client,
+                            namespace_scope(app.get_namespace()).map(str::to_string),
+                            refresh_state.context_generation,
+                            &mut events_state,
+                            &mut snapshot_dirty,
+                        );
+                    }
                     // Reset auto-refresh timer after manual refresh
                     auto_refresh.reset();
                 }
@@ -2337,6 +2590,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             &client,
                             &detail_tx,
                             resource,
+                            &mut detail_request_seq,
                         );
                     }
 
@@ -2361,6 +2615,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             &mut refresh_state,
                             &mut snapshot_dirty,
                         );
+                        if view == AppView::Events {
+                            request_events_refresh(
+                                &events_tx,
+                                &mut global_state,
+                                &client,
+                                namespace_scope(app.get_namespace()).map(str::to_string),
+                                refresh_state.context_generation,
+                                &mut events_state,
+                                &mut snapshot_dirty,
+                            );
+                        }
                     }
                     // Trigger extensions sync when navigating to Extensions view
                     if view == kubectui::app::AppView::Extensions {
@@ -2409,6 +2674,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     refresh_state.context_generation =
                         refresh_state.context_generation.wrapping_add(1);
                     abort_in_flight_refresh(&mut refresh_state);
+                    abort_in_flight_events_fetch(&mut events_state);
+                    events_state.queued_namespace = None;
                     refresh_state.queued_refresh = None;
                     delete_in_flight_id = None;
                     for (_, handle) in exec_sessions.drain() {
@@ -2439,6 +2706,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &mut refresh_state,
                         &mut snapshot_dirty,
                     );
+                    if app.view() == AppView::Events {
+                        request_events_refresh(
+                            &events_tx,
+                            &mut global_state,
+                            &client,
+                            namespace_scope(app.get_namespace()).map(str::to_string),
+                            refresh_state.context_generation,
+                            &mut events_state,
+                            &mut snapshot_dirty,
+                        );
+                    }
                 }
                 AppAction::OpenDetail(resource) => {
                     open_detail_for_resource(
@@ -2447,6 +2725,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &client,
                         &detail_tx,
                         resource,
+                        &mut detail_request_seq,
                     );
                     if app.focus == kubectui::app::Focus::Workbench {
                         app.focus = kubectui::app::Focus::Content;
@@ -2469,6 +2748,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &client,
                         &detail_tx,
                         target.resource,
+                        &mut detail_request_seq,
                     );
                 }
                 AppAction::CloseDetail => {
@@ -2492,9 +2772,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 .then(|| detail.yaml.clone())
                         })
                         .flatten();
+                    let pending_request_id = cached_yaml
+                        .is_none()
+                        .then(|| next_request_id(&mut detail_request_seq));
                     app.detail_view = None;
-                    app.open_resource_yaml_tab(resource.clone(), cached_yaml.clone(), None);
-                    if cached_yaml.is_none() {
+                    app.open_resource_yaml_tab(
+                        resource.clone(),
+                        cached_yaml.clone(),
+                        None,
+                        pending_request_id,
+                    );
+                    if let Some(request_id) = pending_request_id {
                         let client_clone = client.clone();
                         let snapshot_clone = cached_snapshot.clone();
                         let tx = detail_tx.clone();
@@ -2507,7 +2795,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             )
                             .await
                             .map_err(|err| err.to_string());
-                            let _ = tx.send((requested_resource, result)).await;
+                            let _ = tx
+                                .send(DetailAsyncResult {
+                                    request_id,
+                                    resource: requested_resource,
+                                    result,
+                                })
+                                .await;
                         });
                     }
                 }
@@ -2524,9 +2818,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         continue;
                     };
                     app.detail_view = None;
-                    app.workbench.open_tab(WorkbenchTabState::Relations(
-                        kubectui::workbench::RelationsTabState::new(resource.clone()),
-                    ));
+                    let request_id = next_request_id(&mut relations_request_seq);
+                    let mut relations_tab =
+                        kubectui::workbench::RelationsTabState::new(resource.clone());
+                    relations_tab.pending_request_id = Some(request_id);
+                    app.workbench
+                        .open_tab(WorkbenchTabState::Relations(relations_tab));
                     app.focus = kubectui::app::Focus::Workbench;
 
                     let tx = relations_tx.clone();
@@ -2541,7 +2838,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         )
                         .await
                         .map_err(|err| format!("{err:#}"));
-                        let _ = tx.send((requested_resource, result)).await;
+                        let _ = tx
+                            .send(RelationsAsyncResult {
+                                request_id,
+                                resource: requested_resource,
+                                result,
+                            })
+                            .await;
                     });
                 }
                 AppAction::OpenResourceEvents => {
@@ -2563,9 +2866,17 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         })
                         .unwrap_or_default();
                     let loading = cached_events.is_empty();
+                    let pending_request_id =
+                        loading.then(|| next_request_id(&mut detail_request_seq));
                     app.detail_view = None;
-                    app.open_resource_events_tab(resource.clone(), cached_events, loading, None);
-                    if loading {
+                    app.open_resource_events_tab(
+                        resource.clone(),
+                        cached_events,
+                        loading,
+                        None,
+                        pending_request_id,
+                    );
+                    if let Some(request_id) = pending_request_id {
                         let client_clone = client.clone();
                         let snapshot_clone = cached_snapshot.clone();
                         let tx = detail_tx.clone();
@@ -2578,7 +2889,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             )
                             .await
                             .map_err(|err| err.to_string());
-                            let _ = tx.send((requested_resource, result)).await;
+                            let _ = tx
+                                .send(DetailAsyncResult {
+                                    request_id,
+                                    resource: requested_resource,
+                                    result,
+                                })
+                                .await;
                         });
                     }
                 }
@@ -3999,21 +4316,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     if let Some((pod_name, pod_ns)) = pod_info {
                         let tx = probe_tx.clone();
                         let k = client.get_client();
-                        let pn = pod_name.clone();
-                        let ns = pod_ns.clone();
+                        let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
                         tokio::spawn(async move {
-                            let pods_api: Api<Pod> = Api::namespaced(k, &ns);
-                            let probes = match pods_api.get(&pn).await {
-                                Ok(pod) => extract_probes_from_pod(&pod).unwrap_or_default(),
-                                Err(_) => Vec::new(),
+                            let pods_api: Api<Pod> = Api::namespaced(k, &pod_ns);
+                            let result = match pods_api.get(&pod_name).await {
+                                Ok(pod) => Ok(extract_probes_from_pod(&pod).unwrap_or_default()),
+                                Err(err) => Err(format!("Failed to load probes: {err}")),
                             };
-                            let _ = tx
-                                .send(ProbeAsyncResult {
-                                    pod_name: pn,
-                                    namespace: ns,
-                                    probes,
-                                })
-                                .await;
+                            let _ = tx.send(ProbeAsyncResult { resource, result }).await;
                         });
                     } else {
                         apply_action(AppAction::ProbePanelOpen, &mut app);
@@ -4073,10 +4383,7 @@ fn spawn_extensions_fetch(
         return;
     }
 
-    let Some(crd) = snapshot.custom_resource_definitions.get(
-        app.selected_idx()
-            .min(snapshot.custom_resource_definitions.len().saturating_sub(1)),
-    ) else {
+    let Some(crd) = selected_extension_crd(app, snapshot).cloned() else {
         app.extension_instances.clear();
         app.extension_error = None;
         app.extension_selected_crd = None;
@@ -4086,6 +4393,8 @@ fn spawn_extensions_fetch(
     if app.extension_selected_crd.as_deref() == Some(crd.name.as_str()) {
         return;
     }
+
+    app.begin_extension_instances_load(crd.name.clone());
 
     let namespace_owned = if crd.scope.eq_ignore_ascii_case("Namespaced") {
         namespace_scope(app.get_namespace()).map(ToString::to_string)
@@ -4110,50 +4419,34 @@ fn spawn_extensions_fetch(
     });
 }
 
+fn apply_extension_fetch_result(app: &mut AppState, result: ExtensionFetchResult) {
+    if app.extension_selected_crd.as_deref() != Some(result.crd_name.as_str()) {
+        return;
+    }
+
+    match result.result {
+        Ok(items) => app.set_extension_instances(result.crd_name, items, None),
+        Err(err) => app.set_extension_instances(result.crd_name, Vec::new(), Some(err)),
+    }
+}
+
+fn selected_extension_crd<'a>(
+    app: &AppState,
+    snapshot: &'a ClusterSnapshot,
+) -> Option<&'a kubectui::k8s::dtos::CustomResourceDefinitionInfo> {
+    kubectui::ui::views::extensions::crds::selected_crd(
+        &snapshot.custom_resource_definitions,
+        app.search_query(),
+        app.selected_idx(),
+    )
+}
+
 fn namespace_scope(namespace: &str) -> Option<&str> {
     if namespace == "all" {
         None
     } else {
         Some(namespace)
     }
-}
-
-/// Filters a slice by a text query matching name and optional namespace fields,
-/// then returns the item at the given index in the filtered result.
-/// Case-insensitive substring match without allocating a new lowercase string.
-#[inline]
-fn contains_ci(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    if needle.len() > haystack.len() {
-        return false;
-    }
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
-}
-
-fn filtered_get<'a, T, F>(items: &'a [T], idx: usize, query: &str, text_fields: F) -> Option<&'a T>
-where
-    F: Fn(&T, &str) -> bool,
-{
-    if query.is_empty() {
-        return items.get(idx.min(items.len().saturating_sub(1)));
-    }
-    let mut last_match = None;
-    for (match_idx, item) in items
-        .iter()
-        .filter(|item| text_fields(item, query))
-        .enumerate()
-    {
-        last_match = Some(item);
-        if match_idx == idx {
-            return Some(item);
-        }
-    }
-    last_match
 }
 
 fn filtered_index(indices: &[usize], idx: usize) -> Option<usize> {
@@ -4164,402 +4457,13 @@ fn filtered_index(indices: &[usize], idx: usize) -> Option<usize> {
 
 fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<ResourceRef> {
     let idx = app.selected_idx();
-    let q = app.search_query();
     match app.view() {
         AppView::Dashboard => None,
         AppView::Issues => {
             let issues = kubectui::state::issues::compute_issues(snapshot);
-            let query = q.trim();
+            let query = app.search_query().trim();
             let indices = kubectui::state::issues::filtered_issue_indices(&issues, query);
             filtered_index(&indices, idx).map(|i| issues[i].resource_ref.clone())
-        }
-        AppView::Nodes => {
-            let indices = filtered_workload_indices(
-                &snapshot.nodes,
-                q,
-                app.workload_sort(),
-                |node, needle| contains_ci(&node.name, needle),
-                |node| node.name.as_str(),
-                |_node| "",
-                |node| {
-                    node.created_at.map(|created_at| {
-                        let age_secs =
-                            (chrono::Utc::now().timestamp() - created_at.timestamp()).max(0) as u64;
-                        Duration::from_secs(age_secs)
-                    })
-                },
-            );
-            filtered_index(&indices, idx).map(|node_idx| {
-                let node = &snapshot.nodes[node_idx];
-                ResourceRef::Node(node.name.clone())
-            })
-        }
-        AppView::Pods => {
-            let indices = filtered_pod_indices(&snapshot.pods, q, app.pod_sort());
-            filtered_index(&indices, idx).map(|pod_idx| {
-                let pod = &snapshot.pods[pod_idx];
-                ResourceRef::Pod(pod.name.clone(), pod.namespace.clone())
-            })
-        }
-        AppView::Services => {
-            let indices = filtered_workload_indices(
-                &snapshot.services,
-                q,
-                app.workload_sort(),
-                |svc, needle| {
-                    contains_ci(&svc.name, needle)
-                        || contains_ci(&svc.namespace, needle)
-                        || contains_ci(&svc.type_, needle)
-                },
-                |svc| svc.name.as_str(),
-                |svc| svc.namespace.as_str(),
-                |svc| svc.age,
-            );
-            filtered_index(&indices, idx).map(|svc_idx| {
-                let svc = &snapshot.services[svc_idx];
-                ResourceRef::Service(svc.name.clone(), svc.namespace.clone())
-            })
-        }
-        AppView::ResourceQuotas => {
-            let indices = filtered_workload_indices(
-                &snapshot.resource_quotas,
-                q,
-                app.workload_sort(),
-                |rq, needle| {
-                    let hard_key_match = rq.hard.keys().any(|key| contains_ci(key, needle));
-                    contains_ci(&rq.name, needle) || hard_key_match
-                },
-                |rq| rq.name.as_str(),
-                |rq| rq.namespace.as_str(),
-                |rq| rq.age,
-            );
-            filtered_index(&indices, idx).map(|rq_idx| {
-                let rq = &snapshot.resource_quotas[rq_idx];
-                ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone())
-            })
-        }
-        AppView::LimitRanges => {
-            let indices = filtered_workload_indices(
-                &snapshot.limit_ranges,
-                q,
-                app.workload_sort(),
-                |lr, needle| {
-                    let type_match = lr
-                        .limits
-                        .iter()
-                        .any(|spec| contains_ci(&spec.type_, needle));
-                    contains_ci(&lr.name, needle) || type_match
-                },
-                |lr| lr.name.as_str(),
-                |lr| lr.namespace.as_str(),
-                |lr| lr.age,
-            );
-            filtered_index(&indices, idx).map(|lr_idx| {
-                let lr = &snapshot.limit_ranges[lr_idx];
-                ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone())
-            })
-        }
-        AppView::PodDisruptionBudgets => {
-            let indices = filtered_workload_indices(
-                &snapshot.pod_disruption_budgets,
-                q,
-                app.workload_sort(),
-                |pdb, needle| {
-                    contains_ci(&pdb.name, needle)
-                        || contains_ci(pdb.min_available.as_deref().unwrap_or_default(), needle)
-                        || contains_ci(pdb.max_unavailable.as_deref().unwrap_or_default(), needle)
-                },
-                |pdb| pdb.name.as_str(),
-                |pdb| pdb.namespace.as_str(),
-                |pdb| pdb.age,
-            );
-            filtered_index(&indices, idx).map(|pdb_idx| {
-                let pdb = &snapshot.pod_disruption_budgets[pdb_idx];
-                ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone())
-            })
-        }
-        AppView::Deployments => {
-            let indices = filtered_workload_indices(
-                &snapshot.deployments,
-                q,
-                app.workload_sort(),
-                |deploy, needle| {
-                    contains_ci(&deploy.name, needle) || contains_ci(&deploy.namespace, needle)
-                },
-                |deploy| deploy.name.as_str(),
-                |deploy| deploy.namespace.as_str(),
-                |deploy| deploy.age,
-            );
-            filtered_index(&indices, idx).map(|deploy_idx| {
-                let deploy = &snapshot.deployments[deploy_idx];
-                ResourceRef::Deployment(deploy.name.clone(), deploy.namespace.clone())
-            })
-        }
-        AppView::StatefulSets => {
-            let indices = filtered_workload_indices(
-                &snapshot.statefulsets,
-                q,
-                app.workload_sort(),
-                |ss, needle| {
-                    contains_ci(&ss.name, needle)
-                        || contains_ci(ss.image.as_deref().unwrap_or_default(), needle)
-                },
-                |ss| ss.name.as_str(),
-                |ss| ss.namespace.as_str(),
-                |ss| ss.age,
-            );
-            filtered_index(&indices, idx).map(|ss_idx| {
-                let ss = &snapshot.statefulsets[ss_idx];
-                ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone())
-            })
-        }
-        AppView::DaemonSets => {
-            let indices = filtered_workload_indices(
-                &snapshot.daemonsets,
-                q,
-                app.workload_sort(),
-                |ds, needle| {
-                    let label_match = ds
-                        .labels
-                        .iter()
-                        .any(|(key, value)| contains_ci(key, needle) || contains_ci(value, needle));
-                    contains_ci(&ds.name, needle)
-                        || contains_ci(&ds.selector, needle)
-                        || contains_ci(ds.image.as_deref().unwrap_or_default(), needle)
-                        || label_match
-                },
-                |ds| ds.name.as_str(),
-                |ds| ds.namespace.as_str(),
-                |ds| ds.age,
-            );
-            filtered_index(&indices, idx).map(|ds_idx| {
-                let ds = &snapshot.daemonsets[ds_idx];
-                ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone())
-            })
-        }
-        AppView::ReplicaSets => {
-            let indices = filtered_workload_indices(
-                &snapshot.replicasets,
-                q,
-                app.workload_sort(),
-                |rs, needle| contains_ci(&rs.name, needle) || contains_ci(&rs.namespace, needle),
-                |rs| rs.name.as_str(),
-                |rs| rs.namespace.as_str(),
-                |rs| rs.age,
-            );
-            filtered_index(&indices, idx).map(|rs_idx| {
-                let rs = &snapshot.replicasets[rs_idx];
-                ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone())
-            })
-        }
-        AppView::ReplicationControllers => {
-            let indices = filtered_workload_indices(
-                &snapshot.replication_controllers,
-                q,
-                app.workload_sort(),
-                |rc, needle| contains_ci(&rc.name, needle) || contains_ci(&rc.namespace, needle),
-                |rc| rc.name.as_str(),
-                |rc| rc.namespace.as_str(),
-                |rc| rc.age,
-            );
-            filtered_index(&indices, idx).map(|rc_idx| {
-                let rc = &snapshot.replication_controllers[rc_idx];
-                ResourceRef::ReplicationController(rc.name.clone(), rc.namespace.clone())
-            })
-        }
-        AppView::Jobs => {
-            let indices = filtered_workload_indices(
-                &snapshot.jobs,
-                q,
-                app.workload_sort(),
-                |job, needle| contains_ci(&job.name, needle) || contains_ci(&job.status, needle),
-                |job| job.name.as_str(),
-                |job| job.namespace.as_str(),
-                |job| job.age,
-            );
-            filtered_index(&indices, idx).map(|job_idx| {
-                let job = &snapshot.jobs[job_idx];
-                ResourceRef::Job(job.name.clone(), job.namespace.clone())
-            })
-        }
-        AppView::CronJobs => {
-            let indices = filtered_workload_indices(
-                &snapshot.cronjobs,
-                q,
-                app.workload_sort(),
-                |cj, needle| contains_ci(&cj.name, needle) || contains_ci(&cj.schedule, needle),
-                |cj| cj.name.as_str(),
-                |cj| cj.namespace.as_str(),
-                |cj| cj.age,
-            );
-            filtered_index(&indices, idx).map(|cj_idx| {
-                let cj = &snapshot.cronjobs[cj_idx];
-                ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone())
-            })
-        }
-        AppView::Endpoints => filtered_get(&snapshot.endpoints, idx, q, |e, q| {
-            contains_ci(&e.name, q) || contains_ci(&e.namespace, q)
-        })
-        .map(|e| ResourceRef::Endpoint(e.name.clone(), e.namespace.clone())),
-        AppView::Ingresses => filtered_get(&snapshot.ingresses, idx, q, |i, q| {
-            contains_ci(&i.name, q) || contains_ci(&i.namespace, q)
-        })
-        .map(|i| ResourceRef::Ingress(i.name.clone(), i.namespace.clone())),
-        AppView::IngressClasses => filtered_get(&snapshot.ingress_classes, idx, q, |ic, q| {
-            contains_ci(&ic.name, q)
-        })
-        .map(|ic| ResourceRef::IngressClass(ic.name.clone())),
-        AppView::NetworkPolicies => filtered_get(&snapshot.network_policies, idx, q, |np, q| {
-            contains_ci(&np.name, q) || contains_ci(&np.namespace, q)
-        })
-        .map(|np| ResourceRef::NetworkPolicy(np.name.clone(), np.namespace.clone())),
-        AppView::ConfigMaps => filtered_get(&snapshot.config_maps, idx, q, |cm, q| {
-            contains_ci(&cm.name, q) || contains_ci(&cm.namespace, q)
-        })
-        .map(|cm| ResourceRef::ConfigMap(cm.name.clone(), cm.namespace.clone())),
-        AppView::Secrets => filtered_get(&snapshot.secrets, idx, q, |s, q| {
-            contains_ci(&s.name, q) || contains_ci(&s.namespace, q) || contains_ci(&s.type_, q)
-        })
-        .map(|s| ResourceRef::Secret(s.name.clone(), s.namespace.clone())),
-        AppView::HPAs => filtered_get(&snapshot.hpas, idx, q, |h, q| {
-            contains_ci(&h.name, q) || contains_ci(&h.namespace, q)
-        })
-        .map(|h| ResourceRef::Hpa(h.name.clone(), h.namespace.clone())),
-        AppView::PriorityClasses => filtered_get(&snapshot.priority_classes, idx, q, |pc, q| {
-            contains_ci(&pc.name, q)
-        })
-        .map(|pc| ResourceRef::PriorityClass(pc.name.clone())),
-        AppView::PersistentVolumeClaims => {
-            let indices = filtered_workload_indices(
-                &snapshot.pvcs,
-                q,
-                app.workload_sort(),
-                |pvc, needle| contains_ci(&pvc.name, needle) || contains_ci(&pvc.namespace, needle),
-                |pvc| pvc.name.as_str(),
-                |pvc| pvc.namespace.as_str(),
-                |_pvc| None,
-            );
-            filtered_index(&indices, idx).map(|pvc_idx| {
-                let pvc = &snapshot.pvcs[pvc_idx];
-                ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone())
-            })
-        }
-        AppView::PersistentVolumes => {
-            let indices = filtered_workload_indices(
-                &snapshot.pvs,
-                q,
-                app.workload_sort(),
-                |pv, needle| contains_ci(&pv.name, needle),
-                |pv| pv.name.as_str(),
-                |_pv| "",
-                |_pv| None,
-            );
-            filtered_index(&indices, idx)
-                .map(|pv_idx| ResourceRef::Pv(snapshot.pvs[pv_idx].name.clone()))
-        }
-        AppView::StorageClasses => {
-            let indices = filtered_workload_indices(
-                &snapshot.storage_classes,
-                q,
-                app.workload_sort(),
-                |sc, needle| contains_ci(&sc.name, needle),
-                |sc| sc.name.as_str(),
-                |_sc| "",
-                |_sc| None,
-            );
-            filtered_index(&indices, idx).map(|sc_idx| {
-                ResourceRef::StorageClass(snapshot.storage_classes[sc_idx].name.clone())
-            })
-        }
-        AppView::Namespaces => filtered_get(&snapshot.namespace_list, idx, q, |ns, q| {
-            contains_ci(&ns.name, q) || contains_ci(&ns.status, q)
-        })
-        .map(|ns| ResourceRef::Namespace(ns.name.clone())),
-        AppView::Events => filtered_get(&snapshot.events, idx, q, |ev, q| {
-            contains_ci(&ev.name, q) || contains_ci(&ev.namespace, q) || contains_ci(&ev.reason, q)
-        })
-        .map(|ev| ResourceRef::Event(ev.name.clone(), ev.namespace.clone())),
-        AppView::ServiceAccounts => {
-            let indices = filtered_workload_indices(
-                &snapshot.service_accounts,
-                q,
-                app.workload_sort(),
-                |sa, needle| contains_ci(&sa.name, needle) || contains_ci(&sa.namespace, needle),
-                |sa| sa.name.as_str(),
-                |sa| sa.namespace.as_str(),
-                |sa| sa.age,
-            );
-            filtered_index(&indices, idx).map(|sa_idx| {
-                let sa = &snapshot.service_accounts[sa_idx];
-                ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone())
-            })
-        }
-        AppView::Roles => {
-            let indices = filtered_workload_indices(
-                &snapshot.roles,
-                q,
-                app.workload_sort(),
-                |role, needle| {
-                    contains_ci(&role.name, needle) || contains_ci(&role.namespace, needle)
-                },
-                |role| role.name.as_str(),
-                |role| role.namespace.as_str(),
-                |role| role.age,
-            );
-            filtered_index(&indices, idx).map(|role_idx| {
-                let role = &snapshot.roles[role_idx];
-                ResourceRef::Role(role.name.clone(), role.namespace.clone())
-            })
-        }
-        AppView::RoleBindings => {
-            let indices = filtered_workload_indices(
-                &snapshot.role_bindings,
-                q,
-                app.workload_sort(),
-                |rb, needle| {
-                    contains_ci(&rb.name, needle)
-                        || contains_ci(&rb.namespace, needle)
-                        || contains_ci(&rb.role_ref_name, needle)
-                },
-                |rb| rb.name.as_str(),
-                |rb| rb.namespace.as_str(),
-                |rb| rb.age,
-            );
-            filtered_index(&indices, idx).map(|rb_idx| {
-                let rb = &snapshot.role_bindings[rb_idx];
-                ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone())
-            })
-        }
-        AppView::ClusterRoles => {
-            let indices = filtered_workload_indices(
-                &snapshot.cluster_roles,
-                q,
-                app.workload_sort(),
-                |cr, needle| contains_ci(&cr.name, needle),
-                |cr| cr.name.as_str(),
-                |_cr| "",
-                |cr| cr.age,
-            );
-            filtered_index(&indices, idx)
-                .map(|cr_idx| ResourceRef::ClusterRole(snapshot.cluster_roles[cr_idx].name.clone()))
-        }
-        AppView::ClusterRoleBindings => {
-            let indices = filtered_workload_indices(
-                &snapshot.cluster_role_bindings,
-                q,
-                app.workload_sort(),
-                |crb, needle| {
-                    contains_ci(&crb.name, needle) || contains_ci(&crb.role_ref_name, needle)
-                },
-                |crb| crb.name.as_str(),
-                |_crb| "",
-                |crb| crb.age,
-            );
-            filtered_index(&indices, idx).map(|crb_idx| {
-                ResourceRef::ClusterRoleBinding(
-                    snapshot.cluster_role_bindings[crb_idx].name.clone(),
-                )
-            })
         }
         AppView::HelmCharts => None, // Helm repos are local config, no detail view
         AppView::PortForwarding => None, // Port forwards are managed via the dialog
@@ -4588,10 +4492,6 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
                 plural: crd.plural.clone(),
             })
         }
-        AppView::HelmReleases => filtered_get(&snapshot.helm_releases, idx, q, |r, q| {
-            contains_ci(&r.name, q) || contains_ci(&r.namespace, q) || contains_ci(&r.chart, q)
-        })
-        .map(|r| ResourceRef::HelmRelease(r.name.clone(), r.namespace.clone())),
         AppView::FluxCDAlertProviders
         | AppView::FluxCDAlerts
         | AppView::FluxCDAll
@@ -4601,23 +4501,249 @@ fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<Resou
         | AppView::FluxCDImages
         | AppView::FluxCDKustomizations
         | AppView::FluxCDReceivers
-        | AppView::FluxCDSources => {
-            let filtered = kubectui::ui::views::flux::filtered_flux_indices_for_view(
+        | AppView::FluxCDSources
+        | AppView::Nodes
+        | AppView::Pods
+        | AppView::Services
+        | AppView::ResourceQuotas
+        | AppView::LimitRanges
+        | AppView::PodDisruptionBudgets
+        | AppView::Deployments
+        | AppView::StatefulSets
+        | AppView::DaemonSets
+        | AppView::ReplicaSets
+        | AppView::ReplicationControllers
+        | AppView::Jobs
+        | AppView::CronJobs
+        | AppView::Endpoints
+        | AppView::Ingresses
+        | AppView::IngressClasses
+        | AppView::NetworkPolicies
+        | AppView::ConfigMaps
+        | AppView::Secrets
+        | AppView::HPAs
+        | AppView::PriorityClasses
+        | AppView::PersistentVolumeClaims
+        | AppView::PersistentVolumes
+        | AppView::StorageClasses
+        | AppView::Namespaces
+        | AppView::Events
+        | AppView::ServiceAccounts
+        | AppView::Roles
+        | AppView::RoleBindings
+        | AppView::ClusterRoles
+        | AppView::ClusterRoleBindings
+        | AppView::HelmReleases => {
+            let filtered = kubectui::ui::views::filtering::filtered_indices_for_view(
                 app.view(),
                 snapshot,
-                q,
+                app.search_query(),
                 app.workload_sort(),
+                app.pod_sort(),
             );
-            filtered_index(&filtered, idx)
-                .and_then(|resource_idx| snapshot.flux_resources.get(resource_idx))
-                .map(|r| ResourceRef::CustomResource {
-                    name: r.name.clone(),
-                    namespace: r.namespace.clone(),
-                    group: r.group.clone(),
-                    version: r.version.clone(),
-                    kind: r.kind.clone(),
-                    plural: r.plural.clone(),
-                })
+            let resource_idx = filtered_index(&filtered, idx)?;
+            match app.view() {
+                AppView::Nodes => {
+                    Some(ResourceRef::Node(snapshot.nodes[resource_idx].name.clone()))
+                }
+                AppView::Pods => {
+                    let pod = &snapshot.pods[resource_idx];
+                    Some(ResourceRef::Pod(pod.name.clone(), pod.namespace.clone()))
+                }
+                AppView::Services => {
+                    let service = &snapshot.services[resource_idx];
+                    Some(ResourceRef::Service(
+                        service.name.clone(),
+                        service.namespace.clone(),
+                    ))
+                }
+                AppView::ResourceQuotas => {
+                    let quota = &snapshot.resource_quotas[resource_idx];
+                    Some(ResourceRef::ResourceQuota(
+                        quota.name.clone(),
+                        quota.namespace.clone(),
+                    ))
+                }
+                AppView::LimitRanges => {
+                    let limit_range = &snapshot.limit_ranges[resource_idx];
+                    Some(ResourceRef::LimitRange(
+                        limit_range.name.clone(),
+                        limit_range.namespace.clone(),
+                    ))
+                }
+                AppView::PodDisruptionBudgets => {
+                    let pdb = &snapshot.pod_disruption_budgets[resource_idx];
+                    Some(ResourceRef::PodDisruptionBudget(
+                        pdb.name.clone(),
+                        pdb.namespace.clone(),
+                    ))
+                }
+                AppView::Deployments => {
+                    let deployment = &snapshot.deployments[resource_idx];
+                    Some(ResourceRef::Deployment(
+                        deployment.name.clone(),
+                        deployment.namespace.clone(),
+                    ))
+                }
+                AppView::StatefulSets => {
+                    let statefulset = &snapshot.statefulsets[resource_idx];
+                    Some(ResourceRef::StatefulSet(
+                        statefulset.name.clone(),
+                        statefulset.namespace.clone(),
+                    ))
+                }
+                AppView::DaemonSets => {
+                    let daemonset = &snapshot.daemonsets[resource_idx];
+                    Some(ResourceRef::DaemonSet(
+                        daemonset.name.clone(),
+                        daemonset.namespace.clone(),
+                    ))
+                }
+                AppView::ReplicaSets => {
+                    let replicaset = &snapshot.replicasets[resource_idx];
+                    Some(ResourceRef::ReplicaSet(
+                        replicaset.name.clone(),
+                        replicaset.namespace.clone(),
+                    ))
+                }
+                AppView::ReplicationControllers => {
+                    let controller = &snapshot.replication_controllers[resource_idx];
+                    Some(ResourceRef::ReplicationController(
+                        controller.name.clone(),
+                        controller.namespace.clone(),
+                    ))
+                }
+                AppView::Jobs => {
+                    let job = &snapshot.jobs[resource_idx];
+                    Some(ResourceRef::Job(job.name.clone(), job.namespace.clone()))
+                }
+                AppView::CronJobs => {
+                    let cronjob = &snapshot.cronjobs[resource_idx];
+                    Some(ResourceRef::CronJob(
+                        cronjob.name.clone(),
+                        cronjob.namespace.clone(),
+                    ))
+                }
+                AppView::Endpoints => {
+                    let endpoint = &snapshot.endpoints[resource_idx];
+                    Some(ResourceRef::Endpoint(
+                        endpoint.name.clone(),
+                        endpoint.namespace.clone(),
+                    ))
+                }
+                AppView::Ingresses => {
+                    let ingress = &snapshot.ingresses[resource_idx];
+                    Some(ResourceRef::Ingress(
+                        ingress.name.clone(),
+                        ingress.namespace.clone(),
+                    ))
+                }
+                AppView::IngressClasses => Some(ResourceRef::IngressClass(
+                    snapshot.ingress_classes[resource_idx].name.clone(),
+                )),
+                AppView::NetworkPolicies => {
+                    let policy = &snapshot.network_policies[resource_idx];
+                    Some(ResourceRef::NetworkPolicy(
+                        policy.name.clone(),
+                        policy.namespace.clone(),
+                    ))
+                }
+                AppView::ConfigMaps => {
+                    let config_map = &snapshot.config_maps[resource_idx];
+                    Some(ResourceRef::ConfigMap(
+                        config_map.name.clone(),
+                        config_map.namespace.clone(),
+                    ))
+                }
+                AppView::Secrets => {
+                    let secret = &snapshot.secrets[resource_idx];
+                    Some(ResourceRef::Secret(
+                        secret.name.clone(),
+                        secret.namespace.clone(),
+                    ))
+                }
+                AppView::HPAs => {
+                    let hpa = &snapshot.hpas[resource_idx];
+                    Some(ResourceRef::Hpa(hpa.name.clone(), hpa.namespace.clone()))
+                }
+                AppView::PriorityClasses => Some(ResourceRef::PriorityClass(
+                    snapshot.priority_classes[resource_idx].name.clone(),
+                )),
+                AppView::PersistentVolumeClaims => {
+                    let pvc = &snapshot.pvcs[resource_idx];
+                    Some(ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone()))
+                }
+                AppView::PersistentVolumes => {
+                    Some(ResourceRef::Pv(snapshot.pvs[resource_idx].name.clone()))
+                }
+                AppView::StorageClasses => Some(ResourceRef::StorageClass(
+                    snapshot.storage_classes[resource_idx].name.clone(),
+                )),
+                AppView::Namespaces => Some(ResourceRef::Namespace(
+                    snapshot.namespace_list[resource_idx].name.clone(),
+                )),
+                AppView::Events => {
+                    let event = &snapshot.events[resource_idx];
+                    Some(ResourceRef::Event(
+                        event.name.clone(),
+                        event.namespace.clone(),
+                    ))
+                }
+                AppView::ServiceAccounts => {
+                    let service_account = &snapshot.service_accounts[resource_idx];
+                    Some(ResourceRef::ServiceAccount(
+                        service_account.name.clone(),
+                        service_account.namespace.clone(),
+                    ))
+                }
+                AppView::Roles => {
+                    let role = &snapshot.roles[resource_idx];
+                    Some(ResourceRef::Role(role.name.clone(), role.namespace.clone()))
+                }
+                AppView::RoleBindings => {
+                    let role_binding = &snapshot.role_bindings[resource_idx];
+                    Some(ResourceRef::RoleBinding(
+                        role_binding.name.clone(),
+                        role_binding.namespace.clone(),
+                    ))
+                }
+                AppView::ClusterRoles => Some(ResourceRef::ClusterRole(
+                    snapshot.cluster_roles[resource_idx].name.clone(),
+                )),
+                AppView::ClusterRoleBindings => Some(ResourceRef::ClusterRoleBinding(
+                    snapshot.cluster_role_bindings[resource_idx].name.clone(),
+                )),
+                AppView::HelmReleases => {
+                    let release = &snapshot.helm_releases[resource_idx];
+                    Some(ResourceRef::HelmRelease(
+                        release.name.clone(),
+                        release.namespace.clone(),
+                    ))
+                }
+                AppView::FluxCDAlertProviders
+                | AppView::FluxCDAlerts
+                | AppView::FluxCDAll
+                | AppView::FluxCDArtifacts
+                | AppView::FluxCDHelmReleases
+                | AppView::FluxCDHelmRepositories
+                | AppView::FluxCDImages
+                | AppView::FluxCDKustomizations
+                | AppView::FluxCDReceivers
+                | AppView::FluxCDSources => {
+                    snapshot
+                        .flux_resources
+                        .get(resource_idx)
+                        .map(|r| ResourceRef::CustomResource {
+                            name: r.name.clone(),
+                            namespace: r.namespace.clone(),
+                            group: r.group.clone(),
+                            version: r.version.clone(),
+                            kind: r.kind.clone(),
+                            plural: r.plural.clone(),
+                        })
+                }
+                _ => None,
+            }
         }
     }
 }
@@ -4691,6 +4817,7 @@ fn initial_loading_state(resource: ResourceRef, snapshot: &ClusterSnapshot) -> D
     let metadata = metadata_for_resource(snapshot, &resource);
     DetailViewState {
         resource: Some(resource),
+        pending_request_id: None,
         metadata,
         loading: true,
         ..DetailViewState::default()
@@ -4714,6 +4841,7 @@ async fn fetch_detail_view(
 
     Ok(DetailViewState {
         resource: Some(resource),
+        pending_request_id: None,
         metadata,
         yaml,
         events,
@@ -5833,13 +5961,15 @@ fn restore_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
 #[cfg(test)]
 mod tests {
     use super::{
-        map_palette_detail_action, palette_action_requires_loaded_detail,
-        selected_flux_reconcile_resource, selected_resource, workbench_follow_streams_to_stop,
+        ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, apply_extension_fetch_result,
+        map_palette_detail_action, normalize_recent_events, palette_action_requires_loaded_detail,
+        refresh_options_for_view, selected_extension_crd, selected_flux_reconcile_resource,
+        selected_resource, workbench_follow_streams_to_stop,
     };
     use chrono::Utc;
     use kubectui::{
         app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
-        k8s::dtos::{FluxResourceInfo, NodeInfo},
+        k8s::dtos::{CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo},
         policy::DetailAction,
         state::ClusterSnapshot,
         workbench::{PodLogsTabState, WorkbenchTabState},
@@ -5942,6 +6072,86 @@ mod tests {
 
         let selected = selected_resource(&app, &snapshot).expect("selected resource");
         assert_eq!(selected, ResourceRef::Node("worker-a".to_string()));
+    }
+
+    #[test]
+    fn selected_extension_crd_uses_filtered_query_selection() {
+        let mut app = AppState::default();
+        app.view = AppView::Extensions;
+        app.search_query = "gadget".to_string();
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.custom_resource_definitions = vec![
+            CustomResourceDefinitionInfo {
+                name: "widgets.demo.io".to_string(),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                plural: "widgets".to_string(),
+                scope: "Namespaced".to_string(),
+                instances: 1,
+            },
+            CustomResourceDefinitionInfo {
+                name: "gadgets.demo.io".to_string(),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Gadget".to_string(),
+                plural: "gadgets".to_string(),
+                scope: "Namespaced".to_string(),
+                instances: 2,
+            },
+        ];
+
+        let selected = selected_extension_crd(&app, &snapshot).expect("selected CRD");
+        assert_eq!(selected.name, "gadgets.demo.io");
+    }
+
+    #[test]
+    fn stale_extension_fetch_results_are_ignored() {
+        let mut app = AppState::default();
+        app.begin_extension_instances_load("widgets.demo.io".to_string());
+
+        apply_extension_fetch_result(
+            &mut app,
+            ExtensionFetchResult {
+                crd_name: "gadgets.demo.io".to_string(),
+                result: Ok(Vec::new()),
+            },
+        );
+
+        assert_eq!(
+            app.extension_selected_crd.as_deref(),
+            Some("widgets.demo.io")
+        );
+        assert!(app.extension_instances.is_empty());
+        assert!(app.extension_error.is_none());
+    }
+
+    #[test]
+    fn normalize_recent_events_sorts_and_truncates() {
+        let now = Utc::now();
+        let events = (0..300)
+            .map(|idx| K8sEventInfo {
+                name: format!("event-{idx}"),
+                last_seen: Some(now - chrono::TimeDelta::seconds(i64::from(idx))),
+                ..K8sEventInfo::default()
+            })
+            .collect::<Vec<_>>();
+
+        let normalized = normalize_recent_events(events);
+        assert_eq!(normalized.len(), MAX_RECENT_EVENTS_CACHE_ITEMS);
+        assert_eq!(normalized[0].name, "event-0");
+        assert_eq!(
+            normalized.last().map(|event| event.name.as_str()),
+            Some("event-249")
+        );
+    }
+
+    #[test]
+    fn events_view_uses_fast_refresh_profile() {
+        let options = refresh_options_for_view(AppView::Events, false, false);
+        assert!(!options.include_secondary_resources);
+        assert!(!options.include_cluster_info);
     }
 
     #[test]

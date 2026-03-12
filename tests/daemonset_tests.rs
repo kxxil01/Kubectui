@@ -1,7 +1,15 @@
 //! Comprehensive tests for DaemonSet DTO and fetch operations.
 
 use kubectui::k8s::dtos::DaemonSetInfo;
+use kubectui::ui::views::filtering::filtered_daemonset_indices;
 use std::collections::BTreeMap;
+
+fn filtered_daemonsets<'a>(items: &'a [DaemonSetInfo], query: &str) -> Vec<&'a DaemonSetInfo> {
+    filtered_daemonset_indices(items, query, None)
+        .into_iter()
+        .map(|idx| &items[idx])
+        .collect()
+}
 
 /// Tests DaemonSetInfo DTO creation with all fields.
 #[test]
@@ -187,8 +195,6 @@ fn test_daemonset_info_selector_parsing() {
 /// Tests filtering DaemonSets by label via selector.
 #[test]
 fn test_daemonset_selector_label_matching() {
-    use kubectui::state::filters::filter_daemonsets;
-
     let items = vec![
         DaemonSetInfo {
             name: "prod-ds".to_string(),
@@ -228,7 +234,7 @@ fn test_daemonset_selector_label_matching() {
         },
     ];
 
-    let filtered = filter_daemonsets(&items, "prod", None);
+    let filtered = filtered_daemonsets(&items, "prod");
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].name, "prod-ds");
 }
@@ -236,8 +242,6 @@ fn test_daemonset_selector_label_matching() {
 /// Tests namespace filtering for DaemonSets.
 #[test]
 fn test_daemonset_namespace_filtering() {
-    use kubectui::state::filters::filter_daemonsets;
-
     let items = vec![
         DaemonSetInfo {
             name: "monitoring-ds".to_string(),
@@ -251,7 +255,7 @@ fn test_daemonset_namespace_filtering() {
         },
     ];
 
-    let filtered = filter_daemonsets(&items, "", Some("monitoring"));
+    let filtered = filtered_daemonsets(&items, "monitoring");
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].namespace, "monitoring");
 }
@@ -259,8 +263,6 @@ fn test_daemonset_namespace_filtering() {
 /// Tests filtering DaemonSets by image name.
 #[test]
 fn test_daemonset_image_filtering() {
-    use kubectui::state::filters::filter_daemonsets;
-
     let items = vec![
         DaemonSetInfo {
             name: "app-exporter".to_string(),
@@ -276,7 +278,7 @@ fn test_daemonset_image_filtering() {
         },
     ];
 
-    let filtered = filter_daemonsets(&items, "prom", None);
+    let filtered = filtered_daemonsets(&items, "prom");
     assert_eq!(filtered.len(), 1);
     assert_eq!(filtered[0].name, "app-exporter");
 }

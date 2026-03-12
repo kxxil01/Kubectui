@@ -20,9 +20,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
+        views::filtering::filtered_priority_class_indices,
     },
 };
 
@@ -98,19 +98,7 @@ pub fn render_priority_classes(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.priority_classes, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.priority_classes.len()).collect();
-            }
-            cluster
-                .priority_classes
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, priority_class)| {
-                    contains_ci(&priority_class.name, q).then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_priority_class_indices(&cluster.priority_classes, q),
     );
 
     if indices.is_empty() {

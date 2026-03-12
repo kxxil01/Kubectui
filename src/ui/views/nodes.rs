@@ -17,15 +17,16 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     columns::ColumnDef,
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, loading_or_empty_message_no_search, responsive_table_widths_vec,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        table_viewport_rows, table_window,
+        views::filtering::filtered_node_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -35,6 +36,7 @@ struct NodeDerivedCacheKey {
     snapshot_version: u64,
     data_fingerprint: u64,
     minute_bucket: i64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -82,23 +84,7 @@ pub fn render_nodes(
         snapshot.snapshot_version,
         data_fingerprint(&snapshot.nodes, snapshot.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &snapshot.nodes,
-                q,
-                sort,
-                |node, needle| contains_ci(&node.name, needle),
-                |node| node.name.as_str(),
-                |_node| "",
-                |node| {
-                    node.created_at.map(|created_at| {
-                        let age_secs =
-                            (Utc::now().timestamp() - created_at.timestamp()).max(0) as u64;
-                        std::time::Duration::from_secs(age_secs)
-                    })
-                },
-            )
-        },
+        |q| filtered_node_indices(&snapshot.nodes, q, sort),
     );
 
     if indices.is_empty() {
@@ -141,7 +127,7 @@ pub fn render_nodes(
     let dim_style = Style::default().fg(theme.fg_dim);
     let warn_style = theme.badge_warning_style();
     let now_unix = Utc::now().timestamp();
-    let derived = cached_node_derived(snapshot, query, indices.as_ref(), now_unix);
+    let derived = cached_node_derived(snapshot, query, indices.as_ref(), now_unix, cache_variant);
 
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &node_idx) in indices[window.start..window.end].iter().enumerate() {
@@ -245,12 +231,14 @@ fn cached_node_derived(
     query: &str,
     indices: &[usize],
     now_unix: i64,
+    variant: u64,
 ) -> NodeDerivedCacheValue {
     let key = NodeDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.nodes, snapshot.snapshot_version),
         minute_bucket: now_unix / 60,
+        variant,
     };
 
     if let Ok(cache) = NODE_DERIVED_CACHE.lock()

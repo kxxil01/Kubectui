@@ -16,15 +16,15 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_image, format_small_int, loading_or_empty_message,
-        responsive_table_widths, table_viewport_rows, table_window, workload_sort_header,
-        workload_sort_suffix,
+        responsive_table_widths, table_viewport_rows, table_window,
+        views::filtering::filtered_replication_controller_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 
@@ -33,6 +33,7 @@ struct ReplicationControllerDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -68,17 +69,7 @@ pub fn render_replication_controllers(
         cluster.snapshot_version,
         data_fingerprint(&cluster.replication_controllers, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.replication_controllers,
-                q,
-                sort,
-                |rc, needle| contains_ci(&rc.name, needle) || contains_ci(&rc.namespace, needle),
-                |rc| rc.name.as_str(),
-                |rc| rc.namespace.as_str(),
-                |rc| rc.age,
-            )
-        },
+        |q| filtered_replication_controller_indices(&cluster.replication_controllers, q, sort),
     );
 
     if indices.is_empty() {
@@ -121,7 +112,8 @@ pub fn render_replication_controllers(
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
-    let derived = cached_replication_controller_derived(cluster, query, indices.as_ref());
+    let derived =
+        cached_replication_controller_derived(cluster, query, indices.as_ref(), cache_variant);
 
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &rc_idx) in indices[window.start..window.end].iter().enumerate() {
@@ -228,6 +220,7 @@ fn cached_replication_controller_derived(
     cluster: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> ReplicationControllerDerivedCacheValue {
     let key = ReplicationControllerDerivedCacheKey {
         query: query.to_string(),
@@ -236,6 +229,7 @@ fn cached_replication_controller_derived(
             &cluster.replication_controllers,
             cluster.snapshot_version,
         ),
+        variant,
     };
 
     if let Ok(cache) = REPLICATION_CONTROLLER_DERIVED_CACHE.lock()

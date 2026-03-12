@@ -16,9 +16,11 @@ use kubectui::{
     state::{
         ClusterSnapshot,
         alerts::{compute_alerts, compute_dashboard_insights, compute_workload_ready_percent},
-        filters::{NodeRoleFilter, NodeStatusFilter, filter_nodes, filter_services},
     },
-    ui,
+    ui::{
+        self,
+        views::filtering::{filtered_node_indices, filtered_service_indices},
+    },
 };
 use ratatui::{Terminal, backend::TestBackend};
 
@@ -31,12 +33,7 @@ fn benchmark_filter_10k_nodes_under_100ms() {
         .collect::<Vec<_>>();
 
     let start = Instant::now();
-    let _ = filter_nodes(
-        &nodes,
-        "worker-99",
-        Some(NodeStatusFilter::Ready),
-        Some(NodeRoleFilter::Worker),
-    );
+    let _ = filtered_node_indices(&nodes, "worker-99", None);
     let elapsed = start.elapsed();
     assert!(elapsed.as_millis() < 100, "{}ms", elapsed.as_millis());
 }
@@ -56,7 +53,7 @@ fn benchmark_filter_1k_services_under_50ms() {
         .collect::<Vec<_>>();
 
     let start = Instant::now();
-    let _ = filter_services(&svcs, "svc-9", Some("prod"), Some("ClusterIP"));
+    let _ = filtered_service_indices(&svcs, "prod", None);
     let elapsed = start.elapsed();
     assert!(elapsed.as_millis() < 50, "{}ms", elapsed.as_millis());
 }

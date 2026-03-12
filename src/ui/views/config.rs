@@ -20,9 +20,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
+        views::filtering::{filtered_config_map_indices, filtered_secret_indices},
     },
 };
 
@@ -96,19 +96,7 @@ pub fn render_config_maps(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.config_maps, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.config_maps.len()).collect();
-            }
-            cluster
-                .config_maps
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, cm)| {
-                    (contains_ci(&cm.name, q) || contains_ci(&cm.namespace, q)).then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_config_map_indices(&cluster.config_maps, q),
     );
 
     if indices.is_empty() {
@@ -285,22 +273,7 @@ pub fn render_secrets(
         query,
         cluster.snapshot_version,
         data_fingerprint(&cluster.secrets, cluster.snapshot_version),
-        |q| {
-            if q.is_empty() {
-                return (0..cluster.secrets.len()).collect();
-            }
-            cluster
-                .secrets
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, secret)| {
-                    (contains_ci(&secret.name, q)
-                        || contains_ci(&secret.namespace, q)
-                        || contains_ci(&secret.type_, q))
-                    .then_some(idx)
-                })
-                .collect()
-        },
+        |q| filtered_secret_indices(&cluster.secrets, q),
     );
 
     if indices.is_empty() {

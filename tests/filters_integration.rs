@@ -5,70 +5,71 @@ mod common;
 use std::time::Instant;
 
 use common::{make_deployment, make_node, make_service};
-use kubectui::state::filters::{
-    DeploymentHealth, NodeRoleFilter, NodeStatusFilter, filter_deployments, filter_nodes,
-    filter_services,
+use kubectui::ui::{
+    views::deployments::{DeploymentHealth, deployment_health_from_ready},
+    views::filtering::{
+        filtered_deployment_indices, filtered_node_indices, filtered_service_indices,
+    },
 };
 
-/// Validates multi-criteria node filtering workflow.
+/// Validates node query matching uses production filtering.
 #[test]
 #[ignore = "Optional integration run"]
-fn filters_nodes_with_multiple_criteria() {
+fn filters_nodes_by_query() {
     let nodes = vec![
         make_node("master-ready", true, "master"),
         make_node("master-notready", false, "master"),
         make_node("worker-ready", true, "worker"),
     ];
 
-    let out = filter_nodes(
-        &nodes,
-        "master",
-        Some(NodeStatusFilter::Ready),
-        Some(NodeRoleFilter::Master),
-    );
+    let out = filtered_node_indices(&nodes, "MASTER", None);
 
-    assert_eq!(out.len(), 1);
-    assert_eq!(out[0].name, "master-ready");
+    assert_eq!(out.len(), 2);
+    assert_eq!(nodes[out[0]].name, "master-ready");
+    assert_eq!(nodes[out[1]].name, "master-notready");
 }
 
-/// Validates service filtering across namespaces and types.
+/// Validates service query matches namespace and type through the production path.
 #[test]
 #[ignore = "Optional integration run"]
-fn filters_services_across_namespaces() {
+fn filters_services_across_fields() {
     let services = vec![
         make_service("api", "prod", "ClusterIP"),
         make_service("api", "dev", "ClusterIP"),
         make_service("api-lb", "prod", "LoadBalancer"),
     ];
 
-    let prod = filter_services(&services, "api", Some("prod"), None);
+    let prod = filtered_service_indices(&services, "prod", None);
     assert_eq!(prod.len(), 2);
 
-    let prod_lb = filter_services(&services, "api", Some("prod"), Some("LoadBalancer"));
+    let prod_lb = filtered_service_indices(&services, "LoadBalancer", None);
     assert_eq!(prod_lb.len(), 1);
 }
 
-/// Verifies filtered result counts match expected values.
+/// Verifies deployment health mapping stays aligned with the render path.
 #[test]
 #[ignore = "Optional integration run"]
-fn filter_counts_match_expected() {
+fn deployment_health_classification_matches_expected() {
     let deployments = vec![
         make_deployment("api", "prod", "3/3"),
         make_deployment("api", "dev", "1/3"),
         make_deployment("api", "qa", "0/3"),
     ];
 
+    let out = filtered_deployment_indices(&deployments, "api", None);
+    assert_eq!(out.len(), 3);
+
     assert_eq!(
-        filter_deployments(&deployments, "api", None, Some(DeploymentHealth::Healthy)).len(),
-        1
+        deployment_health_from_ready(&deployments[out[0]].ready),
+        DeploymentHealth::Healthy
     );
     assert_eq!(
-        filter_deployments(&deployments, "api", None, Some(DeploymentHealth::Degraded)).len(),
-        1
+        deployment_health_from_ready(&deployments[out[1]].ready),
+        DeploymentHealth::Degraded
     );
     assert_eq!(
-        filter_deployments(&deployments, "api", None, Some(DeploymentHealth::Failed)).len(),
-        1
+        deployment_health_from_ready(&deployments[out[2]].ready),
+        DeploymentHealth::Failed
     );
 }
 
@@ -81,12 +82,7 @@ fn filter_performance_1000_items_under_100ms() {
         .collect::<Vec<_>>();
 
     let started = Instant::now();
-    let out = filter_nodes(
-        &items,
-        "worker-9",
-        Some(NodeStatusFilter::Ready),
-        Some(NodeRoleFilter::Worker),
-    );
+    let out = filtered_node_indices(&items, "worker-9", None);
     let elapsed = started.elapsed();
 
     assert!(!out.is_empty());

@@ -22,8 +22,8 @@ use std::{
 
 use crate::{
     app::{
-        AppState, AppView, PodSortColumn, PodSortState, WorkloadSortColumn, WorkloadSortState,
-        filtered_pod_indices,
+        AppState, AppView, Focus, PodSortColumn, PodSortState, WorkloadSortColumn,
+        WorkloadSortState, filtered_pod_indices,
     },
     policy::ViewAction,
     state::{ClusterSnapshot, ViewLoadState},
@@ -264,6 +264,7 @@ struct PodDerivedCacheKey {
     snapshot_version: u64,
     data_fingerprint: u64,
     minute_bucket: i64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -280,12 +281,14 @@ fn cached_pod_derived(
     query: &str,
     indices: &[usize],
     now_unix: i64,
+    variant: u64,
 ) -> PodDerivedCacheValue {
     let key = PodDerivedCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.pods, cluster.snapshot_version),
         minute_bucket: now_unix / 60,
+        variant,
     };
 
     if let Ok(cache) = POD_DERIVED_CACHE.lock()
@@ -771,10 +774,19 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         } else {
             " • [H] history • [b] workbench"
         };
+        let focus_hint = match app.focus {
+            Focus::Workbench if app.workbench().maximized => {
+                " • WORKBENCH ACTIVE [Esc] exit maximize"
+            }
+            Focus::Workbench => " • WORKBENCH ACTIVE [Esc] return",
+            Focus::Content => " • resource list active",
+            Focus::Sidebar => " • sidebar active",
+        };
         format!(
-            "[{}]{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [q] quit",
+            "[{}]{}{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [q] quit",
             app.get_namespace(),
-            current_activity
+            current_activity,
+            focus_hint
         )
     };
 
@@ -984,7 +996,7 @@ fn render_pods_widget(
     let name_style = ratatui::prelude::Style::default().fg(theme.fg);
     let dim_style = ratatui::prelude::Style::default().fg(theme.fg_dim);
     let now_unix = chrono::Utc::now().timestamp();
-    let derived = cached_pod_derived(cluster, query, indices.as_ref(), now_unix);
+    let derived = cached_pod_derived(cluster, query, indices.as_ref(), now_unix, cache_variant);
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &pod_idx) in indices[window.start..window.end].iter().enumerate() {
         let idx = window.start + local_idx;
@@ -1994,5 +2006,33 @@ mod tests {
         });
 
         draw(&app, &snapshot);
+    }
+
+    #[test]
+    fn pod_derived_cache_separates_sort_variants() {
+        let now = chrono::Utc::now();
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(crate::k8s::dtos::PodInfo {
+            name: "a".to_string(),
+            created_at: Some(now - chrono::Duration::minutes(5)),
+            ..crate::k8s::dtos::PodInfo::default()
+        });
+        snapshot.pods.push(crate::k8s::dtos::PodInfo {
+            name: "b".to_string(),
+            created_at: Some(now - chrono::Duration::minutes(1)),
+            ..crate::k8s::dtos::PodInfo::default()
+        });
+
+        let first = cached_pod_derived(&snapshot, "", &[0, 1], now.timestamp(), 0);
+        let second = cached_pod_derived(&snapshot, "", &[1, 0], now.timestamp(), 1);
+
+        assert_eq!(
+            first[0].age,
+            format_age_from_timestamp(snapshot.pods[0].created_at, now.timestamp())
+        );
+        assert_eq!(
+            second[0].age,
+            format_age_from_timestamp(snapshot.pods[1].created_at, now.timestamp())
+        );
     }
 }

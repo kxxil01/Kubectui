@@ -9,15 +9,16 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
+    app::{AppView, WorkloadSortColumn, WorkloadSortState},
     k8s::dtos::RoleBindingSubject,
     state::ClusterSnapshot,
     ui::{
         components::{active_block, default_block, default_theme},
-        contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window, workload_sort_header, workload_sort_suffix,
+        table_viewport_rows, table_window,
+        views::filtering::filtered_cluster_role_binding_indices,
+        workload_sort_header, workload_sort_suffix,
     },
 };
 use std::{
@@ -32,6 +33,7 @@ struct ClusterRoleBindingDerivedCacheKey {
     query: String,
     snapshot_version: u64,
     data_fingerprint: u64,
+    variant: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +57,7 @@ fn cached_cluster_role_binding_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
+    variant: u64,
 ) -> ClusterRoleBindingDerivedCacheValue {
     let key = ClusterRoleBindingDerivedCacheKey {
         query: query.to_string(),
@@ -63,6 +66,7 @@ fn cached_cluster_role_binding_derived(
             &snapshot.cluster_role_bindings,
             snapshot.snapshot_version,
         ),
+        variant,
     };
 
     if let Ok(cache) = CLUSTER_ROLE_BINDING_DERIVED_CACHE.lock()
@@ -128,21 +132,7 @@ pub fn render_cluster_role_bindings(
         cluster.snapshot_version,
         data_fingerprint(&cluster.cluster_role_bindings, cluster.snapshot_version),
         cache_variant,
-        |q| {
-            filtered_workload_indices(
-                &cluster.cluster_role_bindings,
-                q,
-                sort,
-                |rb, needle| {
-                    needle.is_empty()
-                        || contains_ci(&rb.name, needle)
-                        || contains_ci(&rb.role_ref_name, needle)
-                },
-                |rb| rb.name.as_str(),
-                |_rb| "",
-                |rb| rb.age,
-            )
-        },
+        |q| filtered_cluster_role_binding_indices(&cluster.cluster_role_bindings, q, sort),
     );
 
     let theme = default_theme();
@@ -187,7 +177,7 @@ pub fn render_cluster_role_bindings(
     .height(1)
     .style(theme.header_style());
 
-    let derived = cached_cluster_role_binding_derived(cluster, query, &indices);
+    let derived = cached_cluster_role_binding_derived(cluster, query, &indices, cache_variant);
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()

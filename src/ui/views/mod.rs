@@ -9,6 +9,7 @@ pub mod detail;
 pub mod endpoints;
 pub mod events;
 pub mod extensions;
+pub mod filtering;
 pub mod flux;
 pub mod governance;
 pub mod helm;
