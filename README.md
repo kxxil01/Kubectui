@@ -1,6 +1,6 @@
 # KubecTUI
 
-A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, stream logs, exec into pods, port-forward, scale workloads, inspect probes, and trigger rolling restarts — all without leaving your terminal.
+A fast, keyboard-driven terminal UI for Kubernetes. Browse resources, inspect timelines and relationships, stream logs, exec into pods, port-forward, scale workloads, manage CronJobs, and perform day-2 operations without leaving your terminal.
 
 ![Rust](https://img.shields.io/badge/rust-1.85+-orange)
 ![License](https://img.shields.io/badge/license-MIT-blue)
@@ -35,18 +35,24 @@ cargo build --release
 
 - **46 resource views** across 9 sidebar groups — Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Services, Endpoints, Ingresses, ConfigMaps, Secrets, HPAs, PVCs, PVs, StorageClasses, RBAC, Events, Namespaces, FluxCD resources, and more
 - **Custom Resource Definitions** — browse CRDs, drill into instances, view full YAML via dynamic API
-- **Bottom workbench** with 7 persistent tab types — YAML, Events, Pod Logs, Workload Logs, Exec, Port-Forward, Action History
-- **Action palette** (`:`) — unified fuzzy search for navigation and context-aware resource actions (logs, exec, scale, restart, delete, etc.)
+- **Bottom workbench** with 9 persistent tab types — Action History, YAML, Decoded Secret, Timeline, Pod Logs, Workload Logs, Exec, Port-Forward, and Relations
+- **Action palette** (`:`) — unified fuzzy search for navigation, column toggles, and context-aware resource actions
+- **Permission-aware UX** — list/detail actions are filtered by resource capability and available RBAC; forbidden list/metrics/discovery reads degrade gracefully instead of poisoning the UI
 - **Pod exec/shell** — terminal sessions with container picker and shell fallback order (bash → sh → busybox)
 - **Real-time log streaming** with follow mode, previous logs, timestamp toggle, search/highlight, and multi-container picker
-- **Workload-level logs** — aggregate logs across all pods of a Deployment, StatefulSet, or DaemonSet with per-pod/container/text filtering
+- **Workload-level logs** — aggregate logs across all pods of a Deployment, StatefulSet, DaemonSet, ReplicaSet, ReplicationController, or Job with per-pod/container/text filtering
 - **Port-forwarding** via kube-rs — no `kubectl` binary required
 - **Scale deployments** and StatefulSets directly from the detail view or action palette
 - **Rollout restart** for Deployments, StatefulSets, and DaemonSets
-- **YAML editing** — press `e` to open resource YAML in `$EDITOR`, apply changes on save
-- **Resource deletion** — press `d` to delete with confirmation, `F` for force delete (stuck finalizers)
-- **CronJob manual trigger** — press `T` to create a Job from CronJob spec
+- **YAML editing** — press `e` to open supported resource YAML in `$EDITOR`, apply changes on save
+- **Resource deletion** — press `d` to delete supported resources with confirmation, `F` for force delete when available
+- **CronJob management panel** — next-run/last-run state, capped Job execution history, selected-run log access, manual trigger, and pause/resume on `S`
+- **Decoded Secret inspection/editing** — open decoded Secret values in the workbench, edit inline, and save with automatic base64 re-encode
 - **Health probe inspector** — view liveness, readiness, and startup probe configs per container
+- **Relationship explorer** — jump owner chains, service backends, ingress backends, storage bindings, RBAC bindings, and Flux lineage from `w`
+- **Issue Center** — problem-first view across cluster failures and degraded resources
+- **Bookmarks** — persistent per-context bookmarks with a dedicated Bookmarks view and `B` toggle
+- **Node operations** — cordon, uncordon, and drain with confirmation and action-history tracking
 - **Clipboard integration** — `Ctrl+y` copies resource name, `Y` copies namespace/name, `y` in logs copies content
 - **Log export** — `S` in log tabs saves buffer to file
 - **Action history** with pending/success/error tracking and resource jump-back
@@ -99,19 +105,23 @@ Press `Enter` on any resource to open its detail view.
 
 | Key | Action | Applies to |
 |-----|--------|------------|
-| `y` | Open YAML viewer | All |
-| `v` | Open events viewer | All |
-| `l` / `L` | Open log viewer | Pods, Deployments, StatefulSets, DaemonSets, ReplicaSets, Jobs |
+| `y` | Open YAML in workbench | All resources with YAML access |
+| `o` | Open decoded Secret tab | Secrets |
+| `v` | Open timeline/events in workbench | Supported namespaced resources |
+| `l` / `L` | Open log viewer | Pods and supported workloads; CronJobs use the selected history row |
 | `x` | Open exec/shell session | Pods |
 | `f` | Open port-forward dialog | Pods |
 | `p` | Open probe inspector | Pods |
 | `s` | Open scale dialog | Deployments, StatefulSets |
 | `R` | Rollout restart | Deployments, StatefulSets, DaemonSets |
 | `R` | Flux reconcile | FluxCD resources |
-| `e` | Edit YAML in `$EDITOR` | All (when YAML is loaded) |
-| `d` | Delete resource (with confirmation) | All |
-| `F` | Force delete (in delete confirmation) | All |
+| `e` | Edit YAML in `$EDITOR` | Supported resources when YAML is loaded |
+| `d` | Delete resource (with confirmation) | Supported resources |
+| `F` | Force delete (in delete confirmation) | Supported delete targets |
 | `T` | Trigger CronJob as a new Job | CronJobs |
+| `S` | Pause/resume CronJob | CronJobs |
+| `w` | Open relations tab | Relationship-capable resources |
+| `B` | Toggle bookmark | List/detail resource contexts |
 | `m` | Toggle metadata expand/collapse | All |
 | `:` | Open action palette | All |
 | `Esc` | Close detail view | All |
@@ -128,6 +138,7 @@ Press `:` from anywhere to open. Shows context-aware resource actions when a res
 | `Esc` | Close |
 
 > Tip: type `scl` to find Scale, `lg` for Logs, `dep` for Deployments, etc. Actions are filtered by what the current resource supports.
+> Tip: permission-gated actions are also filtered by your current RBAC when KubecTUI can determine it.
 
 ### Workbench
 
@@ -204,11 +215,13 @@ kubectui [OPTIONS]
 
 - **Action palette**: use `:` to discover all available actions for the current resource — no need to memorize shortcuts
 - **Quick jump**: `:` + type `dep` to jump to Deployments, `pod` for Pods, `svc` for Services
+- **RBAC-aware behavior**: if your kubeconfig cannot list or mutate a resource type, KubecTUI now prefers hiding or disabling that action instead of failing after the UI pivots
 - **Search is live**: `/` filters the current list as you type — no need to press Enter
 - **Ctrl+U** clears the search query while in search mode
 - **Previous logs**: press `P` in a pod log tab to view logs from crashed/restarted containers
 - **Workload logs**: press `l` on a Deployment/StatefulSet to aggregate logs from all its pods
 - **All Containers**: in pod logs picker, select "All Containers" to stream all container logs together
+- **CronJobs**: use `j`/`k` in CronJob detail to select a historical Job, `Enter` to jump into that Job, `l` for its logs, `T` to trigger, and `S` to pause/resume
 - **Helm releases**: navigate to Helm → Releases to see all Helm v3 releases in the cluster
 - **Metrics**: CPU/memory metrics require `metrics-server` to be installed in the cluster
 - **Restart vs Scale**: use `R` for a rolling restart (zero-downtime), use `s` to change replica count
