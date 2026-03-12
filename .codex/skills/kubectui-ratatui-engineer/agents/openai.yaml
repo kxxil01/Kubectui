@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kubectui Ratatui Engineer"
+  short_description: "Work on Kubectui TUI rendering, input handling, and performance."
+  default_prompt: "Use this skill for Kubectui Ratatui and Crossterm work, especially render-path changes, table views, scrolling, filtering, and TUI performance."
