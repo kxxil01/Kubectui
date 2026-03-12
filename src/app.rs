@@ -1,6 +1,8 @@
 //! Application state machine and keyboard input handling.
 
-use std::{collections::HashMap, collections::HashSet, fs, path::Path, sync::LazyLock};
+use std::{
+    collections::HashMap, collections::HashSet, fs, path::Path, sync::LazyLock, time::Instant,
+};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
@@ -1205,6 +1207,8 @@ pub struct DetailViewState {
     pub confirm_delete: bool,
     /// When true, a drain confirmation prompt is shown in the detail view.
     pub confirm_drain: bool,
+    /// When true, metadata labels/annotations are shown in full (no truncation).
+    pub metadata_expanded: bool,
 }
 
 /// A row in the sidebar — either a group header or a leaf view item.
@@ -1442,6 +1446,7 @@ pub enum AppAction {
     UncordonNode,
     DrainNode,
     ForceDrainNode,
+    ToggleDetailMetadata,
 }
 
 /// Which panel currently owns keyboard focus.
@@ -1493,6 +1498,14 @@ pub enum Focus {
 ///       Enter: navigate → Content        Enter: open detail view
 ///                                        Esc: return → Sidebar
 /// ```
+/// A transient notification that auto-dismisses.
+#[derive(Debug, Clone)]
+pub struct Toast {
+    pub message: String,
+    pub is_error: bool,
+    pub created_at: Instant,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     /// The currently active top-level view (e.g. Pods, Deployments).
@@ -1546,6 +1559,10 @@ pub struct AppState {
     pub needs_config_save: bool,
     /// Persistent bottom workbench state.
     pub workbench: WorkbenchState,
+    /// Spinner animation tick counter (0–7), advanced on each UI tick during loading.
+    pub spinner_tick: u8,
+    /// Stack of timed toast notifications (max 3).
+    pub toasts: Vec<Toast>,
 }
 
 impl Default for AppState {
@@ -1583,6 +1600,8 @@ impl Default for AppState {
             current_context_name: None,
             needs_config_save: false,
             workbench: WorkbenchState::default(),
+            spinner_tick: 0,
+            toasts: Vec::new(),
         }
     }
 }
@@ -1809,6 +1828,40 @@ impl AppState {
     /// Clears any active non-error status message.
     pub fn clear_status(&mut self) {
         self.status_message = None;
+    }
+
+    /// Advance the spinner animation frame (wraps at 8).
+    pub fn advance_spinner(&mut self) {
+        self.spinner_tick = self.spinner_tick.wrapping_add(1) % 8;
+    }
+
+    /// Returns the current braille spinner character.
+    pub fn spinner_char(&self) -> char {
+        const FRAMES: [char; 8] = [
+            '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
+            '\u{2827}',
+        ];
+        FRAMES[self.spinner_tick as usize % FRAMES.len()]
+    }
+
+    /// Push a timed toast notification (max 3 in stack).
+    pub fn push_toast(&mut self, message: String, is_error: bool) {
+        self.toasts.push(Toast {
+            message,
+            is_error,
+            created_at: Instant::now(),
+        });
+        if self.toasts.len() > 3 {
+            self.toasts.remove(0);
+        }
+    }
+
+    /// Expire toasts older than 5 seconds. Returns true if any expired.
+    pub fn expire_toasts(&mut self) -> bool {
+        let before = self.toasts.len();
+        self.toasts
+            .retain(|t| t.created_at.elapsed() < std::time::Duration::from_secs(5));
+        self.toasts.len() != before
     }
 
     pub fn toggle_workbench(&mut self) {
@@ -3137,6 +3190,7 @@ impl AppState {
             {
                 AppAction::EditYaml
             }
+            KeyCode::Char('m') if self.detail_view.is_some() => AppAction::ToggleDetailMetadata,
             KeyCode::Char('d')
                 if self
                     .detail_view

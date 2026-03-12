@@ -338,6 +338,14 @@ impl Theme {
             .add_modifier(Modifier::BOLD)
     }
 
+    /// Active sort column header style — uses accent2 to stand out from regular headers
+    pub fn sort_indicator_style(&self) -> Style {
+        Style::default()
+            .fg(self.accent2)
+            .bg(self.bg_surface)
+            .add_modifier(Modifier::BOLD)
+    }
+
     /// Selected row highlight style (REVERSED for maximum terminal compatibility)
     pub fn selection_style(&self) -> Style {
         Style::default()
