@@ -51,12 +51,14 @@ cargo build --release
 - **Log export** — `S` in log tabs saves buffer to file
 - **Action history** with pending/success/error tracking and resource jump-back
 - **Helm release browser** — reads Helm v3 releases from cluster secrets
-- **FluxCD support** — browse all Flux resources, trigger reconcile from detail or palette
+- **FluxCD support** — browse all Flux resources, trigger reconcile, deep reconciliation detail (full conditions, revisions, generation sync, source ref, Stalled detection), Reconcile column with relative time, generation mismatch indicator
 - **5 color themes** — Dark (default), Nord, Dracula, Catppuccin Mocha, Light — cycle with `T`, persist in config
 - **Multi-context switching** at startup and runtime
 - **Namespace filtering** across all views
 - **Fuzzy search** (`/`) on every resource list
 - **Dashboard** with cluster health gauges, alerts, and workload summaries
+- **Network resilience** — connection health indicator (●/◐/○), graceful backoff on API failures, staleness indicator, manual refresh bypass, error truncation
+- **UI/UX polish** — loading spinners, sort direction colors, persistent search bar with result count, YAML syntax highlighting, toast notifications, detail metadata expand/collapse
 - **Configuration persistence** — namespace, theme, workbench state, refresh interval
 
 ---
@@ -110,6 +112,7 @@ Press `Enter` on any resource to open its detail view.
 | `d` | Delete resource (with confirmation) | All |
 | `F` | Force delete (in delete confirmation) | All |
 | `T` | Trigger CronJob as a new Job | CronJobs |
+| `m` | Toggle metadata expand/collapse | All |
 | `:` | Open action palette | All |
 | `Esc` | Close detail view | All |
 
