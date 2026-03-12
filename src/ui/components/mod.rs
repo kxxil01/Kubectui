@@ -45,7 +45,7 @@ struct HeaderCacheKey {
     theme_index: u8,
     title: String,
     cluster_meta: String,
-    health_discriminant: u8,
+    health: ConnectionHealth,
 }
 
 type HeaderCacheValue = Arc<Line<'static>>;
@@ -150,15 +150,6 @@ fn collapsed_mask(collapsed: &HashSet<NavGroup>) -> u16 {
         .fold(0u16, |mask, group| mask | nav_group_bit(*group))
 }
 
-fn health_discriminant(health: ConnectionHealth) -> u8 {
-    match health {
-        ConnectionHealth::Unknown => 0,
-        ConnectionHealth::Connected => 1,
-        ConnectionHealth::Degraded(_) => 2,
-        ConnectionHealth::Disconnected => 3,
-    }
-}
-
 fn cached_header_line(
     theme_index: u8,
     title: &str,
@@ -166,13 +157,12 @@ fn cached_header_line(
     health: ConnectionHealth,
     theme: &Theme,
 ) -> HeaderCacheValue {
-    let h_disc = health_discriminant(health);
     if let Ok(cache) = HEADER_LINE_CACHE.lock()
         && let Some((cached_key, value)) = cache.as_ref()
         && cached_key.theme_index == theme_index
         && cached_key.title == title
         && cached_key.cluster_meta == cluster_meta
-        && cached_key.health_discriminant == h_disc
+        && cached_key.health == health
     {
         return value.clone();
     }
@@ -181,7 +171,7 @@ fn cached_header_line(
         theme_index,
         title: title.to_string(),
         cluster_meta: cluster_meta.to_string(),
-        health_discriminant: h_disc,
+        health,
     };
 
     let title_style = theme.title_style();

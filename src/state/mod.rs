@@ -46,7 +46,7 @@ pub enum DataPhase {
 }
 
 /// Connection health state, computed after each refresh cycle.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ConnectionHealth {
     #[default]
     Unknown,
@@ -1271,7 +1271,9 @@ impl GlobalState {
         previous: &[T],
         label: &str,
         errors: &mut Vec<String>,
+        total_fetches: &mut usize,
     ) -> Vec<T> {
+        *total_fetches += 1;
         match result {
             Ok(items) => items,
             Err(err) => {
@@ -1579,102 +1581,140 @@ impl GlobalState {
         ) = tokio::join!(wave1, wave2);
 
         let mut errors = Vec::new();
+        let mut total_fetches: usize = 0;
 
-        let nodes =
-            Self::keep_prev_vec_on_error(nodes_res, &self.snapshot.nodes, "nodes", &mut errors);
-        let pods = Self::keep_prev_vec_on_error(pods_res, &self.snapshot.pods, "pods", &mut errors);
+        let nodes = Self::keep_prev_vec_on_error(
+            nodes_res,
+            &self.snapshot.nodes,
+            "nodes",
+            &mut errors,
+            &mut total_fetches,
+        );
+        let pods = Self::keep_prev_vec_on_error(
+            pods_res,
+            &self.snapshot.pods,
+            "pods",
+            &mut errors,
+            &mut total_fetches,
+        );
         let services = Self::keep_prev_vec_on_error(
             services_res,
             &self.snapshot.services,
             "services",
             &mut errors,
+            &mut total_fetches,
         );
         let deployments = Self::keep_prev_vec_on_error(
             deployments_res,
             &self.snapshot.deployments,
             "deployments",
             &mut errors,
+            &mut total_fetches,
         );
         let statefulsets = Self::keep_prev_vec_on_error(
             statefulsets_res,
             &self.snapshot.statefulsets,
             "statefulsets",
             &mut errors,
+            &mut total_fetches,
         );
         let daemonsets = Self::keep_prev_vec_on_error(
             daemonsets_res,
             &self.snapshot.daemonsets,
             "daemonsets",
             &mut errors,
+            &mut total_fetches,
         );
         let replicasets = Self::keep_prev_vec_on_error(
             replicasets_res,
             &self.snapshot.replicasets,
             "replicasets",
             &mut errors,
+            &mut total_fetches,
         );
         let replication_controllers = Self::keep_prev_vec_on_error(
             replication_controllers_res,
             &self.snapshot.replication_controllers,
             "replicationcontrollers",
             &mut errors,
+            &mut total_fetches,
         );
-        let jobs = Self::keep_prev_vec_on_error(jobs_res, &self.snapshot.jobs, "jobs", &mut errors);
+        let jobs = Self::keep_prev_vec_on_error(
+            jobs_res,
+            &self.snapshot.jobs,
+            "jobs",
+            &mut errors,
+            &mut total_fetches,
+        );
         let cronjobs = Self::keep_prev_vec_on_error(
             cronjobs_res,
             &self.snapshot.cronjobs,
             "cronjobs",
             &mut errors,
+            &mut total_fetches,
         );
         let resource_quotas = Self::keep_prev_vec_on_error(
             resource_quotas_res,
             &self.snapshot.resource_quotas,
             "resourcequotas",
             &mut errors,
+            &mut total_fetches,
         );
         let limit_ranges = Self::keep_prev_vec_on_error(
             limit_ranges_res,
             &self.snapshot.limit_ranges,
             "limitranges",
             &mut errors,
+            &mut total_fetches,
         );
         let pod_disruption_budgets = Self::keep_prev_vec_on_error(
             pod_disruption_budgets_res,
             &self.snapshot.pod_disruption_budgets,
             "pdbs",
             &mut errors,
+            &mut total_fetches,
         );
         let service_accounts = Self::keep_prev_vec_on_error(
             service_accounts_res,
             &self.snapshot.service_accounts,
             "serviceaccounts",
             &mut errors,
+            &mut total_fetches,
         );
-        let roles =
-            Self::keep_prev_vec_on_error(roles_res, &self.snapshot.roles, "roles", &mut errors);
+        let roles = Self::keep_prev_vec_on_error(
+            roles_res,
+            &self.snapshot.roles,
+            "roles",
+            &mut errors,
+            &mut total_fetches,
+        );
         let role_bindings = Self::keep_prev_vec_on_error(
             role_bindings_res,
             &self.snapshot.role_bindings,
             "rolebindings",
             &mut errors,
+            &mut total_fetches,
         );
         let cluster_roles = Self::keep_prev_vec_on_error(
             cluster_roles_res,
             &self.snapshot.cluster_roles,
             "clusterroles",
             &mut errors,
+            &mut total_fetches,
         );
         let cluster_role_bindings = Self::keep_prev_vec_on_error(
             cluster_role_bindings_res,
             &self.snapshot.cluster_role_bindings,
             "clusterrolebindings",
             &mut errors,
+            &mut total_fetches,
         );
         let custom_resource_definitions = Self::keep_prev_vec_on_error(
             custom_resource_definitions_res,
             &self.snapshot.custom_resource_definitions,
             "crds",
             &mut errors,
+            &mut total_fetches,
         );
         let cluster_info = match cluster_info_res {
             Ok(Some(info)) => Some(info),
@@ -1690,51 +1730,77 @@ impl GlobalState {
             &self.snapshot.endpoints,
             "endpoints",
             &mut errors,
+            &mut total_fetches,
         );
         let ingresses = Self::keep_prev_vec_on_error(
             ingresses_res,
             &self.snapshot.ingresses,
             "ingresses",
             &mut errors,
+            &mut total_fetches,
         );
         let ingress_classes = Self::keep_prev_vec_on_error(
             ingress_classes_res,
             &self.snapshot.ingress_classes,
             "ingressclasses",
             &mut errors,
+            &mut total_fetches,
         );
         let network_policies = Self::keep_prev_vec_on_error(
             network_policies_res,
             &self.snapshot.network_policies,
             "networkpolicies",
             &mut errors,
+            &mut total_fetches,
         );
         let config_maps = Self::keep_prev_vec_on_error(
             config_maps_res,
             &self.snapshot.config_maps,
             "configmaps",
             &mut errors,
+            &mut total_fetches,
         );
         let secrets = Self::keep_prev_vec_on_error(
             secrets_res,
             &self.snapshot.secrets,
             "secrets",
             &mut errors,
+            &mut total_fetches,
         );
-        let hpas = Self::keep_prev_vec_on_error(hpas_res, &self.snapshot.hpas, "hpas", &mut errors);
-        let pvcs = Self::keep_prev_vec_on_error(pvcs_res, &self.snapshot.pvcs, "pvcs", &mut errors);
-        let pvs = Self::keep_prev_vec_on_error(pvs_res, &self.snapshot.pvs, "pvs", &mut errors);
+        let hpas = Self::keep_prev_vec_on_error(
+            hpas_res,
+            &self.snapshot.hpas,
+            "hpas",
+            &mut errors,
+            &mut total_fetches,
+        );
+        let pvcs = Self::keep_prev_vec_on_error(
+            pvcs_res,
+            &self.snapshot.pvcs,
+            "pvcs",
+            &mut errors,
+            &mut total_fetches,
+        );
+        let pvs = Self::keep_prev_vec_on_error(
+            pvs_res,
+            &self.snapshot.pvs,
+            "pvs",
+            &mut errors,
+            &mut total_fetches,
+        );
         let storage_classes = Self::keep_prev_vec_on_error(
             storage_classes_res,
             &self.snapshot.storage_classes,
             "storageclasses",
             &mut errors,
+            &mut total_fetches,
         );
         let namespace_list = Self::keep_prev_vec_on_error(
             namespace_list_res,
             &self.snapshot.namespace_list,
             "namespacelist",
             &mut errors,
+            &mut total_fetches,
         );
         self.namespaces = Self::namespace_names_from_list(&namespace_list);
         let priority_classes = Self::keep_prev_vec_on_error(
@@ -1742,6 +1808,7 @@ impl GlobalState {
             &self.snapshot.priority_classes,
             "priorityclasses",
             &mut errors,
+            &mut total_fetches,
         );
         let helm_releases = Self::filter_namespace(
             Self::keep_prev_vec_on_error(
@@ -1749,6 +1816,7 @@ impl GlobalState {
                 &self.snapshot.helm_releases,
                 "helmreleases",
                 &mut errors,
+                &mut total_fetches,
             ),
             namespace,
             |release| release.namespace.as_str(),
@@ -1758,12 +1826,14 @@ impl GlobalState {
             &self.snapshot.flux_resources,
             "fluxresources",
             &mut errors,
+            &mut total_fetches,
         );
         let node_metrics = Self::keep_prev_vec_on_error(
             node_metrics_res,
             &self.snapshot.node_metrics,
             "nodemetrics",
             &mut errors,
+            &mut total_fetches,
         );
 
         let all_failed = nodes.is_empty()
@@ -1864,6 +1934,8 @@ impl GlobalState {
         snap.failed_resource_count = errors.len();
         snap.connection_health = if errors.is_empty() {
             ConnectionHealth::Connected
+        } else if errors.len() >= total_fetches {
+            ConnectionHealth::Disconnected
         } else {
             ConnectionHealth::Degraded(errors.len())
         };

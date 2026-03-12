@@ -4880,7 +4880,7 @@ async fn fetch_detail_view(
     let sections = sections_for_resource(snapshot, &resource);
 
     // Run YAML, events, and metrics fetches concurrently (no dependencies between them).
-    let (yaml, events, (pod_metrics, node_metrics, metrics_unavailable_message)) = tokio::join!(
+    let ((yaml, yaml_error), events, (pod_metrics, node_metrics, metrics_unavailable_message)) = tokio::join!(
         fetch_detail_yaml(client, &resource),
         fetch_detail_events(client, &resource),
         fetch_detail_metrics(client, &resource),
@@ -4891,6 +4891,7 @@ async fn fetch_detail_view(
         pending_request_id: None,
         metadata,
         yaml,
+        yaml_error,
         events,
         sections,
         pod_metrics,
@@ -4906,7 +4907,10 @@ async fn fetch_detail_view(
     })
 }
 
-async fn fetch_detail_yaml(client: &K8sClient, resource: &ResourceRef) -> Option<String> {
+async fn fetch_detail_yaml(
+    client: &K8sClient,
+    resource: &ResourceRef,
+) -> (Option<String>, Option<String>) {
     let result = match resource {
         ResourceRef::CustomResource {
             group,
@@ -4936,8 +4940,8 @@ async fn fetch_detail_yaml(client: &K8sClient, resource: &ResourceRef) -> Option
         }
     };
     match result {
-        Ok(yaml) => Some(yaml),
-        Err(e) => Some(format!("# YAML fetch failed: {e}")),
+        Ok(yaml) => (Some(yaml), None),
+        Err(e) => (None, Some(format!("YAML fetch failed: {e}"))),
     }
 }
 
