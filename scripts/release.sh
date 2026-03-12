@@ -20,13 +20,13 @@ bump_version() {
     local major minor patch
     # Strip any pre-release suffix for bumping
     local base="${current%%-*}"
-    IFS='.' read -r major minor patch <<< "$base"
+    IFS='.' read -r major minor patch <<<"$base"
 
     case "$part" in
-        major) echo "$((major + 1)).0.0" ;;
-        minor) echo "${major}.$((minor + 1)).0" ;;
-        patch) echo "${major}.${minor}.$((patch + 1))" ;;
-        *)     echo "$part" ;;  # Explicit version
+    major) echo "$((major + 1)).0.0" ;;
+    minor) echo "${major}.$((minor + 1)).0" ;;
+    patch) echo "${major}.${minor}.$((patch + 1))" ;;
+    *) echo "$part" ;; # Explicit version
     esac
 }
 
@@ -86,8 +86,10 @@ git add "$CARGO_TOML" Cargo.lock
 git commit -m "chore: release ${TAG}"
 git tag -a "$TAG" -m "Release ${TAG}"
 
+echo "Push origin to main"
+git push origin main --tags
+
 echo ""
-echo "Done! To publish the release:"
-echo "  git push origin main --tags"
+echo "Done! To publish the release!"
 echo ""
 echo "This will trigger the release workflow to build binaries and create a GitHub Release."

@@ -34,6 +34,7 @@ use ratatui::{
 
 use crate::{
     app::{AppView, NavGroup},
+    state::ConnectionHealth,
     ui::theme::Theme,
 };
 
@@ -44,6 +45,7 @@ struct HeaderCacheKey {
     theme_index: u8,
     title: String,
     cluster_meta: String,
+    health: ConnectionHealth,
 }
 
 type HeaderCacheValue = Arc<Line<'static>>;
@@ -152,6 +154,7 @@ fn cached_header_line(
     theme_index: u8,
     title: &str,
     cluster_meta: &str,
+    health: ConnectionHealth,
     theme: &Theme,
 ) -> HeaderCacheValue {
     if let Ok(cache) = HEADER_LINE_CACHE.lock()
@@ -159,6 +162,7 @@ fn cached_header_line(
         && cached_key.theme_index == theme_index
         && cached_key.title == title
         && cached_key.cluster_meta == cluster_meta
+        && cached_key.health == health
     {
         return value.clone();
     }
@@ -167,17 +171,39 @@ fn cached_header_line(
         theme_index,
         title: title.to_string(),
         cluster_meta: cluster_meta.to_string(),
+        health,
     };
 
     let title_style = theme.title_style();
     let dim_style = Style::default().fg(theme.fg_dim);
-    let built = Arc::new(Line::from(vec![
+    let mut spans = vec![
         Span::styled(" ⎈ ", title_style),
         Span::styled(title.to_string(), title_style),
         Span::styled("  │  ", theme.muted_style()),
         Span::styled("⛅ ", dim_style),
         Span::styled(cluster_meta.to_string(), dim_style),
-    ]));
+    ];
+
+    match health {
+        ConnectionHealth::Connected => {
+            spans.push(Span::styled(" ●", Style::default().fg(theme.success)));
+        }
+        ConnectionHealth::Degraded(n) => {
+            spans.push(Span::styled(
+                format!(" ◐ {n} degraded"),
+                Style::default().fg(theme.warning),
+            ));
+        }
+        ConnectionHealth::Disconnected => {
+            spans.push(Span::styled(
+                " ○ disconnected",
+                Style::default().fg(theme.error),
+            ));
+        }
+        ConnectionHealth::Unknown => {}
+    }
+
+    let built = Arc::new(Line::from(spans));
 
     if let Ok(mut cache) = HEADER_LINE_CACHE.lock() {
         *cache = Some((key, built.clone()));
@@ -318,10 +344,16 @@ fn cached_sidebar_lines(
 }
 
 /// Renders the top header bar with app title, version badge, and cluster endpoint.
-pub fn render_header(frame: &mut Frame, area: Rect, title: &str, cluster_meta: &str) {
+pub fn render_header(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    cluster_meta: &str,
+    health: ConnectionHealth,
+) {
     let theme = default_theme();
     let theme_index = crate::ui::theme::active_theme_index();
-    let text = cached_header_line(theme_index, title, cluster_meta, &theme);
+    let text = cached_header_line(theme_index, title, cluster_meta, health, &theme);
 
     frame.render_widget(
         Paragraph::new((*text).clone())

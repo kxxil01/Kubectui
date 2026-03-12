@@ -1194,6 +1194,7 @@ pub struct DetailViewState {
     pub pending_request_id: Option<u64>,
     pub metadata: DetailMetadata,
     pub yaml: Option<String>,
+    pub yaml_error: Option<String>,
     pub events: Vec<EventInfo>,
     pub sections: Vec<String>,
     pub pod_metrics: Option<PodMetricsInfo>,

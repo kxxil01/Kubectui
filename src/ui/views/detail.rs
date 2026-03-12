@@ -363,6 +363,13 @@ fn render_inspection_panel(frame: &mut Frame, area: Rect, detail_state: &DetailV
         .map(|yaml| yaml.lines().count())
         .unwrap_or(0);
 
+    let yaml_error_line = detail_state.yaml_error.as_ref().map(|e| {
+        Line::from(vec![
+            Span::styled(" ✗ ", theme.badge_error_style()),
+            Span::styled(e.clone(), Style::default().fg(theme.error)),
+        ])
+    });
+
     let lines = vec![
         Line::from(vec![
             Span::styled(" [y] ", theme.keybind_key_style()),
@@ -397,10 +404,14 @@ fn render_inspection_panel(frame: &mut Frame, area: Rect, detail_state: &DetailV
             Line::from("")
         },
         Line::from(""),
-        Line::from(vec![
-            Span::styled(" YAML lines ", theme.inactive_style()),
-            Span::styled(yaml_lines.to_string(), Style::default().fg(theme.fg)),
-        ]),
+        if let Some(err_line) = yaml_error_line {
+            err_line
+        } else {
+            Line::from(vec![
+                Span::styled(" YAML lines ", theme.inactive_style()),
+                Span::styled(yaml_lines.to_string(), Style::default().fg(theme.fg)),
+            ])
+        },
         Line::from(vec![
             Span::styled(" Events     ", theme.inactive_style()),
             Span::styled(

@@ -1604,8 +1604,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             Err(err) => {
                                 consecutive_refresh_failures += 1;
                                 let delay = match consecutive_refresh_failures {
-                                    1 => 30,
-                                    2 => 60,
+                                    1 => 5,
+                                    2 => 15,
+                                    3 => 30,
+                                    4 => 60,
                                     _ => 120,
                                 };
                                 backoff_until = Some(Instant::now() + Duration::from_secs(delay));
@@ -2474,6 +2476,9 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
                 AppAction::Quit => break,
                 AppAction::RefreshData => {
+                    // Manual refresh bypasses backoff
+                    consecutive_refresh_failures = 0;
+                    backoff_until = None;
                     request_refresh(
                         &refresh_tx,
                         &mut global_state,
@@ -2697,9 +2702,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     let ctx_clone = ctx.clone();
                     pending_context_switch = Some((
                         ctx,
-                        tokio::spawn(
-                            async move { K8sClient::connect_with_context(&ctx_clone).await },
-                        ),
+                        tokio::spawn(async move {
+                            tokio::time::timeout(
+                                Duration::from_secs(15),
+                                K8sClient::connect_with_context(&ctx_clone),
+                            )
+                            .await
+                            .map_err(|_| anyhow::anyhow!("connection timed out after 15s"))?
+                        }),
                     ));
                 }
                 AppAction::SelectNamespace(namespace) => {
@@ -4870,7 +4880,7 @@ async fn fetch_detail_view(
     let sections = sections_for_resource(snapshot, &resource);
 
     // Run YAML, events, and metrics fetches concurrently (no dependencies between them).
-    let (yaml, events, (pod_metrics, node_metrics, metrics_unavailable_message)) = tokio::join!(
+    let ((yaml, yaml_error), events, (pod_metrics, node_metrics, metrics_unavailable_message)) = tokio::join!(
         fetch_detail_yaml(client, &resource),
         fetch_detail_events(client, &resource),
         fetch_detail_metrics(client, &resource),
@@ -4881,6 +4891,7 @@ async fn fetch_detail_view(
         pending_request_id: None,
         metadata,
         yaml,
+        yaml_error,
         events,
         sections,
         pod_metrics,
@@ -4896,8 +4907,11 @@ async fn fetch_detail_view(
     })
 }
 
-async fn fetch_detail_yaml(client: &K8sClient, resource: &ResourceRef) -> Option<String> {
-    match resource {
+async fn fetch_detail_yaml(
+    client: &K8sClient,
+    resource: &ResourceRef,
+) -> (Option<String>, Option<String>) {
+    let result = match resource {
         ResourceRef::CustomResource {
             group,
             version,
@@ -4905,20 +4919,29 @@ async fn fetch_detail_yaml(client: &K8sClient, resource: &ResourceRef) -> Option
             plural,
             name,
             namespace,
-        } => client
-            .fetch_custom_resource_yaml(group, version, kind, plural, name, namespace.as_deref())
-            .await
-            .ok(),
-        ResourceRef::HelmRelease(name, ns) => client.fetch_helm_release_yaml(name, ns).await.ok(),
+        } => {
+            client
+                .fetch_custom_resource_yaml(
+                    group,
+                    version,
+                    kind,
+                    plural,
+                    name,
+                    namespace.as_deref(),
+                )
+                .await
+        }
+        ResourceRef::HelmRelease(name, ns) => client.fetch_helm_release_yaml(name, ns).await,
         _ => {
             let kind = resource.kind().to_ascii_lowercase();
             let name = resource.name();
             let namespace = resource.namespace();
-            client
-                .fetch_resource_yaml(&kind, name, namespace)
-                .await
-                .ok()
+            client.fetch_resource_yaml(&kind, name, namespace).await
         }
+    };
+    match result {
+        Ok(yaml) => (Some(yaml), None),
+        Err(e) => (None, Some(format!("YAML fetch failed: {e}"))),
     }
 }
 
