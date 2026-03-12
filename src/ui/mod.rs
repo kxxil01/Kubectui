@@ -345,6 +345,14 @@ fn cached_pod_derived(
     built
 }
 
+fn truncate_error(msg: &str, max_len: usize) -> &str {
+    if msg.len() <= max_len {
+        return msg;
+    }
+    let end = msg.floor_char_boundary(max_len.saturating_sub(1));
+    &msg[..end]
+}
+
 /// Renders a full frame for the current app and cluster state.
 pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     let _frame_scope = profiling::frame_scope(app.view());
@@ -378,7 +386,13 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     {
         let _header_scope = profiling::span_scope("header");
-        components::render_header(frame, root[0], "KubecTUI v0.1.0", cluster.cluster_summary());
+        components::render_header(
+            frame,
+            root[0],
+            "KubecTUI v0.1.0",
+            cluster.cluster_summary(),
+            cluster.connection_health,
+        );
     }
 
     let body_root = {
@@ -805,9 +819,17 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     // Toast notifications take priority over regular status messages
     let active_toast = app.toasts.last();
     let status = if let Some(toast) = active_toast.filter(|t| t.is_error) {
-        format!("[{}] ✗ {}", app.get_namespace(), toast.message)
+        format!(
+            "[{}] ✗ {}",
+            app.get_namespace(),
+            truncate_error(&toast.message, 120)
+        )
     } else if let Some(err) = app.error_message() {
-        format!("[{}] ERROR: {err}", app.get_namespace())
+        format!(
+            "[{}] ERROR: {}",
+            app.get_namespace(),
+            truncate_error(err, 120)
+        )
     } else if let Some(toast) = active_toast {
         format!("[{}] ● {}", app.get_namespace(), toast.message)
     } else if let Some(message) = app.status_message() {
@@ -817,6 +839,14 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         let current_activity = current_view_activity(cluster, app.view(), app.spinner_char())
             .map(|activity| format!(" {activity} •"))
             .unwrap_or_default();
+        let staleness = cluster.last_updated.map_or(String::new(), |ts| {
+            let elapsed = (chrono::Utc::now() - ts).num_seconds();
+            if elapsed > 45 {
+                format!(" {elapsed}s ago •")
+            } else {
+                String::new()
+            }
+        });
         let sort_hint = if app.view() == AppView::Pods {
             let active = app.pod_sort().map_or("default", PodSortState::short_label);
             format!(" • [n/a] sort ({active}) • [1/2/3] pod-sort • [0] clear-sort")
@@ -859,7 +889,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             Focus::Sidebar => " • sidebar active",
         };
         format!(
-            "[{}]{}{} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [q] quit",
+            "[{}]{}{}{staleness} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [q] quit",
             app.get_namespace(),
             current_activity,
             focus_hint

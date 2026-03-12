@@ -45,6 +45,17 @@ pub enum DataPhase {
     Error,
 }
 
+/// Connection health state, computed after each refresh cycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConnectionHealth {
+    #[default]
+    Unknown,
+    Connected,
+    /// Some resource fetches failed. Inner value is the count of failed resources.
+    Degraded(usize),
+    Disconnected,
+}
+
 impl fmt::Display for DataPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let label = match self {
@@ -131,6 +142,8 @@ pub struct ClusterSnapshot {
     pub last_updated: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
     pub cluster_url: Option<String>,
+    pub connection_health: ConnectionHealth,
+    pub failed_resource_count: usize,
 }
 
 impl Default for ClusterSnapshot {
@@ -184,6 +197,8 @@ impl Default for ClusterSnapshot {
             last_updated: None,
             last_error: None,
             cluster_url: None,
+            connection_health: ConnectionHealth::Unknown,
+            failed_resource_count: 0,
         }
     }
 }
@@ -1766,12 +1781,16 @@ impl GlobalState {
         if all_failed {
             let message = if errors.is_empty() {
                 "failed to refresh cluster state".to_string()
-            } else {
+            } else if errors.len() <= 3 {
                 errors.join(" | ")
+            } else {
+                format!("{} (+{} more)", errors[..3].join(" | "), errors.len() - 3)
             };
             let snap = Arc::make_mut(&mut self.snapshot);
             snap.phase = DataPhase::Error;
             snap.last_error = Some(message.clone());
+            snap.connection_health = ConnectionHealth::Disconnected;
+            snap.failed_resource_count = errors.len();
             self.snapshot_dirty = true;
             self.publish_snapshot();
             return Err(anyhow!(message));
@@ -1842,10 +1861,22 @@ impl GlobalState {
         snap.snapshot_version = snap.snapshot_version.saturating_add(1);
         snap.phase = DataPhase::Ready;
         snap.last_updated = Some(Utc::now());
+        snap.failed_resource_count = errors.len();
+        snap.connection_health = if errors.is_empty() {
+            ConnectionHealth::Connected
+        } else {
+            ConnectionHealth::Degraded(errors.len())
+        };
         snap.last_error = if errors.is_empty() {
             None
-        } else {
+        } else if errors.len() <= 3 {
             Some(errors.join(" | "))
+        } else {
+            Some(format!(
+                "{} (+{} more)",
+                errors[..3].join(" | "),
+                errors.len() - 3
+            ))
         };
         self.snapshot_dirty = true;
 
