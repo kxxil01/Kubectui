@@ -6001,11 +6001,19 @@ fn flux_detail_sections(flux: &kubectui::k8s::dtos::FluxResourceInfo) -> Vec<Str
         lines.push(String::new());
         lines.push("REVISIONS".to_string());
         if let Some(ref rev) = flux.last_applied_revision {
-            let display = if rev.len() > 48 { &rev[..48] } else { rev };
+            let display = if rev.len() > 48 {
+                &rev[..rev.floor_char_boundary(48)]
+            } else {
+                rev
+            };
             lines.push(format!("applied: {display}"));
         }
         if let Some(ref rev) = flux.last_attempted_revision {
-            let display = if rev.len() > 48 { &rev[..48] } else { rev };
+            let display = if rev.len() > 48 {
+                &rev[..rev.floor_char_boundary(48)]
+            } else {
+                rev
+            };
             lines.push(format!("attempted: {display}"));
         }
     }
