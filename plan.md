@@ -27,6 +27,10 @@ Current milestone status:
 - Milestone 12: completed
 - Milestone 13: completed
 - Milestone 14: completed
+- Milestone 15: completed
+- Milestone 15a (UI/UX Polish): completed
+- Milestone 15b (Network Resilience): completed
+- Milestone 15c (Flux Deep Reconciliation): completed
 - Milestone 16: not started
 - Milestone 17: not started
 - Milestone 18: not started
@@ -53,6 +57,12 @@ Completion notes:
 
 - Milestone 11 shipped Node Operations: cordon (`c`), uncordon (`u`), and drain (`D`) for Kubernetes nodes. Cordon/uncordon execute immediately with optimistic cache updates. Drain shows a confirmation dialog with force-drain option (`F`). Node list status column now shows SchedulingDisabled for cordoned nodes. All three operations are available via the action palette and recorded in action history.
 
+- Milestone 15a (UI/UX Polish, PR #11) shipped: loading spinners with animated braille dots, sort direction color indicators (▲ green ascending, ▼ amber descending), persistent search bar with result count, YAML syntax highlighting (keys blue, strings green, numbers cyan, booleans magenta), toast notifications for actions, detail metadata expand/collapse (`m` key).
+
+- Milestone 15b (Network Resilience, PR #12) shipped: ConnectionHealth indicator in header (● green connected, ◐ yellow degraded, ○ red disconnected), softer backoff schedule (5/15/30/60/120s), manual refresh bypass (`r` resets backoff), staleness indicator (shows "Xs ago" when data >45s old), error truncation (120 char cap with UTF-8 safe floor_char_boundary), context switch 15s timeout, YAML fetch error feedback (separate yaml_error field, disables edit on error), compile-time version string via CARGO_PKG_VERSION.
+
+- Milestone 15c (Flux Deep Reconciliation, PR #13) shipped: FluxCondition struct with full conditions array parsing, 9 new fields on FluxResourceInfo (conditions, last_reconcile_time, last_applied/attempted_revision, observed/current generation, source_ref, interval, timeout), Stalled condition detection separate from NotReady, Reconcile column in Flux list view with relative time, generation mismatch ⟳ indicator, rich Flux detail panel (Reconciliation, Revisions, Generation sync, Artifact, Conditions sections), Stalled promoted to Error severity in Issue Center.
+
 Post-milestone fixes and improvements (shipped after M5):
 
 - Deep audit: 23 fixes across 35 files (UTF-8 safe truncation, time-based backoff, TOCTOU race fix, non-blocking extension fetch, temp file security, magic number cleanup)
@@ -63,7 +73,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 626 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
+- 633 tests passing, zero clippy warnings, fmt clean, dev+release builds passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---

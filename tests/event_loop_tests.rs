@@ -126,6 +126,52 @@ fn test_port_forward_list_refresh_emits_refresh_action() {
 }
 
 #[test]
+fn test_workbench_yaml_tab_refresh_uses_global_refresh_action() {
+    let mut app = AppState::default();
+    app.open_resource_yaml_tab(
+        ResourceRef::Pod("test-pod".to_string(), "default".to_string()),
+        Some("kind: Pod".to_string()),
+        None,
+        None,
+    );
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('r')), &mut app);
+    assert_eq!(action, AppAction::RefreshData);
+}
+
+#[test]
+fn test_logs_viewer_refresh_emits_global_action_when_not_searching() {
+    let mut app = AppState::default();
+    app.detail_view = Some(pod_detail());
+    app.open_logs_viewer();
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('r')), &mut app);
+    assert_eq!(action, AppAction::RefreshData);
+}
+
+#[test]
+fn test_logs_viewer_search_keeps_r_as_text() {
+    let mut app = AppState::default();
+    app.detail_view = Some(pod_detail());
+    app.open_logs_viewer();
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('/')), &mut app);
+    apply_action(action, &mut app);
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('r')), &mut app);
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench().active_tab()
+        && let WorkbenchTabState::PodLogs(logs_tab) = &tab.state
+    {
+        assert_eq!(logs_tab.viewer.search_input, "r");
+        assert!(logs_tab.viewer.searching);
+    } else {
+        panic!("expected active pod logs tab");
+    }
+}
+
+#[test]
 fn test_history_shortcut_opens_action_history_tab() {
     let mut app = AppState::default();
 

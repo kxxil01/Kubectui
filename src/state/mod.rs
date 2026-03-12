@@ -619,6 +619,7 @@ impl Default for RefreshOptions {
 
 const CORE_REFRESH_VIEWS: &[AppView] = &[
     AppView::Dashboard,
+    AppView::Issues,
     AppView::Nodes,
     AppView::Namespaces,
     AppView::Pods,
@@ -2748,6 +2749,10 @@ mod tests {
             ViewLoadState::Loading
         );
         assert_eq!(
+            pending_snapshot.view_load_state(AppView::Issues),
+            ViewLoadState::Loading
+        );
+        assert_eq!(
             pending_snapshot.view_load_state(AppView::NetworkPolicies),
             ViewLoadState::Loading
         );
@@ -2772,6 +2777,10 @@ mod tests {
         assert!(!snapshot.secondary_resources_loaded);
         assert_eq!(
             snapshot.view_load_state(AppView::Pods),
+            ViewLoadState::Ready
+        );
+        assert_eq!(
+            snapshot.view_load_state(AppView::Issues),
             ViewLoadState::Ready
         );
         assert_eq!(
