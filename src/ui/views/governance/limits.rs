@@ -22,9 +22,9 @@ use crate::{
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
-        table_viewport_rows, table_window,
+        sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_limit_range_indices,
-        workload_sort_header, workload_sort_suffix,
+        workload_sort_suffix,
     },
 };
 
@@ -132,18 +132,12 @@ pub fn render_limit_ranges(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
-    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
-    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
-
     let header = Row::new([
-        Cell::from(Span::styled(
-            format!("  {name_header}"),
-            theme.header_style(),
-        )),
+        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Specs", theme.header_style())),
         Cell::from(Span::styled("Types", theme.header_style())),
-        Cell::from(Span::styled(age_header, theme.header_style())),
+        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
     ])
     .height(1)
     .style(theme.header_style());

@@ -24,9 +24,9 @@ use crate::{
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, loading_or_empty_message_no_search, responsive_table_widths_vec,
-        table_viewport_rows, table_window,
+        sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_node_indices,
-        workload_sort_header, workload_sort_suffix,
+        workload_sort_suffix,
     },
 };
 
@@ -108,16 +108,10 @@ pub fn render_nodes(
 
     let header_cells: Vec<Cell> = visible_columns
         .iter()
-        .map(|col| {
-            let label = match col.id {
-                "name" => format!(
-                    "  {}",
-                    workload_sort_header(col.label, sort, WorkloadSortColumn::Name)
-                ),
-                "age" => workload_sort_header(col.label, sort, WorkloadSortColumn::Age).to_string(),
-                _ => col.label.to_string(),
-            };
-            Cell::from(Span::styled(label, theme.header_style()))
+        .map(|col| match col.id {
+            "name" => sort_header_cell(col.label, sort, WorkloadSortColumn::Name, &theme, true),
+            "age" => sort_header_cell(col.label, sort, WorkloadSortColumn::Age, &theme, false),
+            _ => Cell::from(Span::styled(col.label.to_string(), theme.header_style())),
         })
         .collect();
     let header = Row::new(header_cells).height(1).style(theme.header_style());

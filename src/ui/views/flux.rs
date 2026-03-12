@@ -24,8 +24,8 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        loading_or_empty_message, responsive_table_widths, table_viewport_rows, table_window,
-        workload_sort_header, workload_sort_suffix,
+        loading_or_empty_message, responsive_table_widths, sort_header_cell, table_viewport_rows,
+        table_window, workload_sort_suffix,
     },
 };
 
@@ -312,18 +312,12 @@ pub fn render_flux_resources(
         FluxMode::HelmRepositories => "URL",
         _ => "Message",
     };
-    let name_header = workload_sort_header("Name", sort, WorkloadSortColumn::Name);
-    let age_header = workload_sort_header("Age", sort, WorkloadSortColumn::Age);
-
     let header = Row::new([
-        Cell::from(Span::styled(
-            format!("  {name_header}"),
-            theme.header_style(),
-        )),
+        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Kind", theme.header_style())),
         Cell::from(Span::styled("Status", theme.header_style())),
-        Cell::from(Span::styled(age_header, theme.header_style())),
+        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
         Cell::from(Span::styled(detail_col_name, theme.header_style())),
     ])
     .height(1)

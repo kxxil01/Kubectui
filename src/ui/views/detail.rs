@@ -67,15 +67,25 @@ fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailVie
                 Style::default().fg(theme.muted),
             ),
         ]));
-        for (k, v) in detail_state.metadata.labels.iter().take(5) {
+        let label_iter: Box<dyn Iterator<Item = _>> = if detail_state.metadata_expanded {
+            Box::new(detail_state.metadata.labels.iter())
+        } else {
+            Box::new(detail_state.metadata.labels.iter().take(5))
+        };
+        for (k, v) in label_iter {
+            let display_val = if detail_state.metadata_expanded || v.len() <= 50 {
+                v.clone()
+            } else {
+                format!("{}…", &v[..v.floor_char_boundary(50)])
+            };
             lines.push(Line::from(vec![
                 Span::styled("   ", theme.inactive_style()),
                 Span::styled(k.clone(), Style::default().fg(theme.accent)),
                 Span::styled("=", Style::default().fg(theme.muted)),
-                Span::styled(v.clone(), Style::default().fg(theme.fg_dim)),
+                Span::styled(display_val, Style::default().fg(theme.fg_dim)),
             ]));
         }
-        if detail_state.metadata.labels.len() > 5 {
+        if !detail_state.metadata_expanded && detail_state.metadata.labels.len() > 5 {
             lines.push(Line::from(Span::styled(
                 format!("   … +{} more", detail_state.metadata.labels.len() - 5),
                 Style::default().fg(theme.muted),
@@ -97,11 +107,16 @@ fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailVie
                 Style::default().fg(theme.muted),
             ),
         ]));
-        for (k, v) in detail_state.metadata.annotations.iter().take(3) {
-            let display_val = if v.len() > 50 {
-                format!("{}…", &v[..v.floor_char_boundary(50)])
-            } else {
+        let annot_iter: Box<dyn Iterator<Item = _>> = if detail_state.metadata_expanded {
+            Box::new(detail_state.metadata.annotations.iter())
+        } else {
+            Box::new(detail_state.metadata.annotations.iter().take(3))
+        };
+        for (k, v) in annot_iter {
+            let display_val = if detail_state.metadata_expanded || v.len() <= 50 {
                 v.clone()
+            } else {
+                format!("{}…", &v[..v.floor_char_boundary(50)])
             };
             lines.push(Line::from(vec![
                 Span::styled("   ", theme.inactive_style()),
@@ -110,12 +125,29 @@ fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailVie
                 Span::styled(display_val, Style::default().fg(theme.fg_dim)),
             ]));
         }
-        if detail_state.metadata.annotations.len() > 3 {
+        if !detail_state.metadata_expanded && detail_state.metadata.annotations.len() > 3 {
             lines.push(Line::from(Span::styled(
                 format!("   … +{} more", detail_state.metadata.annotations.len() - 3),
                 Style::default().fg(theme.muted),
             )));
         }
+    }
+
+    // Show expand/collapse hint if there's truncatable content
+    let has_truncated = (!detail_state.metadata.labels.is_empty()
+        && detail_state.metadata.labels.len() > 5)
+        || (!detail_state.metadata.annotations.is_empty()
+            && detail_state.metadata.annotations.len() > 3);
+    if has_truncated || detail_state.metadata_expanded {
+        let hint = if detail_state.metadata_expanded {
+            " [m] collapse"
+        } else {
+            " [m] expand all"
+        };
+        lines.push(Line::from(Span::styled(
+            hint,
+            Style::default().fg(theme.muted),
+        )));
     }
 
     let block = Block::default()

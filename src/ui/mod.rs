@@ -9,6 +9,7 @@ pub mod views;
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     prelude::Frame,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{
         Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
@@ -27,7 +28,10 @@ use crate::{
     },
     policy::ViewAction,
     state::{ClusterSnapshot, ViewLoadState},
-    ui::components::{active_block, default_block, default_theme},
+    ui::{
+        components::{active_block, default_block, default_theme},
+        theme::Theme,
+    },
 };
 use filter_cache::{cached_filter_indices_with_variant, data_fingerprint};
 
@@ -227,30 +231,54 @@ fn effective_workbench_height(
     requested_height.min(max_height).max(6)
 }
 
-fn current_view_activity(snapshot: &ClusterSnapshot, view: AppView) -> Option<String> {
+fn current_view_activity(
+    snapshot: &ClusterSnapshot,
+    view: AppView,
+    spinner: char,
+) -> Option<String> {
     match snapshot.view_load_state(view) {
-        ViewLoadState::Loading => Some(format!("{} loading...", view.label())),
-        ViewLoadState::Refreshing => Some(format!("{} refreshing...", view.label())),
+        ViewLoadState::Loading => Some(format!("{spinner} {} loading...", view.label())),
+        ViewLoadState::Refreshing => Some(format!("{spinner} {} refreshing...", view.label())),
         ViewLoadState::Idle | ViewLoadState::Ready => None,
     }
 }
 
+/// Returns (header_text, is_active_sort_column).
 pub(crate) fn workload_sort_header(
     label: &str,
     sort: Option<WorkloadSortState>,
     column: WorkloadSortColumn,
-) -> String {
+) -> (String, bool) {
     match sort {
         Some(WorkloadSortState {
             column: active,
             descending: true,
-        }) if active == column => format!("{label}▼"),
+        }) if active == column => (format!("{label} ▼"), true),
         Some(WorkloadSortState {
             column: active,
             descending: false,
-        }) if active == column => format!("{label}▲"),
-        _ => label.to_string(),
+        }) if active == column => (format!("{label} ▲"), true),
+        _ => (label.to_string(), false),
     }
+}
+
+/// Returns a styled `Cell` for a sortable column header.
+/// When `padded` is true, the label is prefixed with two spaces (for the Name column).
+pub(crate) fn sort_header_cell(
+    label: &str,
+    sort: Option<WorkloadSortState>,
+    column: WorkloadSortColumn,
+    theme: &Theme,
+    padded: bool,
+) -> Cell<'static> {
+    let (text, is_sorted) = workload_sort_header(label, sort, column);
+    let text = if padded { format!("  {text}") } else { text };
+    let style = if is_sorted {
+        theme.sort_indicator_style()
+    } else {
+        theme.header_style()
+    };
+    Cell::from(Span::styled(text, style))
 }
 
 pub(crate) fn workload_sort_suffix(sort: Option<WorkloadSortState>) -> String {
@@ -409,7 +437,51 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         components::render_workbench(frame, body_root[1], app, cluster);
     }
 
-    let content = body[1];
+    let content_full = body[1];
+
+    // When in search mode, carve out a 1-row search bar at the top of the content area
+    let (search_area, content) = if app.is_search_mode() {
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(content_full);
+        (Some(split[0]), split[1])
+    } else if !app.search_query().is_empty() {
+        // Show active filter hint even after exiting search mode
+        let split = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(content_full);
+        (Some(split[0]), split[1])
+    } else {
+        (None, content_full)
+    };
+
+    if let Some(search_rect) = search_area {
+        let theme = default_theme();
+        let query_text = app.search_query();
+        let mut spans = vec![
+            Span::styled(
+                " / ",
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::raw(query_text),
+        ];
+        if app.is_search_mode() {
+            spans.push(Span::styled("█", Style::default().fg(theme.accent)));
+        } else {
+            spans.push(Span::styled(
+                "  [Esc] clear",
+                Style::default().fg(theme.muted),
+            ));
+        }
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg_surface)),
+            search_rect,
+        );
+    }
 
     // Resolve visible columns for current view
     let visible_columns: Vec<crate::columns::ColumnDef> = {
@@ -730,15 +802,19 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         }
     }
 
-    let status = if let Some(err) = app.error_message() {
+    // Toast notifications take priority over regular status messages
+    let active_toast = app.toasts.last();
+    let status = if let Some(toast) = active_toast.filter(|t| t.is_error) {
+        format!("[{}] ✗ {}", app.get_namespace(), toast.message)
+    } else if let Some(err) = app.error_message() {
         format!("[{}] ERROR: {err}", app.get_namespace())
+    } else if let Some(toast) = active_toast {
+        format!("[{}] ● {}", app.get_namespace(), toast.message)
     } else if let Some(message) = app.status_message() {
         format!("[{}] {message}", app.get_namespace())
-    } else if app.is_search_mode() {
-        format!("[{}] Search: {}", app.get_namespace(), app.search_query())
     } else {
         let theme_name = theme::active_theme().name;
-        let current_activity = current_view_activity(cluster, app.view())
+        let current_activity = current_view_activity(cluster, app.view(), app.spinner_char())
             .map(|activity| format!(" {activity} •"))
             .unwrap_or_default();
         let sort_hint = if app.view() == AppView::Pods {
@@ -792,7 +868,8 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     {
         let _status_scope = profiling::span_scope("status");
-        components::render_status_bar(frame, root[2], &status, app.error_message().is_some());
+        let is_error = active_toast.is_some_and(|t| t.is_error) || app.error_message().is_some();
+        components::render_status_bar(frame, root[2], &status, is_error);
     }
 
     if let Some(detail_state) = app.detail_view.as_ref() {
