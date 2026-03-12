@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     action_history::{ActionHistoryState, ActionHistoryTarget, ActionKind, ActionStatus},
+    authorization::ActionAuthorizationMap,
     bookmarks::{BookmarkEntry, BookmarkToggleResult, selected_bookmark_resource, toggle_bookmark},
+    cronjob::CronJobHistoryEntry,
     k8s::{
         client::EventInfo,
         dtos::{CustomResourceInfo, NodeMetricsInfo, PodInfo, PodMetricsInfo},
@@ -1053,6 +1055,7 @@ pub struct DetailMetadata {
     pub namespace: Option<String>,
     pub status: Option<String>,
     pub node_unschedulable: Option<bool>,
+    pub cronjob_suspended: Option<bool>,
     pub node: Option<String>,
     pub ip: Option<String>,
     pub created: Option<String>,
@@ -1060,6 +1063,7 @@ pub struct DetailMetadata {
     pub annotations: Vec<(String, String)>,
     pub owner_references: Vec<crate::k8s::dtos::OwnerRefInfo>,
     pub flux_reconcile_enabled: bool,
+    pub action_authorizations: ActionAuthorizationMap,
 }
 
 /// Top-level active component when detail modal is open.
@@ -1254,12 +1258,68 @@ pub struct DetailViewState {
     pub error: Option<String>,
     pub scale_dialog: Option<ScaleDialogState>,
     pub probe_panel: Option<ProbePanelComponentState>,
+    pub cronjob_history: Vec<CronJobHistoryEntry>,
+    pub cronjob_history_selected: usize,
     /// When true, a delete confirmation prompt is shown in the detail view.
     pub confirm_delete: bool,
     /// When true, a drain confirmation prompt is shown in the detail view.
     pub confirm_drain: bool,
+    /// Target suspend value when a CronJob suspend/resume confirmation is shown.
+    pub confirm_cronjob_suspend: Option<bool>,
     /// When true, metadata labels/annotations are shown in full (no truncation).
     pub metadata_expanded: bool,
+}
+
+impl DetailViewState {
+    pub fn has_confirmation_dialog(&self) -> bool {
+        self.confirm_delete || self.confirm_drain || self.confirm_cronjob_suspend.is_some()
+    }
+
+    pub fn selected_cronjob_history(&self) -> Option<&CronJobHistoryEntry> {
+        self.cronjob_history.get(
+            self.cronjob_history_selected
+                .min(self.cronjob_history.len().saturating_sub(1)),
+        )
+    }
+
+    pub fn select_next_cronjob_history(&mut self) {
+        if !self.cronjob_history.is_empty() {
+            let max = self.cronjob_history.len().saturating_sub(1);
+            self.cronjob_history_selected = (self.cronjob_history_selected + 1).min(max);
+        }
+    }
+
+    pub fn select_prev_cronjob_history(&mut self) {
+        self.cronjob_history_selected = self.cronjob_history_selected.saturating_sub(1);
+    }
+
+    pub fn selected_detail_resource(&self) -> Option<ResourceRef> {
+        match self.resource.as_ref() {
+            Some(ResourceRef::CronJob(_, _)) => self
+                .selected_cronjob_history()
+                .map(|entry| ResourceRef::Job(entry.job_name.clone(), entry.namespace.clone())),
+            _ => None,
+        }
+    }
+
+    pub fn selected_logs_resource(&self) -> Option<ResourceRef> {
+        match self.resource.as_ref() {
+            Some(
+                resource @ (ResourceRef::Pod(_, _)
+                | ResourceRef::Deployment(_, _)
+                | ResourceRef::StatefulSet(_, _)
+                | ResourceRef::DaemonSet(_, _)
+                | ResourceRef::ReplicaSet(_, _)
+                | ResourceRef::ReplicationController(_, _)
+                | ResourceRef::Job(_, _)),
+            ) => Some(resource.clone()),
+            Some(ResourceRef::CronJob(_, _)) => self
+                .selected_cronjob_history()
+                .filter(|entry| entry.has_log_target())
+                .and_then(|_| self.selected_detail_resource()),
+            _ => None,
+        }
+    }
 }
 
 /// A row in the sidebar — either a group header or a leaf view item.
@@ -1482,6 +1542,8 @@ pub enum AppAction {
     DeleteResource,
     ForceDeleteResource,
     TriggerCronJob,
+    ConfirmCronJobSuspend(bool),
+    SetCronJobSuspend(bool),
     CycleTheme,
     OpenHelp,
     CloseHelp,
@@ -2408,9 +2470,12 @@ impl AppState {
     /// in-detail logs overlay. This now opens the canonical workbench tab.
     pub fn open_logs_viewer(&mut self) {
         if let Some(detail) = &self.detail_view
-            && let Some(resource @ ResourceRef::Pod(_, _)) = detail.resource.clone()
+            && let Some(resource) = detail.selected_logs_resource()
         {
-            self.open_pod_logs_tab(resource);
+            match resource {
+                pod @ ResourceRef::Pod(_, _) => self.open_pod_logs_tab(pod),
+                workload => self.open_workload_logs_tab(workload, 0),
+            }
         }
     }
 
@@ -3110,7 +3175,7 @@ impl AppState {
             || self
                 .detail_view
                 .as_ref()
-                .is_some_and(|d| d.confirm_delete || d.confirm_drain)
+                .is_some_and(DetailViewState::has_confirmation_dialog)
         {
             return None;
         }
@@ -3324,6 +3389,18 @@ impl AppState {
                 }
                 AppAction::None
             }
+            KeyCode::Esc
+                if self
+                    .detail_view
+                    .as_ref()
+                    .and_then(|d| d.confirm_cronjob_suspend)
+                    .is_some() =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.confirm_cronjob_suspend = None;
+                }
+                AppAction::None
+            }
             KeyCode::Esc if self.detail_view.is_some() => AppAction::CloseDetail,
             KeyCode::Esc if self.focus == Focus::Content => {
                 self.focus = Focus::Sidebar;
@@ -3352,8 +3429,7 @@ impl AppState {
             KeyCode::Char('y')
                 if (self.detail_view.as_ref().is_some_and(|detail| {
                     detail.supports_action(DetailAction::ViewYaml)
-                        && !detail.confirm_delete
-                        && !detail.confirm_drain
+                        && !detail.has_confirmation_dialog()
                 }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::OpenResourceYaml
@@ -3401,7 +3477,7 @@ impl AppState {
                 if !self
                     .detail_view
                     .as_ref()
-                    .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::OpenActionHistory
             }
@@ -3508,6 +3584,59 @@ impl AppState {
                     .unwrap_or(false) =>
             {
                 AppAction::DeleteResource
+            }
+            KeyCode::Char('S') | KeyCode::Char('y') | KeyCode::Enter
+                if self
+                    .detail_view
+                    .as_ref()
+                    .and_then(|d| d.confirm_cronjob_suspend)
+                    .is_some() =>
+            {
+                AppAction::SetCronJobSuspend(
+                    self.detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.confirm_cronjob_suspend)
+                        .unwrap_or(false),
+                )
+            }
+            KeyCode::Enter
+                if self
+                    .detail_view
+                    .as_ref()
+                    .filter(|detail| !detail.has_confirmation_dialog())
+                    .and_then(DetailViewState::selected_detail_resource)
+                    .is_some() =>
+            {
+                self.detail_view
+                    .as_ref()
+                    .filter(|detail| !detail.has_confirmation_dialog())
+                    .and_then(DetailViewState::selected_detail_resource)
+                    .map(AppAction::OpenDetail)
+                    .unwrap_or(AppAction::None)
+            }
+            KeyCode::Char('j') | KeyCode::Down
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.select_next_cronjob_history();
+                }
+                AppAction::None
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.select_prev_cronjob_history();
+                }
+                AppAction::None
             }
             KeyCode::Tab if self.detail_view.is_none() => {
                 self.next_view();
@@ -3659,7 +3788,7 @@ impl AppState {
                 if !self
                     .detail_view
                     .as_ref()
-                    .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::OpenCommandPalette
             }
@@ -3676,7 +3805,7 @@ impl AppState {
                 if !self
                     .detail_view
                     .as_ref()
-                    .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::RefreshData
             }
@@ -3685,7 +3814,7 @@ impl AppState {
                     && !self
                         .detail_view
                         .as_ref()
-                        .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+                        .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::RefreshData
             }
@@ -3703,6 +3832,18 @@ impl AppState {
                     .is_some_and(|detail| detail.supports_action(DetailAction::Trigger)) =>
             {
                 AppAction::TriggerCronJob
+            }
+            KeyCode::Char('S')
+                if self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::SuspendCronJob)
+                        || detail.supports_action(DetailAction::ResumeCronJob)
+                }) =>
+            {
+                AppAction::ConfirmCronJobSuspend(
+                    self.detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::SuspendCronJob)),
+                )
             }
             KeyCode::Char('c')
                 if self
@@ -3737,7 +3878,7 @@ impl AppState {
                 if !self
                     .detail_view
                     .as_ref()
-                    .is_some_and(|d| d.confirm_delete || d.confirm_drain) =>
+                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::OpenHelp
             }
@@ -4639,6 +4780,106 @@ mod tests {
         let action = app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
         assert_eq!(action, AppAction::None);
         assert!(!app.detail_view.as_ref().unwrap().confirm_drain);
+    }
+
+    #[test]
+    fn cronjob_detail_jk_and_enter_follow_selected_job() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CronJob(
+                "nightly".to_string(),
+                "ops".to_string(),
+            )),
+            yaml: Some("kind: CronJob".to_string()),
+            cronjob_history: vec![
+                CronJobHistoryEntry {
+                    job_name: "nightly-001".to_string(),
+                    namespace: "ops".to_string(),
+                    status: "Succeeded".to_string(),
+                    completions: "1/1".to_string(),
+                    duration: Some("8s".to_string()),
+                    pod_count: 1,
+                    live_pod_count: 0,
+                    completion_pct: Some(100),
+                    active_pods: 0,
+                    failed_pods: 0,
+                    age: None,
+                    created_at: None,
+                    logs_authorized: None,
+                },
+                CronJobHistoryEntry {
+                    job_name: "nightly-002".to_string(),
+                    namespace: "ops".to_string(),
+                    status: "Failed".to_string(),
+                    completions: "0/1".to_string(),
+                    duration: Some("3s".to_string()),
+                    pod_count: 1,
+                    live_pod_count: 1,
+                    completion_pct: Some(0),
+                    active_pods: 0,
+                    failed_pods: 1,
+                    age: None,
+                    created_at: None,
+                    logs_authorized: None,
+                },
+            ],
+            ..DetailViewState::default()
+        });
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+            AppAction::None
+        );
+        assert_eq!(
+            app.detail_view.as_ref().unwrap().cronjob_history_selected,
+            1
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            AppAction::OpenDetail(ResourceRef::Job(
+                "nightly-002".to_string(),
+                "ops".to_string(),
+            ))
+        );
+    }
+
+    #[test]
+    fn cronjob_detail_shift_s_opens_suspend_confirmation() {
+        let mut app = AppState::default();
+        let mut detail = DetailViewState {
+            resource: Some(ResourceRef::CronJob(
+                "nightly".to_string(),
+                "ops".to_string(),
+            )),
+            yaml: Some("kind: CronJob".to_string()),
+            ..DetailViewState::default()
+        };
+        detail.metadata.cronjob_suspended = Some(false);
+        app.detail_view = Some(detail);
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('S'), KeyModifiers::SHIFT)),
+            AppAction::ConfirmCronJobSuspend(true)
+        );
+    }
+
+    #[test]
+    fn cronjob_suspend_confirm_enter_dispatches_target_state() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CronJob(
+                "nightly".to_string(),
+                "ops".to_string(),
+            )),
+            yaml: Some("kind: CronJob".to_string()),
+            confirm_cronjob_suspend: Some(false),
+            ..DetailViewState::default()
+        });
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            AppAction::SetCronJobSuspend(false)
+        );
     }
 
     #[test]

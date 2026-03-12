@@ -1,7 +1,12 @@
 //! Canonical cross-view and detail action policies.
 
-use crate::app::{AppView, DetailViewState, ResourceRef, WorkloadSortColumn};
 use crate::k8s::flux::flux_reconcile_support;
+use crate::{
+    app::{AppView, DetailViewState, ResourceRef, WorkloadSortColumn},
+    authorization::{
+        ActionAuthorizationMap, DetailActionAuthorization, detail_action_requires_authorization,
+    },
+};
 
 /// Shared list-level actions that are view-dependent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -33,7 +38,7 @@ pub enum RelationshipCapability {
 }
 
 /// Actions that can appear in the detail footer or be triggered from detail context.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DetailAction {
     ViewYaml,
     ViewDecodedSecret,
@@ -49,6 +54,8 @@ pub enum DetailAction {
     EditYaml,
     Delete,
     Trigger,
+    SuspendCronJob,
+    ResumeCronJob,
     ViewRelationships,
     Cordon,
     Uncordon,
@@ -59,10 +66,13 @@ pub enum DetailAction {
 pub struct ResourceActionContext {
     pub resource: ResourceRef,
     pub node_unschedulable: Option<bool>,
+    pub cronjob_suspended: Option<bool>,
+    pub cronjob_history_logs_available: bool,
+    pub action_authorizations: ActionAuthorizationMap,
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 18] = [
+    pub const ORDER: [DetailAction; 20] = [
         DetailAction::ViewYaml,
         DetailAction::ViewDecodedSecret,
         DetailAction::ToggleBookmark,
@@ -77,6 +87,8 @@ impl DetailAction {
         DetailAction::EditYaml,
         DetailAction::Delete,
         DetailAction::Trigger,
+        DetailAction::SuspendCronJob,
+        DetailAction::ResumeCronJob,
         DetailAction::ViewRelationships,
         DetailAction::Cordon,
         DetailAction::Uncordon,
@@ -98,6 +110,7 @@ impl DetailAction {
             DetailAction::EditYaml => "[e]",
             DetailAction::Delete => "[d]",
             DetailAction::Trigger => "[T]",
+            DetailAction::SuspendCronJob | DetailAction::ResumeCronJob => "[S]",
             DetailAction::ViewRelationships => "[w]",
             DetailAction::Cordon => "[c]",
             DetailAction::Uncordon => "[u]",
@@ -121,6 +134,8 @@ impl DetailAction {
             DetailAction::EditYaml => "Edit",
             DetailAction::Delete => "Delete",
             DetailAction::Trigger => "Trigger",
+            DetailAction::SuspendCronJob => "Suspend",
+            DetailAction::ResumeCronJob => "Resume",
             DetailAction::ViewRelationships => "Relations",
             DetailAction::Cordon => "Cordon",
             DetailAction::Uncordon => "Uncordon",
@@ -341,6 +356,24 @@ impl AppView {
 }
 
 impl ResourceRef {
+    pub fn supports_events_tab(&self) -> bool {
+        matches!(
+            self,
+            ResourceRef::Pod(_, _)
+                | ResourceRef::Deployment(_, _)
+                | ResourceRef::StatefulSet(_, _)
+                | ResourceRef::DaemonSet(_, _)
+                | ResourceRef::ReplicaSet(_, _)
+                | ResourceRef::Job(_, _)
+                | ResourceRef::CronJob(_, _)
+                | ResourceRef::Service(_, _)
+                | ResourceRef::Ingress(_, _)
+                | ResourceRef::ConfigMap(_, _)
+                | ResourceRef::Pvc(_, _)
+                | ResourceRef::HelmRelease(_, _)
+        )
+    }
+
     /// Returns true when this resource is a Flux custom resource that supports
     /// the direct reconcile action.
     pub fn supports_flux_reconcile(&self) -> bool {
@@ -365,9 +398,11 @@ impl ResourceRef {
         &self,
         action: DetailAction,
         node_unschedulable: Option<bool>,
+        cronjob_suspended: Option<bool>,
     ) -> bool {
         match action {
-            DetailAction::ViewYaml | DetailAction::ViewEvents => true,
+            DetailAction::ViewYaml => true,
+            DetailAction::ViewEvents => self.supports_events_tab(),
             DetailAction::ViewDecodedSecret => matches!(self, ResourceRef::Secret(_, _)),
             DetailAction::ToggleBookmark => true,
             DetailAction::Logs => matches!(
@@ -396,8 +431,16 @@ impl ResourceRef {
                     | ResourceRef::DaemonSet(_, _)
             ),
             DetailAction::FluxReconcile => self.supports_flux_reconcile(),
-            DetailAction::EditYaml | DetailAction::Delete => true,
+            DetailAction::EditYaml | DetailAction::Delete => {
+                !matches!(self, ResourceRef::HelmRelease(_, _))
+            }
             DetailAction::Trigger => matches!(self, ResourceRef::CronJob(_, _)),
+            DetailAction::SuspendCronJob => {
+                matches!(self, ResourceRef::CronJob(_, _)) && !cronjob_suspended.unwrap_or(false)
+            }
+            DetailAction::ResumeCronJob => {
+                matches!(self, ResourceRef::CronJob(_, _)) && cronjob_suspended.unwrap_or(false)
+            }
             DetailAction::ViewRelationships => {
                 crate::k8s::relationships::resource_has_relationships(self)
             }
@@ -414,8 +457,36 @@ impl ResourceRef {
 
 impl ResourceActionContext {
     pub fn supports_action(&self, action: DetailAction) -> bool {
-        self.resource
-            .supports_detail_action(action, self.node_unschedulable)
+        let supported = if matches!(action, DetailAction::Logs)
+            && matches!(self.resource, ResourceRef::CronJob(_, _))
+        {
+            self.cronjob_history_logs_available
+        } else {
+            self.resource.supports_detail_action(
+                action,
+                self.node_unschedulable,
+                self.cronjob_suspended,
+            )
+        };
+
+        if !supported {
+            return false;
+        }
+
+        if matches!(action, DetailAction::Logs)
+            && matches!(self.resource, ResourceRef::CronJob(_, _))
+        {
+            return true;
+        }
+
+        if detail_action_requires_authorization(action) {
+            return self
+                .action_authorizations
+                .get(&action)
+                .is_none_or(|status| *status == DetailActionAuthorization::Allowed);
+        }
+
+        true
     }
 }
 
@@ -424,6 +495,11 @@ impl DetailViewState {
         self.resource.clone().map(|resource| ResourceActionContext {
             resource,
             node_unschedulable: self.metadata.node_unschedulable,
+            cronjob_suspended: self.metadata.cronjob_suspended,
+            cronjob_history_logs_available: self
+                .selected_cronjob_history()
+                .is_some_and(|entry| entry.has_log_target()),
+            action_authorizations: self.metadata.action_authorizations.clone(),
         })
     }
 
@@ -432,6 +508,7 @@ impl DetailViewState {
             || self.probe_panel.is_some()
             || self.confirm_delete
             || self.confirm_drain
+            || self.confirm_cronjob_suspend.is_some()
     }
 
     pub fn supports_action(&self, action: DetailAction) -> bool {
@@ -455,6 +532,8 @@ impl DetailViewState {
                 | DetailAction::EditYaml
                 | DetailAction::Delete
                 | DetailAction::Trigger
+                | DetailAction::SuspendCronJob
+                | DetailAction::ResumeCronJob
                 | DetailAction::ViewRelationships
                 | DetailAction::Cordon
                 | DetailAction::Uncordon
@@ -469,6 +548,14 @@ impl DetailViewState {
         }
         if action == DetailAction::EditYaml && self.yaml.is_none() {
             return false;
+        }
+        if matches!(action, DetailAction::Logs)
+            && matches!(self.resource.as_ref(), Some(ResourceRef::CronJob(_, _)))
+        {
+            return self
+                .selected_cronjob_history()
+                .is_some_and(|entry| entry.has_log_target())
+                && !self.has_blocking_detail_overlay();
         }
 
         resource.supports_action(action)
@@ -485,7 +572,7 @@ impl DetailViewState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::app::AppView;
+    use crate::{app::AppView, authorization::DetailActionAuthorization};
 
     #[test]
     fn flux_views_only_offer_list_reconcile_where_supported() {
@@ -557,51 +644,88 @@ mod tests {
     }
 
     #[test]
+    fn denied_authorization_hides_permission_gated_actions() {
+        let mut detail = DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: Pod".to_string()),
+            ..DetailViewState::default()
+        };
+        detail
+            .metadata
+            .action_authorizations
+            .insert(DetailAction::Exec, DetailActionAuthorization::Denied);
+        detail
+            .metadata
+            .action_authorizations
+            .insert(DetailAction::Logs, DetailActionAuthorization::Allowed);
+
+        assert!(detail.supports_action(DetailAction::Logs));
+        assert!(!detail.supports_action(DetailAction::Exec));
+    }
+
+    #[test]
+    fn events_only_appear_for_supported_resources() {
+        let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        let node = ResourceRef::Node("node-0".to_string());
+
+        assert!(pod.supports_detail_action(DetailAction::ViewEvents, None, None));
+        assert!(!node.supports_detail_action(DetailAction::ViewEvents, None, None));
+    }
+
+    #[test]
+    fn helm_release_does_not_offer_unsupported_mutations() {
+        let helm = ResourceRef::HelmRelease("release".to_string(), "default".to_string());
+
+        assert!(!helm.supports_detail_action(DetailAction::EditYaml, None, None));
+        assert!(!helm.supports_detail_action(DetailAction::Delete, None, None));
+    }
+
+    #[test]
     fn view_relationships_available_for_relationship_capable_resources() {
         let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
-        assert!(pod.supports_detail_action(DetailAction::ViewRelationships, None));
+        assert!(pod.supports_detail_action(DetailAction::ViewRelationships, None, None));
 
         let deploy = ResourceRef::Deployment("api".to_string(), "ns".to_string());
-        assert!(deploy.supports_detail_action(DetailAction::ViewRelationships, None));
+        assert!(deploy.supports_detail_action(DetailAction::ViewRelationships, None, None));
 
         let svc = ResourceRef::Service("svc".to_string(), "ns".to_string());
-        assert!(svc.supports_detail_action(DetailAction::ViewRelationships, None));
+        assert!(svc.supports_detail_action(DetailAction::ViewRelationships, None, None));
 
         let pvc = ResourceRef::Pvc("pvc".to_string(), "ns".to_string());
-        assert!(pvc.supports_detail_action(DetailAction::ViewRelationships, None));
+        assert!(pvc.supports_detail_action(DetailAction::ViewRelationships, None, None));
     }
 
     #[test]
     fn view_relationships_unavailable_for_non_relationship_resources() {
         let node = ResourceRef::Node("node-0".to_string());
-        assert!(!node.supports_detail_action(DetailAction::ViewRelationships, None));
+        assert!(!node.supports_detail_action(DetailAction::ViewRelationships, None, None));
 
         let cm = ResourceRef::ConfigMap("cm".to_string(), "ns".to_string());
-        assert!(!cm.supports_detail_action(DetailAction::ViewRelationships, None));
+        assert!(!cm.supports_detail_action(DetailAction::ViewRelationships, None, None));
     }
 
     #[test]
     fn node_actions_are_state_aware() {
         let node = ResourceRef::Node("node-0".to_string());
-        assert!(node.supports_detail_action(DetailAction::Cordon, Some(false)));
-        assert!(!node.supports_detail_action(DetailAction::Uncordon, Some(false)));
-        assert!(node.supports_detail_action(DetailAction::Drain, Some(false)));
+        assert!(node.supports_detail_action(DetailAction::Cordon, Some(false), None));
+        assert!(!node.supports_detail_action(DetailAction::Uncordon, Some(false), None));
+        assert!(node.supports_detail_action(DetailAction::Drain, Some(false), None));
 
-        assert!(!node.supports_detail_action(DetailAction::Cordon, Some(true)));
-        assert!(node.supports_detail_action(DetailAction::Uncordon, Some(true)));
-        assert!(node.supports_detail_action(DetailAction::Drain, Some(true)));
+        assert!(!node.supports_detail_action(DetailAction::Cordon, Some(true), None));
+        assert!(node.supports_detail_action(DetailAction::Uncordon, Some(true), None));
+        assert!(node.supports_detail_action(DetailAction::Drain, Some(true), None));
     }
 
     #[test]
     fn non_node_resources_do_not_support_node_ops() {
         let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
-        assert!(!pod.supports_detail_action(DetailAction::Cordon, None));
-        assert!(!pod.supports_detail_action(DetailAction::Uncordon, None));
-        assert!(!pod.supports_detail_action(DetailAction::Drain, None));
+        assert!(!pod.supports_detail_action(DetailAction::Cordon, None, None));
+        assert!(!pod.supports_detail_action(DetailAction::Uncordon, None, None));
+        assert!(!pod.supports_detail_action(DetailAction::Drain, None, None));
 
         let deploy = ResourceRef::Deployment("api".to_string(), "ns".to_string());
-        assert!(!deploy.supports_detail_action(DetailAction::Cordon, None));
-        assert!(!deploy.supports_detail_action(DetailAction::Drain, None));
+        assert!(!deploy.supports_detail_action(DetailAction::Cordon, None, None));
+        assert!(!deploy.supports_detail_action(DetailAction::Drain, None, None));
     }
 
     #[test]
@@ -639,8 +763,8 @@ mod tests {
         let secret = ResourceRef::Secret("app-secret".to_string(), "default".to_string());
         let config_map = ResourceRef::ConfigMap("app-config".to_string(), "default".to_string());
 
-        assert!(secret.supports_detail_action(DetailAction::ViewDecodedSecret, None));
-        assert!(!config_map.supports_detail_action(DetailAction::ViewDecodedSecret, None));
+        assert!(secret.supports_detail_action(DetailAction::ViewDecodedSecret, None, None));
+        assert!(!config_map.supports_detail_action(DetailAction::ViewDecodedSecret, None, None));
     }
 
     #[test]
@@ -648,8 +772,51 @@ mod tests {
         let pod = ResourceRef::Pod("api".to_string(), "default".to_string());
         let cluster_role = ResourceRef::ClusterRole("admin".to_string());
 
-        assert!(pod.supports_detail_action(DetailAction::ToggleBookmark, None));
-        assert!(cluster_role.supports_detail_action(DetailAction::ToggleBookmark, None));
+        assert!(pod.supports_detail_action(DetailAction::ToggleBookmark, None, None));
+        assert!(cluster_role.supports_detail_action(DetailAction::ToggleBookmark, None, None));
+    }
+
+    #[test]
+    fn cronjob_actions_follow_suspend_state() {
+        let cronjob = ResourceRef::CronJob("nightly".to_string(), "ops".to_string());
+
+        assert!(cronjob.supports_detail_action(DetailAction::Trigger, None, Some(false)));
+        assert!(cronjob.supports_detail_action(DetailAction::SuspendCronJob, None, Some(false),));
+        assert!(!cronjob.supports_detail_action(DetailAction::ResumeCronJob, None, Some(false),));
+
+        assert!(!cronjob.supports_detail_action(DetailAction::SuspendCronJob, None, Some(true),));
+        assert!(cronjob.supports_detail_action(DetailAction::ResumeCronJob, None, Some(true),));
+    }
+
+    #[test]
+    fn cronjob_logs_follow_selected_history_availability() {
+        let mut detail = DetailViewState {
+            resource: Some(ResourceRef::CronJob(
+                "nightly".to_string(),
+                "ops".to_string(),
+            )),
+            yaml: Some("kind: CronJob".to_string()),
+            cronjob_history: vec![crate::cronjob::CronJobHistoryEntry {
+                job_name: "nightly-001".to_string(),
+                namespace: "ops".to_string(),
+                status: "Running".to_string(),
+                completions: "0/1".to_string(),
+                duration: None,
+                pod_count: 1,
+                live_pod_count: 1,
+                completion_pct: Some(0),
+                active_pods: 1,
+                failed_pods: 0,
+                age: None,
+                created_at: None,
+                logs_authorized: Some(true),
+            }],
+            ..DetailViewState::default()
+        };
+
+        assert!(detail.supports_action(DetailAction::Logs));
+        detail.cronjob_history[0].logs_authorized = Some(false);
+        assert!(!detail.supports_action(DetailAction::Logs));
     }
 
     #[test]

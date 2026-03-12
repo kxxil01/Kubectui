@@ -57,6 +57,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("d", "Delete resource"),
             ("F", "Force delete (in confirm dialog)"),
             ("T", "Trigger CronJob"),
+            ("S", "Pause/resume CronJob"),
             ("w", "View relations"),
         ],
     ),

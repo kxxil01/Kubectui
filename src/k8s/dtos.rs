@@ -220,6 +220,8 @@ pub struct JobInfo {
     pub status: String,
     pub completions: String,
     pub duration: Option<String>,
+    pub desired_completions: i32,
+    pub succeeded_pods: i32,
     pub parallelism: i32,
     pub active_pods: i32,
     pub failed_pods: i32,

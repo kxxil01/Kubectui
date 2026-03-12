@@ -315,6 +315,16 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs (needs async K8s call)
             true
         }
+        AppAction::ConfirmCronJobSuspend(suspend) => {
+            if let Some(detail) = &mut app_state.detail_view {
+                detail.confirm_cronjob_suspend = Some(suspend);
+            }
+            true
+        }
+        AppAction::SetCronJobSuspend(_) => {
+            // Handled in main.rs (needs async K8s call)
+            true
+        }
         AppAction::CycleTheme => {
             crate::ui::theme::cycle_theme();
             true
@@ -469,6 +479,9 @@ mod tests {
             .open_with_context(Some(ResourceActionContext {
                 resource: ResourceRef::Pod("test".into(), "default".into()),
                 node_unschedulable: None,
+                cronjob_suspended: None,
+                cronjob_history_logs_available: false,
+                action_authorizations: Default::default(),
             }));
         let changed = apply_action(
             AppAction::PaletteAction {
