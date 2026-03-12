@@ -389,7 +389,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         components::render_header(
             frame,
             root[0],
-            "KubecTUI v0.1.0",
+            concat!("KubecTUI v", env!("CARGO_PKG_VERSION")),
             cluster.cluster_summary(),
             cluster.connection_health,
         );
