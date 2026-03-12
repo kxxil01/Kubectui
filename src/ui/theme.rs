@@ -294,6 +294,7 @@ impl Theme {
         } else if status.eq_ignore_ascii_case("failed")
             || status.eq_ignore_ascii_case("error")
             || status.eq_ignore_ascii_case("false")
+            || status.eq_ignore_ascii_case("stalled")
             || status.eq_ignore_ascii_case("crashloopbackoff")
             || status.eq_ignore_ascii_case("oomkilled")
             || status.eq_ignore_ascii_case("evicted")

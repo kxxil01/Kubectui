@@ -123,6 +123,8 @@ struct FluxFormattedRow {
     kind: String,
     status: String,
     age: String,
+    last_reconcile: String,
+    gen_mismatch: bool,
     message: String,
     artifact: String,
     source_url: String,
@@ -242,6 +244,11 @@ fn cached_formatted_rows(
                 kind: resource.kind.clone(),
                 status: resource.status.clone(),
                 age: format_age_from_created(resource.created_at, now_unix),
+                last_reconcile: format_age_from_created(resource.last_reconcile_time, now_unix),
+                gen_mismatch: resource
+                    .observed_generation
+                    .zip(resource.generation)
+                    .is_some_and(|(obs, cur)| obs < cur),
                 message: truncate_message(resource.message.as_deref().unwrap_or("-"), 56),
                 artifact: truncate_message(resource.artifact.as_deref().unwrap_or("-"), 56),
                 source_url: truncate_message(resource.source_url.as_deref().unwrap_or("-"), 56),
@@ -317,6 +324,7 @@ pub fn render_flux_resources(
         Cell::from(Span::styled("Namespace", theme.header_style())),
         Cell::from(Span::styled("Kind", theme.header_style())),
         Cell::from(Span::styled("Status", theme.header_style())),
+        Cell::from(Span::styled("Reconcile", theme.header_style())),
         sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
         Cell::from(Span::styled(detail_col_name, theme.header_style())),
     ])
@@ -339,6 +347,11 @@ pub fn render_flux_resources(
             } else {
                 theme.row_alt_style()
             };
+            let status_display = if resource.gen_mismatch {
+                format!("{} ⟳", resource.status)
+            } else {
+                resource.status.clone()
+            };
             Row::new(vec![
                 Cell::from(Span::styled(
                     format!("  {}", resource.name),
@@ -353,8 +366,12 @@ pub fn render_flux_resources(
                     Style::default().fg(theme.accent2),
                 )),
                 Cell::from(Span::styled(
-                    resource.status.as_str(),
+                    status_display,
                     status_style(&resource.status, &theme),
+                )),
+                Cell::from(Span::styled(
+                    resource.last_reconcile.as_str(),
+                    theme.inactive_style(),
                 )),
                 Cell::from(Span::styled(resource.age.as_str(), theme.inactive_style())),
                 Cell::from(Span::styled(detail, Style::default().fg(theme.fg_dim))),
@@ -383,9 +400,10 @@ pub fn render_flux_resources(
                 Constraint::Min(22),
                 Constraint::Length(18),
                 Constraint::Length(18),
-                Constraint::Length(11),
+                Constraint::Length(13),
                 Constraint::Length(9),
-                Constraint::Min(28),
+                Constraint::Length(9),
+                Constraint::Min(24),
             ],
         ),
     )
@@ -455,6 +473,10 @@ fn resource_matches_query(resource: &FluxResourceInfo, query: &str) -> bool {
 fn status_style(status: &str, theme: &crate::ui::theme::Theme) -> Style {
     if status.eq_ignore_ascii_case("ready") {
         theme.badge_success_style()
+    } else if status.eq_ignore_ascii_case("stalled") {
+        Style::default()
+            .fg(theme.error)
+            .add_modifier(ratatui::prelude::Modifier::BOLD)
     } else if status.eq_ignore_ascii_case("notready") {
         theme.badge_error_style()
     } else if status.eq_ignore_ascii_case("suspended") {

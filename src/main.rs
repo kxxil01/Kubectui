@@ -5009,6 +5009,19 @@ async fn fetch_detail_metrics(
     }
 }
 
+fn find_flux_resource<'a>(
+    snapshot: &'a ClusterSnapshot,
+    name: &str,
+    namespace: &Option<String>,
+    group: &str,
+    kind: &str,
+) -> Option<&'a kubectui::k8s::dtos::FluxResourceInfo> {
+    snapshot
+        .flux_resources
+        .iter()
+        .find(|f| f.name == name && f.namespace == *namespace && f.group == group && f.kind == kind)
+}
+
 fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> DetailMetadata {
     match resource {
         ResourceRef::Node(name) => {
@@ -5430,12 +5443,27 @@ fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
             kind,
             group,
             ..
-        } => DetailMetadata {
-            name: name.clone(),
-            namespace: namespace.clone(),
-            status: Some(format!("{kind}.{group}")),
-            ..DetailMetadata::default()
-        },
+        } => {
+            if let Some(flux) = find_flux_resource(snapshot, name, namespace, group, kind) {
+                DetailMetadata {
+                    name: name.clone(),
+                    namespace: namespace.clone(),
+                    status: Some(flux.status.clone()),
+                    created: flux
+                        .created_at
+                        .map(|ts: chrono::DateTime<chrono::Utc>| ts.to_rfc3339()),
+                    flux_reconcile_enabled: !flux.suspended,
+                    ..DetailMetadata::default()
+                }
+            } else {
+                DetailMetadata {
+                    name: name.clone(),
+                    namespace: namespace.clone(),
+                    status: Some(format!("{kind}.{group}")),
+                    ..DetailMetadata::default()
+                }
+            }
+        }
     }
 }
 
@@ -5926,18 +5954,119 @@ fn sections_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> 
             })
             .unwrap_or_default(),
         ResourceRef::CustomResource {
+            name,
+            namespace,
             kind,
             group,
             version,
             ..
         } => {
-            vec![
-                "CUSTOM RESOURCE".to_string(),
-                format!("kind: {kind}"),
-                format!("apiVersion: {group}/{version}"),
-            ]
+            if let Some(flux) = find_flux_resource(snapshot, name, namespace, group, kind) {
+                flux_detail_sections(flux)
+            } else {
+                vec![
+                    "CUSTOM RESOURCE".to_string(),
+                    format!("kind: {kind}"),
+                    format!("apiVersion: {group}/{version}"),
+                ]
+            }
         }
     }
+}
+
+fn flux_detail_sections(flux: &kubectui::k8s::dtos::FluxResourceInfo) -> Vec<String> {
+    let mut lines = Vec::new();
+
+    lines.push("RECONCILIATION".to_string());
+    if let Some(ref sr) = flux.source_ref {
+        lines.push(format!("source: {sr}"));
+    }
+    if let Some(ref interval) = flux.interval {
+        lines.push(format!("interval: {interval}"));
+    }
+    if let Some(ref timeout) = flux.timeout {
+        lines.push(format!("timeout: {timeout}"));
+    }
+    if let Some(ts) = flux.last_reconcile_time {
+        lines.push(format!(
+            "last reconcile: {}",
+            ts.format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+    }
+    if flux.suspended {
+        lines.push("suspended: true".to_string());
+    }
+
+    if flux.last_applied_revision.is_some() || flux.last_attempted_revision.is_some() {
+        lines.push(String::new());
+        lines.push("REVISIONS".to_string());
+        if let Some(ref rev) = flux.last_applied_revision {
+            let display = if rev.len() > 48 {
+                &rev[..rev.floor_char_boundary(48)]
+            } else {
+                rev
+            };
+            lines.push(format!("applied: {display}"));
+        }
+        if let Some(ref rev) = flux.last_attempted_revision {
+            let display = if rev.len() > 48 {
+                &rev[..rev.floor_char_boundary(48)]
+            } else {
+                rev
+            };
+            lines.push(format!("attempted: {display}"));
+        }
+    }
+
+    if flux.generation.is_some() || flux.observed_generation.is_some() {
+        lines.push(String::new());
+        lines.push("GENERATION".to_string());
+        let cur = flux
+            .generation
+            .map(|g| g.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let obs = flux
+            .observed_generation
+            .map(|g| g.to_string())
+            .unwrap_or_else(|| "-".to_string());
+        let sync = if flux.observed_generation == flux.generation {
+            "in sync"
+        } else {
+            "OUTDATED"
+        };
+        lines.push(format!("current: {cur}  observed: {obs}  ({sync})"));
+    }
+
+    if let Some(ref artifact) = flux.artifact {
+        lines.push(String::new());
+        lines.push("ARTIFACT".to_string());
+        lines.push(artifact.clone());
+    }
+
+    if !flux.conditions.is_empty() {
+        lines.push(String::new());
+        lines.push("CONDITIONS".to_string());
+        for cond in &flux.conditions {
+            let ts = cond
+                .timestamp
+                .map(|t| t.format("%H:%M:%S").to_string())
+                .unwrap_or_else(|| "-".to_string());
+            let reason = cond.reason.as_deref().unwrap_or("-");
+            let msg = cond.message.as_deref().unwrap_or("");
+            let msg_display = if msg.len() > 60 {
+                let end = msg.floor_char_boundary(57);
+                format!("{}...", &msg[..end])
+            } else {
+                msg.to_string()
+            };
+            lines.push(format!(
+                "  {}={} ({reason}) [{ts}] {msg_display}",
+                cond.type_, cond.status
+            ));
+        }
+    }
+
+    lines
 }
 
 fn map_to_kv(map: &std::collections::BTreeMap<String, String>) -> String {
