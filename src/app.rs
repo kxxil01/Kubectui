@@ -2907,6 +2907,42 @@ impl AppState {
         }
     }
 
+    fn workbench_refresh_action(&self, key: KeyEvent) -> Option<AppAction> {
+        if self.focus != Focus::Workbench
+            || !self.workbench.open
+            || self
+                .detail_view
+                .as_ref()
+                .is_some_and(|d| d.confirm_delete || d.confirm_drain)
+        {
+            return None;
+        }
+
+        let tab = self.workbench.active_tab()?;
+
+        let allow_plain_r = match &tab.state {
+            WorkbenchTabState::ActionHistory(_)
+            | WorkbenchTabState::ResourceYaml(_)
+            | WorkbenchTabState::ResourceEvents(_)
+            | WorkbenchTabState::Relations(_) => true,
+            WorkbenchTabState::PodLogs(tab) => {
+                !tab.viewer.searching && !tab.viewer.picking_container
+            }
+            WorkbenchTabState::WorkloadLogs(tab) => !tab.editing_text_filter,
+            WorkbenchTabState::Exec(_) | WorkbenchTabState::PortForward(_) => false,
+        };
+
+        match key.code {
+            KeyCode::Char('r') if allow_plain_r => Some(AppAction::RefreshData),
+            KeyCode::Char('R')
+                if key.modifiers.contains(KeyModifiers::CONTROL) && allow_plain_r =>
+            {
+                Some(AppAction::RefreshData)
+            }
+            _ => None,
+        }
+    }
+
     /// Routes a raw keyboard event to the appropriate handler and returns the resulting action.
     ///
     /// # Input routing priority (highest → lowest)
@@ -3001,6 +3037,10 @@ impl AppState {
 
         if self.is_search_mode {
             return self.handle_search_input(key);
+        }
+
+        if let Some(action) = self.workbench_refresh_action(key) {
+            return action;
         }
 
         if self.focus == Focus::Workbench && self.workbench.open {
