@@ -2929,11 +2929,22 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.close_namespace_picker();
                 }
                 AppAction::OpenCommandPalette => {
-                    let resource_ctx = app
+                    let resource_ctx = if let Some(resource_ctx) = app
                         .detail_view
                         .as_ref()
                         .and_then(|d| d.resource_action_context())
-                        .or_else(|| selected_resource_context(&app, &cached_snapshot));
+                    {
+                        Some(resource_ctx)
+                    } else if let Some(mut resource_ctx) =
+                        selected_resource_context(&app, &cached_snapshot)
+                    {
+                        resource_ctx.action_authorizations = client
+                            .fetch_detail_action_authorizations(&resource_ctx.resource)
+                            .await;
+                        Some(resource_ctx)
+                    } else {
+                        None
+                    };
                     app.refresh_palette_columns();
                     app.command_palette.open_with_context(resource_ctx);
                 }
@@ -5630,6 +5641,7 @@ fn selected_resource_context(
         resource,
         node_unschedulable,
         cronjob_suspended,
+        cronjob_history_logs_available: false,
         action_authorizations: Default::default(),
     })
 }

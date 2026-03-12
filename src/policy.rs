@@ -67,6 +67,7 @@ pub struct ResourceActionContext {
     pub resource: ResourceRef,
     pub node_unschedulable: Option<bool>,
     pub cronjob_suspended: Option<bool>,
+    pub cronjob_history_logs_available: bool,
     pub action_authorizations: ActionAuthorizationMap,
 }
 
@@ -355,6 +356,24 @@ impl AppView {
 }
 
 impl ResourceRef {
+    pub fn supports_events_tab(&self) -> bool {
+        matches!(
+            self,
+            ResourceRef::Pod(_, _)
+                | ResourceRef::Deployment(_, _)
+                | ResourceRef::StatefulSet(_, _)
+                | ResourceRef::DaemonSet(_, _)
+                | ResourceRef::ReplicaSet(_, _)
+                | ResourceRef::Job(_, _)
+                | ResourceRef::CronJob(_, _)
+                | ResourceRef::Service(_, _)
+                | ResourceRef::Ingress(_, _)
+                | ResourceRef::ConfigMap(_, _)
+                | ResourceRef::Pvc(_, _)
+                | ResourceRef::HelmRelease(_, _)
+        )
+    }
+
     /// Returns true when this resource is a Flux custom resource that supports
     /// the direct reconcile action.
     pub fn supports_flux_reconcile(&self) -> bool {
@@ -382,7 +401,8 @@ impl ResourceRef {
         cronjob_suspended: Option<bool>,
     ) -> bool {
         match action {
-            DetailAction::ViewYaml | DetailAction::ViewEvents => true,
+            DetailAction::ViewYaml => true,
+            DetailAction::ViewEvents => self.supports_events_tab(),
             DetailAction::ViewDecodedSecret => matches!(self, ResourceRef::Secret(_, _)),
             DetailAction::ToggleBookmark => true,
             DetailAction::Logs => matches!(
@@ -411,7 +431,9 @@ impl ResourceRef {
                     | ResourceRef::DaemonSet(_, _)
             ),
             DetailAction::FluxReconcile => self.supports_flux_reconcile(),
-            DetailAction::EditYaml | DetailAction::Delete => true,
+            DetailAction::EditYaml | DetailAction::Delete => {
+                !matches!(self, ResourceRef::HelmRelease(_, _))
+            }
             DetailAction::Trigger => matches!(self, ResourceRef::CronJob(_, _)),
             DetailAction::SuspendCronJob => {
                 matches!(self, ResourceRef::CronJob(_, _)) && !cronjob_suspended.unwrap_or(false)
@@ -435,12 +457,26 @@ impl ResourceRef {
 
 impl ResourceActionContext {
     pub fn supports_action(&self, action: DetailAction) -> bool {
-        if !self.resource.supports_detail_action(
-            action,
-            self.node_unschedulable,
-            self.cronjob_suspended,
-        ) {
+        let supported = if matches!(action, DetailAction::Logs)
+            && matches!(self.resource, ResourceRef::CronJob(_, _))
+        {
+            self.cronjob_history_logs_available
+        } else {
+            self.resource.supports_detail_action(
+                action,
+                self.node_unschedulable,
+                self.cronjob_suspended,
+            )
+        };
+
+        if !supported {
             return false;
+        }
+
+        if matches!(action, DetailAction::Logs)
+            && matches!(self.resource, ResourceRef::CronJob(_, _))
+        {
+            return true;
         }
 
         if detail_action_requires_authorization(action) {
@@ -460,6 +496,9 @@ impl DetailViewState {
             resource,
             node_unschedulable: self.metadata.node_unschedulable,
             cronjob_suspended: self.metadata.cronjob_suspended,
+            cronjob_history_logs_available: self
+                .selected_cronjob_history()
+                .is_some_and(|entry| entry.has_log_target()),
             action_authorizations: self.metadata.action_authorizations.clone(),
         })
     }
@@ -625,6 +664,23 @@ mod tests {
     }
 
     #[test]
+    fn events_only_appear_for_supported_resources() {
+        let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        let node = ResourceRef::Node("node-0".to_string());
+
+        assert!(pod.supports_detail_action(DetailAction::ViewEvents, None, None));
+        assert!(!node.supports_detail_action(DetailAction::ViewEvents, None, None));
+    }
+
+    #[test]
+    fn helm_release_does_not_offer_unsupported_mutations() {
+        let helm = ResourceRef::HelmRelease("release".to_string(), "default".to_string());
+
+        assert!(!helm.supports_detail_action(DetailAction::EditYaml, None, None));
+        assert!(!helm.supports_detail_action(DetailAction::Delete, None, None));
+    }
+
+    #[test]
     fn view_relationships_available_for_relationship_capable_resources() {
         let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
         assert!(pod.supports_detail_action(DetailAction::ViewRelationships, None, None));
@@ -730,6 +786,37 @@ mod tests {
 
         assert!(!cronjob.supports_detail_action(DetailAction::SuspendCronJob, None, Some(true),));
         assert!(cronjob.supports_detail_action(DetailAction::ResumeCronJob, None, Some(true),));
+    }
+
+    #[test]
+    fn cronjob_logs_follow_selected_history_availability() {
+        let mut detail = DetailViewState {
+            resource: Some(ResourceRef::CronJob(
+                "nightly".to_string(),
+                "ops".to_string(),
+            )),
+            yaml: Some("kind: CronJob".to_string()),
+            cronjob_history: vec![crate::cronjob::CronJobHistoryEntry {
+                job_name: "nightly-001".to_string(),
+                namespace: "ops".to_string(),
+                status: "Running".to_string(),
+                completions: "0/1".to_string(),
+                duration: None,
+                pod_count: 1,
+                live_pod_count: 1,
+                completion_pct: Some(0),
+                active_pods: 1,
+                failed_pods: 0,
+                age: None,
+                created_at: None,
+                logs_authorized: Some(true),
+            }],
+            ..DetailViewState::default()
+        };
+
+        assert!(detail.supports_action(DetailAction::Logs));
+        detail.cronjob_history[0].logs_authorized = Some(false);
+        assert!(!detail.supports_action(DetailAction::Logs));
     }
 
     #[test]

@@ -480,6 +480,7 @@ mod tests {
                 resource: ResourceRef::Pod("test".into(), "default".into()),
                 node_unschedulable: None,
                 cronjob_suspended: None,
+                cronjob_history_logs_available: false,
                 action_authorizations: Default::default(),
             }));
         let changed = apply_action(

@@ -654,6 +654,7 @@ mod tests {
             resource,
             node_unschedulable,
             cronjob_suspended: None,
+            cronjob_history_logs_available: false,
             action_authorizations: Default::default(),
         }
     }
@@ -820,6 +821,28 @@ mod tests {
                 .iter()
                 .any(|e| e.action == DetailAction::SuspendCronJob)
         );
+    }
+
+    #[test]
+    fn palette_hides_denied_permission_actions() {
+        let mut resource = ctx(ResourceRef::Pod("test".into(), "default".into()), None);
+        resource.action_authorizations.insert(
+            DetailAction::Exec,
+            crate::authorization::DetailActionAuthorization::Denied,
+        );
+        let entries = action_entries_for_resource(Some(&resource));
+
+        assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
+        assert!(!entries.iter().any(|e| e.action == DetailAction::Exec));
+    }
+
+    #[test]
+    fn palette_offers_cronjob_logs_when_selected_run_has_access() {
+        let mut resource = ctx(ResourceRef::CronJob("nightly".into(), "ops".into()), None);
+        resource.cronjob_history_logs_available = true;
+        let entries = action_entries_for_resource(Some(&resource));
+
+        assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
     }
 
     #[test]

@@ -105,18 +105,23 @@ impl ResourceRef {
                 _ => self.base_access_checks("get"),
             },
             DetailAction::ViewDecodedSecret => self.base_access_checks("get"),
-            DetailAction::ViewEvents => self
-                .namespace()
-                .map(|namespace| {
-                    vec![ResourceAccessCheck::resource(
-                        "list",
-                        None,
-                        "events",
-                        Some(namespace),
-                        None,
-                    )]
-                })
-                .unwrap_or_default(),
+            DetailAction::ViewEvents => {
+                if !self.supports_events_tab() {
+                    Vec::new()
+                } else {
+                    self.namespace()
+                        .map(|namespace| {
+                            vec![ResourceAccessCheck::resource(
+                                "list",
+                                None,
+                                "events",
+                                Some(namespace),
+                                None,
+                            )]
+                        })
+                        .unwrap_or_default()
+                }
+            }
             DetailAction::Logs => match self {
                 ResourceRef::Pod(name, namespace) => vec![
                     ResourceAccessCheck::resource("get", None, "pods", Some(namespace), Some(name)),
