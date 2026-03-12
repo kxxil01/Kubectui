@@ -9,10 +9,12 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState},
+    app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
+    bookmarks::BookmarkEntry,
     k8s::dtos::RoleBindingSubject,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
@@ -108,6 +110,7 @@ pub fn render_role_bindings(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
@@ -190,10 +193,13 @@ pub fn render_role_bindings(
                     )
                 };
             Row::new(vec![
-                Cell::from(Line::from(vec![
-                    Span::styled("  ", name_style),
-                    Span::styled(rb.name.as_str(), name_style),
-                ])),
+                bookmarked_name_cell(
+                    &ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone()),
+                    bookmarks,
+                    rb.name.as_str(),
+                    name_style,
+                    &theme,
+                ),
                 Cell::from(Span::styled(rb.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(role_ref, Style::default().fg(theme.accent2))),
                 Cell::from(Span::styled(subjects_count, dim_style)),

@@ -9,11 +9,12 @@
 
 use crossterm::event::{KeyCode, KeyEvent};
 use kubectui::events::{apply_action, route_keyboard_input};
+use kubectui::secret::{DecodedSecretEntry, DecodedSecretValue};
 use kubectui::ui::components::port_forward_dialog::PortForwardMode;
 use kubectui::workbench::WorkbenchTabState;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
-    app::{ActiveComponent, AppAction, AppState, DetailViewState, ResourceRef},
+    app::{ActiveComponent, AppAction, AppState, AppView, DetailViewState, Focus, ResourceRef},
 };
 
 fn pod_detail() -> DetailViewState {
@@ -34,6 +35,17 @@ fn deployment_detail() -> DetailViewState {
             "default".to_string(),
         )),
         yaml: Some("kind: Deployment".to_string()),
+        ..DetailViewState::default()
+    }
+}
+
+fn secret_detail() -> DetailViewState {
+    DetailViewState {
+        resource: Some(ResourceRef::Secret(
+            "app-secret".to_string(),
+            "default".to_string(),
+        )),
+        yaml: Some("apiVersion: v1\nkind: Secret\ndata:\n  token: aGVsbG8=\n".to_string()),
         ..DetailViewState::default()
     }
 }
@@ -137,6 +149,111 @@ fn test_workbench_yaml_tab_refresh_uses_global_refresh_action() {
 
     let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('r')), &mut app);
     assert_eq!(action, AppAction::RefreshData);
+}
+
+#[test]
+fn test_secret_detail_o_opens_decoded_secret() {
+    let mut app = AppState::default();
+    app.detail_view = Some(secret_detail());
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('o')), &mut app);
+    assert_eq!(action, AppAction::OpenDecodedSecret);
+}
+
+#[test]
+fn test_secret_detail_uppercase_b_toggles_bookmark() {
+    let mut app = AppState::default();
+    app.detail_view = Some(secret_detail());
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('B')), &mut app);
+    assert_eq!(action, AppAction::ToggleBookmark);
+}
+
+#[test]
+fn test_secrets_list_o_opens_decoded_secret() {
+    let mut app = AppState::default();
+    app.view = AppView::Secrets;
+    app.focus = Focus::Content;
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('o')), &mut app);
+    assert_eq!(action, AppAction::OpenDecodedSecret);
+}
+
+#[test]
+fn test_decoded_secret_tab_refresh_uses_global_refresh_action() {
+    let mut app = AppState::default();
+    app.open_decoded_secret_tab(
+        ResourceRef::Secret("app-secret".to_string(), "default".to_string()),
+        Some("apiVersion: v1\nkind: Secret\ndata:\n  token: aGVsbG8=\n".to_string()),
+        None,
+        None,
+    );
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('r')), &mut app);
+    assert_eq!(action, AppAction::RefreshData);
+}
+
+#[test]
+fn test_decoded_secret_editor_keeps_r_as_text() {
+    let mut app = AppState::default();
+    app.open_decoded_secret_tab(
+        ResourceRef::Secret("app-secret".to_string(), "default".to_string()),
+        Some("apiVersion: v1\nkind: Secret\ndata:\n  token: aGVsbG8=\n".to_string()),
+        None,
+        None,
+    );
+
+    if let Some(tab) = app.workbench_mut().active_tab_mut()
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
+    {
+        secret_tab.entries = vec![DecodedSecretEntry {
+            key: "token".to_string(),
+            value: DecodedSecretValue::Text {
+                original: "hello".to_string(),
+                current: "hello".to_string(),
+            },
+        }];
+        secret_tab.editing = true;
+        secret_tab.edit_input.clear();
+    }
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('r')), &mut app);
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench().active_tab()
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &tab.state
+    {
+        assert_eq!(secret_tab.edit_input, "r");
+        assert!(secret_tab.editing);
+    } else {
+        panic!("expected active decoded secret tab");
+    }
+}
+
+#[test]
+fn test_decoded_secret_tab_save_emits_action_when_dirty() {
+    let mut app = AppState::default();
+    app.open_decoded_secret_tab(
+        ResourceRef::Secret("app-secret".to_string(), "default".to_string()),
+        Some("apiVersion: v1\nkind: Secret\ndata:\n  token: aGVsbG8=\n".to_string()),
+        None,
+        None,
+    );
+
+    if let Some(tab) = app.workbench_mut().active_tab_mut()
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
+    {
+        secret_tab.entries = vec![DecodedSecretEntry {
+            key: "token".to_string(),
+            value: DecodedSecretValue::Text {
+                original: "hello".to_string(),
+                current: "updated".to_string(),
+            },
+        }];
+    }
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('s')), &mut app);
+    assert_eq!(action, AppAction::SaveDecodedSecret);
 }
 
 #[test]

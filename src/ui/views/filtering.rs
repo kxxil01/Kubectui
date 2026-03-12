@@ -515,7 +515,9 @@ pub fn filtered_indices_for_view(
     pod_sort: Option<PodSortState>,
 ) -> Vec<usize> {
     match view {
-        AppView::Dashboard | AppView::PortForwarding | AppView::Extensions => Vec::new(),
+        AppView::Dashboard | AppView::Bookmarks | AppView::PortForwarding | AppView::Extensions => {
+            Vec::new()
+        }
         AppView::Issues => {
             let issues = compute_issues(snapshot);
             filtered_issue_indices(&issues, query.trim())

@@ -24,6 +24,7 @@ pub struct ColumnDef {
 pub fn view_key(view: AppView) -> &'static str {
     match view {
         AppView::Dashboard => "dashboard",
+        AppView::Bookmarks => "bookmarks",
         AppView::Issues => "issues",
         AppView::Nodes => "nodes",
         AppView::Namespaces => "namespaces",

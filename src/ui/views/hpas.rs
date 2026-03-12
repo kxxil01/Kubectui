@@ -16,9 +16,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, ResourceRef},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
@@ -89,6 +91,7 @@ pub fn render_hpas(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
 ) {
@@ -162,10 +165,13 @@ pub fn render_hpas(
                     )
                 };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", hpa.name),
+                bookmarked_name_cell(
+                    &ResourceRef::Hpa(hpa.name.clone(), hpa.namespace.clone()),
+                    bookmarks,
+                    hpa.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     hpa.namespace.clone(),
                     Style::default().fg(theme.fg_dim),

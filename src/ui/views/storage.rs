@@ -16,9 +16,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState},
+    app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, sort_header_cell, table_viewport_rows, table_window,
@@ -99,6 +101,7 @@ pub fn render_pvcs(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
     sort: Option<WorkloadSortState>,
@@ -184,10 +187,13 @@ pub fn render_pvcs(
             };
 
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", pvc.name),
+                bookmarked_name_cell(
+                    &ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone()),
+                    bookmarks,
+                    pvc.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     pvc.namespace.clone(),
                     Style::default().fg(theme.fg_dim),
@@ -304,6 +310,7 @@ pub fn render_pvs(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
     sort: Option<WorkloadSortState>,
@@ -392,10 +399,13 @@ pub fn render_pvs(
             };
 
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {}", pv.name),
+                bookmarked_name_cell(
+                    &ResourceRef::Pv(pv.name.clone()),
+                    bookmarks,
+                    pv.name.as_str(),
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(capacity, Style::default().fg(theme.info))),
                 Cell::from(Span::styled(modes, Style::default().fg(theme.accent2))),
                 Cell::from(Span::styled(
@@ -515,6 +525,7 @@ pub fn render_storage_classes(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
     sort: Option<WorkloadSortState>,
@@ -610,11 +621,19 @@ pub fn render_storage_classes(
                     },
                 )
             };
+            let display_name = if default_label.is_empty() {
+                storage_class.name.clone()
+            } else {
+                format!("{} {}", storage_class.name, default_label)
+            };
             Row::new(vec![
-                Cell::from(Span::styled(
-                    format!("  {} {}", storage_class.name, default_label),
+                bookmarked_name_cell(
+                    &ResourceRef::StorageClass(storage_class.name.clone()),
+                    bookmarks,
+                    display_name,
                     Style::default().fg(theme.fg),
-                )),
+                    &theme,
+                ),
                 Cell::from(Span::styled(
                     storage_class.provisioner.clone(),
                     Style::default().fg(theme.accent2),

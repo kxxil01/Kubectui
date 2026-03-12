@@ -6,7 +6,7 @@ use std::{
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
-    text::{Line, Span},
+    text::Span,
     widgets::{
         Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         Table, TableState,
@@ -14,9 +14,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState},
+    app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
@@ -54,6 +56,7 @@ pub fn render_service_accounts(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
@@ -134,10 +137,13 @@ pub fn render_service_accounts(
                 None => theme.inactive_style(),
             };
             Row::new(vec![
-                Cell::from(Line::from(vec![
-                    Span::styled("  ", name_style),
-                    Span::styled(sa.name.as_str(), name_style),
-                ])),
+                bookmarked_name_cell(
+                    &ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone()),
+                    bookmarks,
+                    sa.name.as_str(),
+                    name_style,
+                    &theme,
+                ),
                 Cell::from(Span::styled(sa.namespace.as_str(), dim_style)),
                 Cell::from(Span::styled(
                     format_small_int(sa.secrets_count as i64),

@@ -1,5 +1,6 @@
 //! View-specific renderers.
 
+pub mod bookmarks;
 pub mod config;
 pub mod cronjobs;
 pub mod daemonsets;

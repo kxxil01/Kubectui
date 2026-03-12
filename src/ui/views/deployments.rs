@@ -8,7 +8,7 @@ use std::{
 use ratatui::{
     layout::{Margin, Rect},
     prelude::{Frame, Style},
-    text::{Line, Span},
+    text::Span,
     widgets::{
         Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         Table, TableState,
@@ -16,10 +16,12 @@ use ratatui::{
 };
 
 use crate::{
-    app::{AppView, WorkloadSortColumn, WorkloadSortState},
+    app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
+    bookmarks::BookmarkEntry,
     columns::ColumnDef,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_image, format_small_int, loading_or_empty_message,
@@ -50,10 +52,12 @@ static DEPLOYMENT_DERIVED_CACHE: LazyLock<
 > = LazyLock::new(|| Mutex::new(None));
 
 /// Renders the Deployments table with stateful selection and scrollbar.
+#[allow(clippy::too_many_arguments)]
 pub fn render_deployments(
     frame: &mut Frame,
     area: Rect,
     snapshot: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
@@ -135,10 +139,13 @@ pub fn render_deployments(
         let cells: Vec<Cell> = visible_columns
             .iter()
             .map(|col| match col.id {
-                "name" => Cell::from(Line::from(vec![
-                    Span::styled("  ", name_style),
-                    Span::styled(deploy.name.as_str(), name_style),
-                ])),
+                "name" => bookmarked_name_cell(
+                    &ResourceRef::Deployment(deploy.name.clone(), deploy.namespace.clone()),
+                    bookmarks,
+                    deploy.name.as_str(),
+                    name_style,
+                    &theme,
+                ),
                 "namespace" => Cell::from(Span::styled(deploy.namespace.as_str(), dim_style)),
                 "ready" => Cell::from(Span::styled(deploy.ready.as_str(), ready_style)),
                 "updated" => Cell::from(Span::styled(

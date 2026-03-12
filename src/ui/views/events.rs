@@ -16,9 +16,11 @@ use ratatui::{
 };
 
 use crate::{
-    app::AppView,
+    app::{AppView, ResourceRef},
+    bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
+        bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
@@ -89,6 +91,7 @@ pub fn render_events(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
+    bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
 ) {
@@ -181,7 +184,13 @@ pub fn render_events(
                 )
             };
             Row::new(vec![
-                Cell::from(Span::styled(ev.type_.clone(), type_style)),
+                bookmarked_name_cell(
+                    &ResourceRef::Event(ev.name.clone(), ev.namespace.clone()),
+                    bookmarks,
+                    ev.type_.as_str(),
+                    type_style,
+                    &theme,
+                ),
                 Cell::from(ev.namespace.clone()),
                 Cell::from(ev.involved_object.clone()),
                 Cell::from(ev.reason.clone()),
