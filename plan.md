@@ -31,9 +31,9 @@ Current milestone status:
 - Milestone 15a (UI/UX Polish): completed
 - Milestone 15b (Network Resilience): completed
 - Milestone 15c (Flux Deep Reconciliation): completed
-- Milestone 16: not started
-- Milestone 17: not started
-- Milestone 18: not started
+- Milestone 16: completed
+- Milestone 17: completed
+- Milestone 18: completed
 - Milestone 19: not started
 - Milestone 20: not started
 - Milestone 21: not started
@@ -62,6 +62,9 @@ Completion notes:
 - Milestone 15b (Network Resilience, PR #12) shipped: ConnectionHealth indicator in header (● green connected, ◐ yellow degraded, ○ red disconnected), softer backoff schedule (5/15/30/60/120s), manual refresh bypass (`r` resets backoff), staleness indicator (shows "Xs ago" when data >45s old), error truncation (120 char cap with UTF-8 safe floor_char_boundary), context switch 15s timeout, YAML fetch error feedback (separate yaml_error field, disables edit on error), compile-time version string via CARGO_PKG_VERSION.
 
 - Milestone 15c (Flux Deep Reconciliation, PR #13) shipped: FluxCondition struct with full conditions array parsing, 9 new fields on FluxResourceInfo (conditions, last_reconcile_time, last_applied/attempted_revision, observed/current generation, source_ref, interval, timeout), Stalled condition detection separate from NotReady, Reconcile column in Flux list view with relative time, generation mismatch ⟳ indicator, rich Flux detail panel (Reconciliation, Revisions, Generation sync, Artifact, Conditions sections), Stalled promoted to Error severity in Issue Center.
+- Milestone 16 shipped: decoded Secret inspection and editing in the workbench with masked-by-default values, inline edit/save flow with automatic base64 re-encode, binary/invalid-value handling, action palette integration, and regression coverage.
+- Milestone 17 shipped: persistent per-context bookmarks, dedicated Bookmarks view, jump-to-resource navigation, `B` toggle from list/detail, stale bookmark indication, command/help integration, and inline bookmark markers across normal list views.
+- Milestone 18 shipped: CronJob detail now acts as the management panel with next-run display, capped Job execution history, per-run status/duration/pod-count/completion visibility, `Enter` jump into child Job detail, `l` access to selected failed/current Job logs, suspend/resume confirmation on `S`, action palette/help integration, and mutation history coverage.
 
 Post-milestone fixes and improvements (shipped after M5):
 
@@ -371,29 +374,21 @@ Addressed by Milestone 14 (View Personalization):
 - per-view column visibility toggle via action palette
 - context-aware preference hierarchy (global ← cluster)
 
-## Gap L: Secret management friction
+## Gap L: Secret management friction (addressed in M16)
 
-Current issue:
+Addressed by Milestone 16 (Secret Decoded View & Editor):
 
-- viewing Secret values requires manual base64 decode outside the TUI
-- editing Secrets requires manual encode + YAML apply
+- automatic decode/encode path for Secret data
+- masked-by-default decoded inspection
+- inline decoded editing and save/apply from the workbench
 
-Needed:
+## Gap M: No resource bookmarks (addressed in M17)
 
-- automatic decode/encode in Secret detail view
-- masking for shoulder-surfing protection
+Addressed by Milestone 17 (Resource Bookmarks):
 
-## Gap M: No resource bookmarks
-
-Current issue:
-
-- in large clusters, repeatedly navigating to the same critical resources
-- no way to pin frequently-accessed resources
-
-Needed:
-
-- per-cluster bookmarks with instant jump
-- bookmark persistence across sessions
+- per-context persisted bookmarks
+- dedicated Bookmarks view with jump navigation
+- inline bookmark indicators on bookmarked list rows
 
 ## Gap N: Weak CronJob observability
 
@@ -1178,7 +1173,7 @@ Keep the app fast as the workbench and workflow surface grow.
 
 ### Status
 
-Not started
+Completed
 
 ### Goal
 
@@ -1233,7 +1228,7 @@ Managing Secrets requires `kubectl get secret -o jsonpath | base64 --decode` per
 
 ### Status
 
-Not started
+Completed
 
 ### Goal
 
@@ -1288,7 +1283,7 @@ In clusters with hundreds of resources, engineers repeatedly navigate to the sam
 
 ### Status
 
-Not started
+Completed
 
 ### Goal
 
@@ -1308,17 +1303,17 @@ CronJob management (database backups, cleanup scripts, report generation) is a d
 
 ### Tasks
 
-1. Add cron expression parser for next-run-time display (use `cron` crate or manual parser).
-2. Add Job-to-CronJob linking via ownerReferences in existing snapshot data.
-3. Add "History" section in CronJob detail view: table of child Jobs sorted by creation time.
-4. Show per-job: status (Complete/Failed/Active), duration, completions (succeeded/total), pod count.
-5. Add `Enter` on a history job row to jump to that Job's detail (and its pod logs).
-6. Add suspend/resume toggle (`S` key) via PATCH to `.spec.suspend`.
-7. Add next-run-time display in CronJob detail header.
-8. Record suspend/resume in action history.
-9. Add action palette: "Suspend CronJob", "Resume CronJob".
-10. Update help overlay.
-11. Add tests for cron parsing, job linking, suspend/resume lifecycle.
+1. Added cron-expression next-run display using the canonical CronJob helper path with 5-field guardrails and `N/A` fallback for unsupported expressions.
+2. Linked Jobs back to CronJobs from existing snapshot ownerReferences without introducing extra fetches.
+3. Added a CronJob detail history table in the inspection panel, sorted newest-first and capped at 20 runs.
+4. Surface per-run status, duration, pod count, and completion percentage directly in the history table.
+5. Added `Enter` on the selected history row to jump straight into that Job's detail.
+6. Added `l` from CronJob detail to open logs for the selected failed/current child Job.
+7. Added suspend/resume toggle (`S`) with confirmation and PATCH to `.spec.suspend`.
+8. Record trigger, suspend, and resume actions in the unified action history.
+9. Added action palette support for "Suspend CronJob" and "Resume CronJob".
+10. Updated the help overlay and detail hints.
+11. Added cron parsing, history selection, suspend/resume routing, palette, and render smoke coverage.
 
 ### Deliverables
 
@@ -1820,13 +1815,11 @@ This is the execution order.
 - Milestone 13: Timeline & Correlation ✅
 - Milestone 14: View Personalization ✅
 
-## P4 (Next)
+## P4 (Completed)
 
-- Milestone 16: Secret Decoded View & Editor
-- Milestone 17: Resource Bookmarks
-- Milestone 18: CronJob/Job Management Panel
+- Milestone 18: CronJob/Job Management Panel ✅
 
-## P5
+## P5 (Next)
 
 - Milestone 19: Ephemeral Debug Container Launcher
 - Milestone 20: Helm Release History & Rollback

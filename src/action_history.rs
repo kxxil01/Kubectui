@@ -16,6 +16,8 @@ pub enum ActionKind {
     FluxReconcile,
     ApplyYaml,
     Trigger,
+    Suspend,
+    Resume,
     Cordon,
     Uncordon,
     Drain,
@@ -30,6 +32,8 @@ impl ActionKind {
             ActionKind::FluxReconcile => "Reconcile",
             ActionKind::ApplyYaml => "Apply YAML",
             ActionKind::Trigger => "Trigger",
+            ActionKind::Suspend => "Suspend",
+            ActionKind::Resume => "Resume",
             ActionKind::Cordon => "Cordon",
             ActionKind::Uncordon => "Uncordon",
             ActionKind::Drain => "Drain",
@@ -212,6 +216,8 @@ mod tests {
         assert_eq!(ActionKind::Cordon.label(), "Cordon");
         assert_eq!(ActionKind::Uncordon.label(), "Uncordon");
         assert_eq!(ActionKind::Drain.label(), "Drain");
+        assert_eq!(ActionKind::Suspend.label(), "Suspend");
+        assert_eq!(ActionKind::Resume.label(), "Resume");
     }
 
     #[test]

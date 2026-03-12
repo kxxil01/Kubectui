@@ -62,6 +62,14 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     (DetailAction::Delete, &["delete", "remove"]),
     (DetailAction::Trigger, &["trigger", "run"]),
     (
+        DetailAction::SuspendCronJob,
+        &["suspend", "pause", "stop schedule"],
+    ),
+    (
+        DetailAction::ResumeCronJob,
+        &["resume", "unpause", "start schedule"],
+    ),
+    (
         DetailAction::ViewRelationships,
         &[
             "relations",
@@ -645,6 +653,8 @@ mod tests {
         ResourceActionContext {
             resource,
             node_unschedulable,
+            cronjob_suspended: None,
+            action_authorizations: Default::default(),
         }
     }
 
@@ -778,6 +788,38 @@ mod tests {
         assert!(!entries.iter().any(|e| e.action == DetailAction::Cordon));
         assert!(entries.iter().any(|e| e.action == DetailAction::Uncordon));
         assert!(entries.iter().any(|e| e.action == DetailAction::Drain));
+    }
+
+    #[test]
+    fn palette_entry_cronjob_actions_follow_suspend_state() {
+        let mut schedulable = ctx(ResourceRef::CronJob("nightly".into(), "ops".into()), None);
+        schedulable.cronjob_suspended = Some(false);
+        let entries = action_entries_for_resource(Some(&schedulable));
+        assert!(entries.iter().any(|e| e.action == DetailAction::Trigger));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.action == DetailAction::SuspendCronJob)
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.action == DetailAction::ResumeCronJob)
+        );
+
+        let mut suspended = ctx(ResourceRef::CronJob("nightly".into(), "ops".into()), None);
+        suspended.cronjob_suspended = Some(true);
+        let entries = action_entries_for_resource(Some(&suspended));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.action == DetailAction::ResumeCronJob)
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|e| e.action == DetailAction::SuspendCronJob)
+        );
     }
 
     #[test]

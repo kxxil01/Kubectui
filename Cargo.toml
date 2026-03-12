@@ -22,6 +22,7 @@ crossterm = { version = "0.29", features = ["event-stream"] }
 log = "0.4"
 env_logger = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
+cronexpr = "1.4.0"
 async-trait = "0.1"
 base64 = "0.22"
 dashmap = "5.5"

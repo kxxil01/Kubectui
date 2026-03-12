@@ -2225,6 +2225,51 @@ mod tests {
     }
 
     #[test]
+    fn render_detail_cronjob_history_smoke() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.cronjobs.push(CronJobInfo {
+            name: "nightly".to_string(),
+            namespace: "ops".to_string(),
+            schedule: "0 2 * * *".to_string(),
+            ..CronJobInfo::default()
+        });
+
+        let mut app = app_with_view(AppView::CronJobs);
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::CronJob(
+                "nightly".to_string(),
+                "ops".to_string(),
+            )),
+            metadata: DetailMetadata {
+                name: "nightly".to_string(),
+                namespace: Some("ops".to_string()),
+                status: Some("Active".to_string()),
+                cronjob_suspended: Some(false),
+                ..DetailMetadata::default()
+            },
+            yaml: Some("kind: CronJob\nmetadata:\n  name: nightly\n".to_string()),
+            cronjob_history: vec![crate::cronjob::CronJobHistoryEntry {
+                job_name: "nightly-001".to_string(),
+                namespace: "ops".to_string(),
+                status: "Failed".to_string(),
+                completions: "0/1".to_string(),
+                duration: Some("4s".to_string()),
+                pod_count: 1,
+                live_pod_count: 1,
+                completion_pct: Some(0),
+                active_pods: 0,
+                failed_pods: 1,
+                age: None,
+                created_at: None,
+                logs_authorized: None,
+            }],
+            ..DetailViewState::default()
+        });
+
+        draw(&app, &snapshot);
+    }
+
+    #[test]
     fn pod_derived_cache_separates_sort_variants() {
         let now = chrono::Utc::now();
         let mut snapshot = ClusterSnapshot::default();
