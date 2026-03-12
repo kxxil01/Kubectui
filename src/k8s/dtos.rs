@@ -668,6 +668,16 @@ pub struct HelmReleaseInfo {
     pub age: Option<Duration>,
 }
 
+/// A single Flux status condition entry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct FluxCondition {
+    pub type_: String,
+    pub status: String,
+    pub reason: Option<String>,
+    pub message: Option<String>,
+    pub timestamp: Option<DateTime<Utc>>,
+}
+
 /// Flux custom resource info for dedicated GitOps views.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FluxResourceInfo {
@@ -684,6 +694,15 @@ pub struct FluxResourceInfo {
     pub suspended: bool,
     pub created_at: Option<DateTime<Utc>>,
     pub age: Option<Duration>,
+    pub conditions: Vec<FluxCondition>,
+    pub last_reconcile_time: Option<DateTime<Utc>>,
+    pub last_applied_revision: Option<String>,
+    pub last_attempted_revision: Option<String>,
+    pub observed_generation: Option<i64>,
+    pub generation: Option<i64>,
+    pub source_ref: Option<String>,
+    pub interval: Option<String>,
+    pub timeout: Option<String>,
 }
 
 /// Information about a configured Helm repository (from ~/.config/helm/repositories.yaml).
