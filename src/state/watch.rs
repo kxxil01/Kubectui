@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use futures::TryStreamExt;
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
-use k8s_openapi::api::core::v1::{Pod, Service};
+use k8s_openapi::api::core::v1::{Node, Pod, Service};
 use kube::runtime::WatchStreamExt;
 use kube::runtime::watcher::{self, Event};
 use kube::{Api, Client, ResourceExt};
@@ -16,11 +16,11 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use crate::k8s::conversions::{
-    daemonset_to_info, deployment_to_info, pod_to_info, replicaset_to_info, service_to_info,
-    statefulset_to_info,
+    daemonset_to_info, deployment_to_info, node_to_info, pod_to_info, replicaset_to_info,
+    service_to_info, statefulset_to_info,
 };
 use crate::k8s::dtos::{
-    DaemonSetInfo, DeploymentInfo, PodInfo, ReplicaSetInfo, ServiceInfo, StatefulSetInfo,
+    DaemonSetInfo, DeploymentInfo, NodeInfo, PodInfo, ReplicaSetInfo, ServiceInfo, StatefulSetInfo,
 };
 
 /// Identifies which watched resource produced an update.
@@ -32,6 +32,7 @@ pub enum WatchedResource {
     StatefulSets,
     DaemonSets,
     Services,
+    Nodes,
 }
 
 /// A snapshot update published by a watcher task.
@@ -51,6 +52,7 @@ pub enum WatchPayload {
     StatefulSets(Vec<StatefulSetInfo>),
     DaemonSets(Vec<DaemonSetInfo>),
     Services(Vec<ServiceInfo>),
+    Nodes(Vec<NodeInfo>),
     /// A watcher encountered an error or terminated.
     Error {
         resource: WatchedResource,
@@ -175,6 +177,10 @@ fn sort_services(items: &mut [ServiceInfo]) {
     items.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
+fn sort_nodes(items: &mut [NodeInfo]) {
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
 /// Manages all watch tasks and their lifecycle.
 ///
 /// Instances are single-use: after [`stop_all`](WatchManager::stop_all),
@@ -234,7 +240,13 @@ impl WatchManager {
             watch_tx.clone(),
             cancel_rx.clone(),
         );
-        start_service_watch(client, self.session.clone(), watch_tx, cancel_rx);
+        start_service_watch(
+            client.clone(),
+            self.session.clone(),
+            watch_tx.clone(),
+            cancel_rx.clone(),
+        );
+        start_node_watch(client, self.session.clone(), watch_tx, cancel_rx);
     }
 
     /// Stops all running watch tasks.
@@ -963,6 +975,122 @@ fn process_service_event(store: &mut ResourceStore<ServiceInfo>, event: Event<Se
                 warn!(
                     name = svc.metadata.name.as_deref().unwrap_or("<unknown>"),
                     "skipping service with empty UID on delete"
+                );
+                return false;
+            }
+            store.remove(&uid);
+            true
+        }
+    }
+}
+
+// ── Node watcher (always cluster-scoped) ──
+
+fn start_node_watch(
+    client: Client,
+    session: WatchSessionKey,
+    watch_tx: mpsc::Sender<WatchUpdate>,
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        // Nodes are cluster-scoped — always use Api::all regardless of namespace.
+        let api: Api<Node> = Api::all(client);
+
+        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
+        let mut store = ResourceStore::<NodeInfo>::new();
+        tokio::pin!(stream);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => break,
+                item = stream.try_next() => {
+                    match item {
+                        Ok(Some(event)) => {
+                            if process_node_event(&mut store, event) {
+                                let mut snapshot = store.publish();
+                                sort_nodes(&mut snapshot);
+                                if watch_tx.send(WatchUpdate {
+                                    resource: WatchedResource::Nodes,
+                                    context_generation: session.context_generation,
+                                    data: WatchPayload::Nodes(snapshot),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            warn!("node watch stream ended unexpectedly");
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Nodes,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::Nodes,
+                                    message: "watch stream terminated".to_string(),
+                                },
+                            }).await;
+                            break;
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "node watch stream error");
+                            store.readiness = StoreReadiness::Error;
+                            store.last_error = Some(err.to_string());
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Nodes,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::Nodes,
+                                    message: err.to_string(),
+                                },
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn process_node_event(store: &mut ResourceStore<NodeInfo>, event: Event<Node>) -> bool {
+    match event {
+        Event::Init => {
+            store.begin_init();
+            false
+        }
+        Event::InitApply(node) => {
+            let uid = node.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = node.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping node with empty UID during init"
+                );
+                return false;
+            }
+            store.apply_init_page(uid, node_to_info(node));
+            false
+        }
+        Event::InitDone => {
+            store.commit_init();
+            true
+        }
+        Event::Apply(node) => {
+            let uid = node.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = node.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping node with empty UID on apply"
+                );
+                return false;
+            }
+            store.apply_event(uid, node_to_info(node));
+            true
+        }
+        Event::Delete(node) => {
+            let uid = node.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = node.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping node with empty UID on delete"
                 );
                 return false;
             }

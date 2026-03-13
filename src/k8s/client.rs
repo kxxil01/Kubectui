@@ -171,48 +171,7 @@ impl K8sClient {
 
         let nodes = list
             .into_iter()
-            .map(|node| {
-                let alloc = node
-                    .status
-                    .as_ref()
-                    .and_then(|status| status.allocatable.as_ref());
-                let name = node
-                    .metadata
-                    .name
-                    .as_ref()
-                    .cloned()
-                    .unwrap_or_else(|| "<unknown>".to_string());
-
-                NodeInfo {
-                    name,
-                    ready: node_condition_true(&node, "Ready"),
-                    kubelet_version: node
-                        .status
-                        .as_ref()
-                        .and_then(|status| status.node_info.as_ref())
-                        .map(|info| info.kubelet_version.clone())
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    os_image: node
-                        .status
-                        .as_ref()
-                        .and_then(|status| status.node_info.as_ref())
-                        .map(|info| info.os_image.clone())
-                        .unwrap_or_else(|| "unknown".to_string()),
-                    role: node_role(&node),
-                    cpu_allocatable: alloc.and_then(|a| a.get("cpu").map(|q| q.0.clone())),
-                    memory_allocatable: alloc.and_then(|a| a.get("memory").map(|q| q.0.clone())),
-                    created_at: node.metadata.creation_timestamp.as_ref().map(|ts| ts.0),
-                    memory_pressure: node_condition_true(&node, "MemoryPressure"),
-                    disk_pressure: node_condition_true(&node, "DiskPressure"),
-                    pid_pressure: node_condition_true(&node, "PIDPressure"),
-                    network_unavailable: node_condition_true(&node, "NetworkUnavailable"),
-                    unschedulable: node
-                        .spec
-                        .as_ref()
-                        .and_then(|s| s.unschedulable)
-                        .unwrap_or(false),
-                }
-            })
+            .map(crate::k8s::conversions::node_to_info)
             .collect();
 
         Ok(nodes)
@@ -2499,33 +2458,6 @@ fn is_metrics_api_unavailable(err: &kube::Error) -> bool {
     }
 }
 
-fn node_condition_true(node: &Node, condition_type: &str) -> bool {
-    node.status
-        .as_ref()
-        .and_then(|status| status.conditions.as_ref())
-        .and_then(|conditions| {
-            conditions
-                .iter()
-                .find(|condition| condition.type_ == condition_type)
-        })
-        .is_some_and(|condition| condition.status == "True")
-}
-
-fn node_role(node: &Node) -> String {
-    let labels = node.metadata.labels.as_ref();
-
-    let is_control_plane = labels.is_some_and(|labels| {
-        labels.contains_key("node-role.kubernetes.io/control-plane")
-            || labels.contains_key("node-role.kubernetes.io/master")
-    });
-
-    if is_control_plane {
-        "master".to_string()
-    } else {
-        "worker".to_string()
-    }
-}
-
 fn rule_from_policy_rule(rule: &PolicyRule) -> RbacRule {
     RbacRule {
         verbs: rule.verbs.clone(),
@@ -3196,6 +3128,7 @@ mod tests {
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 
     use super::*;
+    use crate::k8s::conversions::{node_condition_true, node_role};
 
     fn node_with_condition(condition_type: &str, status: &str) -> Node {
         Node {

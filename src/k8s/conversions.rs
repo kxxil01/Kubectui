@@ -5,10 +5,10 @@
 
 use chrono::Utc;
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
-use k8s_openapi::api::core::v1::{Pod, PodSpec, Service};
+use k8s_openapi::api::core::v1::{Node, Pod, PodSpec, Service};
 
 use crate::k8s::dtos::{
-    DaemonSetInfo, DeploymentInfo, OwnerRefInfo, PodInfo, ReplicaSetInfo, ServiceInfo,
+    DaemonSetInfo, DeploymentInfo, NodeInfo, OwnerRefInfo, PodInfo, ReplicaSetInfo, ServiceInfo,
     StatefulSetInfo,
 };
 use crate::state::alerts::{format_mib, format_millicores, parse_mib, parse_millicores};
@@ -332,6 +332,79 @@ pub fn service_to_info(svc: Service) -> ServiceInfo {
             .unwrap_or_default(),
         created_at,
         age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+    }
+}
+
+/// Checks whether a node condition of the given type has status `"True"`.
+pub fn node_condition_true(node: &Node, condition_type: &str) -> bool {
+    node.status
+        .as_ref()
+        .and_then(|status| status.conditions.as_ref())
+        .and_then(|conditions| {
+            conditions
+                .iter()
+                .find(|condition| condition.type_ == condition_type)
+        })
+        .is_some_and(|condition| condition.status == "True")
+}
+
+/// Extracts the role of a node from its labels.
+pub fn node_role(node: &Node) -> String {
+    let labels = node.metadata.labels.as_ref();
+
+    let is_control_plane = labels.is_some_and(|labels| {
+        labels.contains_key("node-role.kubernetes.io/control-plane")
+            || labels.contains_key("node-role.kubernetes.io/master")
+    });
+
+    if is_control_plane {
+        "master".to_string()
+    } else {
+        "worker".to_string()
+    }
+}
+
+/// Converts a raw Kubernetes `Node` into a [`NodeInfo`] DTO.
+pub fn node_to_info(node: Node) -> NodeInfo {
+    let alloc = node
+        .status
+        .as_ref()
+        .and_then(|status| status.allocatable.as_ref());
+    let name = node
+        .metadata
+        .name
+        .as_ref()
+        .cloned()
+        .unwrap_or_else(|| "<unknown>".to_string());
+
+    NodeInfo {
+        name,
+        ready: node_condition_true(&node, "Ready"),
+        kubelet_version: node
+            .status
+            .as_ref()
+            .and_then(|status| status.node_info.as_ref())
+            .map(|info| info.kubelet_version.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        os_image: node
+            .status
+            .as_ref()
+            .and_then(|status| status.node_info.as_ref())
+            .map(|info| info.os_image.clone())
+            .unwrap_or_else(|| "unknown".to_string()),
+        role: node_role(&node),
+        cpu_allocatable: alloc.and_then(|a| a.get("cpu").map(|q| q.0.clone())),
+        memory_allocatable: alloc.and_then(|a| a.get("memory").map(|q| q.0.clone())),
+        created_at: node.metadata.creation_timestamp.as_ref().map(|ts| ts.0),
+        memory_pressure: node_condition_true(&node, "MemoryPressure"),
+        disk_pressure: node_condition_true(&node, "DiskPressure"),
+        pid_pressure: node_condition_true(&node, "PIDPressure"),
+        network_unavailable: node_condition_true(&node, "NetworkUnavailable"),
+        unschedulable: node
+            .spec
+            .as_ref()
+            .and_then(|s| s.unschedulable)
+            .unwrap_or(false),
     }
 }
 
