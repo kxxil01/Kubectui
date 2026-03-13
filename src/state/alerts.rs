@@ -426,6 +426,17 @@ pub(crate) fn parse_mib(raw: &str) -> u64 {
 pub(crate) fn format_millicores(m: u64) -> String {
     if m >= 1000 && m.is_multiple_of(1000) {
         format!("{}", m / 1000)
+    } else if m >= 1000 {
+        let whole = m / 1000;
+        let frac = m % 1000;
+        // Trim trailing zeros: 1500 → "1.5", 1250 → "1.25"
+        if frac.is_multiple_of(100) {
+            format!("{whole}.{}", frac / 100)
+        } else if frac.is_multiple_of(10) {
+            format!("{whole}.{:02}", frac / 10)
+        } else {
+            format!("{whole}.{frac:03}")
+        }
     } else {
         format!("{m}m")
     }
@@ -1053,7 +1064,9 @@ mod tests {
     #[test]
     fn format_millicores_fractional() {
         assert_eq!(format_millicores(500), "500m");
-        assert_eq!(format_millicores(1500), "1500m");
+        assert_eq!(format_millicores(1500), "1.5");
+        assert_eq!(format_millicores(1250), "1.25");
+        assert_eq!(format_millicores(1001), "1.001");
     }
 
     #[test]

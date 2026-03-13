@@ -21,6 +21,7 @@ use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
     columns::ColumnDef,
+    k8s::dtos::NodeMetricsInfo,
     state::{
         ClusterSnapshot,
         alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
@@ -131,12 +132,19 @@ pub fn render_nodes(
     let now_unix = Utc::now().timestamp();
     let derived = cached_node_derived(snapshot, query, indices.as_ref(), now_unix, cache_variant);
 
-    // Build node metrics lookup: name -> &NodeMetricsInfo
-    let metrics_by_node: HashMap<&str, &crate::k8s::dtos::NodeMetricsInfo> = snapshot
-        .node_metrics
+    // Build node metrics lookup only when metric columns are visible
+    let needs_metrics = visible_columns
         .iter()
-        .map(|nm| (nm.name.as_str(), nm))
-        .collect();
+        .any(|c| matches!(c.id, "cpu" | "memory"));
+    let metrics_by_node: HashMap<&str, &NodeMetricsInfo> = if needs_metrics {
+        snapshot
+            .node_metrics
+            .iter()
+            .map(|nm| (nm.name.as_str(), nm))
+            .collect()
+    } else {
+        HashMap::new()
+    };
 
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &node_idx) in indices[window.start..window.end].iter().enumerate() {
