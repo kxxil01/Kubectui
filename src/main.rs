@@ -49,7 +49,10 @@ use kubectui::{
     },
     policy::{DetailAction, ResourceActionContext},
     secret::{decode_secret_yaml, encode_secret_yaml},
-    state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
+    state::{
+        ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope,
+        watch::{WatchManager, WatchSessionKey, WatchUpdate},
+    },
     ui,
     workbench::{WorkbenchTabKey, WorkbenchTabState},
 };
@@ -1603,6 +1606,18 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let mut refresh_state = RefreshRuntimeState::default();
     let mut snapshot_dirty = false;
 
+    // Watch-backed resource caches — pushes live updates for core resources.
+    let (watch_tx, mut watch_rx) = tokio::sync::mpsc::channel::<WatchUpdate>(32);
+    let mut watch_manager = {
+        let mut wm = WatchManager::new(WatchSessionKey {
+            context_generation: refresh_state.context_generation,
+            cluster_context: app.current_context_name.clone(),
+            namespace: namespace_scope(app.get_namespace()).map(str::to_string),
+        });
+        wm.start_watches(client.get_client(), watch_tx.clone());
+        wm
+    };
+
     // Start with view-scoped refresh (workload-first for core views, secondary deferred).
     let startup_include_flux = app.view().is_fluxcd();
     request_refresh(
@@ -2068,6 +2083,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             refresh_state.context_generation,
                         ));
                     }
+                }
+            }
+
+            // Watch-backed resource updates — live cluster changes via watch streams.
+            Some(update) = watch_rx.recv() => {
+                if update.context_generation == refresh_state.context_generation {
+                    global_state.apply_watch_update(update);
                 }
             }
 
@@ -2743,6 +2765,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             port_forwarder.stop_all().await;
                             app.tunnel_registry.update_tunnels(Vec::new());
 
+                            watch_manager.stop_all();
+
                             client = new_client;
                             app.current_context_name = Some(ctx.clone());
                             coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
@@ -2769,6 +2793,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 &mut refresh_state,
                                 &mut snapshot_dirty,
                             );
+                            // Restart watches for the new context.
+                            watch_manager = WatchManager::new(WatchSessionKey {
+                                context_generation: refresh_state.context_generation,
+                                cluster_context: app.current_context_name.clone(),
+                                namespace: namespace_scope(app.get_namespace()).map(str::to_string),
+                            });
+                            watch_manager.start_watches(client.get_client(), watch_tx.clone());
                             if app.view() == AppView::Events {
                                 request_events_refresh(
                                     &events_tx,
@@ -2857,15 +2888,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     auto_refresh_count = auto_refresh_count.wrapping_add(1);
                     let include_flux = app.view().is_fluxcd()
                         || auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY);
-                    request_refresh(
-                        &refresh_tx,
-                        &mut global_state,
-                        &client,
-                        namespace_scope(app.get_namespace()).map(str::to_string),
-                        refresh_options_for_view(app.view(), include_flux, false),
-                        &mut refresh_state,
-                        &mut snapshot_dirty,
-                    );
+                    let mut dispatch = refresh_options_for_view(app.view(), include_flux, false);
+                    // Strip watched scopes — watches provide real-time updates
+                    dispatch.primary_scope = dispatch.primary_scope.without(RefreshScope::WATCHED_SCOPES);
+                    dispatch.options.scope = dispatch.options.scope.without(RefreshScope::WATCHED_SCOPES);
+                    if !dispatch.options.scope.is_empty() || dispatch.options.include_cluster_info {
+                        request_refresh(
+                            &refresh_tx,
+                            &mut global_state,
+                            &client,
+                            namespace_scope(app.get_namespace()).map(str::to_string),
+                            dispatch,
+                            &mut refresh_state,
+                            &mut snapshot_dirty,
+                        );
+                    }
                     if app.view() == AppView::Events {
                         request_events_refresh(
                             &events_tx,
@@ -3216,6 +3253,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.selected_idx = 0;
                     app.close_namespace_picker();
                     app.needs_config_save = true;
+                    watch_manager.stop_all();
                     // Invalidate stale async results from previous namespace selections.
                     refresh_state.context_generation =
                         refresh_state.context_generation.wrapping_add(1);
@@ -3263,6 +3301,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             &mut snapshot_dirty,
                         );
                     }
+                    // Restart watches for the new namespace.
+                    watch_manager = WatchManager::new(WatchSessionKey {
+                        context_generation: refresh_state.context_generation,
+                        cluster_context: app.current_context_name.clone(),
+                        namespace: namespace_scope(app.get_namespace()).map(str::to_string),
+                    });
+                    watch_manager.start_watches(client.get_client(), watch_tx.clone());
                 }
                 AppAction::OpenDetail(resource) => {
                     open_detail_for_resource(

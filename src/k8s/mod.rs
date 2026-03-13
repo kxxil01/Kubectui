@@ -1,6 +1,7 @@
 //! Kubernetes integration layer.
 
 pub mod client;
+pub mod conversions;
 pub mod dtos;
 pub mod events;
 pub mod exec;
