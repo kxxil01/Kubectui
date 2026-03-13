@@ -663,15 +663,12 @@ impl RefreshScope {
             | Self::DEPLOYMENTS.0
             | Self::STATEFULSETS.0
             | Self::DAEMONSETS.0
-            | Self::REPLICASETS.0,
-    );
-    pub const CORE_OVERVIEW: Self = Self(
-        Self::WATCHED_SCOPES.0
+            | Self::REPLICASETS.0
             | Self::REPLICATION_CONTROLLERS.0
             | Self::JOBS.0
-            | Self::CRONJOBS.0
-            | Self::NAMESPACES.0,
+            | Self::CRONJOBS.0,
     );
+    pub const CORE_OVERVIEW: Self = Self(Self::WATCHED_SCOPES.0 | Self::NAMESPACES.0);
     pub const LEGACY_SECONDARY: Self = Self(
         Self::NETWORK.0
             | Self::CONFIG.0
@@ -1304,6 +1301,33 @@ impl GlobalState {
                     if *slot != ViewLoadState::Ready {
                         *slot = ViewLoadState::Ready;
                         changed = true;
+                    }
+                }
+                watch::WatchPayload::ReplicationControllers(items) => {
+                    snap.replication_controllers = items;
+                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+                    changed = true;
+                    let slot = &mut snap.view_load_states[AppView::ReplicationControllers.index()];
+                    if *slot != ViewLoadState::Ready {
+                        *slot = ViewLoadState::Ready;
+                    }
+                }
+                watch::WatchPayload::Jobs(items) => {
+                    snap.jobs = items;
+                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+                    changed = true;
+                    let slot = &mut snap.view_load_states[AppView::Jobs.index()];
+                    if *slot != ViewLoadState::Ready {
+                        *slot = ViewLoadState::Ready;
+                    }
+                }
+                watch::WatchPayload::CronJobs(items) => {
+                    snap.cronjobs = items;
+                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+                    changed = true;
+                    let slot = &mut snap.view_load_states[AppView::CronJobs.index()];
+                    if *slot != ViewLoadState::Ready {
+                        *slot = ViewLoadState::Ready;
                     }
                 }
                 watch::WatchPayload::Error { .. } => {

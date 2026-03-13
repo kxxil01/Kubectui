@@ -8,7 +8,8 @@ use std::collections::HashMap;
 
 use futures::TryStreamExt;
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
-use k8s_openapi::api::core::v1::{Node, Pod, Service};
+use k8s_openapi::api::batch::v1::{CronJob, Job};
+use k8s_openapi::api::core::v1::{Node, Pod, ReplicationController, Service};
 use kube::runtime::WatchStreamExt;
 use kube::runtime::watcher::{self, Event};
 use kube::{Api, Client, ResourceExt};
@@ -16,11 +17,12 @@ use tokio::sync::mpsc;
 use tracing::warn;
 
 use crate::k8s::conversions::{
-    daemonset_to_info, deployment_to_info, node_to_info, pod_to_info, replicaset_to_info,
-    service_to_info, statefulset_to_info,
+    cronjob_to_info, daemonset_to_info, deployment_to_info, job_to_info, node_to_info, pod_to_info,
+    replicaset_to_info, replication_controller_to_info, service_to_info, statefulset_to_info,
 };
 use crate::k8s::dtos::{
-    DaemonSetInfo, DeploymentInfo, NodeInfo, PodInfo, ReplicaSetInfo, ServiceInfo, StatefulSetInfo,
+    CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, PodInfo, ReplicaSetInfo,
+    ReplicationControllerInfo, ServiceInfo, StatefulSetInfo,
 };
 
 /// Identifies which watched resource produced an update.
@@ -33,6 +35,9 @@ pub enum WatchedResource {
     DaemonSets,
     Services,
     Nodes,
+    ReplicationControllers,
+    Jobs,
+    CronJobs,
 }
 
 /// A snapshot update published by a watcher task.
@@ -53,6 +58,9 @@ pub enum WatchPayload {
     DaemonSets(Vec<DaemonSetInfo>),
     Services(Vec<ServiceInfo>),
     Nodes(Vec<NodeInfo>),
+    ReplicationControllers(Vec<ReplicationControllerInfo>),
+    Jobs(Vec<JobInfo>),
+    CronJobs(Vec<CronJobInfo>),
     /// A watcher encountered an error or terminated.
     Error {
         resource: WatchedResource,
@@ -181,6 +189,18 @@ fn sort_nodes(items: &mut [NodeInfo]) {
     items.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
+fn sort_replication_controllers(items: &mut [ReplicationControllerInfo]) {
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
+fn sort_jobs(items: &mut [JobInfo]) {
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
+fn sort_cronjobs(items: &mut [CronJobInfo]) {
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
 /// Manages all watch tasks and their lifecycle.
 ///
 /// Instances are single-use: after [`stop_all`](WatchManager::stop_all),
@@ -246,7 +266,25 @@ impl WatchManager {
             watch_tx.clone(),
             cancel_rx.clone(),
         );
-        start_node_watch(client, self.session.clone(), watch_tx, cancel_rx);
+        start_node_watch(
+            client.clone(),
+            self.session.clone(),
+            watch_tx.clone(),
+            cancel_rx.clone(),
+        );
+        start_replication_controller_watch(
+            client.clone(),
+            self.session.clone(),
+            watch_tx.clone(),
+            cancel_rx.clone(),
+        );
+        start_job_watch(
+            client.clone(),
+            self.session.clone(),
+            watch_tx.clone(),
+            cancel_rx.clone(),
+        );
+        start_cronjob_watch(client, self.session.clone(), watch_tx, cancel_rx);
     }
 
     /// Stops all running watch tasks.
@@ -1091,6 +1129,357 @@ fn process_node_event(store: &mut ResourceStore<NodeInfo>, event: Event<Node>) -
                 warn!(
                     name = node.metadata.name.as_deref().unwrap_or("<unknown>"),
                     "skipping node with empty UID on delete"
+                );
+                return false;
+            }
+            store.remove(&uid);
+            true
+        }
+    }
+}
+
+fn start_replication_controller_watch(
+    client: Client,
+    session: WatchSessionKey,
+    watch_tx: mpsc::Sender<WatchUpdate>,
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        let api: Api<ReplicationController> = match &session.namespace {
+            Some(ns) => Api::namespaced(client, ns),
+            None => Api::all(client),
+        };
+
+        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
+        let mut store = ResourceStore::<ReplicationControllerInfo>::new();
+        tokio::pin!(stream);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => break,
+                item = stream.try_next() => {
+                    match item {
+                        Ok(Some(event)) => {
+                            if process_replication_controller_event(&mut store, event) {
+                                let mut snapshot = store.publish();
+                                sort_replication_controllers(&mut snapshot);
+                                if watch_tx.send(WatchUpdate {
+                                    resource: WatchedResource::ReplicationControllers,
+                                    context_generation: session.context_generation,
+                                    data: WatchPayload::ReplicationControllers(snapshot),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            warn!("replicationcontroller watch stream ended unexpectedly");
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::ReplicationControllers,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::ReplicationControllers,
+                                    message: "watch stream terminated".to_string(),
+                                },
+                            }).await;
+                            break;
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "replicationcontroller watch stream error");
+                            store.readiness = StoreReadiness::Error;
+                            store.last_error = Some(err.to_string());
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::ReplicationControllers,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::ReplicationControllers,
+                                    message: err.to_string(),
+                                },
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn process_replication_controller_event(
+    store: &mut ResourceStore<ReplicationControllerInfo>,
+    event: Event<ReplicationController>,
+) -> bool {
+    match event {
+        Event::Init => {
+            store.begin_init();
+            false
+        }
+        Event::InitApply(rc) => {
+            let uid = rc.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = rc.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping replicationcontroller with empty UID during init"
+                );
+                return false;
+            }
+            store.apply_init_page(uid, replication_controller_to_info(rc));
+            false
+        }
+        Event::InitDone => {
+            store.commit_init();
+            true
+        }
+        Event::Apply(rc) => {
+            let uid = rc.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = rc.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping replicationcontroller with empty UID on apply"
+                );
+                return false;
+            }
+            store.apply_event(uid, replication_controller_to_info(rc));
+            true
+        }
+        Event::Delete(rc) => {
+            let uid = rc.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = rc.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping replicationcontroller with empty UID on delete"
+                );
+                return false;
+            }
+            store.remove(&uid);
+            true
+        }
+    }
+}
+
+fn start_job_watch(
+    client: Client,
+    session: WatchSessionKey,
+    watch_tx: mpsc::Sender<WatchUpdate>,
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        let api: Api<Job> = match &session.namespace {
+            Some(ns) => Api::namespaced(client, ns),
+            None => Api::all(client),
+        };
+
+        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
+        let mut store = ResourceStore::<JobInfo>::new();
+        tokio::pin!(stream);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => break,
+                item = stream.try_next() => {
+                    match item {
+                        Ok(Some(event)) => {
+                            if process_job_event(&mut store, event) {
+                                let mut snapshot = store.publish();
+                                sort_jobs(&mut snapshot);
+                                if watch_tx.send(WatchUpdate {
+                                    resource: WatchedResource::Jobs,
+                                    context_generation: session.context_generation,
+                                    data: WatchPayload::Jobs(snapshot),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            warn!("job watch stream ended unexpectedly");
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Jobs,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::Jobs,
+                                    message: "watch stream terminated".to_string(),
+                                },
+                            }).await;
+                            break;
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "job watch stream error");
+                            store.readiness = StoreReadiness::Error;
+                            store.last_error = Some(err.to_string());
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Jobs,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::Jobs,
+                                    message: err.to_string(),
+                                },
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn process_job_event(store: &mut ResourceStore<JobInfo>, event: Event<Job>) -> bool {
+    match event {
+        Event::Init => {
+            store.begin_init();
+            false
+        }
+        Event::InitApply(job) => {
+            let uid = job.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = job.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping job with empty UID during init"
+                );
+                return false;
+            }
+            store.apply_init_page(uid, job_to_info(job));
+            false
+        }
+        Event::InitDone => {
+            store.commit_init();
+            true
+        }
+        Event::Apply(job) => {
+            let uid = job.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = job.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping job with empty UID on apply"
+                );
+                return false;
+            }
+            store.apply_event(uid, job_to_info(job));
+            true
+        }
+        Event::Delete(job) => {
+            let uid = job.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = job.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping job with empty UID on delete"
+                );
+                return false;
+            }
+            store.remove(&uid);
+            true
+        }
+    }
+}
+
+fn start_cronjob_watch(
+    client: Client,
+    session: WatchSessionKey,
+    watch_tx: mpsc::Sender<WatchUpdate>,
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        let api: Api<CronJob> = match &session.namespace {
+            Some(ns) => Api::namespaced(client, ns),
+            None => Api::all(client),
+        };
+
+        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
+        let mut store = ResourceStore::<CronJobInfo>::new();
+        tokio::pin!(stream);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => break,
+                item = stream.try_next() => {
+                    match item {
+                        Ok(Some(event)) => {
+                            if process_cronjob_event(&mut store, event) {
+                                let mut snapshot = store.publish();
+                                sort_cronjobs(&mut snapshot);
+                                if watch_tx.send(WatchUpdate {
+                                    resource: WatchedResource::CronJobs,
+                                    context_generation: session.context_generation,
+                                    data: WatchPayload::CronJobs(snapshot),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            warn!("cronjob watch stream ended unexpectedly");
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::CronJobs,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::CronJobs,
+                                    message: "watch stream terminated".to_string(),
+                                },
+                            }).await;
+                            break;
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "cronjob watch stream error");
+                            store.readiness = StoreReadiness::Error;
+                            store.last_error = Some(err.to_string());
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::CronJobs,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::CronJobs,
+                                    message: err.to_string(),
+                                },
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn process_cronjob_event(store: &mut ResourceStore<CronJobInfo>, event: Event<CronJob>) -> bool {
+    match event {
+        Event::Init => {
+            store.begin_init();
+            false
+        }
+        Event::InitApply(cj) => {
+            let uid = cj.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = cj.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping cronjob with empty UID during init"
+                );
+                return false;
+            }
+            store.apply_init_page(uid, cronjob_to_info(cj));
+            false
+        }
+        Event::InitDone => {
+            store.commit_init();
+            true
+        }
+        Event::Apply(cj) => {
+            let uid = cj.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = cj.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping cronjob with empty UID on apply"
+                );
+                return false;
+            }
+            store.apply_event(uid, cronjob_to_info(cj));
+            true
+        }
+        Event::Delete(cj) => {
+            let uid = cj.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = cj.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping cronjob with empty UID on delete"
                 );
                 return false;
             }

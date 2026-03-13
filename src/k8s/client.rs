@@ -32,7 +32,6 @@ use kube::{
     config::KubeConfigOptions,
 };
 
-use crate::cronjob::cronjob_next_schedule_time;
 use crate::k8s::{events, yaml};
 use crate::{
     app::ResourceRef,
@@ -522,30 +521,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let items = list
             .into_iter()
-            .map(|rc| {
-                let spec = rc.spec.as_ref();
-                let status = rc.status.as_ref();
-                let created_at = rc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-                ReplicationControllerInfo {
-                    name: rc.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: rc
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    desired: spec.and_then(|s| s.replicas).unwrap_or(0),
-                    ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
-                    available: status.and_then(|s| s.available_replicas).unwrap_or(0),
-                    image: crate::k8s::conversions::extract_image_from_pod_spec(
-                        spec.and_then(|s| s.template.as_ref())
-                            .and_then(|t| t.spec.as_ref()),
-                    ),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::replication_controller_to_info)
             .collect();
 
         Ok(items)
@@ -768,53 +746,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let jobs = list
             .into_iter()
-            .map(|job| {
-                let spec = job.spec.as_ref();
-                let status = job.status.as_ref();
-
-                let succeeded = status.and_then(|s| s.succeeded).unwrap_or(0);
-                let failed = status.and_then(|s| s.failed).unwrap_or(0);
-                let active = status.and_then(|s| s.active).unwrap_or(0);
-                let desired_completions = spec.and_then(|s| s.completions).unwrap_or(1);
-                let parallelism = spec.and_then(|s| s.parallelism).unwrap_or(1);
-                let start_time = status.and_then(|s| s.start_time.as_ref()).map(|ts| ts.0);
-                let completion_time = status
-                    .and_then(|s| s.completion_time.as_ref())
-                    .map(|ts| ts.0);
-                let created_at = job.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-
-                JobInfo {
-                    name: job.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: job
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    status: job_status_from_counts(succeeded, failed, active),
-                    completions: format_job_completions(succeeded, desired_completions),
-                    duration: format_job_duration(start_time, completion_time),
-                    desired_completions,
-                    succeeded_pods: succeeded,
-                    parallelism,
-                    active_pods: active,
-                    failed_pods: failed,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                    owner_references: job
-                        .metadata
-                        .owner_references
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|oref| crate::k8s::dtos::OwnerRefInfo {
-                            kind: oref.kind,
-                            name: oref.name,
-                            uid: oref.uid,
-                        })
-                        .collect(),
-                }
-            })
+            .map(crate::k8s::conversions::job_to_info)
             .collect();
 
         Ok(jobs)
@@ -836,48 +770,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let cronjobs = list
             .into_iter()
-            .map(|cj| {
-                let spec = cj.spec.as_ref();
-                let status = cj.status.as_ref();
-                let created_at = cj.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-                let schedule = spec
-                    .map(|s| s.schedule.clone())
-                    .unwrap_or_else(|| "<none>".to_string());
-                let timezone = spec.and_then(|s| s.time_zone.clone());
-                let suspend = spec.and_then(|s| s.suspend).unwrap_or(false);
-
-                CronJobInfo {
-                    name: cj.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: cj
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    schedule: schedule.clone(),
-                    timezone: timezone.clone(),
-                    last_schedule_time: status
-                        .and_then(|s| s.last_schedule_time.as_ref())
-                        .map(|ts| ts.0),
-                    next_schedule_time: cronjob_next_schedule_time(
-                        &schedule,
-                        timezone.as_deref(),
-                        suspend,
-                        now,
-                    ),
-                    last_successful_time: status
-                        .and_then(|s| s.last_successful_time.as_ref())
-                        .map(|ts| ts.0),
-                    suspend,
-                    active_jobs: status
-                        .and_then(|s| s.active.as_ref())
-                        .map(|v| v.len() as i32)
-                        .unwrap_or(0),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::cronjob_to_info)
             .collect();
 
         Ok(cronjobs)
@@ -2477,41 +2372,6 @@ fn subject_from_k8s(subject: &Subject) -> RoleBindingSubject {
     }
 }
 
-fn job_status_from_counts(succeeded: i32, failed: i32, active: i32) -> String {
-    if succeeded > 0 && active == 0 {
-        "Succeeded".to_string()
-    } else if failed > 0 {
-        "Failed".to_string()
-    } else if active > 0 {
-        "Running".to_string()
-    } else {
-        "Pending".to_string()
-    }
-}
-
-fn format_job_completions(succeeded: i32, parallelism: i32) -> String {
-    format!("{}/{}", succeeded.max(0), parallelism.max(1))
-}
-
-fn format_job_duration(
-    start_time: Option<chrono::DateTime<Utc>>,
-    completion_time: Option<chrono::DateTime<Utc>>,
-) -> Option<String> {
-    let start = start_time?;
-    let end = completion_time.unwrap_or_else(Utc::now);
-    let delta = end.signed_duration_since(start);
-
-    let secs = delta.num_seconds().max(0);
-    let mins = secs / 60;
-    let rem_secs = secs % 60;
-
-    if mins > 0 {
-        Some(format!("{mins}m{rem_secs}s"))
-    } else {
-        Some(format!("{rem_secs}s"))
-    }
-}
-
 fn quota_percent_used(
     hard: &BTreeMap<String, String>,
     used: &BTreeMap<String, String>,
@@ -3128,7 +2988,10 @@ mod tests {
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 
     use super::*;
-    use crate::k8s::conversions::{node_condition_true, node_role};
+    use crate::k8s::conversions::{
+        format_job_completions, format_job_duration, job_status_from_counts, node_condition_true,
+        node_role,
+    };
 
     fn node_with_condition(condition_type: &str, status: &str) -> Node {
         Node {
