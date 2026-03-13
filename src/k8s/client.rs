@@ -437,54 +437,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let services = list
             .into_iter()
-            .map(|svc| {
-                let ports = svc
-                    .spec
-                    .as_ref()
-                    .and_then(|spec| spec.ports.as_ref())
-                    .map(|ports| {
-                        ports
-                            .iter()
-                            .map(|p| {
-                                format!(
-                                    "{}/{}",
-                                    p.port,
-                                    p.protocol.clone().unwrap_or_else(|| "TCP".to_string())
-                                )
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-
-                let service_type = svc
-                    .spec
-                    .as_ref()
-                    .and_then(|spec| spec.type_.clone())
-                    .unwrap_or_else(|| "ClusterIP".to_string());
-
-                let created_at = svc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-
-                ServiceInfo {
-                    name: svc.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: svc
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    type_: service_type,
-                    cluster_ip: svc.spec.as_ref().and_then(|spec| spec.cluster_ip.clone()),
-                    ports,
-                    selector: svc
-                        .spec
-                        .as_ref()
-                        .and_then(|spec| spec.selector.clone())
-                        .unwrap_or_default(),
-                    created_at,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                }
-            })
+            .map(crate::k8s::conversions::service_to_info)
             .collect();
 
         Ok(services)
