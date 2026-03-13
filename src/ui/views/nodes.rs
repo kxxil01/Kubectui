@@ -2,6 +2,7 @@
 
 use std::{
     borrow::Cow,
+    collections::HashMap,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -20,13 +21,17 @@ use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
     columns::ColumnDef,
-    state::ClusterSnapshot,
+    k8s::dtos::NodeMetricsInfo,
+    state::{
+        ClusterSnapshot,
+        alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
+    },
     ui::{
         bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, loading_or_empty_message_no_search, responsive_table_widths_vec,
-        sort_header_cell, table_viewport_rows, table_window,
+        sort_header_cell, table_viewport_rows, table_window, utilization_style,
         views::filtering::filtered_node_indices,
         workload_sort_suffix,
     },
@@ -127,6 +132,20 @@ pub fn render_nodes(
     let now_unix = Utc::now().timestamp();
     let derived = cached_node_derived(snapshot, query, indices.as_ref(), now_unix, cache_variant);
 
+    // Build node metrics lookup only when metric columns are visible
+    let needs_metrics = visible_columns
+        .iter()
+        .any(|c| matches!(c.id, "cpu" | "memory"));
+    let metrics_by_node: HashMap<&str, &NodeMetricsInfo> = if needs_metrics {
+        snapshot
+            .node_metrics
+            .iter()
+            .map(|nm| (nm.name.as_str(), nm))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &node_idx) in indices[window.start..window.end].iter().enumerate() {
         let idx = window.start + local_idx;
@@ -170,14 +189,36 @@ pub fn render_nodes(
                 ),
                 "status" => Cell::from(Line::from(status_spans.take().unwrap_or_default())),
                 "roles" => Cell::from(Span::styled(node.role.as_str(), accent_style)),
-                "cpu" => Cell::from(Span::styled(
-                    node.cpu_allocatable.as_deref().unwrap_or("N/A"),
-                    dim_style,
-                )),
-                "memory" => Cell::from(Span::styled(
-                    node.memory_allocatable.as_deref().unwrap_or("N/A"),
-                    dim_style,
-                )),
+                "cpu" => {
+                    let alloc = node.cpu_allocatable.as_deref().unwrap_or("N/A");
+                    match metrics_by_node.get(node.name.as_str()) {
+                        Some(nm) => {
+                            let used = parse_millicores(&nm.cpu);
+                            let alloc_m = parse_millicores(alloc);
+                            let pct = if alloc_m > 0 { used * 100 / alloc_m } else { 0 };
+                            let text = format!("{}/{} {}%", format_millicores(used), alloc, pct);
+                            Cell::from(Span::styled(text, utilization_style(pct, &theme)))
+                        }
+                        None => Cell::from(Span::styled(alloc, dim_style)),
+                    }
+                }
+                "memory" => {
+                    let alloc = node.memory_allocatable.as_deref().unwrap_or("N/A");
+                    match metrics_by_node.get(node.name.as_str()) {
+                        Some(nm) => {
+                            let used = parse_mib(&nm.memory);
+                            let alloc_mib = parse_mib(alloc);
+                            let pct = if alloc_mib > 0 {
+                                used * 100 / alloc_mib
+                            } else {
+                                0
+                            };
+                            let text = format!("{}/{} {}%", format_mib(used), alloc, pct);
+                            Cell::from(Span::styled(text, utilization_style(pct, &theme)))
+                        }
+                        None => Cell::from(Span::styled(alloc, dim_style)),
+                    }
+                }
                 "age" => Cell::from(Span::styled(age.to_string(), theme.inactive_style())),
                 _ => Cell::from(""),
             })

@@ -126,6 +126,76 @@ pub const POD_COLUMNS: &[ColumnDef] = &[
         hideable: true,
         default_visible: true,
     },
+    ColumnDef {
+        id: "cpu_usage",
+        label: "CPU",
+        default_width: Constraint::Length(10),
+        hideable: true,
+        default_visible: false,
+    },
+    ColumnDef {
+        id: "mem_usage",
+        label: "Memory",
+        default_width: Constraint::Length(10),
+        hideable: true,
+        default_visible: false,
+    },
+    ColumnDef {
+        id: "cpu_req",
+        label: "CPU Req",
+        default_width: Constraint::Length(10),
+        hideable: true,
+        default_visible: false,
+    },
+    ColumnDef {
+        id: "mem_req",
+        label: "Mem Req",
+        default_width: Constraint::Length(10),
+        hideable: true,
+        default_visible: false,
+    },
+    ColumnDef {
+        id: "cpu_lim",
+        label: "CPU Lim",
+        default_width: Constraint::Length(10),
+        hideable: true,
+        default_visible: false,
+    },
+    ColumnDef {
+        id: "mem_lim",
+        label: "Mem Lim",
+        default_width: Constraint::Length(10),
+        hideable: true,
+        default_visible: false,
+    },
+    ColumnDef {
+        id: "cpu_pct_req",
+        label: "%CPU/R",
+        default_width: Constraint::Length(8),
+        hideable: true,
+        default_visible: false,
+    },
+    ColumnDef {
+        id: "mem_pct_req",
+        label: "%MEM/R",
+        default_width: Constraint::Length(8),
+        hideable: true,
+        default_visible: false,
+    },
+    ColumnDef {
+        id: "cpu_pct_lim",
+        label: "%CPU/L",
+        default_width: Constraint::Length(8),
+        hideable: true,
+        default_visible: false,
+    },
+    ColumnDef {
+        id: "mem_pct_lim",
+        label: "%MEM/L",
+        default_width: Constraint::Length(8),
+        hideable: true,
+        default_visible: false,
+    },
 ];
 
 pub const DEPLOYMENT_COLUMNS: &[ColumnDef] = &[
@@ -184,14 +254,14 @@ pub const NODE_COLUMNS: &[ColumnDef] = &[
     ColumnDef {
         id: "name",
         label: "Name",
-        default_width: Constraint::Percentage(26),
+        default_width: Constraint::Percentage(22),
         hideable: false,
         default_visible: true,
     },
     ColumnDef {
         id: "status",
         label: "Status",
-        default_width: Constraint::Percentage(28),
+        default_width: Constraint::Percentage(22),
         hideable: true,
         default_visible: true,
     },
@@ -205,14 +275,14 @@ pub const NODE_COLUMNS: &[ColumnDef] = &[
     ColumnDef {
         id: "cpu",
         label: "CPU",
-        default_width: Constraint::Percentage(12),
+        default_width: Constraint::Percentage(16),
         hideable: true,
         default_visible: true,
     },
     ColumnDef {
         id: "memory",
         label: "Memory",
-        default_width: Constraint::Percentage(12),
+        default_width: Constraint::Percentage(16),
         hideable: true,
         default_visible: true,
     },
@@ -1257,5 +1327,38 @@ mod tests {
         assert_eq!(view_key(AppView::Deployments), "deployments");
         assert_eq!(view_key(AppView::Nodes), "nodes");
         assert_eq!(view_key(AppView::FluxCDAll), "flux_all");
+    }
+
+    #[test]
+    fn pod_columns_has_17_entries_with_10_metrics_hidden() {
+        assert_eq!(POD_COLUMNS.len(), 17);
+        let hidden: Vec<&str> = POD_COLUMNS
+            .iter()
+            .filter(|c| !c.default_visible)
+            .map(|c| c.id)
+            .collect();
+        assert_eq!(
+            hidden,
+            vec![
+                "cpu_usage",
+                "mem_usage",
+                "cpu_req",
+                "mem_req",
+                "cpu_lim",
+                "mem_lim",
+                "cpu_pct_req",
+                "mem_pct_req",
+                "cpu_pct_lim",
+                "mem_pct_lim",
+            ]
+        );
+    }
+
+    #[test]
+    fn node_columns_cpu_memory_wider_for_utilization() {
+        let cpu = NODE_COLUMNS.iter().find(|c| c.id == "cpu").unwrap();
+        let mem = NODE_COLUMNS.iter().find(|c| c.id == "memory").unwrap();
+        assert_eq!(cpu.default_width, Constraint::Percentage(16));
+        assert_eq!(mem.default_width, Constraint::Percentage(16));
     }
 }
