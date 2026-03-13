@@ -579,12 +579,12 @@ fn render_line_gauge(
         1.0
     };
     let pct = (ratio * 100.0) as u8;
-    let color = if pct >= 100 {
-        theme.success
+    let color = if pct >= 90 {
+        theme.error
     } else if pct >= 70 {
         theme.warning
     } else {
-        theme.error
+        theme.success
     };
 
     let gauge = LineGauge::default()
