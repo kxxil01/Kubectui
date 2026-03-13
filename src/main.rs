@@ -1121,9 +1121,8 @@ fn refresh_options_for_view(
             RefreshDispatch::new(RefreshScope::NAMESPACES, RefreshScope::NAMESPACES)
         }
         AppView::Bookmarks => full_refresh_options(include_flux, include_cluster_info),
-        AppView::HelmCharts | AppView::PortForwarding => {
-            RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE)
-        }
+        AppView::HelmCharts => RefreshDispatch::new(RefreshScope::HELM, RefreshScope::HELM),
+        AppView::PortForwarding => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
         AppView::Issues => RefreshDispatch::new(
             RefreshScope::CORE_OVERVIEW,
             RefreshScope::CORE_OVERVIEW
@@ -1131,6 +1130,12 @@ fn refresh_options_for_view(
                 .union(RefreshScope::FLUX),
         ),
         AppView::Events => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
+        AppView::Endpoints
+        | AppView::Ingresses
+        | AppView::IngressClasses
+        | AppView::NetworkPolicies => {
+            RefreshDispatch::new(RefreshScope::NETWORK, RefreshScope::NETWORK)
+        }
         AppView::ConfigMaps
         | AppView::Secrets
         | AppView::ResourceQuotas
@@ -1143,6 +1148,7 @@ fn refresh_options_for_view(
         AppView::PersistentVolumeClaims | AppView::PersistentVolumes | AppView::StorageClasses => {
             RefreshDispatch::new(RefreshScope::STORAGE, RefreshScope::STORAGE)
         }
+        AppView::HelmReleases => RefreshDispatch::new(RefreshScope::HELM, RefreshScope::HELM),
         AppView::FluxCDAlertProviders
         | AppView::FluxCDAlerts
         | AppView::FluxCDAll
@@ -1163,16 +1169,12 @@ fn refresh_options_for_view(
         AppView::Extensions => {
             RefreshDispatch::new(RefreshScope::EXTENSIONS, RefreshScope::EXTENSIONS)
         }
-        _ if view_prefers_secondary_refresh(view) => {
-            full_refresh_options(include_flux, include_cluster_info)
-        }
-        _ => fast_refresh_options(include_flux),
     }
 }
 
 fn mutation_refresh_options(view: AppView, include_flux: bool) -> RefreshDispatch {
     if view_prefers_secondary_refresh(view) {
-        full_refresh_options(include_flux, false)
+        refresh_options_for_view(view, include_flux, false)
     } else {
         fast_refresh_options(include_flux)
     }
@@ -7596,17 +7598,26 @@ mod tests {
 
     #[test]
     fn bucket_views_refresh_only_their_own_scope() {
+        let network = refresh_options_for_view(AppView::Endpoints, false, false);
         let config = refresh_options_for_view(AppView::ConfigMaps, false, false);
         let storage = refresh_options_for_view(AppView::PersistentVolumes, false, false);
+        let helm_charts = refresh_options_for_view(AppView::HelmCharts, false, false);
+        let helm_releases = refresh_options_for_view(AppView::HelmReleases, false, false);
         let security = refresh_options_for_view(AppView::ServiceAccounts, false, false);
         let flux = refresh_options_for_view(AppView::FluxCDAll, false, false);
         let events = refresh_options_for_view(AppView::Events, false, false);
         let extensions = refresh_options_for_view(AppView::Extensions, false, false);
 
+        assert_eq!(network.primary_scope, RefreshScope::NETWORK);
+        assert_eq!(network.options.scope, RefreshScope::NETWORK);
         assert_eq!(config.primary_scope, RefreshScope::CONFIG);
         assert_eq!(config.options.scope, RefreshScope::CONFIG);
         assert_eq!(storage.primary_scope, RefreshScope::STORAGE);
         assert_eq!(storage.options.scope, RefreshScope::STORAGE);
+        assert_eq!(helm_charts.primary_scope, RefreshScope::HELM);
+        assert_eq!(helm_charts.options.scope, RefreshScope::HELM);
+        assert_eq!(helm_releases.primary_scope, RefreshScope::HELM);
+        assert_eq!(helm_releases.options.scope, RefreshScope::HELM);
         assert_eq!(security.primary_scope, RefreshScope::SECURITY);
         assert_eq!(security.options.scope, RefreshScope::SECURITY);
         assert_eq!(flux.primary_scope, RefreshScope::FLUX);
@@ -7653,22 +7664,23 @@ mod tests {
     }
 
     #[test]
-    fn mutation_refresh_profiles_restore_core_dependency_refresh() {
+    fn mutation_refresh_profiles_prioritize_active_scope() {
         let deployments = mutation_refresh_options(AppView::Deployments, false);
         let cronjobs = mutation_refresh_options(AppView::CronJobs, false);
         let config = mutation_refresh_options(AppView::ConfigMaps, false);
+        let network = mutation_refresh_options(AppView::Endpoints, false);
+        let helm = mutation_refresh_options(AppView::HelmReleases, false);
 
         assert_eq!(deployments.primary_scope, RefreshScope::CORE_OVERVIEW);
         assert_eq!(deployments.options.scope, RefreshScope::CORE_OVERVIEW);
         assert_eq!(cronjobs.primary_scope, RefreshScope::CORE_OVERVIEW);
         assert_eq!(cronjobs.options.scope, RefreshScope::CORE_OVERVIEW);
-        assert_eq!(config.primary_scope, RefreshScope::CORE_OVERVIEW);
-        assert!(
-            config
-                .options
-                .scope
-                .contains(RefreshScope::LEGACY_SECONDARY)
-        );
+        assert_eq!(config.primary_scope, RefreshScope::CONFIG);
+        assert_eq!(config.options.scope, RefreshScope::CONFIG);
+        assert_eq!(network.primary_scope, RefreshScope::NETWORK);
+        assert_eq!(network.options.scope, RefreshScope::NETWORK);
+        assert_eq!(helm.primary_scope, RefreshScope::HELM);
+        assert_eq!(helm.options.scope, RefreshScope::HELM);
     }
 
     #[test]
