@@ -32,7 +32,7 @@ pub struct OwnerRefInfo {
 }
 
 /// Lightweight pod view used by state management and rendering.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct PodInfo {
     pub name: String,
     pub namespace: String,

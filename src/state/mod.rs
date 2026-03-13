@@ -3,6 +3,7 @@
 pub mod alerts;
 pub mod issues;
 pub mod port_forward;
+pub mod watch;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -1221,6 +1222,35 @@ impl GlobalState {
             self.publish_snapshot();
         }
         changed
+    }
+
+    /// Applies a watch-backed resource update to the snapshot.
+    ///
+    /// Only updates the snapshot if the data actually changed, avoiding
+    /// unnecessary version bumps and downstream cache invalidation.
+    pub fn apply_watch_update(&mut self, update: watch::WatchUpdate) {
+        let mut changed = false;
+        {
+            let snap = Arc::make_mut(&mut self.snapshot);
+            match update.data {
+                watch::WatchPayload::Pods(pods) => {
+                    if snap.pods != pods {
+                        snap.pods = pods;
+                        snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+                        changed = true;
+                    }
+                    let slot = &mut snap.view_load_states[AppView::Pods.index()];
+                    if *slot != ViewLoadState::Ready {
+                        *slot = ViewLoadState::Ready;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        if changed {
+            self.snapshot_dirty = true;
+            self.publish_snapshot();
+        }
     }
 
     pub fn apply_events_update(&mut self, events: Vec<K8sEventInfo>) {
@@ -4277,6 +4307,77 @@ mod tests {
         assert_eq!(
             info.desired_count - info.ready_count,
             info.unavailable_count
+        );
+    }
+
+    fn make_pod_info(name: &str) -> PodInfo {
+        PodInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn apply_watch_update_updates_pods() {
+        let mut state = GlobalState::default();
+        let initial_version = state.snapshot.snapshot_version;
+
+        let update = watch::WatchUpdate {
+            resource: watch::WatchedResource::Pods,
+            context_generation: 0,
+            data: watch::WatchPayload::Pods(vec![make_pod_info("pod-a"), make_pod_info("pod-b")]),
+        };
+
+        state.apply_watch_update(update);
+
+        assert_eq!(state.snapshot.pods.len(), 2);
+        assert_eq!(state.snapshot.pods[0].name, "pod-a");
+        assert!(state.snapshot.snapshot_version > initial_version);
+    }
+
+    #[test]
+    fn apply_watch_update_identical_data_no_version_bump() {
+        let mut state = GlobalState::default();
+        let pods = vec![make_pod_info("pod-a")];
+
+        // First update
+        let update = watch::WatchUpdate {
+            resource: watch::WatchedResource::Pods,
+            context_generation: 0,
+            data: watch::WatchPayload::Pods(pods.clone()),
+        };
+        state.apply_watch_update(update);
+        let version_after_first = state.snapshot.snapshot_version;
+
+        // Second identical update
+        let update = watch::WatchUpdate {
+            resource: watch::WatchedResource::Pods,
+            context_generation: 0,
+            data: watch::WatchPayload::Pods(pods),
+        };
+        state.apply_watch_update(update);
+        assert_eq!(state.snapshot.snapshot_version, version_after_first);
+    }
+
+    #[test]
+    fn apply_watch_update_sets_pod_view_ready() {
+        let mut state = GlobalState::default();
+        assert_eq!(
+            state.snapshot.view_load_states[AppView::Pods.index()],
+            ViewLoadState::Idle
+        );
+
+        let update = watch::WatchUpdate {
+            resource: watch::WatchedResource::Pods,
+            context_generation: 0,
+            data: watch::WatchPayload::Pods(vec![make_pod_info("pod-a")]),
+        };
+        state.apply_watch_update(update);
+        assert_eq!(
+            state.snapshot.view_load_states[AppView::Pods.index()],
+            ViewLoadState::Ready
         );
     }
 }
