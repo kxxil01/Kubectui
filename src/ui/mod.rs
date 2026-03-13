@@ -16,11 +16,7 @@ use ratatui::{
         Table, TableState,
     },
 };
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{borrow::Cow, collections::HashMap, sync::LazyLock};
 
 use crate::{
     app::{
@@ -38,7 +34,10 @@ use crate::{
         theme::Theme,
     },
 };
-use filter_cache::{cached_filter_indices_with_variant, data_fingerprint};
+use filter_cache::{
+    DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+    cached_filter_indices_with_variant, data_fingerprint,
+};
 
 /// Case-insensitive substring match without allocating a new lowercase string.
 #[inline]
@@ -326,23 +325,14 @@ pub(crate) fn workload_sort_suffix(sort: Option<WorkloadSortState>) -> String {
         .unwrap_or_default()
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PodDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    minute_bucket: i64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct PodDerivedCell {
     age: String,
 }
 
-type PodDerivedCacheValue = Arc<Vec<PodDerivedCell>>;
-static POD_DERIVED_CACHE: LazyLock<Mutex<Option<(PodDerivedCacheKey, PodDerivedCacheValue)>>> =
-    LazyLock::new(|| Mutex::new(None));
+type PodDerivedCacheValue = DerivedRowsCacheValue<PodDerivedCell>;
+static POD_DERIVED_CACHE: LazyLock<DerivedRowsCache<PodDerivedCell>> =
+    LazyLock::new(Default::default);
 
 fn cached_pod_derived(
     cluster: &ClusterSnapshot,
@@ -351,22 +341,15 @@ fn cached_pod_derived(
     now_unix: i64,
     variant: u64,
 ) -> PodDerivedCacheValue {
-    let key = PodDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.pods, cluster.snapshot_version),
-        minute_bucket: now_unix / 60,
         variant,
+        freshness_bucket: now_unix / 60,
     };
 
-    if let Ok(cache) = POD_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&POD_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&pod_idx| {
@@ -375,14 +358,8 @@ fn cached_pod_derived(
                     age: format_age_from_timestamp(pod.created_at, now_unix),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = POD_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 fn truncate_error(msg: &str, max_len: usize) -> &str {
@@ -459,16 +436,16 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .split(body_root[0])
     };
 
-    let sidebar_counts: Vec<(AppView, usize)> = {
+    let sidebar_counts: Vec<(AppView, Option<usize>)> = {
         use crate::app::SidebarItem;
         crate::app::sidebar_rows(&app.collapsed_groups)
             .iter()
             .filter_map(|item| {
                 if let SidebarItem::View(view) = item {
                     if *view == AppView::Bookmarks {
-                        Some((*view, app.bookmark_count()))
+                        Some((*view, Some(app.bookmark_count())))
                     } else {
-                        cluster.resource_count(*view).map(|c| (*view, c))
+                        Some((*view, cluster.resource_count(*view)))
                     }
                 } else {
                     None
@@ -1531,6 +1508,23 @@ mod tests {
             .expect("render should not panic");
     }
 
+    fn render_to_string(app: &AppState, snapshot: &ClusterSnapshot) -> String {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, app, snapshot))
+            .expect("render should not panic");
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
     fn app_with_view(view: AppView) -> AppState {
         let mut app = AppState::default();
         while app.view() != view {
@@ -1767,6 +1761,65 @@ mod tests {
 
         let app = app_with_view(AppView::Dashboard);
         draw(&app, &snapshot);
+    }
+
+    #[test]
+    fn sidebar_uses_unknown_count_placeholder_for_unloaded_scopes() {
+        let text = render_to_string(
+            &app_with_view(AppView::Dashboard),
+            &ClusterSnapshot::default(),
+        );
+        assert!(text.contains("Pods (…)"));
+        assert!(text.contains("Services (…)"));
+        assert!(!text.contains("Pods (0)"));
+    }
+
+    #[test]
+    fn dashboard_metrics_state_is_explicit() {
+        let mut loading_snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            loaded_scope: crate::state::RefreshScope::CORE_OVERVIEW,
+            ..ClusterSnapshot::default()
+        };
+        loading_snapshot.nodes.push(NodeInfo {
+            name: "node-a".to_string(),
+            ready: true,
+            ..NodeInfo::default()
+        });
+        loading_snapshot.pods.push(PodInfo {
+            name: "pod-a".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+
+        let loading_text = render_to_string(&app_with_view(AppView::Dashboard), &loading_snapshot);
+        assert!(loading_text.contains("Metrics   loading..."));
+
+        let unavailable_snapshot = ClusterSnapshot {
+            loaded_scope: crate::state::RefreshScope::CORE_OVERVIEW
+                .union(crate::state::RefreshScope::METRICS),
+            ..loading_snapshot
+        };
+        let unavailable_text =
+            render_to_string(&app_with_view(AppView::Dashboard), &unavailable_snapshot);
+        assert!(unavailable_text.contains("Metrics   unavailable"));
+    }
+
+    #[test]
+    fn issues_view_marks_partial_coverage_until_backfill_finishes() {
+        let snapshot = ClusterSnapshot {
+            loaded_scope: crate::state::RefreshScope::CORE_OVERVIEW,
+            pods: vec![PodInfo {
+                name: "stuck-pod".to_string(),
+                namespace: "default".to_string(),
+                status: "Pending".to_string(),
+                ..PodInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        };
+        let text = render_to_string(&app_with_view(AppView::Issues), &snapshot);
+        assert!(text.contains("partial coverage"));
     }
 
     /// Verifies nodes view renders without panic for multiple list sizes.
@@ -2267,6 +2320,22 @@ mod tests {
     fn render_helm_repos_empty_smoke() {
         let app = app_with_view(AppView::HelmCharts);
         draw(&app, &ClusterSnapshot::default());
+    }
+
+    #[test]
+    fn helm_repositories_empty_state_is_not_stuck_loading_once_local_data_is_ready() {
+        let snapshot = ClusterSnapshot {
+            loaded_scope: crate::state::RefreshScope::LOCAL_HELM_REPOSITORIES,
+            view_load_states: {
+                let mut states = [ViewLoadState::Idle; AppView::COUNT];
+                states[AppView::HelmCharts.index()] = ViewLoadState::Ready;
+                states
+            },
+            ..ClusterSnapshot::default()
+        };
+        let text = render_to_string(&app_with_view(AppView::HelmCharts), &snapshot);
+        assert!(text.contains("No Helm repositories configured"));
+        assert!(!text.contains("Loading Helm repositories"));
     }
 
     /// Verifies FluxCD "all" view renders without panic.

@@ -13,7 +13,7 @@ use ratatui::{
 use crate::{
     k8s::dtos::AlertSeverity,
     state::{
-        ClusterSnapshot,
+        ClusterSnapshot, RefreshScope,
         issues::{compute_issues, filtered_issue_indices},
     },
     ui::{
@@ -34,6 +34,11 @@ pub fn render_issues(
     let theme = default_theme();
     let query = search.trim();
     let all_issues = compute_issues(cluster);
+    let diagnostics_loaded = cluster.scope_loaded(
+        RefreshScope::CORE_OVERVIEW
+            .union(RefreshScope::LEGACY_SECONDARY)
+            .union(RefreshScope::FLUX),
+    );
 
     let indices = filtered_issue_indices(&all_issues, query);
 
@@ -42,7 +47,11 @@ pub fn render_issues(
             cluster,
             AppView::Issues,
             query,
-            "  Scanning for issues...",
+            if diagnostics_loaded {
+                "  Scanning for issues..."
+            } else {
+                "  Scanning for issues... diagnostic backfill still running"
+            },
             "  No issues detected — cluster looks healthy",
             "  No issues match the search query",
         );
@@ -102,10 +111,18 @@ pub fn render_issues(
     let mut table_state = TableState::default().with_selected(Some(window.selected));
 
     let title = if query.is_empty() {
-        format!(" Issues ({total}) ")
+        if diagnostics_loaded {
+            format!(" Issues ({total}) ")
+        } else {
+            format!(" Issues ({total}) [partial coverage] ")
+        }
     } else {
         let all = all_issues.len();
-        format!(" Issues ({total} of {all}) [/{query}]")
+        if diagnostics_loaded {
+            format!(" Issues ({total} of {all}) [/{query}]")
+        } else {
+            format!(" Issues ({total} of {all}) [/{query}] [partial coverage]")
+        }
     };
 
     let table = Table::new(

@@ -9,7 +9,7 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use kubectui::{
     k8s::dtos::{
-        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
+        ClusterRoleBindingInfo, ClusterRoleInfo, ClusterVersionInfo, ConfigMapInfo, CronJobInfo,
         CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo,
         FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
         K8sEventInfo, LimitRangeInfo, NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo,
@@ -63,6 +63,7 @@ pub fn make_pod(name: &str, namespace: &str, status: &str) -> PodInfo {
 #[allow(dead_code)]
 pub struct MockDataSource {
     pub url: String,
+    pub context: Option<String>,
     pub nodes: Vec<NodeInfo>,
     pub namespaces: Vec<String>,
     pub pods: Vec<PodInfo>,
@@ -92,6 +93,7 @@ impl Default for MockDataSource {
     fn default() -> Self {
         Self {
             url: "https://mock.cluster".to_string(),
+            context: Some("mock".to_string()),
             nodes: vec![make_node("n1", true, "worker")],
             namespaces: vec!["default".to_string(), "kube-system".to_string()],
             pods: vec![make_pod("p1", "default", "Running")],
@@ -147,6 +149,10 @@ impl Default for MockDataSource {
 impl ClusterDataSource for MockDataSource {
     fn cluster_url(&self) -> &str {
         &self.url
+    }
+
+    fn cluster_context(&self) -> Option<&str> {
+        self.context.as_deref()
     }
 
     async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>> {
@@ -337,20 +343,23 @@ impl ClusterDataSource for MockDataSource {
         }
     }
 
-    async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {
+    async fn fetch_cluster_version(&self) -> Result<ClusterVersionInfo> {
         self.calls.fetch_add(1, Ordering::SeqCst);
         if self.fail {
             return Err(anyhow!("mock cluster info error"));
         }
-        Ok(ClusterInfo {
-            context: Some("mock".to_string()),
-            server: self.url.clone(),
-            git_version: Some("v1.30.0".to_string()),
-            platform: Some("linux/amd64".to_string()),
-            node_count: self.nodes.len(),
-            ready_nodes: self.nodes.iter().filter(|n| n.ready).count(),
-            pod_count: self.pods.len(),
+        Ok(ClusterVersionInfo {
+            git_version: "v1.30.0".to_string(),
+            platform: "linux/amd64".to_string(),
         })
+    }
+
+    async fn fetch_cluster_pod_count(&self) -> Result<usize> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock cluster info error"));
+        }
+        Ok(self.pods.len())
     }
 
     async fn fetch_endpoints(&self, _namespace: Option<&str>) -> Result<Vec<EndpointInfo>> {

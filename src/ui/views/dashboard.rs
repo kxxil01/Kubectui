@@ -13,7 +13,7 @@ use ratatui::{
 use crate::{
     k8s::dtos::{AlertItem, AlertSeverity},
     state::{
-        ClusterSnapshot,
+        ClusterSnapshot, RefreshScope,
         alerts::{
             ClusterResourceSummary, DashboardHealthState, DashboardInsights, DashboardStats,
             NamespaceUtilizationSummary, PodConsumerSummary, TOP_N, compute_alerts,
@@ -214,6 +214,13 @@ fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot
         .last_updated
         .map(|t| t.format("%H:%M:%S").to_string())
         .unwrap_or_else(|| "—".to_string());
+    let (metrics_label, metrics_style) = if !snapshot.scope_loaded(RefreshScope::METRICS) {
+        ("loading...", theme.badge_warning_style())
+    } else if snapshot.node_metrics.is_empty() && snapshot.pod_metrics.is_empty() {
+        ("unavailable", theme.badge_error_style())
+    } else {
+        ("ready", theme.badge_success_style())
+    };
 
     let lines = vec![
         Line::from(vec![
@@ -233,6 +240,10 @@ fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot
             Span::styled(phase_label, phase_style),
             Span::styled("  updated ", theme.inactive_style()),
             Span::styled(last_updated, Style::default().fg(theme.fg_dim)),
+        ]),
+        Line::from(vec![
+            Span::styled("  Metrics   ", theme.inactive_style()),
+            Span::styled(metrics_label, metrics_style),
         ]),
     ];
 
