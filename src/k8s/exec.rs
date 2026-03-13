@@ -263,7 +263,7 @@ async fn pipe_exec_output(
         match reader.read(&mut buf).await {
             Ok(0) => break,
             Ok(n) => {
-                let chunk = String::from_utf8_lossy(&buf[..n]).to_string();
+                let chunk = String::from_utf8_lossy(&buf[..n]).into_owned();
                 let _ = update_tx
                     .send(ExecEvent::Output {
                         session_id,

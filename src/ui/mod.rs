@@ -186,7 +186,8 @@ pub(crate) fn responsive_table_widths_vec(area_width: u16, wide: &[Constraint]) 
         remainders.push((scaled % total_weight, idx));
     }
 
-    remainders.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    remainders
+        .sort_unstable_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
     let remaining = 100u16.saturating_sub(assigned);
     for idx in 0..usize::from(remaining) {
         percentages[remainders[idx % n].1] = percentages[remainders[idx % n].1].saturating_add(1);
@@ -1439,27 +1440,42 @@ pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
         .split(vertical[1])[1]
 }
 
+/// Formats a `DateTime<Utc>` timestamp as a human-readable age relative to `now_unix`.
 #[inline]
-fn format_age_from_timestamp(
+pub(crate) fn format_age_from_timestamp(
     created_at: Option<chrono::DateTime<chrono::Utc>>,
     now_unix: i64,
 ) -> String {
     let Some(created_at) = created_at else {
         return "-".to_string();
     };
-    let age_secs = now_unix - created_at.timestamp();
-    if age_secs < 0 {
-        return "future".to_string();
-    }
+    let age_secs = now_unix.saturating_sub(created_at.timestamp());
     let days = age_secs / 86_400;
     let hours = (age_secs % 86_400) / 3_600;
     let mins = (age_secs % 3_600) / 60;
     if days > 0 {
-        format!("{days}d{hours}h")
+        format!("{days}d {hours}h")
     } else if hours > 0 {
-        format!("{hours}h{mins}m")
+        format!("{hours}h {mins}m")
     } else {
         format!("{mins}m")
+    }
+}
+
+/// Truncates a string to `max_chars` characters, appending "..." if truncated.
+/// Returns `Cow::Borrowed` when no truncation is needed to avoid allocation.
+pub(crate) fn truncate_message(msg: &str, max_chars: usize) -> Cow<'_, str> {
+    if msg.len() <= max_chars {
+        return Cow::Borrowed(msg);
+    }
+    let char_count = msg.chars().count();
+    if char_count <= max_chars {
+        Cow::Borrowed(msg)
+    } else if max_chars < 4 {
+        Cow::Owned(msg.chars().take(max_chars).collect())
+    } else {
+        let truncated: String = msg.chars().take(max_chars - 3).collect();
+        Cow::Owned(format!("{truncated}..."))
     }
 }
 

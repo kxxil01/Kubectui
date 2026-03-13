@@ -955,7 +955,7 @@ impl K8sClient {
             .map(crate::k8s::conversions::event_to_info)
             .collect();
         // Sort by last_seen descending
-        events.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        events.sort_unstable_by(|a, b| b.last_seen.cmp(&a.last_seen));
         events.truncate(MAX_RECENT_EVENTS_ITEMS);
         Ok(events)
     }
@@ -1010,7 +1010,7 @@ impl K8sClient {
             });
         }
 
-        crds.sort_by(|a, b| a.name.cmp(&b.name));
+        crds.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         Ok(crds)
     }
 
@@ -1053,7 +1053,7 @@ impl K8sClient {
             })
             .collect::<Vec<_>>();
 
-        resources.sort_by(|a, b| a.name.cmp(&b.name));
+        resources.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         Ok(resources)
     }
 
@@ -2063,7 +2063,7 @@ impl K8sClient {
             .collect();
 
         // Sort by namespace then name
-        releases.sort_by(|a, b| a.namespace.cmp(&b.namespace).then(a.name.cmp(&b.name)));
+        releases.sort_unstable_by(|a, b| a.namespace.cmp(&b.namespace).then(a.name.cmp(&b.name)));
         Ok(releases)
     }
 
@@ -2111,7 +2111,7 @@ impl K8sClient {
             self.invalidate_flux_targets_cache().await;
         }
 
-        out.sort_by(|left, right| {
+        out.sort_unstable_by(|left, right| {
             left.namespace
                 .cmp(&right.namespace)
                 .then_with(|| left.kind.cmp(&right.kind))

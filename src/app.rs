@@ -693,7 +693,7 @@ pub fn filtered_pod_indices(
     };
 
     if let Some(sort) = sort {
-        out.sort_by(|left_idx, right_idx| {
+        out.sort_unstable_by(|left_idx, right_idx| {
             let left = &pods[*left_idx];
             let right = &pods[*right_idx];
             let ordered = match sort.column {
@@ -780,7 +780,7 @@ where
         .collect();
 
     if let Some(sort) = sort {
-        out.sort_by(|left_idx, right_idx| {
+        out.sort_unstable_by(|left_idx, right_idx| {
             let left = &items[*left_idx];
             let right = &items[*right_idx];
             let ordered = match sort.column {

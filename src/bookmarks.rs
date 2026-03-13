@@ -78,7 +78,7 @@ pub fn toggle_bookmark(
     }
 
     bookmarks.insert(0, BookmarkEntry::new(resource));
-    bookmarks.sort_by(|left, right| {
+    bookmarks.sort_unstable_by(|left, right| {
         right
             .bookmarked_at_unix
             .cmp(&left.bookmarked_at_unix)

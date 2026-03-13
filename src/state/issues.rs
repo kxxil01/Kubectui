@@ -441,7 +441,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
     }
 
     // Sort: severity rank (Error first), then category, then name.
-    issues.sort_by(|a, b| {
+    issues.sort_unstable_by(|a, b| {
         severity_rank(a.severity)
             .cmp(&severity_rank(b.severity))
             .then_with(|| a.category.cmp(&b.category))

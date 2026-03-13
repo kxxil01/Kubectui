@@ -143,7 +143,12 @@ pub fn render_nodes(
         let age = derived
             .get(idx)
             .map(|cell| Cow::Borrowed(cell.age.as_str()))
-            .unwrap_or_else(|| Cow::Owned(format_age(node.created_at, now_unix)));
+            .unwrap_or_else(|| {
+                Cow::Owned(crate::ui::format_age_from_timestamp(
+                    node.created_at,
+                    now_unix,
+                ))
+            });
         let (status_text, status_style) = match (node.ready, node.unschedulable) {
             (true, false) => ("● Ready", theme.badge_success_style()),
             (true, true) => ("● Ready SchedulingDisabled", theme.badge_warning_style()),
@@ -279,28 +284,9 @@ fn cached_node_derived(
             .map(|&node_idx| {
                 let node = &snapshot.nodes[node_idx];
                 NodeDerivedCell {
-                    age: format_age(node.created_at, now_unix),
+                    age: crate::ui::format_age_from_timestamp(node.created_at, now_unix),
                 }
             })
             .collect()
     })
-}
-
-#[inline]
-fn format_age(created_at: Option<chrono::DateTime<Utc>>, now_unix: i64) -> String {
-    let Some(created_at) = created_at else {
-        return "N/A".to_string();
-    };
-    let age_secs = now_unix.saturating_sub(created_at.timestamp());
-    let days = age_secs / 86_400;
-    let hours = (age_secs % 86_400) / 3_600;
-    let mins = (age_secs % 3_600) / 60;
-
-    if days > 0 {
-        format!("{days}d {hours}h")
-    } else if hours > 0 {
-        format!("{hours}h {mins}m")
-    } else {
-        format!("{}m", mins.max(0))
-    }
 }
