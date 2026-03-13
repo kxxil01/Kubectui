@@ -1391,18 +1391,25 @@ impl GlobalState {
         let include_secondary_resources = options.include_secondary_resources;
         let skip_core = options.skip_core;
 
-        // Capture previous core resource data for fallback when skip_core is set.
-        let prev_nodes = self.snapshot.nodes.clone();
-        let prev_pods = self.snapshot.pods.clone();
-        let prev_services = self.snapshot.services.clone();
-        let prev_deployments = self.snapshot.deployments.clone();
-        let prev_statefulsets = self.snapshot.statefulsets.clone();
-        let prev_daemonsets = self.snapshot.daemonsets.clone();
-        let prev_replicasets = self.snapshot.replicasets.clone();
-        let prev_replication_controllers = self.snapshot.replication_controllers.clone();
-        let prev_jobs = self.snapshot.jobs.clone();
-        let prev_cronjobs = self.snapshot.cronjobs.clone();
-        let prev_namespace_list = self.snapshot.namespace_list.clone();
+        // Capture previous core resource data only when skip_core is set,
+        // avoiding 11 Vec clones on every normal refresh cycle.
+        let prev_core = if skip_core {
+            Some((
+                self.snapshot.nodes.clone(),
+                self.snapshot.pods.clone(),
+                self.snapshot.services.clone(),
+                self.snapshot.deployments.clone(),
+                self.snapshot.statefulsets.clone(),
+                self.snapshot.daemonsets.clone(),
+                self.snapshot.replicasets.clone(),
+                self.snapshot.replication_controllers.clone(),
+                self.snapshot.jobs.clone(),
+                self.snapshot.cronjobs.clone(),
+                self.snapshot.namespace_list.clone(),
+            ))
+        } else {
+            None
+        };
 
         let flux_fetch = async move {
             if include_flux {
@@ -1458,7 +1465,21 @@ impl GlobalState {
         // When skip_core is true (secondary-only backfill pass), wave1 returns previous
         // snapshot values to avoid redundant API calls for core resources.
         let wave1 = async {
-            if skip_core {
+            if let Some((
+                prev_nodes,
+                prev_pods,
+                prev_services,
+                prev_deployments,
+                prev_statefulsets,
+                prev_daemonsets,
+                prev_replicasets,
+                prev_replication_controllers,
+                prev_jobs,
+                prev_cronjobs,
+                prev_namespace_list,
+            )) = prev_core
+            {
+                let (flux_res, cluster_info_res) = tokio::join!(flux_fetch, cluster_info_fetch);
                 (
                     Ok(prev_nodes),
                     Ok(prev_pods),
@@ -1471,8 +1492,8 @@ impl GlobalState {
                     Ok(prev_jobs),
                     Ok(prev_cronjobs),
                     Ok(prev_namespace_list),
-                    flux_fetch.await,
-                    cluster_info_fetch.await,
+                    flux_res,
+                    cluster_info_res,
                 )
             } else {
                 tokio::join!(
