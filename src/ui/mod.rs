@@ -2322,6 +2322,22 @@ mod tests {
         draw(&app, &ClusterSnapshot::default());
     }
 
+    #[test]
+    fn helm_repositories_empty_state_is_not_stuck_loading_once_local_data_is_ready() {
+        let snapshot = ClusterSnapshot {
+            loaded_scope: crate::state::RefreshScope::LOCAL_HELM_REPOSITORIES,
+            view_load_states: {
+                let mut states = [ViewLoadState::Idle; AppView::COUNT];
+                states[AppView::HelmCharts.index()] = ViewLoadState::Ready;
+                states
+            },
+            ..ClusterSnapshot::default()
+        };
+        let text = render_to_string(&app_with_view(AppView::HelmCharts), &snapshot);
+        assert!(text.contains("No Helm repositories configured"));
+        assert!(!text.contains("Loading Helm repositories"));
+    }
+
     /// Verifies FluxCD "all" view renders without panic.
     #[test]
     fn render_fluxcd_all_view_smoke() {

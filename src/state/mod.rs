@@ -654,6 +654,7 @@ impl RefreshScope {
     pub const EXTENSIONS: Self = Self(1 << 17);
     pub const FLUX: Self = Self(1 << 18);
     pub const EVENTS: Self = Self(1 << 19);
+    pub const LOCAL_HELM_REPOSITORIES: Self = Self(1 << 20);
     pub const CORE_OVERVIEW: Self = Self(
         Self::NODES.0
             | Self::PODS.0
@@ -675,8 +676,13 @@ impl RefreshScope {
             | Self::HELM.0
             | Self::EXTENSIONS.0,
     );
-    pub const DEFAULT: Self =
-        Self(Self::CORE_OVERVIEW.0 | Self::METRICS.0 | Self::LEGACY_SECONDARY.0 | Self::FLUX.0);
+    pub const DEFAULT: Self = Self(
+        Self::CORE_OVERVIEW.0
+            | Self::METRICS.0
+            | Self::LEGACY_SECONDARY.0
+            | Self::FLUX.0
+            | Self::LOCAL_HELM_REPOSITORIES.0,
+    );
 
     pub const fn is_empty(self) -> bool {
         self.0 == 0
@@ -1066,7 +1072,7 @@ impl GlobalState {
             AppView::Jobs => RefreshScope::JOBS,
             AppView::CronJobs => RefreshScope::CRONJOBS,
             AppView::Services => RefreshScope::SERVICES,
-            AppView::HelmCharts => RefreshScope::NONE,
+            AppView::HelmCharts => RefreshScope::LOCAL_HELM_REPOSITORIES,
             AppView::Endpoints
             | AppView::Ingresses
             | AppView::IngressClasses
@@ -1557,6 +1563,9 @@ impl GlobalState {
         let fetch_helm = options.scope.intersects(RefreshScope::HELM);
         let fetch_extensions = options.scope.intersects(RefreshScope::EXTENSIONS);
         let fetch_flux = options.scope.intersects(RefreshScope::FLUX);
+        let fetch_local_helm_repositories = options
+            .scope
+            .intersects(RefreshScope::LOCAL_HELM_REPOSITORIES);
         let fetch_cluster_info = options.include_cluster_info;
         let skip_core = options.skip_core;
         let wave1 = tokio::join!(
@@ -2143,11 +2152,14 @@ impl GlobalState {
             .len();
 
         let prev_loaded_scope = self.snapshot.loaded_scope;
+        let prev_connection_health = self.snapshot.connection_health;
         {
             let snap = Arc::make_mut(&mut self.snapshot);
             snap.services_count = snap.services.len();
             snap.namespaces_count = namespaces_count;
-            snap.helm_repositories = crate::k8s::helm::read_helm_repositories();
+            if fetch_local_helm_repositories {
+                snap.helm_repositories = crate::k8s::helm::read_helm_repositories();
+            }
             snap.loaded_scope = prev_loaded_scope.union(options.completed_scope());
         }
         self.mark_refresh_completed(options);
@@ -2157,7 +2169,9 @@ impl GlobalState {
         snap.phase = DataPhase::Ready;
         snap.last_updated = Some(Utc::now());
         snap.failed_resource_count = errors.len();
-        snap.connection_health = if errors.is_empty() {
+        snap.connection_health = if total_fetches == 0 {
+            prev_connection_health
+        } else if errors.is_empty() {
             ConnectionHealth::Connected
         } else if errors.len() >= total_fetches {
             ConnectionHealth::Disconnected
@@ -3632,6 +3646,31 @@ mod tests {
                 },
             ),
             (
+                "helm_charts",
+                RefreshScope::LOCAL_HELM_REPOSITORIES,
+                ExpectedFetchCounts {
+                    total: 0,
+                    nodes: 0,
+                    pods: 0,
+                    services: 0,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 0,
+                    config_calls: 0,
+                    storage_calls: 0,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 0,
+                    cluster_pod_count: 0,
+                    node_metrics: 0,
+                    pod_metrics: 0,
+                    service_accounts: 0,
+                    pvcs: 0,
+                },
+            ),
+            (
                 "flux",
                 RefreshScope::FLUX,
                 ExpectedFetchCounts {
@@ -3697,6 +3736,48 @@ mod tests {
 
             assert_fetch_counts(scenario, &counters, expected);
         }
+    }
+
+    #[tokio::test]
+    async fn local_helm_repositories_refresh_marks_view_ready_without_touching_cluster_health() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+
+        state.begin_loading_transition(false);
+        state.mark_refresh_requested(refresh_options(
+            RefreshScope::LOCAL_HELM_REPOSITORIES,
+            false,
+        ));
+        assert_eq!(
+            state.snapshot().view_load_state(AppView::HelmCharts),
+            ViewLoadState::Loading
+        );
+
+        {
+            let snap = Arc::make_mut(&mut state.snapshot);
+            snap.connection_health = ConnectionHealth::Degraded(2);
+        }
+
+        state
+            .refresh_with_options(
+                &source,
+                Some("default"),
+                refresh_options(RefreshScope::LOCAL_HELM_REPOSITORIES, false),
+            )
+            .await
+            .expect("local helm repositories refresh should succeed");
+
+        let snapshot = state.snapshot();
+        assert_eq!(
+            snapshot.view_load_state(AppView::HelmCharts),
+            ViewLoadState::Ready
+        );
+        assert!(
+            snapshot
+                .loaded_scope
+                .contains(RefreshScope::LOCAL_HELM_REPOSITORIES)
+        );
+        assert_eq!(snapshot.connection_health, ConnectionHealth::Degraded(2));
     }
 
     #[test]

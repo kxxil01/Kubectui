@@ -967,7 +967,9 @@ fn finish_mutation_success(
 }
 
 fn full_refresh_options(include_flux: bool, include_cluster_info: bool) -> RefreshDispatch {
-    let mut scope = RefreshScope::CORE_OVERVIEW.union(RefreshScope::LEGACY_SECONDARY);
+    let mut scope = RefreshScope::CORE_OVERVIEW
+        .union(RefreshScope::LEGACY_SECONDARY)
+        .union(RefreshScope::LOCAL_HELM_REPOSITORIES);
     if include_flux {
         scope = scope.union(RefreshScope::FLUX);
     }
@@ -1121,7 +1123,10 @@ fn refresh_options_for_view(
             RefreshDispatch::new(RefreshScope::NAMESPACES, RefreshScope::NAMESPACES)
         }
         AppView::Bookmarks => full_refresh_options(include_flux, include_cluster_info),
-        AppView::HelmCharts => RefreshDispatch::new(RefreshScope::HELM, RefreshScope::HELM),
+        AppView::HelmCharts => RefreshDispatch::new(
+            RefreshScope::LOCAL_HELM_REPOSITORIES,
+            RefreshScope::LOCAL_HELM_REPOSITORIES,
+        ),
         AppView::PortForwarding => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
         AppView::Issues => RefreshDispatch::new(
             RefreshScope::CORE_OVERVIEW,
@@ -7614,8 +7619,14 @@ mod tests {
         assert_eq!(config.options.scope, RefreshScope::CONFIG);
         assert_eq!(storage.primary_scope, RefreshScope::STORAGE);
         assert_eq!(storage.options.scope, RefreshScope::STORAGE);
-        assert_eq!(helm_charts.primary_scope, RefreshScope::HELM);
-        assert_eq!(helm_charts.options.scope, RefreshScope::HELM);
+        assert_eq!(
+            helm_charts.primary_scope,
+            RefreshScope::LOCAL_HELM_REPOSITORIES
+        );
+        assert_eq!(
+            helm_charts.options.scope,
+            RefreshScope::LOCAL_HELM_REPOSITORIES
+        );
         assert_eq!(helm_releases.primary_scope, RefreshScope::HELM);
         assert_eq!(helm_releases.options.scope, RefreshScope::HELM);
         assert_eq!(security.primary_scope, RefreshScope::SECURITY);
