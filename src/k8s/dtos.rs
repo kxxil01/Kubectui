@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Lightweight node view used by state management and rendering.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct NodeInfo {
     pub name: String,
     pub ready: bool,
@@ -32,7 +32,7 @@ pub struct OwnerRefInfo {
 }
 
 /// Lightweight pod view used by state management and rendering.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct PodInfo {
     pub name: String,
     pub namespace: String,
@@ -52,7 +52,7 @@ pub struct PodInfo {
 }
 
 /// Lightweight service view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ServiceInfo {
     pub name: String,
     pub namespace: String,
@@ -65,7 +65,7 @@ pub struct ServiceInfo {
 }
 
 /// Lightweight deployment view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct DeploymentInfo {
     pub name: String,
     pub namespace: String,
@@ -80,7 +80,7 @@ pub struct DeploymentInfo {
 }
 
 /// Lightweight StatefulSet view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct StatefulSetInfo {
     pub name: String,
     pub namespace: String,
@@ -94,7 +94,7 @@ pub struct StatefulSetInfo {
 }
 
 /// Lightweight DaemonSet view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct DaemonSetInfo {
     pub name: String,
     pub namespace: String,
@@ -190,7 +190,7 @@ pub struct ClusterRoleBindingInfo {
 }
 
 /// Lightweight ReplicaSet view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ReplicaSetInfo {
     pub name: String,
     pub namespace: String,
@@ -204,7 +204,7 @@ pub struct ReplicaSetInfo {
 }
 
 /// Lightweight ReplicationController view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ReplicationControllerInfo {
     pub name: String,
     pub namespace: String,
@@ -217,7 +217,7 @@ pub struct ReplicationControllerInfo {
 }
 
 /// Lightweight Job view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct JobInfo {
     pub name: String,
     pub namespace: String,
@@ -235,7 +235,7 @@ pub struct JobInfo {
 }
 
 /// Lightweight CronJob view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct CronJobInfo {
     pub name: String,
     pub namespace: String,
