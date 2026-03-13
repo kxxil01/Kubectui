@@ -19,11 +19,10 @@ use k8s_openapi::api::{
     },
     networking::v1::{Ingress, IngressClass, NetworkPolicy},
     policy::v1::PodDisruptionBudget,
-    rbac::v1::{ClusterRole, ClusterRoleBinding, PolicyRule, Role, RoleBinding, Subject},
+    rbac::v1::{ClusterRole, ClusterRoleBinding, Role, RoleBinding},
     scheduling::v1::PriorityClass,
 };
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
-use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::{
     Api, Client, Config,
     api::{
@@ -548,25 +547,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let service_accounts = list
             .into_iter()
-            .map(|sa| {
-                let created_at = sa.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-
-                ServiceAccountInfo {
-                    name: sa.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: sa
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    secrets_count: sa.secrets.as_ref().map_or(0, |v| v.len()),
-                    image_pull_secrets_count: sa.image_pull_secrets.as_ref().map_or(0, |v| v.len()),
-                    automount_service_account_token: sa.automount_service_account_token,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::service_account_to_info)
             .collect();
 
         Ok(service_accounts)
@@ -588,30 +571,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let roles = list
             .into_iter()
-            .map(|role| {
-                let created_at = role.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-
-                RoleInfo {
-                    name: role
-                        .metadata
-                        .name
-                        .unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: role
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    rules: role
-                        .rules
-                        .as_ref()
-                        .map(|rules| rules.iter().map(rule_from_policy_rule).collect())
-                        .unwrap_or_default(),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::role_to_info)
             .collect();
 
         Ok(roles)
@@ -636,30 +598,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let role_bindings = list
             .into_iter()
-            .map(|rb| {
-                let created_at = rb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-                let role_ref = rb.role_ref;
-
-                RoleBindingInfo {
-                    name: rb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: rb
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    role_ref_kind: role_ref.kind,
-                    role_ref_name: role_ref.name,
-                    subjects: rb
-                        .subjects
-                        .as_ref()
-                        .map(|subjects| subjects.iter().map(subject_from_k8s).collect())
-                        .unwrap_or_default(),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::role_binding_to_info)
             .collect();
 
         Ok(role_bindings)
@@ -674,23 +615,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let cluster_roles = list
             .into_iter()
-            .map(|cr| {
-                let created_at = cr.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-
-                ClusterRoleInfo {
-                    name: cr.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    rules: cr
-                        .rules
-                        .as_ref()
-                        .map(|rules| rules.iter().map(rule_from_policy_rule).collect())
-                        .unwrap_or_default(),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::cluster_role_to_info)
             .collect();
 
         Ok(cluster_roles)
@@ -705,26 +632,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let cluster_role_bindings = list
             .into_iter()
-            .map(|crb| {
-                let created_at = crb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-                let role_ref = crb.role_ref;
-
-                ClusterRoleBindingInfo {
-                    name: crb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    role_ref_kind: role_ref.kind,
-                    role_ref_name: role_ref.name,
-                    subjects: crb
-                        .subjects
-                        .as_ref()
-                        .map(|subjects| subjects.iter().map(subject_from_k8s).collect())
-                        .unwrap_or_default(),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::cluster_role_binding_to_info)
             .collect();
 
         Ok(cluster_role_bindings)
@@ -797,49 +707,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let quotas = list
             .into_iter()
-            .map(|quota| {
-                let hard = quota
-                    .status
-                    .as_ref()
-                    .and_then(|status| status.hard.as_ref())
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(k, v)| (k, v.0))
-                    .collect::<BTreeMap<_, _>>();
-
-                let used = quota
-                    .status
-                    .as_ref()
-                    .and_then(|status| status.used.as_ref())
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|(k, v)| (k, v.0))
-                    .collect::<BTreeMap<_, _>>();
-
-                let percent_used = quota_percent_used(&hard, &used);
-                let created_at = quota.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-
-                ResourceQuotaInfo {
-                    name: quota
-                        .metadata
-                        .name
-                        .unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: quota
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    hard,
-                    used,
-                    percent_used,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::resource_quota_to_info)
             .collect();
 
         Ok(quotas)
@@ -861,48 +731,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let ranges = list
             .into_iter()
-            .map(|range| {
-                let limits = range
-                    .spec
-                    .as_ref()
-                    .map(|spec| {
-                        spec.limits
-                            .iter()
-                            .map(|item| LimitSpec {
-                                type_: item.type_.clone(),
-                                min: quantity_map_to_string_map(item.min.clone()),
-                                max: quantity_map_to_string_map(item.max.clone()),
-                                default: quantity_map_to_string_map(item.default.clone()),
-                                default_request: quantity_map_to_string_map(
-                                    item.default_request.clone(),
-                                ),
-                                max_limit_request_ratio: quantity_map_to_string_map(
-                                    item.max_limit_request_ratio.clone(),
-                                ),
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default();
-
-                let created_at = range.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-
-                LimitRangeInfo {
-                    name: range
-                        .metadata
-                        .name
-                        .unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: range
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    limits,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::limit_range_to_info)
             .collect();
 
         Ok(ranges)
@@ -927,34 +758,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let pdbs = list
             .into_iter()
-            .map(|pdb| {
-                let spec = pdb.spec.as_ref();
-                let status = pdb.status.as_ref();
-                let created_at = pdb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-
-                PodDisruptionBudgetInfo {
-                    name: pdb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: pdb
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    min_available: spec
-                        .and_then(|s| s.min_available.as_ref())
-                        .map(int_or_string_to_string),
-                    max_unavailable: spec
-                        .and_then(|s| s.max_unavailable.as_ref())
-                        .map(int_or_string_to_string),
-                    current_healthy: status.map(|s| s.current_healthy).unwrap_or(0),
-                    desired_healthy: status.map(|s| s.desired_healthy).unwrap_or(0),
-                    disruptions_allowed: status.map(|s| s.disruptions_allowed).unwrap_or(0),
-                    expected_pods: status.map(|s| s.expected_pods).unwrap_or(0),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::pdb_to_info)
             .collect();
 
         Ok(pdbs)
@@ -970,45 +776,9 @@ impl K8sClient {
             "failed fetching endpoints".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|ep| {
-                let created_at = ep
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let mut addresses = Vec::new();
-                let mut ports = Vec::new();
-                if let Some(subsets) = ep.subsets {
-                    for subset in &subsets {
-                        if let Some(addrs) = &subset.addresses {
-                            for addr in addrs {
-                                addresses.push(addr.ip.clone());
-                            }
-                        }
-                        if let Some(ps) = &subset.ports {
-                            for p in ps {
-                                ports.push(format!(
-                                    "{}/{}",
-                                    p.port,
-                                    p.protocol.as_deref().unwrap_or("TCP")
-                                ));
-                            }
-                        }
-                    }
-                }
-                EndpointInfo {
-                    name: ep.metadata.name.unwrap_or_default(),
-                    namespace: ep.metadata.namespace.unwrap_or_default(),
-                    addresses,
-                    ports,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::endpoint_to_info)
             .collect())
     }
 
@@ -1022,86 +792,9 @@ impl K8sClient {
             "failed fetching ingresses".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|ing| {
-                let created_at = ing
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let class = ing.spec.as_ref().and_then(|s| s.ingress_class_name.clone());
-                let hosts: Vec<String> = ing
-                    .spec
-                    .as_ref()
-                    .and_then(|s| s.rules.as_ref())
-                    .map(|rules| rules.iter().filter_map(|r| r.host.clone()).collect())
-                    .unwrap_or_default();
-                let address = ing
-                    .status
-                    .as_ref()
-                    .and_then(|s| s.load_balancer.as_ref())
-                    .and_then(|lb| lb.ingress.as_ref())
-                    .and_then(|ingresses| ingresses.first())
-                    .and_then(|i| i.ip.clone().or_else(|| i.hostname.clone()));
-                let backend_services: Vec<(String, String)> = ing
-                    .spec
-                    .as_ref()
-                    .map(|spec| {
-                        let mut backends = Vec::new();
-                        if let Some(default_backend) = &spec.default_backend
-                            && let Some(svc) = &default_backend.service
-                        {
-                            let port = svc
-                                .port
-                                .as_ref()
-                                .map(|p| {
-                                    p.name.clone().unwrap_or_else(|| {
-                                        p.number.map(|n| n.to_string()).unwrap_or_default()
-                                    })
-                                })
-                                .unwrap_or_default();
-                            backends.push((svc.name.clone(), port));
-                        }
-                        for rule in spec.rules.as_deref().unwrap_or_default() {
-                            if let Some(http) = &rule.http {
-                                for path in &http.paths {
-                                    if let Some(svc) = &path.backend.service {
-                                        let port = svc
-                                            .port
-                                            .as_ref()
-                                            .map(|p| {
-                                                p.name.clone().unwrap_or_else(|| {
-                                                    p.number
-                                                        .map(|n| n.to_string())
-                                                        .unwrap_or_default()
-                                                })
-                                            })
-                                            .unwrap_or_default();
-                                        backends.push((svc.name.clone(), port));
-                                    }
-                                }
-                            }
-                        }
-                        backends.sort();
-                        backends.dedup();
-                        backends
-                    })
-                    .unwrap_or_default();
-                IngressInfo {
-                    name: ing.metadata.name.unwrap_or_default(),
-                    namespace: ing.metadata.namespace.unwrap_or_default(),
-                    class,
-                    hosts,
-                    address,
-                    ports: vec!["80".to_string(), "443".to_string()],
-                    backend_services,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::ingress_to_info)
             .collect())
     }
 
@@ -1112,35 +805,9 @@ impl K8sClient {
             "failed fetching ingress classes".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|ic| {
-                let created_at = ic
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let is_default = ic
-                    .metadata
-                    .annotations
-                    .as_ref()
-                    .and_then(|a| a.get("ingressclass.kubernetes.io/is-default-class"))
-                    .map(|v| v == "true")
-                    .unwrap_or(false);
-                IngressClassInfo {
-                    name: ic.metadata.name.unwrap_or_default(),
-                    controller: ic
-                        .spec
-                        .as_ref()
-                        .map(|s| s.controller.clone().unwrap_or_default())
-                        .unwrap_or_default(),
-                    is_default,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::ingress_class_to_info)
             .collect())
     }
 
@@ -1157,54 +824,9 @@ impl K8sClient {
             "failed fetching network policies".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|np| {
-                let created_at = np
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let pod_selector = np
-                    .spec
-                    .as_ref()
-                    .map(|s| {
-                        s.pod_selector
-                            .match_labels
-                            .as_ref()
-                            .map(|ml| {
-                                ml.iter()
-                                    .map(|(k, v)| format!("{k}={v}"))
-                                    .collect::<Vec<_>>()
-                                    .join(",")
-                            })
-                            .unwrap_or_else(|| "<all>".to_string())
-                    })
-                    .unwrap_or_default();
-                let ingress_rules = np
-                    .spec
-                    .as_ref()
-                    .and_then(|s| s.ingress.as_ref())
-                    .map(|r| r.len())
-                    .unwrap_or(0);
-                let egress_rules = np
-                    .spec
-                    .as_ref()
-                    .and_then(|s| s.egress.as_ref())
-                    .map(|r| r.len())
-                    .unwrap_or(0);
-                NetworkPolicyInfo {
-                    name: np.metadata.name.unwrap_or_default(),
-                    namespace: np.metadata.namespace.unwrap_or_default(),
-                    pod_selector,
-                    ingress_rules,
-                    egress_rules,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::network_policy_to_info)
             .collect())
     }
 
@@ -1218,26 +840,9 @@ impl K8sClient {
             "failed fetching configmaps".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|cm| {
-                let created_at = cm
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let data_count = cm.data.as_ref().map(|d| d.len()).unwrap_or(0)
-                    + cm.binary_data.as_ref().map(|d| d.len()).unwrap_or(0);
-                ConfigMapInfo {
-                    name: cm.metadata.name.unwrap_or_default(),
-                    namespace: cm.metadata.namespace.unwrap_or_default(),
-                    data_count,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::config_map_to_info)
             .collect())
     }
 
@@ -1251,26 +856,9 @@ impl K8sClient {
             "failed fetching secrets".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|s| {
-                let created_at = s
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let data_count = s.data.as_ref().map(|d| d.len()).unwrap_or(0);
-                SecretInfo {
-                    name: s.metadata.name.unwrap_or_default(),
-                    namespace: s.metadata.namespace.unwrap_or_default(),
-                    type_: s.type_.unwrap_or_else(|| "Opaque".to_string()),
-                    data_count,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::secret_to_info)
             .collect())
     }
 
@@ -1284,33 +872,9 @@ impl K8sClient {
             "failed fetching HPAs".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|hpa| {
-                let created_at = hpa
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let spec = hpa.spec.as_ref();
-                let status = hpa.status.as_ref();
-                let reference = spec
-                    .map(|s| format!("{}/{}", s.scale_target_ref.kind, s.scale_target_ref.name))
-                    .unwrap_or_default();
-                HpaInfo {
-                    name: hpa.metadata.name.unwrap_or_default(),
-                    namespace: hpa.metadata.namespace.unwrap_or_default(),
-                    reference,
-                    min_replicas: spec.and_then(|s| s.min_replicas),
-                    max_replicas: spec.map(|s| s.max_replicas).unwrap_or(0),
-                    current_replicas: status.and_then(|s| s.current_replicas).unwrap_or(0),
-                    desired_replicas: status.map(|s| s.desired_replicas).unwrap_or(0),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::hpa_to_info)
             .collect())
     }
 
@@ -1324,40 +888,9 @@ impl K8sClient {
             "failed fetching PVCs".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|pvc| {
-                let created_at = pvc
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let spec = pvc.spec.as_ref();
-                let status = pvc.status.as_ref();
-                let access_modes = spec
-                    .and_then(|s| s.access_modes.as_ref())
-                    .map(|modes| modes.to_vec())
-                    .unwrap_or_default();
-                let capacity = status
-                    .and_then(|s| s.capacity.as_ref())
-                    .and_then(|c| c.get("storage"))
-                    .map(|q| q.0.clone());
-                PvcInfo {
-                    name: pvc.metadata.name.unwrap_or_default(),
-                    namespace: pvc.metadata.namespace.unwrap_or_default(),
-                    status: status
-                        .and_then(|s| s.phase.clone())
-                        .unwrap_or_else(|| "Unknown".to_string()),
-                    volume: spec.and_then(|s| s.volume_name.clone()),
-                    capacity,
-                    access_modes,
-                    storage_class: spec.and_then(|s| s.storage_class_name.clone()),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::pvc_to_info)
             .collect())
     }
 
@@ -1368,50 +901,9 @@ impl K8sClient {
             "failed fetching PVs".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|pv| {
-                let created_at = pv
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let spec = pv.spec.as_ref();
-                let access_modes = spec
-                    .and_then(|s| s.access_modes.as_ref())
-                    .map(|modes| modes.to_vec())
-                    .unwrap_or_default();
-                let capacity = spec
-                    .and_then(|s| s.capacity.as_ref())
-                    .and_then(|c| c.get("storage"))
-                    .map(|q| q.0.clone());
-                let claim = spec.and_then(|s| s.claim_ref.as_ref()).map(|cr| {
-                    format!(
-                        "{}/{}",
-                        cr.namespace.as_deref().unwrap_or(""),
-                        cr.name.as_deref().unwrap_or("")
-                    )
-                });
-                PvInfo {
-                    name: pv.metadata.name.unwrap_or_default(),
-                    capacity,
-                    access_modes,
-                    reclaim_policy: spec
-                        .and_then(|s| s.persistent_volume_reclaim_policy.clone())
-                        .unwrap_or_else(|| "Retain".to_string()),
-                    status: pv
-                        .status
-                        .as_ref()
-                        .and_then(|s| s.phase.clone())
-                        .unwrap_or_else(|| "Unknown".to_string()),
-                    claim,
-                    storage_class: spec.and_then(|s| s.storage_class_name.clone()),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::pv_to_info)
             .collect())
     }
 
@@ -1423,34 +915,9 @@ impl K8sClient {
             "failed fetching storage classes".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|sc| {
-                let created_at = sc
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let is_default = sc
-                    .metadata
-                    .annotations
-                    .as_ref()
-                    .and_then(|a| a.get("storageclass.kubernetes.io/is-default-class"))
-                    .map(|v| v == "true")
-                    .unwrap_or(false);
-                StorageClassInfo {
-                    name: sc.metadata.name.unwrap_or_default(),
-                    provisioner: sc.provisioner,
-                    reclaim_policy: sc.reclaim_policy,
-                    volume_binding_mode: sc.volume_binding_mode,
-                    allow_volume_expansion: sc.allow_volume_expansion.unwrap_or(false),
-                    is_default,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::storage_class_to_info)
             .collect())
     }
 
@@ -1461,27 +928,9 @@ impl K8sClient {
             "failed fetching namespaces".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|ns| {
-                let created_at = ns
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                NamespaceInfo {
-                    name: ns.metadata.name.unwrap_or_default(),
-                    status: ns
-                        .status
-                        .as_ref()
-                        .and_then(|s| s.phase.clone())
-                        .unwrap_or_else(|| "Active".to_string()),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::namespace_to_info)
             .collect())
     }
 
@@ -1501,38 +950,9 @@ impl K8sClient {
             }
         })
         .await?;
-        let now = Utc::now();
         let mut events: Vec<K8sEventInfo> = list
             .into_iter()
-            .map(|ev| {
-                let created_at = ev
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let last_seen = ev
-                    .last_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                let involved = format!(
-                    "{}/{}",
-                    ev.involved_object.kind.as_deref().unwrap_or(""),
-                    ev.involved_object.name.as_deref().unwrap_or("")
-                );
-                K8sEventInfo {
-                    name: ev.metadata.name.unwrap_or_default(),
-                    namespace: ev.metadata.namespace.unwrap_or_default(),
-                    reason: ev.reason.unwrap_or_default(),
-                    message: ev.message.unwrap_or_default(),
-                    type_: ev.type_.unwrap_or_else(|| "Normal".to_string()),
-                    count: ev.count.unwrap_or(1),
-                    involved_object: involved,
-                    last_seen,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                }
-            })
+            .map(crate::k8s::conversions::event_to_info)
             .collect();
         // Sort by last_seen descending
         events.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
@@ -1547,25 +967,9 @@ impl K8sClient {
             "failed fetching priority classes".to_string()
         })
         .await?;
-        let now = Utc::now();
         Ok(list
             .into_iter()
-            .map(|pc| {
-                let created_at = pc
-                    .metadata
-                    .creation_timestamp
-                    .as_ref()
-                    .and_then(|ts| chrono::DateTime::parse_from_rfc3339(&ts.0.to_rfc3339()).ok())
-                    .map(|dt| dt.with_timezone(&Utc));
-                PriorityClassInfo {
-                    name: pc.metadata.name.unwrap_or_default(),
-                    value: pc.value,
-                    global_default: pc.global_default.unwrap_or(false),
-                    description: pc.description.unwrap_or_default(),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                }
-            })
+            .map(crate::k8s::conversions::priority_class_to_info)
             .collect())
     }
 
@@ -2353,93 +1757,6 @@ fn is_metrics_api_unavailable(err: &kube::Error) -> bool {
     }
 }
 
-fn rule_from_policy_rule(rule: &PolicyRule) -> RbacRule {
-    RbacRule {
-        verbs: rule.verbs.clone(),
-        api_groups: rule.api_groups.clone().unwrap_or_default(),
-        resources: rule.resources.clone().unwrap_or_default(),
-        resource_names: rule.resource_names.clone().unwrap_or_default(),
-        non_resource_urls: rule.non_resource_urls.clone().unwrap_or_default(),
-    }
-}
-
-fn subject_from_k8s(subject: &Subject) -> RoleBindingSubject {
-    RoleBindingSubject {
-        kind: subject.kind.clone(),
-        name: subject.name.clone(),
-        namespace: subject.namespace.clone(),
-        api_group: subject.api_group.clone(),
-    }
-}
-
-fn quota_percent_used(
-    hard: &BTreeMap<String, String>,
-    used: &BTreeMap<String, String>,
-) -> BTreeMap<String, f64> {
-    hard.iter()
-        .filter_map(|(key, hard_value)| {
-            let used_value = used.get(key)?;
-            let used_num = parse_k8s_quantity(used_value)?;
-            let hard_num = parse_k8s_quantity(hard_value)?;
-            if hard_num <= 0.0 {
-                return None;
-            }
-            Some((key.clone(), (used_num / hard_num) * 100.0))
-        })
-        .collect()
-}
-
-fn quantity_map_to_string_map(
-    value: Option<BTreeMap<String, k8s_openapi::apimachinery::pkg::api::resource::Quantity>>,
-) -> BTreeMap<String, String> {
-    value
-        .unwrap_or_default()
-        .into_iter()
-        .map(|(k, v)| (k, v.0))
-        .collect()
-}
-
-fn int_or_string_to_string(value: &IntOrString) -> String {
-    match value {
-        IntOrString::Int(v) => v.to_string(),
-        IntOrString::String(v) => v.clone(),
-    }
-}
-
-fn parse_k8s_quantity(raw: &str) -> Option<f64> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-
-    let factors = [
-        ("Ki", 1024.0),
-        ("Mi", 1024.0_f64.powi(2)),
-        ("Gi", 1024.0_f64.powi(3)),
-        ("Ti", 1024.0_f64.powi(4)),
-        ("Pi", 1024.0_f64.powi(5)),
-        ("Ei", 1024.0_f64.powi(6)),
-        ("n", 1e-9),
-        ("u", 1e-6),
-        ("m", 1e-3),
-        ("K", 1e3),
-        ("M", 1e6),
-        ("G", 1e9),
-        ("T", 1e12),
-        ("P", 1e15),
-        ("E", 1e18),
-    ];
-
-    for (suffix, factor) in factors {
-        if let Some(number) = raw.strip_suffix(suffix) {
-            let value = number.trim().parse::<f64>().ok()?;
-            return Some(value * factor);
-        }
-    }
-
-    raw.parse::<f64>().ok()
-}
-
 #[derive(Debug, Clone, Copy)]
 struct FluxResourceKindSpec {
     kind: &'static str,
@@ -2986,11 +2303,13 @@ mod tests {
         rbac::v1::{PolicyRule, Subject},
     };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+    use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 
     use super::*;
     use crate::k8s::conversions::{
-        format_job_completions, format_job_duration, job_status_from_counts, node_condition_true,
-        node_role,
+        format_job_completions, format_job_duration, int_or_string_to_string,
+        job_status_from_counts, node_condition_true, node_role, parse_k8s_quantity,
+        quota_percent_used, rule_from_policy_rule, subject_from_k8s,
     };
 
     fn node_with_condition(condition_type: &str, status: &str) -> Node {

@@ -4,14 +4,32 @@
 //! the watch path (`state/watch.rs`) to produce identical typed DTOs.
 
 use chrono::Utc;
+use std::collections::BTreeMap;
+
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
+use k8s_openapi::api::autoscaling::v2::HorizontalPodAutoscaler;
 use k8s_openapi::api::batch::v1::{CronJob, Job};
-use k8s_openapi::api::core::v1::{Node, Pod, PodSpec, ReplicationController, Service};
+use k8s_openapi::api::core::v1::{
+    Endpoints, Namespace, Node, PersistentVolume, PersistentVolumeClaim, Pod, PodSpec,
+    ReplicationController, Service, ServiceAccount,
+};
+use k8s_openapi::api::networking::v1::{Ingress, IngressClass, NetworkPolicy};
+use k8s_openapi::api::policy::v1::PodDisruptionBudget;
+use k8s_openapi::api::rbac::v1::{
+    ClusterRole, ClusterRoleBinding, PolicyRule, Role, RoleBinding, Subject,
+};
+use k8s_openapi::api::scheduling::v1::PriorityClass;
+use k8s_openapi::api::storage::v1::StorageClass;
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 
 use crate::cronjob::cronjob_next_schedule_time;
 use crate::k8s::dtos::{
-    CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NodeInfo, OwnerRefInfo, PodInfo,
-    ReplicaSetInfo, ReplicationControllerInfo, ServiceInfo, StatefulSetInfo,
+    ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo, DaemonSetInfo,
+    DeploymentInfo, EndpointInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo,
+    LimitRangeInfo, LimitSpec, NamespaceInfo, NetworkPolicyInfo, NodeInfo, OwnerRefInfo,
+    PodDisruptionBudgetInfo, PodInfo, PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo,
+    ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject, RoleInfo,
+    SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
 };
 use crate::state::alerts::{format_mib, format_millicores, parse_mib, parse_millicores};
 
@@ -556,6 +574,675 @@ pub(crate) fn format_job_duration(
     } else {
         Some(format!("{rem_secs}s"))
     }
+}
+
+/// Converts a raw `ServiceAccount` into a [`ServiceAccountInfo`] DTO.
+pub fn service_account_to_info(sa: ServiceAccount) -> ServiceAccountInfo {
+    let now = Utc::now();
+    let created_at = sa.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    ServiceAccountInfo {
+        name: sa.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: sa
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        secrets_count: sa.secrets.as_ref().map_or(0, |v| v.len()),
+        image_pull_secrets_count: sa.image_pull_secrets.as_ref().map_or(0, |v| v.len()),
+        automount_service_account_token: sa.automount_service_account_token,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `Role` into a [`RoleInfo`] DTO.
+pub fn role_to_info(role: Role) -> RoleInfo {
+    let now = Utc::now();
+    let created_at = role.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    RoleInfo {
+        name: role
+            .metadata
+            .name
+            .unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: role
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        rules: role
+            .rules
+            .as_ref()
+            .map(|rules| rules.iter().map(rule_from_policy_rule).collect())
+            .unwrap_or_default(),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `RoleBinding` into a [`RoleBindingInfo`] DTO.
+pub fn role_binding_to_info(rb: RoleBinding) -> RoleBindingInfo {
+    let now = Utc::now();
+    let created_at = rb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let role_ref = rb.role_ref;
+    RoleBindingInfo {
+        name: rb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: rb
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        role_ref_kind: role_ref.kind,
+        role_ref_name: role_ref.name,
+        subjects: rb
+            .subjects
+            .as_ref()
+            .map(|subjects| subjects.iter().map(subject_from_k8s).collect())
+            .unwrap_or_default(),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `ClusterRole` into a [`ClusterRoleInfo`] DTO.
+pub fn cluster_role_to_info(cr: ClusterRole) -> ClusterRoleInfo {
+    let now = Utc::now();
+    let created_at = cr.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    ClusterRoleInfo {
+        name: cr.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        rules: cr
+            .rules
+            .as_ref()
+            .map(|rules| rules.iter().map(rule_from_policy_rule).collect())
+            .unwrap_or_default(),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `ClusterRoleBinding` into a [`ClusterRoleBindingInfo`] DTO.
+pub fn cluster_role_binding_to_info(crb: ClusterRoleBinding) -> ClusterRoleBindingInfo {
+    let now = Utc::now();
+    let created_at = crb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let role_ref = crb.role_ref;
+    ClusterRoleBindingInfo {
+        name: crb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        role_ref_kind: role_ref.kind,
+        role_ref_name: role_ref.name,
+        subjects: crb
+            .subjects
+            .as_ref()
+            .map(|subjects| subjects.iter().map(subject_from_k8s).collect())
+            .unwrap_or_default(),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `ResourceQuota` into a [`ResourceQuotaInfo`] DTO.
+pub fn resource_quota_to_info(
+    quota: k8s_openapi::api::core::v1::ResourceQuota,
+) -> ResourceQuotaInfo {
+    let now = Utc::now();
+    let hard = quota
+        .status
+        .as_ref()
+        .and_then(|status| status.hard.as_ref())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(k, v)| (k, v.0))
+        .collect::<BTreeMap<_, _>>();
+
+    let used = quota
+        .status
+        .as_ref()
+        .and_then(|status| status.used.as_ref())
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(k, v)| (k, v.0))
+        .collect::<BTreeMap<_, _>>();
+
+    let percent_used = quota_percent_used(&hard, &used);
+    let created_at = quota.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+    ResourceQuotaInfo {
+        name: quota
+            .metadata
+            .name
+            .unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: quota
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        hard,
+        used,
+        percent_used,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `LimitRange` into a [`LimitRangeInfo`] DTO.
+pub fn limit_range_to_info(range: k8s_openapi::api::core::v1::LimitRange) -> LimitRangeInfo {
+    let now = Utc::now();
+    let limits = range
+        .spec
+        .as_ref()
+        .map(|spec| {
+            spec.limits
+                .iter()
+                .map(|item| LimitSpec {
+                    type_: item.type_.clone(),
+                    min: quantity_map_to_string_map(item.min.clone()),
+                    max: quantity_map_to_string_map(item.max.clone()),
+                    default: quantity_map_to_string_map(item.default.clone()),
+                    default_request: quantity_map_to_string_map(item.default_request.clone()),
+                    max_limit_request_ratio: quantity_map_to_string_map(
+                        item.max_limit_request_ratio.clone(),
+                    ),
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let created_at = range.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+    LimitRangeInfo {
+        name: range
+            .metadata
+            .name
+            .unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: range
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        limits,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `PodDisruptionBudget` into a [`PodDisruptionBudgetInfo`] DTO.
+pub fn pdb_to_info(pdb: PodDisruptionBudget) -> PodDisruptionBudgetInfo {
+    let now = Utc::now();
+    let spec = pdb.spec.as_ref();
+    let status = pdb.status.as_ref();
+    let created_at = pdb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+    PodDisruptionBudgetInfo {
+        name: pdb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: pdb
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        min_available: spec
+            .and_then(|s| s.min_available.as_ref())
+            .map(int_or_string_to_string),
+        max_unavailable: spec
+            .and_then(|s| s.max_unavailable.as_ref())
+            .map(int_or_string_to_string),
+        current_healthy: status.map(|s| s.current_healthy).unwrap_or(0),
+        desired_healthy: status.map(|s| s.desired_healthy).unwrap_or(0),
+        disruptions_allowed: status.map(|s| s.disruptions_allowed).unwrap_or(0),
+        expected_pods: status.map(|s| s.expected_pods).unwrap_or(0),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `Endpoints` into an [`EndpointInfo`] DTO.
+pub fn endpoint_to_info(ep: Endpoints) -> EndpointInfo {
+    let now = Utc::now();
+    let created_at = ep.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let mut addresses = Vec::new();
+    let mut ports = Vec::new();
+    if let Some(subsets) = ep.subsets {
+        for subset in &subsets {
+            if let Some(addrs) = &subset.addresses {
+                for addr in addrs {
+                    addresses.push(addr.ip.clone());
+                }
+            }
+            if let Some(ps) = &subset.ports {
+                for p in ps {
+                    ports.push(format!(
+                        "{}/{}",
+                        p.port,
+                        p.protocol.as_deref().unwrap_or("TCP")
+                    ));
+                }
+            }
+        }
+    }
+    EndpointInfo {
+        name: ep.metadata.name.unwrap_or_default(),
+        namespace: ep.metadata.namespace.unwrap_or_default(),
+        addresses,
+        ports,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `Ingress` into an [`IngressInfo`] DTO.
+pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
+    let now = Utc::now();
+    let created_at = ing.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let class = ing.spec.as_ref().and_then(|s| s.ingress_class_name.clone());
+    let hosts: Vec<String> = ing
+        .spec
+        .as_ref()
+        .and_then(|s| s.rules.as_ref())
+        .map(|rules| rules.iter().filter_map(|r| r.host.clone()).collect())
+        .unwrap_or_default();
+    let address = ing
+        .status
+        .as_ref()
+        .and_then(|s| s.load_balancer.as_ref())
+        .and_then(|lb| lb.ingress.as_ref())
+        .and_then(|ingresses| ingresses.first())
+        .and_then(|i| i.ip.clone().or_else(|| i.hostname.clone()));
+    let backend_services: Vec<(String, String)> = ing
+        .spec
+        .as_ref()
+        .map(|spec| {
+            let mut backends = Vec::new();
+            if let Some(default_backend) = &spec.default_backend
+                && let Some(svc) = &default_backend.service
+            {
+                let port = svc
+                    .port
+                    .as_ref()
+                    .map(|p| {
+                        p.name
+                            .clone()
+                            .unwrap_or_else(|| p.number.map(|n| n.to_string()).unwrap_or_default())
+                    })
+                    .unwrap_or_default();
+                backends.push((svc.name.clone(), port));
+            }
+            for rule in spec.rules.as_deref().unwrap_or_default() {
+                if let Some(http) = &rule.http {
+                    for path in &http.paths {
+                        if let Some(svc) = &path.backend.service {
+                            let port = svc
+                                .port
+                                .as_ref()
+                                .map(|p| {
+                                    p.name.clone().unwrap_or_else(|| {
+                                        p.number.map(|n| n.to_string()).unwrap_or_default()
+                                    })
+                                })
+                                .unwrap_or_default();
+                            backends.push((svc.name.clone(), port));
+                        }
+                    }
+                }
+            }
+            backends.sort();
+            backends.dedup();
+            backends
+        })
+        .unwrap_or_default();
+    IngressInfo {
+        name: ing.metadata.name.unwrap_or_default(),
+        namespace: ing.metadata.namespace.unwrap_or_default(),
+        class,
+        hosts,
+        address,
+        ports: vec!["80".to_string(), "443".to_string()],
+        backend_services,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `IngressClass` into an [`IngressClassInfo`] DTO.
+pub fn ingress_class_to_info(ic: IngressClass) -> IngressClassInfo {
+    let now = Utc::now();
+    let created_at = ic.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let is_default = ic
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get("ingressclass.kubernetes.io/is-default-class"))
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    IngressClassInfo {
+        name: ic.metadata.name.unwrap_or_default(),
+        controller: ic
+            .spec
+            .as_ref()
+            .map(|s| s.controller.clone().unwrap_or_default())
+            .unwrap_or_default(),
+        is_default,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `NetworkPolicy` into a [`NetworkPolicyInfo`] DTO.
+pub fn network_policy_to_info(np: NetworkPolicy) -> NetworkPolicyInfo {
+    let now = Utc::now();
+    let created_at = np.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let pod_selector = np
+        .spec
+        .as_ref()
+        .map(|s| {
+            s.pod_selector
+                .match_labels
+                .as_ref()
+                .map(|ml| {
+                    ml.iter()
+                        .map(|(k, v)| format!("{k}={v}"))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                })
+                .unwrap_or_else(|| "<all>".to_string())
+        })
+        .unwrap_or_default();
+    let ingress_rules = np
+        .spec
+        .as_ref()
+        .and_then(|s| s.ingress.as_ref())
+        .map(|r| r.len())
+        .unwrap_or(0);
+    let egress_rules = np
+        .spec
+        .as_ref()
+        .and_then(|s| s.egress.as_ref())
+        .map(|r| r.len())
+        .unwrap_or(0);
+    NetworkPolicyInfo {
+        name: np.metadata.name.unwrap_or_default(),
+        namespace: np.metadata.namespace.unwrap_or_default(),
+        pod_selector,
+        ingress_rules,
+        egress_rules,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `ConfigMap` into a [`ConfigMapInfo`] DTO.
+pub fn config_map_to_info(cm: k8s_openapi::api::core::v1::ConfigMap) -> ConfigMapInfo {
+    let now = Utc::now();
+    let created_at = cm.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let data_count = cm.data.as_ref().map(|d| d.len()).unwrap_or(0)
+        + cm.binary_data.as_ref().map(|d| d.len()).unwrap_or(0);
+    ConfigMapInfo {
+        name: cm.metadata.name.unwrap_or_default(),
+        namespace: cm.metadata.namespace.unwrap_or_default(),
+        data_count,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `Secret` into a [`SecretInfo`] DTO.
+pub fn secret_to_info(s: k8s_openapi::api::core::v1::Secret) -> SecretInfo {
+    let now = Utc::now();
+    let created_at = s.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let data_count = s.data.as_ref().map(|d| d.len()).unwrap_or(0);
+    SecretInfo {
+        name: s.metadata.name.unwrap_or_default(),
+        namespace: s.metadata.namespace.unwrap_or_default(),
+        type_: s.type_.unwrap_or_else(|| "Opaque".to_string()),
+        data_count,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `HorizontalPodAutoscaler` into an [`HpaInfo`] DTO.
+pub fn hpa_to_info(hpa: HorizontalPodAutoscaler) -> HpaInfo {
+    let now = Utc::now();
+    let created_at = hpa.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let spec = hpa.spec.as_ref();
+    let status = hpa.status.as_ref();
+    let reference = spec
+        .map(|s| format!("{}/{}", s.scale_target_ref.kind, s.scale_target_ref.name))
+        .unwrap_or_default();
+    HpaInfo {
+        name: hpa.metadata.name.unwrap_or_default(),
+        namespace: hpa.metadata.namespace.unwrap_or_default(),
+        reference,
+        min_replicas: spec.and_then(|s| s.min_replicas),
+        max_replicas: spec.map(|s| s.max_replicas).unwrap_or(0),
+        current_replicas: status.and_then(|s| s.current_replicas).unwrap_or(0),
+        desired_replicas: status.map(|s| s.desired_replicas).unwrap_or(0),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `PersistentVolumeClaim` into a [`PvcInfo`] DTO.
+pub fn pvc_to_info(pvc: PersistentVolumeClaim) -> PvcInfo {
+    let now = Utc::now();
+    let created_at = pvc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let spec = pvc.spec.as_ref();
+    let status = pvc.status.as_ref();
+    let access_modes = spec
+        .and_then(|s| s.access_modes.as_ref())
+        .map(|modes| modes.to_vec())
+        .unwrap_or_default();
+    let capacity = status
+        .and_then(|s| s.capacity.as_ref())
+        .and_then(|c| c.get("storage"))
+        .map(|q| q.0.clone());
+    PvcInfo {
+        name: pvc.metadata.name.unwrap_or_default(),
+        namespace: pvc.metadata.namespace.unwrap_or_default(),
+        status: status
+            .and_then(|s| s.phase.clone())
+            .unwrap_or_else(|| "Unknown".to_string()),
+        volume: spec.and_then(|s| s.volume_name.clone()),
+        capacity,
+        access_modes,
+        storage_class: spec.and_then(|s| s.storage_class_name.clone()),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `PersistentVolume` into a [`PvInfo`] DTO.
+pub fn pv_to_info(pv: PersistentVolume) -> PvInfo {
+    let now = Utc::now();
+    let created_at = pv.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let spec = pv.spec.as_ref();
+    let access_modes = spec
+        .and_then(|s| s.access_modes.as_ref())
+        .map(|modes| modes.to_vec())
+        .unwrap_or_default();
+    let capacity = spec
+        .and_then(|s| s.capacity.as_ref())
+        .and_then(|c| c.get("storage"))
+        .map(|q| q.0.clone());
+    let claim = spec.and_then(|s| s.claim_ref.as_ref()).map(|cr| {
+        format!(
+            "{}/{}",
+            cr.namespace.as_deref().unwrap_or(""),
+            cr.name.as_deref().unwrap_or("")
+        )
+    });
+    PvInfo {
+        name: pv.metadata.name.unwrap_or_default(),
+        capacity,
+        access_modes,
+        reclaim_policy: spec
+            .and_then(|s| s.persistent_volume_reclaim_policy.clone())
+            .unwrap_or_else(|| "Retain".to_string()),
+        status: pv
+            .status
+            .as_ref()
+            .and_then(|s| s.phase.clone())
+            .unwrap_or_else(|| "Unknown".to_string()),
+        claim,
+        storage_class: spec.and_then(|s| s.storage_class_name.clone()),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `StorageClass` into a [`StorageClassInfo`] DTO.
+pub fn storage_class_to_info(sc: StorageClass) -> StorageClassInfo {
+    let now = Utc::now();
+    let created_at = sc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let is_default = sc
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get("storageclass.kubernetes.io/is-default-class"))
+        .map(|v| v == "true")
+        .unwrap_or(false);
+    StorageClassInfo {
+        name: sc.metadata.name.unwrap_or_default(),
+        provisioner: sc.provisioner,
+        reclaim_policy: sc.reclaim_policy,
+        volume_binding_mode: sc.volume_binding_mode,
+        allow_volume_expansion: sc.allow_volume_expansion.unwrap_or(false),
+        is_default,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `Namespace` into a [`NamespaceInfo`] DTO.
+pub fn namespace_to_info(ns: Namespace) -> NamespaceInfo {
+    let now = Utc::now();
+    let created_at = ns.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    NamespaceInfo {
+        name: ns.metadata.name.unwrap_or_default(),
+        status: ns
+            .status
+            .as_ref()
+            .and_then(|s| s.phase.clone())
+            .unwrap_or_else(|| "Active".to_string()),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw `Event` into a [`K8sEventInfo`] DTO.
+pub fn event_to_info(ev: k8s_openapi::api::core::v1::Event) -> K8sEventInfo {
+    let now = Utc::now();
+    let created_at = ev.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let last_seen = ev.last_timestamp.as_ref().map(|ts| ts.0);
+    let involved = format!(
+        "{}/{}",
+        ev.involved_object.kind.as_deref().unwrap_or(""),
+        ev.involved_object.name.as_deref().unwrap_or("")
+    );
+    K8sEventInfo {
+        name: ev.metadata.name.unwrap_or_default(),
+        namespace: ev.metadata.namespace.unwrap_or_default(),
+        reason: ev.reason.unwrap_or_default(),
+        message: ev.message.unwrap_or_default(),
+        type_: ev.type_.unwrap_or_else(|| "Normal".to_string()),
+        count: ev.count.unwrap_or(1),
+        involved_object: involved,
+        last_seen,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+    }
+}
+
+/// Converts a raw `PriorityClass` into a [`PriorityClassInfo`] DTO.
+pub fn priority_class_to_info(pc: PriorityClass) -> PriorityClassInfo {
+    let now = Utc::now();
+    let created_at = pc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    PriorityClassInfo {
+        name: pc.metadata.name.unwrap_or_default(),
+        value: pc.value,
+        global_default: pc.global_default.unwrap_or(false),
+        description: pc.description.unwrap_or_default(),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+pub(crate) fn rule_from_policy_rule(rule: &PolicyRule) -> RbacRule {
+    RbacRule {
+        verbs: rule.verbs.clone(),
+        api_groups: rule.api_groups.clone().unwrap_or_default(),
+        resources: rule.resources.clone().unwrap_or_default(),
+        resource_names: rule.resource_names.clone().unwrap_or_default(),
+        non_resource_urls: rule.non_resource_urls.clone().unwrap_or_default(),
+    }
+}
+
+pub(crate) fn subject_from_k8s(subject: &Subject) -> RoleBindingSubject {
+    RoleBindingSubject {
+        kind: subject.kind.clone(),
+        name: subject.name.clone(),
+        namespace: subject.namespace.clone(),
+        api_group: subject.api_group.clone(),
+    }
+}
+
+pub(crate) fn quota_percent_used(
+    hard: &BTreeMap<String, String>,
+    used: &BTreeMap<String, String>,
+) -> BTreeMap<String, f64> {
+    hard.iter()
+        .filter_map(|(key, hard_value)| {
+            let used_value = used.get(key)?;
+            let used_num = parse_k8s_quantity(used_value)?;
+            let hard_num = parse_k8s_quantity(hard_value)?;
+            if hard_num <= 0.0 {
+                return None;
+            }
+            Some((key.clone(), (used_num / hard_num) * 100.0))
+        })
+        .collect()
+}
+
+pub(crate) fn quantity_map_to_string_map(
+    value: Option<BTreeMap<String, k8s_openapi::apimachinery::pkg::api::resource::Quantity>>,
+) -> BTreeMap<String, String> {
+    value
+        .unwrap_or_default()
+        .into_iter()
+        .map(|(k, v)| (k, v.0))
+        .collect()
+}
+
+pub(crate) fn int_or_string_to_string(value: &IntOrString) -> String {
+    match value {
+        IntOrString::Int(v) => v.to_string(),
+        IntOrString::String(v) => v.clone(),
+    }
+}
+
+pub(crate) fn parse_k8s_quantity(raw: &str) -> Option<f64> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    let factors = [
+        ("Ki", 1024.0),
+        ("Mi", 1024.0_f64.powi(2)),
+        ("Gi", 1024.0_f64.powi(3)),
+        ("Ti", 1024.0_f64.powi(4)),
+        ("Pi", 1024.0_f64.powi(5)),
+        ("Ei", 1024.0_f64.powi(6)),
+        ("n", 1e-9),
+        ("u", 1e-6),
+        ("m", 1e-3),
+        ("K", 1e3),
+        ("M", 1e6),
+        ("G", 1e9),
+        ("T", 1e12),
+        ("P", 1e15),
+        ("E", 1e18),
+    ];
+
+    for (suffix, factor) in factors {
+        if let Some(number) = raw.strip_suffix(suffix) {
+            let value = number.trim().parse::<f64>().ok()?;
+            return Some(value * factor);
+        }
+    }
+
+    raw.parse::<f64>().ok()
 }
 
 #[cfg(test)]
