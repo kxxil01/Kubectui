@@ -2889,15 +2889,21 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     auto_refresh_count = auto_refresh_count.wrapping_add(1);
                     let include_flux = app.view().is_fluxcd()
                         || auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY);
-                    request_refresh(
-                        &refresh_tx,
-                        &mut global_state,
-                        &client,
-                        namespace_scope(app.get_namespace()).map(str::to_string),
-                        refresh_options_for_view(app.view(), include_flux, false),
-                        &mut refresh_state,
-                        &mut snapshot_dirty,
-                    );
+                    let mut dispatch = refresh_options_for_view(app.view(), include_flux, false);
+                    // Strip watched scopes — watches provide real-time updates
+                    dispatch.primary_scope = dispatch.primary_scope.without(RefreshScope::WATCHED_SCOPES);
+                    dispatch.options.scope = dispatch.options.scope.without(RefreshScope::WATCHED_SCOPES);
+                    if !dispatch.options.scope.is_empty() || dispatch.options.include_cluster_info {
+                        request_refresh(
+                            &refresh_tx,
+                            &mut global_state,
+                            &client,
+                            namespace_scope(app.get_namespace()).map(str::to_string),
+                            dispatch,
+                            &mut refresh_state,
+                            &mut snapshot_dirty,
+                        );
+                    }
                     if app.view() == AppView::Events {
                         request_events_refresh(
                             &events_tx,

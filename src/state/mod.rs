@@ -656,14 +656,17 @@ impl RefreshScope {
     pub const FLUX: Self = Self(1 << 18);
     pub const EVENTS: Self = Self(1 << 19);
     pub const LOCAL_HELM_REPOSITORIES: Self = Self(1 << 20);
-    pub const CORE_OVERVIEW: Self = Self(
+    pub const WATCHED_SCOPES: Self = Self(
         Self::NODES.0
             | Self::PODS.0
             | Self::SERVICES.0
             | Self::DEPLOYMENTS.0
             | Self::STATEFULSETS.0
             | Self::DAEMONSETS.0
-            | Self::REPLICASETS.0
+            | Self::REPLICASETS.0,
+    );
+    pub const CORE_OVERVIEW: Self = Self(
+        Self::WATCHED_SCOPES.0
             | Self::REPLICATION_CONTROLLERS.0
             | Self::JOBS.0
             | Self::CRONJOBS.0
