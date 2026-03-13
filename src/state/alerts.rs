@@ -399,6 +399,9 @@ pub(crate) fn parse_millicores(raw: &str) -> u64 {
         m.parse().unwrap_or(0)
     } else if let Some(n) = raw.strip_suffix('n') {
         n.parse::<u64>().unwrap_or(0) / 1_000_000
+    } else if raw.contains('.') {
+        // Decimal cores (e.g. "0.5" → 500m, "1.25" → 1250m)
+        raw.parse::<f64>().map(|v| (v * 1000.0) as u64).unwrap_or(0)
     } else {
         raw.parse::<u64>().unwrap_or(0) * 1000
     }
@@ -609,8 +612,11 @@ pub fn compute_namespace_utilization(
 ) -> Vec<NamespaceUtilizationSummary> {
     let mut by_ns: HashMap<&str, NamespaceUtilizationSummary> = HashMap::new();
 
-    // Aggregate resource requests from pods
+    // Aggregate resource requests from running pods only
     for pod in &snapshot.pods {
+        if !pod.status.eq_ignore_ascii_case("running") {
+            continue;
+        }
         let entry =
             by_ns
                 .entry(pod.namespace.as_str())
@@ -1081,6 +1087,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_millicores_decimal_cores() {
+        assert_eq!(parse_millicores("0.5"), 500);
+        assert_eq!(parse_millicores("1.25"), 1250);
+        assert_eq!(parse_millicores("0.1"), 100);
+        assert_eq!(parse_millicores("2.0"), 2000);
+    }
+
+    #[test]
     fn compute_namespace_utilization_empty_snapshot() {
         let snapshot = ClusterSnapshot::default();
         let result = compute_namespace_utilization(&snapshot);
@@ -1440,5 +1454,33 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].cpu_req_utilization_pct, None);
         assert_eq!(result[0].mem_req_utilization_pct, None);
+    }
+
+    #[test]
+    fn compute_namespace_utilization_excludes_non_running_pods() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "running".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("100m".to_string()),
+            memory_request: Some("256Mi".to_string()),
+            ..PodInfo::default()
+        });
+        // Completed pod should not inflate request denominators
+        snapshot.pods.push(PodInfo {
+            name: "completed".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Succeeded".to_string(),
+            cpu_request: Some("500m".to_string()),
+            memory_request: Some("1024Mi".to_string()),
+            ..PodInfo::default()
+        });
+
+        let result = compute_namespace_utilization(&snapshot);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].pod_count, 1);
+        assert_eq!(result[0].cpu_request_m, 100);
+        assert_eq!(result[0].mem_request_mib, 256);
     }
 }

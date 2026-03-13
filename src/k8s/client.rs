@@ -438,35 +438,37 @@ impl K8sClient {
                     let mut mem_req_mib: u64 = 0;
                     let mut cpu_lim_m: u64 = 0;
                     let mut mem_lim_mib: u64 = 0;
-                    let mut has_req = false;
-                    let mut has_lim = false;
+                    let mut has_cpu_req = false;
+                    let mut has_mem_req = false;
+                    let mut has_cpu_lim = false;
+                    let mut has_mem_lim = false;
                     for c in containers {
                         if let Some(req) = c.resources.as_ref().and_then(|r| r.requests.as_ref()) {
                             if let Some(cpu) = req.get("cpu") {
                                 cpu_req_m += parse_millicores(&cpu.0);
-                                has_req = true;
+                                has_cpu_req = true;
                             }
                             if let Some(mem) = req.get("memory") {
                                 mem_req_mib += parse_mib(&mem.0);
-                                has_req = true;
+                                has_mem_req = true;
                             }
                         }
                         if let Some(lim) = c.resources.as_ref().and_then(|r| r.limits.as_ref()) {
                             if let Some(cpu) = lim.get("cpu") {
                                 cpu_lim_m += parse_millicores(&cpu.0);
-                                has_lim = true;
+                                has_cpu_lim = true;
                             }
                             if let Some(mem) = lim.get("memory") {
                                 mem_lim_mib += parse_mib(&mem.0);
-                                has_lim = true;
+                                has_mem_lim = true;
                             }
                         }
                     }
                     (
-                        has_req.then(|| format_millicores(cpu_req_m)),
-                        has_req.then(|| format_mib(mem_req_mib)),
-                        has_lim.then(|| format_millicores(cpu_lim_m)),
-                        has_lim.then(|| format_mib(mem_lim_mib)),
+                        has_cpu_req.then(|| format_millicores(cpu_req_m)),
+                        has_mem_req.then(|| format_mib(mem_req_mib)),
+                        has_cpu_lim.then(|| format_millicores(cpu_lim_m)),
+                        has_mem_lim.then(|| format_mib(mem_lim_mib)),
                     )
                 };
 
