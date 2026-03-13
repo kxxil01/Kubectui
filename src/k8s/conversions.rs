@@ -3,10 +3,19 @@
 //! These conversions are used by both the polling path (`client.rs`) and
 //! the watch path (`state/watch.rs`) to produce identical typed DTOs.
 
-use k8s_openapi::api::core::v1::Pod;
+use chrono::Utc;
+use k8s_openapi::api::apps::v1::{Deployment, ReplicaSet};
+use k8s_openapi::api::core::v1::{Pod, PodSpec};
 
-use crate::k8s::dtos::{OwnerRefInfo, PodInfo};
+use crate::k8s::dtos::{DeploymentInfo, OwnerRefInfo, PodInfo, ReplicaSetInfo};
 use crate::state::alerts::{format_mib, format_millicores, parse_mib, parse_millicores};
+
+/// Extracts the first container image from a pod spec.
+pub fn extract_image_from_pod_spec(pod_spec: Option<&PodSpec>) -> Option<String> {
+    pod_spec
+        .and_then(|spec| spec.containers.first())
+        .and_then(|container| container.image.clone())
+}
 
 /// Converts a raw Kubernetes `Pod` object into a lightweight [`PodInfo`] DTO.
 pub fn pod_to_info(pod: Pod) -> PodInfo {
@@ -114,6 +123,85 @@ pub fn pod_to_info(pod: Pod) -> PodInfo {
         memory_request,
         cpu_limit,
         memory_limit,
+    }
+}
+
+/// Converts a raw Kubernetes `Deployment` into a [`DeploymentInfo`] DTO.
+pub fn deployment_to_info(dep: Deployment) -> DeploymentInfo {
+    let now = Utc::now();
+    let desired_replicas = dep.spec.as_ref().and_then(|s| s.replicas).unwrap_or(1);
+    let ready_replicas = dep
+        .status
+        .as_ref()
+        .and_then(|s| s.ready_replicas)
+        .unwrap_or(0);
+    let available_replicas = dep
+        .status
+        .as_ref()
+        .and_then(|s| s.available_replicas)
+        .unwrap_or(0);
+    let updated_replicas = dep
+        .status
+        .as_ref()
+        .and_then(|s| s.updated_replicas)
+        .unwrap_or(0);
+    let created_at = dep.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let image = extract_image_from_pod_spec(
+        dep.spec
+            .as_ref()
+            .and_then(|spec| spec.template.spec.as_ref()),
+    );
+
+    DeploymentInfo {
+        name: dep.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: dep
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        desired_replicas,
+        ready_replicas,
+        available_replicas,
+        updated_replicas,
+        created_at,
+        ready: format!("{ready_replicas}/{desired_replicas}"),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        image,
+    }
+}
+
+/// Converts a raw Kubernetes `ReplicaSet` into a [`ReplicaSetInfo`] DTO.
+pub fn replicaset_to_info(rs: ReplicaSet) -> ReplicaSetInfo {
+    let now = Utc::now();
+    let spec = rs.spec.as_ref();
+    let status = rs.status.as_ref();
+    let created_at = rs.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+    ReplicaSetInfo {
+        name: rs.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: rs
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        desired: spec.and_then(|s| s.replicas).unwrap_or(0),
+        ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
+        available: status.and_then(|s| s.available_replicas).unwrap_or(0),
+        image: extract_image_from_pod_spec(
+            spec.and_then(|s| s.template.as_ref())
+                .and_then(|t| t.spec.as_ref()),
+        ),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+        owner_references: rs
+            .metadata
+            .owner_references
+            .unwrap_or_default()
+            .into_iter()
+            .map(|oref| OwnerRefInfo {
+                kind: oref.kind,
+                name: oref.name,
+                uid: oref.uid,
+            })
+            .collect(),
     }
 }
 
@@ -307,6 +395,110 @@ mod tests {
         assert_eq!(
             info.annotations,
             vec![("note".to_string(), "test".to_string())]
+        );
+    }
+
+    // ── deployment_to_info tests ──
+
+    #[test]
+    fn deployment_minimal_defaults() {
+        let dep = Deployment::default();
+        let info = deployment_to_info(dep);
+        assert_eq!(info.name, "<unknown>");
+        assert_eq!(info.namespace, "default");
+        assert_eq!(info.desired_replicas, 1);
+        assert_eq!(info.ready_replicas, 0);
+        assert_eq!(info.ready, "0/1");
+        assert!(info.image.is_none());
+    }
+
+    #[test]
+    fn deployment_extracts_replicas() {
+        use k8s_openapi::api::apps::v1::{DeploymentSpec, DeploymentStatus};
+        let dep = Deployment {
+            metadata: ObjectMeta {
+                name: Some("web".to_string()),
+                namespace: Some("prod".to_string()),
+                ..Default::default()
+            },
+            spec: Some(DeploymentSpec {
+                replicas: Some(3),
+                ..Default::default()
+            }),
+            status: Some(DeploymentStatus {
+                ready_replicas: Some(2),
+                available_replicas: Some(2),
+                updated_replicas: Some(3),
+                ..Default::default()
+            }),
+        };
+        let info = deployment_to_info(dep);
+        assert_eq!(info.name, "web");
+        assert_eq!(info.namespace, "prod");
+        assert_eq!(info.desired_replicas, 3);
+        assert_eq!(info.ready_replicas, 2);
+        assert_eq!(info.available_replicas, 2);
+        assert_eq!(info.updated_replicas, 3);
+        assert_eq!(info.ready, "2/3");
+    }
+
+    // ── replicaset_to_info tests ──
+
+    #[test]
+    fn replicaset_minimal_defaults() {
+        let rs = ReplicaSet::default();
+        let info = replicaset_to_info(rs);
+        assert_eq!(info.name, "<unknown>");
+        assert_eq!(info.namespace, "default");
+        assert_eq!(info.desired, 0);
+        assert_eq!(info.ready, 0);
+        assert!(info.owner_references.is_empty());
+    }
+
+    #[test]
+    fn replicaset_extracts_owner_references() {
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
+        let rs = ReplicaSet {
+            metadata: ObjectMeta {
+                name: Some("web-abc".to_string()),
+                namespace: Some("ns".to_string()),
+                owner_references: Some(vec![OwnerReference {
+                    kind: "Deployment".to_string(),
+                    name: "web".to_string(),
+                    uid: "uid-123".to_string(),
+                    api_version: "apps/v1".to_string(),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let info = replicaset_to_info(rs);
+        assert_eq!(info.owner_references.len(), 1);
+        assert_eq!(info.owner_references[0].kind, "Deployment");
+        assert_eq!(info.owner_references[0].name, "web");
+    }
+
+    // ── extract_image_from_pod_spec tests ──
+
+    #[test]
+    fn extract_image_none_spec() {
+        assert!(extract_image_from_pod_spec(None).is_none());
+    }
+
+    #[test]
+    fn extract_image_from_container() {
+        let spec = PodSpec {
+            containers: vec![Container {
+                name: "app".to_string(),
+                image: Some("nginx:latest".to_string()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            extract_image_from_pod_spec(Some(&spec)),
+            Some("nginx:latest".to_string())
         );
     }
 }

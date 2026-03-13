@@ -1245,6 +1245,24 @@ impl GlobalState {
                         changed = true;
                     }
                 }
+                watch::WatchPayload::Deployments(items) => {
+                    snap.deployments = items;
+                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+                    changed = true;
+                    let slot = &mut snap.view_load_states[AppView::Deployments.index()];
+                    if *slot != ViewLoadState::Ready {
+                        *slot = ViewLoadState::Ready;
+                    }
+                }
+                watch::WatchPayload::ReplicaSets(items) => {
+                    snap.replicasets = items;
+                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+                    changed = true;
+                    let slot = &mut snap.view_load_states[AppView::ReplicaSets.index()];
+                    if *slot != ViewLoadState::Ready {
+                        *slot = ViewLoadState::Ready;
+                    }
+                }
                 watch::WatchPayload::Error { .. } => {
                     // Watcher errors are informational — do not clear existing
                     // snapshot data. Polling will continue to refresh on its

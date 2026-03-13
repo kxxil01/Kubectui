@@ -15,7 +15,7 @@ use k8s_openapi::api::{
     batch::v1::{CronJob, Job},
     core::v1::{
         ConfigMap, Endpoints, LimitRange, Namespace, Node, PersistentVolume, PersistentVolumeClaim,
-        Pod, PodSpec, ReplicationController, ResourceQuota, Secret, Service, ServiceAccount,
+        Pod, ReplicationController, ResourceQuota, Secret, Service, ServiceAccount,
     },
     networking::v1::{Ingress, IngressClass, NetworkPolicy},
     policy::v1::PodDisruptionBudget,
@@ -506,51 +506,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let deployments = list
             .into_iter()
-            .map(|dep| {
-                let desired_replicas = dep.spec.as_ref().and_then(|s| s.replicas).unwrap_or(1);
-                let ready_replicas = dep
-                    .status
-                    .as_ref()
-                    .and_then(|s| s.ready_replicas)
-                    .unwrap_or(0);
-                let available_replicas = dep
-                    .status
-                    .as_ref()
-                    .and_then(|s| s.available_replicas)
-                    .unwrap_or(0);
-                let updated_replicas = dep
-                    .status
-                    .as_ref()
-                    .and_then(|s| s.updated_replicas)
-                    .unwrap_or(0);
-
-                let created_at = dep.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-                let image = dep
-                    .spec
-                    .as_ref()
-                    .and_then(|spec| spec.template.spec.as_ref())
-                    .and_then(|spec| spec.containers.first())
-                    .and_then(|container| container.image.clone());
-
-                DeploymentInfo {
-                    name: dep.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: dep
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    desired_replicas,
-                    ready_replicas,
-                    available_replicas,
-                    updated_replicas,
-                    created_at,
-                    ready: format!("{ready_replicas}/{desired_replicas}"),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    image,
-                }
-            })
+            .map(crate::k8s::conversions::deployment_to_info)
             .collect();
 
         Ok(deployments)
@@ -597,8 +555,9 @@ impl K8sClient {
                     pod_management_policy: spec
                         .and_then(|s| s.pod_management_policy.clone())
                         .unwrap_or_else(|| "OrderedReady".to_string()),
-                    image: self
-                        .extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
+                    image: crate::k8s::conversions::extract_image_from_pod_spec(
+                        spec.and_then(|s| s.template.spec.as_ref()),
+                    ),
                     age: created_at.and_then(|ts| (now - ts).to_std().ok()),
                     created_at,
                 }
@@ -671,8 +630,9 @@ impl K8sClient {
                     } else {
                         format!("{unavailable_count} pods unavailable")
                     },
-                    image: self
-                        .extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
+                    image: crate::k8s::conversions::extract_image_from_pod_spec(
+                        spec.and_then(|s| s.template.spec.as_ref()),
+                    ),
                     age: created_at.and_then(|ts| (now - ts).to_std().ok()),
                     created_at,
                 }
@@ -698,41 +658,9 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
         let items = list
             .into_iter()
-            .map(|rs| {
-                let spec = rs.spec.as_ref();
-                let status = rs.status.as_ref();
-                let created_at = rs.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-                ReplicaSetInfo {
-                    name: rs.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-                    namespace: rs
-                        .metadata
-                        .namespace
-                        .unwrap_or_else(|| "default".to_string()),
-                    desired: spec.and_then(|s| s.replicas).unwrap_or(0),
-                    ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
-                    available: status.and_then(|s| s.available_replicas).unwrap_or(0),
-                    image: self.extract_image_from_pod_spec(
-                        spec.and_then(|s| s.template.as_ref())
-                            .and_then(|t| t.spec.as_ref()),
-                    ),
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-                    created_at,
-                    owner_references: rs
-                        .metadata
-                        .owner_references
-                        .unwrap_or_default()
-                        .into_iter()
-                        .map(|oref| crate::k8s::dtos::OwnerRefInfo {
-                            kind: oref.kind,
-                            name: oref.name,
-                            uid: oref.uid,
-                        })
-                        .collect(),
-                }
-            })
+            .map(crate::k8s::conversions::replicaset_to_info)
             .collect();
 
         Ok(items)
@@ -773,7 +701,7 @@ impl K8sClient {
                     desired: spec.and_then(|s| s.replicas).unwrap_or(0),
                     ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
                     available: status.and_then(|s| s.available_replicas).unwrap_or(0),
-                    image: self.extract_image_from_pod_spec(
+                    image: crate::k8s::conversions::extract_image_from_pod_spec(
                         spec.and_then(|s| s.template.as_ref())
                             .and_then(|t| t.spec.as_ref()),
                     ),
@@ -2485,12 +2413,6 @@ impl K8sClient {
 
             sleep(Duration::from_millis(500)).await;
         }
-    }
-
-    fn extract_image_from_pod_spec(&self, pod_spec: Option<&PodSpec>) -> Option<String> {
-        pod_spec
-            .and_then(|spec| spec.containers.first())
-            .and_then(|container| container.image.clone())
     }
 
     /// Creates a port-forward tunnel to a pod's port.

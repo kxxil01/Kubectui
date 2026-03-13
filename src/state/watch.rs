@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use futures::TryStreamExt;
+use k8s_openapi::api::apps::v1::{Deployment, ReplicaSet};
 use k8s_openapi::api::core::v1::Pod;
 use kube::runtime::WatchStreamExt;
 use kube::runtime::watcher::{self, Event};
@@ -14,13 +15,15 @@ use kube::{Api, Client, ResourceExt};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::k8s::conversions::pod_to_info;
-use crate::k8s::dtos::PodInfo;
+use crate::k8s::conversions::{deployment_to_info, pod_to_info, replicaset_to_info};
+use crate::k8s::dtos::{DeploymentInfo, PodInfo, ReplicaSetInfo};
 
 /// Identifies which watched resource produced an update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WatchedResource {
     Pods,
+    Deployments,
+    ReplicaSets,
 }
 
 /// A snapshot update published by a watcher task.
@@ -35,6 +38,8 @@ pub struct WatchUpdate {
 #[derive(Debug)]
 pub enum WatchPayload {
     Pods(Vec<PodInfo>),
+    Deployments(Vec<DeploymentInfo>),
+    ReplicaSets(Vec<ReplicaSetInfo>),
     /// A watcher encountered an error or terminated.
     Error {
         resource: WatchedResource,
@@ -139,6 +144,14 @@ fn sort_pods(pods: &mut [PodInfo]) {
     pods.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
+fn sort_deployments(items: &mut [DeploymentInfo]) {
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
+fn sort_replicasets(items: &mut [ReplicaSetInfo]) {
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
 /// Manages all watch tasks and their lifecycle.
 ///
 /// Instances are single-use: after [`stop_all`](WatchManager::stop_all),
@@ -163,12 +176,24 @@ impl WatchManager {
         &self.session
     }
 
-    /// Starts all watch tasks (currently only pods).
+    /// Starts all watch tasks for core resources.
     pub fn start_watches(&mut self, client: Client, watch_tx: mpsc::Sender<WatchUpdate>) {
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(());
         self.cancel_tx = Some(cancel_tx);
 
-        start_pod_watch(client, self.session.clone(), watch_tx, cancel_rx);
+        start_pod_watch(
+            client.clone(),
+            self.session.clone(),
+            watch_tx.clone(),
+            cancel_rx.clone(),
+        );
+        start_deployment_watch(
+            client.clone(),
+            self.session.clone(),
+            watch_tx.clone(),
+            cancel_rx.clone(),
+        );
+        start_replicaset_watch(client, self.session.clone(), watch_tx, cancel_rx);
     }
 
     /// Stops all running watch tasks.
@@ -295,6 +320,248 @@ fn process_pod_event(store: &mut ResourceStore<PodInfo>, event: Event<Pod>) -> b
                 warn!(
                     pod_name = pod.metadata.name.as_deref().unwrap_or("<unknown>"),
                     "skipping pod with empty UID on delete"
+                );
+                return false;
+            }
+            store.remove(&uid);
+            true
+        }
+    }
+}
+
+// ── Deployment watcher ──
+
+fn start_deployment_watch(
+    client: Client,
+    session: WatchSessionKey,
+    watch_tx: mpsc::Sender<WatchUpdate>,
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        let api: Api<Deployment> = match &session.namespace {
+            Some(ns) => Api::namespaced(client, ns),
+            None => Api::all(client),
+        };
+
+        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
+        let mut store = ResourceStore::<DeploymentInfo>::new();
+        tokio::pin!(stream);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => break,
+                item = stream.try_next() => {
+                    match item {
+                        Ok(Some(event)) => {
+                            if process_deployment_event(&mut store, event) {
+                                let mut snapshot = store.publish();
+                                sort_deployments(&mut snapshot);
+                                if watch_tx.send(WatchUpdate {
+                                    resource: WatchedResource::Deployments,
+                                    context_generation: session.context_generation,
+                                    data: WatchPayload::Deployments(snapshot),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            warn!("deployment watch stream ended unexpectedly");
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Deployments,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::Deployments,
+                                    message: "watch stream terminated".to_string(),
+                                },
+                            }).await;
+                            break;
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "deployment watch stream error");
+                            store.readiness = StoreReadiness::Error;
+                            store.last_error = Some(err.to_string());
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Deployments,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::Deployments,
+                                    message: err.to_string(),
+                                },
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn process_deployment_event(
+    store: &mut ResourceStore<DeploymentInfo>,
+    event: Event<Deployment>,
+) -> bool {
+    match event {
+        Event::Init => {
+            store.begin_init();
+            false
+        }
+        Event::InitApply(dep) => {
+            let uid = dep.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = dep.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping deployment with empty UID during init"
+                );
+                return false;
+            }
+            store.apply_init_page(uid, deployment_to_info(dep));
+            false
+        }
+        Event::InitDone => {
+            store.commit_init();
+            true
+        }
+        Event::Apply(dep) => {
+            let uid = dep.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = dep.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping deployment with empty UID on apply"
+                );
+                return false;
+            }
+            store.apply_event(uid, deployment_to_info(dep));
+            true
+        }
+        Event::Delete(dep) => {
+            let uid = dep.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = dep.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping deployment with empty UID on delete"
+                );
+                return false;
+            }
+            store.remove(&uid);
+            true
+        }
+    }
+}
+
+// ── ReplicaSet watcher ──
+
+fn start_replicaset_watch(
+    client: Client,
+    session: WatchSessionKey,
+    watch_tx: mpsc::Sender<WatchUpdate>,
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        let api: Api<ReplicaSet> = match &session.namespace {
+            Some(ns) => Api::namespaced(client, ns),
+            None => Api::all(client),
+        };
+
+        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
+        let mut store = ResourceStore::<ReplicaSetInfo>::new();
+        tokio::pin!(stream);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => break,
+                item = stream.try_next() => {
+                    match item {
+                        Ok(Some(event)) => {
+                            if process_replicaset_event(&mut store, event) {
+                                let mut snapshot = store.publish();
+                                sort_replicasets(&mut snapshot);
+                                if watch_tx.send(WatchUpdate {
+                                    resource: WatchedResource::ReplicaSets,
+                                    context_generation: session.context_generation,
+                                    data: WatchPayload::ReplicaSets(snapshot),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            warn!("replicaset watch stream ended unexpectedly");
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::ReplicaSets,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::ReplicaSets,
+                                    message: "watch stream terminated".to_string(),
+                                },
+                            }).await;
+                            break;
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "replicaset watch stream error");
+                            store.readiness = StoreReadiness::Error;
+                            store.last_error = Some(err.to_string());
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::ReplicaSets,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::ReplicaSets,
+                                    message: err.to_string(),
+                                },
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn process_replicaset_event(
+    store: &mut ResourceStore<ReplicaSetInfo>,
+    event: Event<ReplicaSet>,
+) -> bool {
+    match event {
+        Event::Init => {
+            store.begin_init();
+            false
+        }
+        Event::InitApply(rs) => {
+            let uid = rs.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = rs.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping replicaset with empty UID during init"
+                );
+                return false;
+            }
+            store.apply_init_page(uid, replicaset_to_info(rs));
+            false
+        }
+        Event::InitDone => {
+            store.commit_init();
+            true
+        }
+        Event::Apply(rs) => {
+            let uid = rs.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = rs.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping replicaset with empty UID on apply"
+                );
+                return false;
+            }
+            store.apply_event(uid, replicaset_to_info(rs));
+            true
+        }
+        Event::Delete(rs) => {
+            let uid = rs.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = rs.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping replicaset with empty UID on delete"
                 );
                 return false;
             }
