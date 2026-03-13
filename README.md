@@ -64,6 +64,7 @@ cargo build --release
 - **Fuzzy search** (`/`) on every resource list
 - **Dashboard** with 5 health/utilization gauges (Nodes Ready, Pods Running, Workload Ready, Cluster CPU, Cluster Mem), overcommitment & governance panel, top-5 CPU/memory pod consumers, namespace utilization with %CPU/R and %MEM/R, alerts, and compact layout for small terminals
 - **Resource utilization** — 10 hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), node CPU/Memory columns with used/alloc/pct% and threshold coloring, powered by metrics-server with graceful degradation
+- **Live watch updates** — 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs) update in real-time via Kubernetes watch streams instead of polling, with automatic reconnect and drift-protection relist on manual refresh
 - **Network resilience** — connection health indicator (●/◐/○), graceful backoff on API failures, staleness indicator, manual refresh bypass, error truncation
 - **UI/UX polish** — loading spinners, sort direction colors, persistent search bar with result count, YAML syntax highlighting, toast notifications, detail metadata expand/collapse
 - **Configuration persistence** — namespace, theme, workbench state, refresh interval
