@@ -18,6 +18,7 @@ use ratatui::{
 };
 use std::{
     borrow::Cow,
+    collections::HashMap,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -1192,7 +1193,6 @@ fn render_pods_widget(
     let derived = cached_pod_derived(cluster, query, indices.as_ref(), now_unix, cache_variant);
 
     // Build pod metrics lookup: (name, namespace) -> &PodMetricsInfo
-    use std::collections::HashMap;
     let pod_metrics_map: HashMap<(&str, &str), &crate::k8s::dtos::PodMetricsInfo> = cluster
         .pod_metrics
         .iter()

@@ -19,7 +19,7 @@ use crate::{
             NamespaceUtilizationSummary, PodConsumerSummary, compute_alerts,
             compute_cluster_resource_summary, compute_dashboard_insights, compute_dashboard_stats,
             compute_namespace_utilization, compute_top_pod_consumers,
-            compute_workload_ready_percent,
+            compute_workload_ready_percent, format_mib, format_millicores,
         },
     },
     ui::{components::default_theme, theme::Theme},
@@ -825,8 +825,6 @@ fn render_consumer_panel(
     is_cpu: bool,
     theme: &Theme,
 ) {
-    use crate::state::alerts::{format_mib, format_millicores};
-
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -877,8 +875,6 @@ fn render_namespace_utilization(
     ns_util: &[NamespaceUtilizationSummary],
     theme: &Theme,
 ) {
-    use crate::state::alerts::{format_mib, format_millicores};
-
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)

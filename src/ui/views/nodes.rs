@@ -2,6 +2,7 @@
 
 use std::{
     borrow::Cow,
+    collections::HashMap,
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -29,7 +30,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, loading_or_empty_message_no_search, responsive_table_widths_vec,
-        sort_header_cell, table_viewport_rows, table_window,
+        sort_header_cell, table_viewport_rows, table_window, utilization_style,
         views::filtering::filtered_node_indices,
         workload_sort_suffix,
     },
@@ -131,7 +132,6 @@ pub fn render_nodes(
     let derived = cached_node_derived(snapshot, query, indices.as_ref(), now_unix, cache_variant);
 
     // Build node metrics lookup: name -> &NodeMetricsInfo
-    use std::collections::HashMap;
     let metrics_by_node: HashMap<&str, &crate::k8s::dtos::NodeMetricsInfo> = snapshot
         .node_metrics
         .iter()
@@ -189,10 +189,7 @@ pub fn render_nodes(
                             let alloc_m = parse_millicores(alloc);
                             let pct = if alloc_m > 0 { used * 100 / alloc_m } else { 0 };
                             let text = format!("{}/{} {}%", format_millicores(used), alloc, pct);
-                            Cell::from(Span::styled(
-                                text,
-                                crate::ui::utilization_style(pct, &theme),
-                            ))
+                            Cell::from(Span::styled(text, utilization_style(pct, &theme)))
                         }
                         None => Cell::from(Span::styled(alloc, dim_style)),
                     }
@@ -209,10 +206,7 @@ pub fn render_nodes(
                                 0
                             };
                             let text = format!("{}/{} {}%", format_mib(used), alloc, pct);
-                            Cell::from(Span::styled(
-                                text,
-                                crate::ui::utilization_style(pct, &theme),
-                            ))
+                            Cell::from(Span::styled(text, utilization_style(pct, &theme)))
                         }
                         None => Cell::from(Span::styled(alloc, dim_style)),
                     }
