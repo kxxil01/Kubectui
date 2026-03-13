@@ -36,7 +36,7 @@ Current milestone status:
 - Milestone 18: completed
 - Milestone 19: not started
 - Milestone 20: not started
-- Milestone 21: not started
+- Milestone 21: completed
 - Milestone 22: not started
 - Milestone 23: not started
 - Milestone 24: not started
@@ -66,6 +66,7 @@ Completion notes:
 - Milestone 17 shipped: persistent per-context bookmarks, dedicated Bookmarks view, jump-to-resource navigation, `B` toggle from list/detail, stale bookmark indication, command/help integration, and inline bookmark markers across normal list views.
 - Milestone 18 shipped: CronJob detail now acts as the management panel with next-run display, capped Job execution history, per-run status/duration/pod-count/completion visibility, `Enter` jump into child Job detail, `l` access to selected failed/current Job logs, suspend/resume confirmation on `S`, action palette/help integration, and mutation history coverage.
 - PR #16 hardened the post-M18 surface: canonical RBAC-aware detail/action authorization, graceful forbidden list/discovery degradation, workbench/detail/palette permission preflight, paused CronJob next-run suppression, and CronJob history log gating based on live pods plus log access.
+- Milestone 21 shipped (PR #18): comprehensive resource utilization dashboard — ClusterResourceSummary with cluster-wide CPU/memory utilization and overcommitment percentages, 5-gauge dashboard row (Nodes Ready, Pods Running, Workload Ready, Cluster CPU, Cluster Mem), Overcommit & Governance panel (commitment ratios, missing request/limit counts), Top Pod Consumers panel (top-5 CPU and memory), enhanced Namespace Utilization table with %CPU/R and %MEM/R columns, 10 new hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), enriched node CPU/Memory columns with used/alloc/pct% format and threshold coloring, pod_metrics pipeline integration via metrics.k8s.io with graceful degradation, compact dashboard layout for small terminals, 20+ new tests, 3 criterion benchmarks.
 
 Post-milestone fixes and improvements (shipped after M5):
 
@@ -77,7 +78,7 @@ Post-milestone fixes and improvements (shipped after M5):
 
 Verification status for completed milestones:
 
-- 508 tests passing on `main`, zero clippy warnings, fmt clean, render profiling check passing
+- 721 tests passing on `main`, zero clippy warnings, fmt clean, render profiling check passing
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -1448,7 +1449,7 @@ Helm rollback is one of the most time-critical operations during incidents. Curr
 
 ### Status
 
-Not started
+Completed (PR #18)
 
 ### Goal
 
