@@ -1230,18 +1230,15 @@ impl GlobalState {
     /// unnecessary version bumps and downstream cache invalidation.
     pub fn apply_watch_update(&mut self, update: watch::WatchUpdate) {
         /// Applies a watched resource update to a snapshot field, bumping the
-        /// version only when data actually changed. Also marks the view ready.
+        /// version only when data actually changed. Does NOT touch view load
+        /// state — that is managed by the refresh pipeline so the loading
+        /// spinner can display correctly.
         macro_rules! apply_watched {
-            ($snap:ident, $changed:ident, $field:ident, $items:expr, $view:expr) => {{
+            ($snap:ident, $changed:ident, $field:ident, $items:expr) => {{
                 let items = $items;
                 if $snap.$field != items {
                     $snap.$field = items;
                     $snap.snapshot_version = $snap.snapshot_version.saturating_add(1);
-                    $changed = true;
-                }
-                let slot = &mut $snap.view_load_states[$view.index()];
-                if *slot != ViewLoadState::Ready {
-                    *slot = ViewLoadState::Ready;
                     $changed = true;
                 }
             }};
@@ -1252,41 +1249,35 @@ impl GlobalState {
             let snap = Arc::make_mut(&mut self.snapshot);
             match update.data {
                 watch::WatchPayload::Pods(items) => {
-                    apply_watched!(snap, changed, pods, items, AppView::Pods);
+                    apply_watched!(snap, changed, pods, items);
                 }
                 watch::WatchPayload::Deployments(items) => {
-                    apply_watched!(snap, changed, deployments, items, AppView::Deployments);
+                    apply_watched!(snap, changed, deployments, items);
                 }
                 watch::WatchPayload::ReplicaSets(items) => {
-                    apply_watched!(snap, changed, replicasets, items, AppView::ReplicaSets);
+                    apply_watched!(snap, changed, replicasets, items);
                 }
                 watch::WatchPayload::StatefulSets(items) => {
-                    apply_watched!(snap, changed, statefulsets, items, AppView::StatefulSets);
+                    apply_watched!(snap, changed, statefulsets, items);
                 }
                 watch::WatchPayload::DaemonSets(items) => {
-                    apply_watched!(snap, changed, daemonsets, items, AppView::DaemonSets);
+                    apply_watched!(snap, changed, daemonsets, items);
                 }
                 watch::WatchPayload::Services(items) => {
-                    apply_watched!(snap, changed, services, items, AppView::Services);
+                    apply_watched!(snap, changed, services, items);
                     snap.services_count = snap.services.len();
                 }
                 watch::WatchPayload::Nodes(items) => {
-                    apply_watched!(snap, changed, nodes, items, AppView::Nodes);
+                    apply_watched!(snap, changed, nodes, items);
                 }
                 watch::WatchPayload::ReplicationControllers(items) => {
-                    apply_watched!(
-                        snap,
-                        changed,
-                        replication_controllers,
-                        items,
-                        AppView::ReplicationControllers
-                    );
+                    apply_watched!(snap, changed, replication_controllers, items);
                 }
                 watch::WatchPayload::Jobs(items) => {
-                    apply_watched!(snap, changed, jobs, items, AppView::Jobs);
+                    apply_watched!(snap, changed, jobs, items);
                 }
                 watch::WatchPayload::CronJobs(items) => {
-                    apply_watched!(snap, changed, cronjobs, items, AppView::CronJobs);
+                    apply_watched!(snap, changed, cronjobs, items);
                 }
                 watch::WatchPayload::Error { .. } => {
                     // Watcher errors are informational — do not clear existing
@@ -4410,7 +4401,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_watch_update_sets_pod_view_ready() {
+    fn apply_watch_update_does_not_change_view_load_state() {
         let mut state = GlobalState::default();
         assert_eq!(
             state.snapshot.view_load_states[AppView::Pods.index()],
@@ -4423,9 +4414,11 @@ mod tests {
             data: watch::WatchPayload::Pods(vec![make_pod_info("pod-a")]),
         };
         state.apply_watch_update(update);
+        // Watch updates must NOT touch view load state — the refresh pipeline
+        // manages it so the loading spinner renders correctly.
         assert_eq!(
             state.snapshot.view_load_states[AppView::Pods.index()],
-            ViewLoadState::Ready
+            ViewLoadState::Idle
         );
     }
 }
