@@ -107,6 +107,16 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Dashboard & Metrics",
+        &[
+            ("", "5 gauges: Nodes, Pods, Workload, CPU, Mem"),
+            ("", "Overcommit & governance panel"),
+            ("", "Top-5 CPU/memory pod consumers"),
+            ("", "Namespace utilization with %CPU/R %MEM/R"),
+            (":", "Toggle pod metric columns via palette"),
+        ],
+    ),
+    (
         "Node Actions",
         &[
             ("c", "Cordon node"),
