@@ -41,6 +41,7 @@ Current milestone status:
 - Milestone 23: not started
 - Milestone 24: not started
 - Milestone 25: not started
+- Phase 8 (Watch-Backed Caches): completed
 
 Completion notes:
 
@@ -67,6 +68,7 @@ Completion notes:
 - Milestone 18 shipped: CronJob detail now acts as the management panel with next-run display, capped Job execution history, per-run status/duration/pod-count/completion visibility, `Enter` jump into child Job detail, `l` access to selected failed/current Job logs, suspend/resume confirmation on `S`, action palette/help integration, and mutation history coverage.
 - PR #16 hardened the post-M18 surface: canonical RBAC-aware detail/action authorization, graceful forbidden list/discovery degradation, workbench/detail/palette permission preflight, paused CronJob next-run suppression, and CronJob history log gating based on live pods plus log access.
 - Milestone 21 shipped (PR #18): comprehensive resource utilization dashboard — ClusterResourceSummary with cluster-wide CPU/memory utilization and overcommitment percentages, 5-gauge dashboard row (Nodes Ready, Pods Running, Workload Ready, Cluster CPU, Cluster Mem), Overcommit & Governance panel (commitment ratios, missing request/limit counts), Top Pod Consumers panel (top-5 CPU and memory), enhanced Namespace Utilization table with %CPU/R and %MEM/R columns, 10 new hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), enriched node CPU/Memory columns with used/alloc/pct% format and threshold coloring, pod_metrics pipeline integration via metrics.k8s.io with graceful degradation, compact dashboard layout for small terminals, 20+ new tests, 3 criterion benchmarks.
+- Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 
 Post-milestone fixes and improvements (shipped after M5):
 
