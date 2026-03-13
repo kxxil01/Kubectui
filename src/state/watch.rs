@@ -63,7 +63,6 @@ pub enum WatchPayload {
     CronJobs(Vec<CronJobInfo>),
     /// A watcher encountered an error or terminated.
     Error {
-        resource: WatchedResource,
         message: String,
     },
 }
@@ -160,45 +159,258 @@ impl<T: Clone> ResourceStore<T> {
     }
 }
 
-/// Publish helper: sorts pods by name for stable output.
-fn sort_pods(pods: &mut [PodInfo]) {
-    pods.sort_by(|a, b| a.name.cmp(&b.name));
+// ── Watcher macro ──
+//
+// Generates `start_<name>_watch`, `process_<name>_event`, and `sort_<name>s`
+// for each watched resource type. The `scope` parameter controls whether
+// the API is namespace-scoped or cluster-scoped.
+
+macro_rules! define_watcher {
+    (
+        name: $name:ident,
+        k8s_type: $K8sType:ty,
+        dto_type: $DtoType:ty,
+        converter: $converter:path,
+        resource_variant: $variant:ident,
+        scope: namespaced $(,)?
+    ) => {
+        define_watcher!(@impl $name, $K8sType, $DtoType, $converter, $variant, namespaced);
+    };
+    (
+        name: $name:ident,
+        k8s_type: $K8sType:ty,
+        dto_type: $DtoType:ty,
+        converter: $converter:path,
+        resource_variant: $variant:ident,
+        scope: cluster $(,)?
+    ) => {
+        define_watcher!(@impl $name, $K8sType, $DtoType, $converter, $variant, cluster);
+    };
+    (@impl $name:ident, $K8sType:ty, $DtoType:ty, $converter:path, $variant:ident, $scope:ident) => {
+        paste::paste! {
+            fn [<sort_ $name s>](items: &mut [$DtoType]) {
+                items.sort_by(|a, b| a.name.cmp(&b.name));
+            }
+
+            fn [<start_ $name _watch>](
+                client: Client,
+                session: WatchSessionKey,
+                watch_tx: mpsc::Sender<WatchUpdate>,
+                mut cancel_rx: tokio::sync::watch::Receiver<()>,
+            ) {
+                tokio::spawn(async move {
+                    let api: Api<$K8sType> = define_watcher!(@api $scope, client, session);
+                    let stream = watcher::watcher(api, watcher::Config::default())
+                        .default_backoff();
+                    let mut store = ResourceStore::<$DtoType>::new();
+                    tokio::pin!(stream);
+
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = cancel_rx.changed() => break,
+                            item = stream.try_next() => {
+                                match item {
+                                    Ok(Some(event)) => {
+                                        if [<process_ $name _event>](&mut store, event) {
+                                            let mut snapshot = store.publish();
+                                            [<sort_ $name s>](&mut snapshot);
+                                            if watch_tx.send(WatchUpdate {
+                                                resource: WatchedResource::$variant,
+                                                context_generation: session.context_generation,
+                                                data: WatchPayload::$variant(snapshot),
+                                            }).await.is_err() {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        warn!(
+                                            concat!(stringify!($name), " watch stream ended unexpectedly")
+                                        );
+                                        let _ = watch_tx.send(WatchUpdate {
+                                            resource: WatchedResource::$variant,
+                                            context_generation: session.context_generation,
+                                            data: WatchPayload::Error {
+                                                message: "watch stream terminated".to_string(),
+                                            },
+                                        }).await;
+                                        break;
+                                    }
+                                    Err(err) => {
+                                        warn!(
+                                            error = %err,
+                                            concat!(stringify!($name), " watch stream error"),
+                                        );
+                                        let _ = watch_tx.send(WatchUpdate {
+                                            resource: WatchedResource::$variant,
+                                            context_generation: session.context_generation,
+                                            data: WatchPayload::Error {
+                                                message: err.to_string(),
+                                            },
+                                        }).await;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            fn [<process_ $name _event>](
+                store: &mut ResourceStore<$DtoType>,
+                event: Event<$K8sType>,
+            ) -> bool {
+                match event {
+                    Event::Init => {
+                        store.begin_init();
+                        false
+                    }
+                    Event::InitApply(obj) => {
+                        let uid = obj.uid().unwrap_or_default();
+                        if uid.is_empty() {
+                            warn!(
+                                name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
+                                concat!("skipping ", stringify!($name), " with empty UID during init"),
+                            );
+                            return false;
+                        }
+                        store.apply_init_page(uid, $converter(obj));
+                        false
+                    }
+                    Event::InitDone => {
+                        store.commit_init();
+                        true
+                    }
+                    Event::Apply(obj) => {
+                        let uid = obj.uid().unwrap_or_default();
+                        if uid.is_empty() {
+                            warn!(
+                                name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
+                                concat!("skipping ", stringify!($name), " with empty UID on apply"),
+                            );
+                            return false;
+                        }
+                        store.apply_event(uid, $converter(obj));
+                        true
+                    }
+                    Event::Delete(obj) => {
+                        let uid = obj.uid().unwrap_or_default();
+                        if uid.is_empty() {
+                            warn!(
+                                name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
+                                concat!("skipping ", stringify!($name), " with empty UID on delete"),
+                            );
+                            return false;
+                        }
+                        store.remove(&uid);
+                        true
+                    }
+                }
+            }
+        }
+    };
+    // API construction helpers — namespace-aware vs cluster-scoped.
+    (@api namespaced, $client:ident, $session:ident) => {
+        match &$session.namespace {
+            Some(ns) => Api::namespaced($client, ns),
+            None => Api::all($client),
+        }
+    };
+    (@api cluster, $client:ident, $session:ident) => {{
+        let _ = &$session; // suppress unused warning
+        Api::all($client)
+    }};
 }
 
-fn sort_deployments(items: &mut [DeploymentInfo]) {
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+define_watcher! {
+    name: pod,
+    k8s_type: Pod,
+    dto_type: PodInfo,
+    converter: pod_to_info,
+    resource_variant: Pods,
+    scope: namespaced,
 }
 
-fn sort_replicasets(items: &mut [ReplicaSetInfo]) {
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+define_watcher! {
+    name: deployment,
+    k8s_type: Deployment,
+    dto_type: DeploymentInfo,
+    converter: deployment_to_info,
+    resource_variant: Deployments,
+    scope: namespaced,
 }
 
-fn sort_statefulsets(items: &mut [StatefulSetInfo]) {
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+define_watcher! {
+    name: replicaset,
+    k8s_type: ReplicaSet,
+    dto_type: ReplicaSetInfo,
+    converter: replicaset_to_info,
+    resource_variant: ReplicaSets,
+    scope: namespaced,
 }
 
-fn sort_daemonsets(items: &mut [DaemonSetInfo]) {
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+define_watcher! {
+    name: statefulset,
+    k8s_type: StatefulSet,
+    dto_type: StatefulSetInfo,
+    converter: statefulset_to_info,
+    resource_variant: StatefulSets,
+    scope: namespaced,
 }
 
-fn sort_services(items: &mut [ServiceInfo]) {
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+define_watcher! {
+    name: daemonset,
+    k8s_type: DaemonSet,
+    dto_type: DaemonSetInfo,
+    converter: daemonset_to_info,
+    resource_variant: DaemonSets,
+    scope: namespaced,
 }
 
-fn sort_nodes(items: &mut [NodeInfo]) {
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+define_watcher! {
+    name: service,
+    k8s_type: Service,
+    dto_type: ServiceInfo,
+    converter: service_to_info,
+    resource_variant: Services,
+    scope: namespaced,
 }
 
-fn sort_replication_controllers(items: &mut [ReplicationControllerInfo]) {
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+define_watcher! {
+    name: node,
+    k8s_type: Node,
+    dto_type: NodeInfo,
+    converter: node_to_info,
+    resource_variant: Nodes,
+    scope: cluster,
 }
 
-fn sort_jobs(items: &mut [JobInfo]) {
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+define_watcher! {
+    name: replication_controller,
+    k8s_type: ReplicationController,
+    dto_type: ReplicationControllerInfo,
+    converter: replication_controller_to_info,
+    resource_variant: ReplicationControllers,
+    scope: namespaced,
 }
 
-fn sort_cronjobs(items: &mut [CronJobInfo]) {
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+define_watcher! {
+    name: job,
+    k8s_type: Job,
+    dto_type: JobInfo,
+    converter: job_to_info,
+    resource_variant: Jobs,
+    scope: namespaced,
+}
+
+define_watcher! {
+    name: cronjob,
+    k8s_type: CronJob,
+    dto_type: CronJobInfo,
+    converter: cronjob_to_info,
+    resource_variant: CronJobs,
+    scope: namespaced,
 }
 
 /// Manages all watch tasks and their lifecycle.
@@ -292,1200 +504,6 @@ impl WatchManager {
         // Dropping the sender causes all receivers to see a changed() error,
         // which terminates the select! in each watcher task.
         self.cancel_tx.take();
-    }
-}
-
-/// Spawns a background task that watches pods and publishes updates.
-fn start_pod_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        let api: Api<Pod> = match &session.namespace {
-            Some(ns) => Api::namespaced(client, ns),
-            None => Api::all(client),
-        };
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-
-        let mut store = ResourceStore::<PodInfo>::new();
-
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => {
-                    break;
-                }
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            let should_publish = process_pod_event(&mut store, event);
-                            if should_publish {
-                                let mut snapshot = store.publish();
-                                sort_pods(&mut snapshot);
-                                let update = WatchUpdate {
-                                    resource: WatchedResource::Pods,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::Pods(snapshot),
-                                };
-                                if watch_tx.send(update).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("pod watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Pods,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Pods,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "pod watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Pods,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Pods,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-/// Processes a single watcher event, returning true if the store should
-/// be published to the event loop.
-fn process_pod_event(store: &mut ResourceStore<PodInfo>, event: Event<Pod>) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(pod) => {
-            let uid = pod.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    pod_name = pod.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping pod with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, pod_to_info(pod));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(pod) => {
-            let uid = pod.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    pod_name = pod.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping pod with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, pod_to_info(pod));
-            true
-        }
-        Event::Delete(pod) => {
-            let uid = pod.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    pod_name = pod.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping pod with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
-    }
-}
-
-// ── Deployment watcher ──
-
-fn start_deployment_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        let api: Api<Deployment> = match &session.namespace {
-            Some(ns) => Api::namespaced(client, ns),
-            None => Api::all(client),
-        };
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-        let mut store = ResourceStore::<DeploymentInfo>::new();
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => break,
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            if process_deployment_event(&mut store, event) {
-                                let mut snapshot = store.publish();
-                                sort_deployments(&mut snapshot);
-                                if watch_tx.send(WatchUpdate {
-                                    resource: WatchedResource::Deployments,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::Deployments(snapshot),
-                                }).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("deployment watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Deployments,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Deployments,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "deployment watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Deployments,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Deployments,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn process_deployment_event(
-    store: &mut ResourceStore<DeploymentInfo>,
-    event: Event<Deployment>,
-) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(dep) => {
-            let uid = dep.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = dep.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping deployment with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, deployment_to_info(dep));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(dep) => {
-            let uid = dep.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = dep.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping deployment with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, deployment_to_info(dep));
-            true
-        }
-        Event::Delete(dep) => {
-            let uid = dep.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = dep.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping deployment with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
-    }
-}
-
-// ── ReplicaSet watcher ──
-
-fn start_replicaset_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        let api: Api<ReplicaSet> = match &session.namespace {
-            Some(ns) => Api::namespaced(client, ns),
-            None => Api::all(client),
-        };
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-        let mut store = ResourceStore::<ReplicaSetInfo>::new();
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => break,
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            if process_replicaset_event(&mut store, event) {
-                                let mut snapshot = store.publish();
-                                sort_replicasets(&mut snapshot);
-                                if watch_tx.send(WatchUpdate {
-                                    resource: WatchedResource::ReplicaSets,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::ReplicaSets(snapshot),
-                                }).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("replicaset watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::ReplicaSets,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::ReplicaSets,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "replicaset watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::ReplicaSets,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::ReplicaSets,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn process_replicaset_event(
-    store: &mut ResourceStore<ReplicaSetInfo>,
-    event: Event<ReplicaSet>,
-) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(rs) => {
-            let uid = rs.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = rs.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping replicaset with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, replicaset_to_info(rs));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(rs) => {
-            let uid = rs.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = rs.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping replicaset with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, replicaset_to_info(rs));
-            true
-        }
-        Event::Delete(rs) => {
-            let uid = rs.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = rs.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping replicaset with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
-    }
-}
-
-// ── StatefulSet watcher ──
-
-fn start_statefulset_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        let api: Api<StatefulSet> = match &session.namespace {
-            Some(ns) => Api::namespaced(client, ns),
-            None => Api::all(client),
-        };
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-        let mut store = ResourceStore::<StatefulSetInfo>::new();
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => break,
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            if process_statefulset_event(&mut store, event) {
-                                let mut snapshot = store.publish();
-                                sort_statefulsets(&mut snapshot);
-                                if watch_tx.send(WatchUpdate {
-                                    resource: WatchedResource::StatefulSets,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::StatefulSets(snapshot),
-                                }).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("statefulset watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::StatefulSets,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::StatefulSets,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "statefulset watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::StatefulSets,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::StatefulSets,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn process_statefulset_event(
-    store: &mut ResourceStore<StatefulSetInfo>,
-    event: Event<StatefulSet>,
-) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(ss) => {
-            let uid = ss.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = ss.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping statefulset with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, statefulset_to_info(ss));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(ss) => {
-            let uid = ss.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = ss.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping statefulset with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, statefulset_to_info(ss));
-            true
-        }
-        Event::Delete(ss) => {
-            let uid = ss.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = ss.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping statefulset with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
-    }
-}
-
-// ── DaemonSet watcher ──
-
-fn start_daemonset_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        let api: Api<DaemonSet> = match &session.namespace {
-            Some(ns) => Api::namespaced(client, ns),
-            None => Api::all(client),
-        };
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-        let mut store = ResourceStore::<DaemonSetInfo>::new();
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => break,
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            if process_daemonset_event(&mut store, event) {
-                                let mut snapshot = store.publish();
-                                sort_daemonsets(&mut snapshot);
-                                if watch_tx.send(WatchUpdate {
-                                    resource: WatchedResource::DaemonSets,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::DaemonSets(snapshot),
-                                }).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("daemonset watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::DaemonSets,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::DaemonSets,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "daemonset watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::DaemonSets,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::DaemonSets,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn process_daemonset_event(
-    store: &mut ResourceStore<DaemonSetInfo>,
-    event: Event<DaemonSet>,
-) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(ds) => {
-            let uid = ds.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = ds.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping daemonset with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, daemonset_to_info(ds));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(ds) => {
-            let uid = ds.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = ds.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping daemonset with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, daemonset_to_info(ds));
-            true
-        }
-        Event::Delete(ds) => {
-            let uid = ds.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = ds.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping daemonset with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
-    }
-}
-
-// ── Service watcher ──
-
-fn start_service_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        let api: Api<Service> = match &session.namespace {
-            Some(ns) => Api::namespaced(client, ns),
-            None => Api::all(client),
-        };
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-        let mut store = ResourceStore::<ServiceInfo>::new();
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => break,
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            if process_service_event(&mut store, event) {
-                                let mut snapshot = store.publish();
-                                sort_services(&mut snapshot);
-                                if watch_tx.send(WatchUpdate {
-                                    resource: WatchedResource::Services,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::Services(snapshot),
-                                }).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("service watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Services,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Services,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "service watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Services,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Services,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn process_service_event(store: &mut ResourceStore<ServiceInfo>, event: Event<Service>) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(svc) => {
-            let uid = svc.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = svc.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping service with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, service_to_info(svc));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(svc) => {
-            let uid = svc.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = svc.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping service with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, service_to_info(svc));
-            true
-        }
-        Event::Delete(svc) => {
-            let uid = svc.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = svc.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping service with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
-    }
-}
-
-// ── Node watcher (always cluster-scoped) ──
-
-fn start_node_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        // Nodes are cluster-scoped — always use Api::all regardless of namespace.
-        let api: Api<Node> = Api::all(client);
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-        let mut store = ResourceStore::<NodeInfo>::new();
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => break,
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            if process_node_event(&mut store, event) {
-                                let mut snapshot = store.publish();
-                                sort_nodes(&mut snapshot);
-                                if watch_tx.send(WatchUpdate {
-                                    resource: WatchedResource::Nodes,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::Nodes(snapshot),
-                                }).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("node watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Nodes,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Nodes,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "node watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Nodes,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Nodes,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn process_node_event(store: &mut ResourceStore<NodeInfo>, event: Event<Node>) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(node) => {
-            let uid = node.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = node.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping node with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, node_to_info(node));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(node) => {
-            let uid = node.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = node.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping node with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, node_to_info(node));
-            true
-        }
-        Event::Delete(node) => {
-            let uid = node.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = node.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping node with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
-    }
-}
-
-fn start_replication_controller_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        let api: Api<ReplicationController> = match &session.namespace {
-            Some(ns) => Api::namespaced(client, ns),
-            None => Api::all(client),
-        };
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-        let mut store = ResourceStore::<ReplicationControllerInfo>::new();
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => break,
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            if process_replication_controller_event(&mut store, event) {
-                                let mut snapshot = store.publish();
-                                sort_replication_controllers(&mut snapshot);
-                                if watch_tx.send(WatchUpdate {
-                                    resource: WatchedResource::ReplicationControllers,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::ReplicationControllers(snapshot),
-                                }).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("replicationcontroller watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::ReplicationControllers,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::ReplicationControllers,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "replicationcontroller watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::ReplicationControllers,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::ReplicationControllers,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn process_replication_controller_event(
-    store: &mut ResourceStore<ReplicationControllerInfo>,
-    event: Event<ReplicationController>,
-) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(rc) => {
-            let uid = rc.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = rc.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping replicationcontroller with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, replication_controller_to_info(rc));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(rc) => {
-            let uid = rc.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = rc.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping replicationcontroller with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, replication_controller_to_info(rc));
-            true
-        }
-        Event::Delete(rc) => {
-            let uid = rc.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = rc.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping replicationcontroller with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
-    }
-}
-
-fn start_job_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        let api: Api<Job> = match &session.namespace {
-            Some(ns) => Api::namespaced(client, ns),
-            None => Api::all(client),
-        };
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-        let mut store = ResourceStore::<JobInfo>::new();
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => break,
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            if process_job_event(&mut store, event) {
-                                let mut snapshot = store.publish();
-                                sort_jobs(&mut snapshot);
-                                if watch_tx.send(WatchUpdate {
-                                    resource: WatchedResource::Jobs,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::Jobs(snapshot),
-                                }).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("job watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Jobs,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Jobs,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "job watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::Jobs,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::Jobs,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn process_job_event(store: &mut ResourceStore<JobInfo>, event: Event<Job>) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(job) => {
-            let uid = job.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = job.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping job with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, job_to_info(job));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(job) => {
-            let uid = job.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = job.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping job with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, job_to_info(job));
-            true
-        }
-        Event::Delete(job) => {
-            let uid = job.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = job.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping job with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
-    }
-}
-
-fn start_cronjob_watch(
-    client: Client,
-    session: WatchSessionKey,
-    watch_tx: mpsc::Sender<WatchUpdate>,
-    mut cancel_rx: tokio::sync::watch::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        let api: Api<CronJob> = match &session.namespace {
-            Some(ns) => Api::namespaced(client, ns),
-            None => Api::all(client),
-        };
-
-        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
-        let mut store = ResourceStore::<CronJobInfo>::new();
-        tokio::pin!(stream);
-
-        loop {
-            tokio::select! {
-                biased;
-                _ = cancel_rx.changed() => break,
-                item = stream.try_next() => {
-                    match item {
-                        Ok(Some(event)) => {
-                            if process_cronjob_event(&mut store, event) {
-                                let mut snapshot = store.publish();
-                                sort_cronjobs(&mut snapshot);
-                                if watch_tx.send(WatchUpdate {
-                                    resource: WatchedResource::CronJobs,
-                                    context_generation: session.context_generation,
-                                    data: WatchPayload::CronJobs(snapshot),
-                                }).await.is_err() {
-                                    break;
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            warn!("cronjob watch stream ended unexpectedly");
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::CronJobs,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::CronJobs,
-                                    message: "watch stream terminated".to_string(),
-                                },
-                            }).await;
-                            break;
-                        }
-                        Err(err) => {
-                            warn!(error = %err, "cronjob watch stream error");
-                            store.readiness = StoreReadiness::Error;
-                            store.last_error = Some(err.to_string());
-                            let _ = watch_tx.send(WatchUpdate {
-                                resource: WatchedResource::CronJobs,
-                                context_generation: session.context_generation,
-                                data: WatchPayload::Error {
-                                    resource: WatchedResource::CronJobs,
-                                    message: err.to_string(),
-                                },
-                            }).await;
-                        }
-                    }
-                }
-            }
-        }
-    });
-}
-
-fn process_cronjob_event(store: &mut ResourceStore<CronJobInfo>, event: Event<CronJob>) -> bool {
-    match event {
-        Event::Init => {
-            store.begin_init();
-            false
-        }
-        Event::InitApply(cj) => {
-            let uid = cj.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = cj.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping cronjob with empty UID during init"
-                );
-                return false;
-            }
-            store.apply_init_page(uid, cronjob_to_info(cj));
-            false
-        }
-        Event::InitDone => {
-            store.commit_init();
-            true
-        }
-        Event::Apply(cj) => {
-            let uid = cj.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = cj.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping cronjob with empty UID on apply"
-                );
-                return false;
-            }
-            store.apply_event(uid, cronjob_to_info(cj));
-            true
-        }
-        Event::Delete(cj) => {
-            let uid = cj.uid().unwrap_or_default();
-            if uid.is_empty() {
-                warn!(
-                    name = cj.metadata.name.as_deref().unwrap_or("<unknown>"),
-                    "skipping cronjob with empty UID on delete"
-                );
-                return false;
-            }
-            store.remove(&uid);
-            true
-        }
     }
 }
 

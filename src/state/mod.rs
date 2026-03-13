@@ -1229,111 +1229,69 @@ impl GlobalState {
     /// Only updates the snapshot if the data actually changed, avoiding
     /// unnecessary version bumps and downstream cache invalidation.
     pub fn apply_watch_update(&mut self, update: watch::WatchUpdate) {
+        /// Applies a watched resource update to a snapshot field, bumping the
+        /// version only when data actually changed. Also marks the view ready.
+        macro_rules! apply_watched {
+            ($snap:ident, $changed:ident, $field:ident, $items:expr, $view:expr) => {{
+                let items = $items;
+                if $snap.$field != items {
+                    $snap.$field = items;
+                    $snap.snapshot_version = $snap.snapshot_version.saturating_add(1);
+                    $changed = true;
+                }
+                let slot = &mut $snap.view_load_states[$view.index()];
+                if *slot != ViewLoadState::Ready {
+                    *slot = ViewLoadState::Ready;
+                    $changed = true;
+                }
+            }};
+        }
+
         let mut changed = false;
         {
             let snap = Arc::make_mut(&mut self.snapshot);
             match update.data {
-                watch::WatchPayload::Pods(pods) => {
-                    if snap.pods != pods {
-                        snap.pods = pods;
-                        snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-                        changed = true;
-                    }
-                    let slot = &mut snap.view_load_states[AppView::Pods.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                        changed = true;
-                    }
+                watch::WatchPayload::Pods(items) => {
+                    apply_watched!(snap, changed, pods, items, AppView::Pods);
                 }
                 watch::WatchPayload::Deployments(items) => {
-                    snap.deployments = items;
-                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-                    changed = true;
-                    let slot = &mut snap.view_load_states[AppView::Deployments.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                    }
+                    apply_watched!(snap, changed, deployments, items, AppView::Deployments);
                 }
                 watch::WatchPayload::ReplicaSets(items) => {
-                    snap.replicasets = items;
-                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-                    changed = true;
-                    let slot = &mut snap.view_load_states[AppView::ReplicaSets.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                    }
+                    apply_watched!(snap, changed, replicasets, items, AppView::ReplicaSets);
                 }
                 watch::WatchPayload::StatefulSets(items) => {
-                    snap.statefulsets = items;
-                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-                    changed = true;
-                    let slot = &mut snap.view_load_states[AppView::StatefulSets.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                    }
+                    apply_watched!(snap, changed, statefulsets, items, AppView::StatefulSets);
                 }
                 watch::WatchPayload::DaemonSets(items) => {
-                    snap.daemonsets = items;
-                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-                    changed = true;
-                    let slot = &mut snap.view_load_states[AppView::DaemonSets.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                    }
+                    apply_watched!(snap, changed, daemonsets, items, AppView::DaemonSets);
                 }
                 watch::WatchPayload::Services(items) => {
-                    snap.services = items;
-                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+                    apply_watched!(snap, changed, services, items, AppView::Services);
                     snap.services_count = snap.services.len();
-                    changed = true;
-                    let slot = &mut snap.view_load_states[AppView::Services.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                    }
                 }
-                watch::WatchPayload::Nodes(nodes) => {
-                    if snap.nodes != nodes {
-                        snap.nodes = nodes;
-                        snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-                        changed = true;
-                    }
-                    let slot = &mut snap.view_load_states[AppView::Nodes.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                        changed = true;
-                    }
+                watch::WatchPayload::Nodes(items) => {
+                    apply_watched!(snap, changed, nodes, items, AppView::Nodes);
                 }
                 watch::WatchPayload::ReplicationControllers(items) => {
-                    snap.replication_controllers = items;
-                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-                    changed = true;
-                    let slot = &mut snap.view_load_states[AppView::ReplicationControllers.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                    }
+                    apply_watched!(
+                        snap,
+                        changed,
+                        replication_controllers,
+                        items,
+                        AppView::ReplicationControllers
+                    );
                 }
                 watch::WatchPayload::Jobs(items) => {
-                    snap.jobs = items;
-                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-                    changed = true;
-                    let slot = &mut snap.view_load_states[AppView::Jobs.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                    }
+                    apply_watched!(snap, changed, jobs, items, AppView::Jobs);
                 }
                 watch::WatchPayload::CronJobs(items) => {
-                    snap.cronjobs = items;
-                    snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-                    changed = true;
-                    let slot = &mut snap.view_load_states[AppView::CronJobs.index()];
-                    if *slot != ViewLoadState::Ready {
-                        *slot = ViewLoadState::Ready;
-                    }
+                    apply_watched!(snap, changed, cronjobs, items, AppView::CronJobs);
                 }
                 watch::WatchPayload::Error { .. } => {
                     // Watcher errors are informational — do not clear existing
-                    // snapshot data. Polling will continue to refresh on its
-                    // own schedule.
+                    // snapshot data. The watch stream's built-in backoff will
+                    // reconnect automatically.
                 }
             }
         }

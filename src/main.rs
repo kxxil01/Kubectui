@@ -2090,7 +2090,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             Some(update) = watch_rx.recv() => {
                 if update.context_generation == refresh_state.context_generation {
                     global_state.apply_watch_update(update);
-                    snapshot_dirty = true;
                 }
             }
 
