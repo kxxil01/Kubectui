@@ -48,7 +48,7 @@ async fn mock_refresh_populates_snapshot() {
     let snapshot = state.snapshot();
     assert_eq!(snapshot.nodes.len(), source.nodes.len());
     assert_eq!(snapshot.pods.len(), 2);
-    assert_eq!(snapshot.services_count, source.services.len());
+    assert_eq!(snapshot.services.len(), source.services.len());
     assert_eq!(snapshot.namespaces_count, 2);
 }
 

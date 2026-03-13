@@ -125,7 +125,7 @@ fn map_events(list: ObjectList<Event>) -> Vec<EventInfo> {
         })
         .collect();
 
-    mapped.sort_by(|a, b| {
+    mapped.sort_unstable_by(|a, b| {
         a.reason
             .cmp(&b.reason)
             .then_with(|| a.message.cmp(&b.message))
@@ -144,7 +144,7 @@ fn map_events(list: ObjectList<Event>) -> Vec<EventInfo> {
             false
         }
     });
-    mapped.sort_by_key(|evt| evt.last_timestamp);
+    mapped.sort_unstable_by_key(|evt| evt.last_timestamp);
     mapped
 }
 

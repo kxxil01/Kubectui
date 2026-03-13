@@ -1,7 +1,5 @@
 //! Bottom workbench renderer.
 
-use std::borrow::Cow;
-
 use ratatui::{
     layout::{Constraint, Direction, Layout, Margin, Rect},
     prelude::{Frame, Modifier, Style},
@@ -652,7 +650,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
                         Style::default().add_modifier(Modifier::BOLD).fg(theme.fg),
                     ),
                     Span::styled(
-                        truncate_message(&event.message, 60),
+                        crate::ui::truncate_message(&event.message, 60),
                         Style::default().fg(theme.fg_dim),
                     ),
                     Span::styled(format!("  {ts}"), theme.muted_style()),
@@ -689,7 +687,10 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
                             .fg(theme.accent)
                             .add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(truncate_message(message, 60), Style::default().fg(theme.fg)),
+                    Span::styled(
+                        crate::ui::truncate_message(message, 60),
+                        Style::default().fg(theme.fg),
+                    ),
                     Span::styled(format!("  {ts}"), theme.muted_style()),
                 ])
             }
@@ -698,25 +699,6 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     render_scrollbar(frame, area, total, window.start);
-}
-
-/// Truncate a message to `max_chars` for timeline display, appending "..." if truncated.
-/// Returns `Cow::Borrowed` when no truncation is needed to avoid allocation.
-fn truncate_message(msg: &str, max_chars: usize) -> Cow<'_, str> {
-    // Fast path: if byte length fits, char length fits too (ASCII-heavy messages).
-    if msg.len() <= max_chars {
-        return Cow::Borrowed(msg);
-    }
-    let char_count = msg.chars().count();
-    if char_count <= max_chars {
-        Cow::Borrowed(msg)
-    } else if max_chars < 4 {
-        // Too small for "..." suffix — just take first max_chars characters.
-        Cow::Owned(msg.chars().take(max_chars).collect())
-    } else {
-        let truncated: String = msg.chars().take(max_chars - 3).collect();
-        Cow::Owned(format!("{truncated}..."))
-    }
 }
 
 fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: usize) {
@@ -1146,7 +1128,8 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize
 
 #[cfg(test)]
 mod tests {
-    use super::{VisibleWindow, centered_window, scroll_window, truncate_message};
+    use super::{VisibleWindow, centered_window, scroll_window};
+    use crate::ui::truncate_message;
 
     #[test]
     fn short_message_unchanged() {
@@ -1174,15 +1157,12 @@ mod tests {
 
     #[test]
     fn multibyte_chars_counted_correctly() {
-        // 10 multi-byte chars (each 3 bytes in UTF-8) = byte len 30 > max_chars 15
-        // but char count 10 <= max_chars 15, so no truncation needed
-        let msg = "\u{00e9}".repeat(10); // é repeated 10 times
+        let msg = "\u{00e9}".repeat(10);
         assert_eq!(truncate_message(&msg, 15).as_ref(), msg);
     }
 
     #[test]
     fn multibyte_chars_truncated_on_char_boundary() {
-        // 20 multi-byte chars, truncate to max 10 chars → 7 chars + "..."
         let msg = "\u{00e9}".repeat(20);
         let result = truncate_message(&msg, 10);
         assert!(result.ends_with("..."));
@@ -1197,7 +1177,6 @@ mod tests {
 
     #[test]
     fn very_small_max_chars_no_ellipsis() {
-        // max_chars < 4: too small for "...", just truncate to max_chars
         let result = truncate_message("hello world", 2);
         assert_eq!(result.as_ref(), "he");
         assert_eq!(result.chars().count(), 2);
@@ -1211,7 +1190,6 @@ mod tests {
 
     #[test]
     fn max_chars_three_uses_ellipsis() {
-        // max_chars == 4 is the smallest that can fit "x..."
         let result = truncate_message("hello world", 4);
         assert_eq!(result.as_ref(), "h...");
         assert_eq!(result.chars().count(), 4);

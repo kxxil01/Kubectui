@@ -120,7 +120,7 @@ pub fn cronjob_history_entries(
         })
         .collect::<Vec<_>>();
 
-    entries.sort_by(|left, right| {
+    entries.sort_unstable_by(|left, right| {
         right
             .created_at
             .cmp(&left.created_at)

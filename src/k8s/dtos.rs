@@ -110,12 +110,6 @@ pub struct DaemonSetInfo {
     pub created_at: Option<DateTime<Utc>>,
 }
 
-/// Legacy lightweight snapshot used by daemonset integration tests.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ClusterSnapshot {
-    pub daemonsets: Vec<DaemonSetInfo>,
-}
-
 /// Shared RBAC policy rule payload used by Role and ClusterRole DTOs.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct RbacRule {
@@ -127,7 +121,7 @@ pub struct RbacRule {
 }
 
 /// Lightweight ServiceAccount view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ServiceAccountInfo {
     pub name: String,
     pub namespace: String,
@@ -139,7 +133,7 @@ pub struct ServiceAccountInfo {
 }
 
 /// Lightweight Role view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct RoleInfo {
     pub name: String,
     pub namespace: String,
@@ -158,7 +152,7 @@ pub struct RoleBindingSubject {
 }
 
 /// Lightweight RoleBinding view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct RoleBindingInfo {
     pub name: String,
     pub namespace: String,
@@ -170,7 +164,7 @@ pub struct RoleBindingInfo {
 }
 
 /// Lightweight ClusterRole view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ClusterRoleInfo {
     pub name: String,
     pub rules: Vec<RbacRule>,
@@ -179,7 +173,7 @@ pub struct ClusterRoleInfo {
 }
 
 /// Lightweight ClusterRoleBinding view used by list and detail pages.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ClusterRoleBindingInfo {
     pub name: String,
     pub role_ref_kind: String,

@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use ratatui::{
     layout::{Constraint, Margin, Rect},
     prelude::{Frame, Style},
@@ -245,15 +245,30 @@ fn cached_formatted_rows(
                     .unwrap_or_else(|| "<cluster-scope>".to_string()),
                 kind: resource.kind.clone(),
                 status: resource.status.clone(),
-                age: format_age_from_created(resource.created_at, now_unix),
-                last_reconcile: format_age_from_created(resource.last_reconcile_time, now_unix),
+                age: crate::ui::format_age_from_timestamp(resource.created_at, now_unix),
+                last_reconcile: crate::ui::format_age_from_timestamp(
+                    resource.last_reconcile_time,
+                    now_unix,
+                ),
                 gen_mismatch: resource
                     .observed_generation
                     .zip(resource.generation)
                     .is_some_and(|(obs, cur)| obs < cur),
-                message: truncate_message(resource.message.as_deref().unwrap_or("-"), 56),
-                artifact: truncate_message(resource.artifact.as_deref().unwrap_or("-"), 56),
-                source_url: truncate_message(resource.source_url.as_deref().unwrap_or("-"), 56),
+                message: crate::ui::truncate_message(
+                    resource.message.as_deref().unwrap_or("-"),
+                    56,
+                )
+                .into_owned(),
+                artifact: crate::ui::truncate_message(
+                    resource.artifact.as_deref().unwrap_or("-"),
+                    56,
+                )
+                .into_owned(),
+                source_url: crate::ui::truncate_message(
+                    resource.source_url.as_deref().unwrap_or("-"),
+                    56,
+                )
+                .into_owned(),
             })
             .collect::<Vec<_>>(),
     );
@@ -498,37 +513,6 @@ fn status_style(status: &str, theme: &crate::ui::theme::Theme) -> Style {
         theme.badge_warning_style()
     } else {
         theme.inactive_style()
-    }
-}
-
-fn truncate_message(message: &str, max_chars: usize) -> String {
-    if message.chars().count() <= max_chars {
-        return message.to_string();
-    }
-    let mut out = message
-        .chars()
-        .take(max_chars.saturating_sub(3))
-        .collect::<String>();
-    out.push_str("...");
-    out
-}
-
-fn format_age_from_created(created_at: Option<DateTime<Utc>>, now_unix: i64) -> String {
-    let Some(created_at) = created_at else {
-        return "-".to_string();
-    };
-
-    let age_secs = now_unix.saturating_sub(created_at.timestamp());
-    let days = age_secs / 86_400;
-    let hours = (age_secs % 86_400) / 3_600;
-    let mins = (age_secs % 3_600) / 60;
-
-    if days > 0 {
-        format!("{days}d {hours}h")
-    } else if hours > 0 {
-        format!("{hours}h {mins}m")
-    } else {
-        format!("{mins}m")
     }
 }
 
