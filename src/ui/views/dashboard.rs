@@ -71,17 +71,6 @@ fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
     let cluster_resources = compute_cluster_resource_summary(snapshot);
     let (top_cpu_pods, top_mem_pods) = compute_top_pod_consumers(snapshot);
 
-    let data = DashboardData {
-        stats,
-        alerts: alerts.clone(),
-        insights: insights.clone(),
-        workload_pct,
-        ns_utilization: ns_utilization.clone(),
-        cluster_resources,
-        top_cpu_pods: top_cpu_pods.clone(),
-        top_mem_pods: top_mem_pods.clone(),
-    };
-
     *guard = Some(DashboardCache {
         version: snapshot.snapshot_version,
         data: DashboardData {
@@ -96,7 +85,17 @@ fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
         },
     });
 
-    data
+    let cached = &guard.as_ref().unwrap().data;
+    DashboardData {
+        stats: cached.stats,
+        alerts: cached.alerts.clone(),
+        insights: cached.insights.clone(),
+        workload_pct: cached.workload_pct,
+        ns_utilization: cached.ns_utilization.clone(),
+        cluster_resources: cached.cluster_resources,
+        top_cpu_pods: cached.top_cpu_pods.clone(),
+        top_mem_pods: cached.top_mem_pods.clone(),
+    }
 }
 
 // ── metric parsing helpers ────────────────────────────────────────────────────

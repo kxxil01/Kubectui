@@ -28,7 +28,10 @@ use crate::{
     },
     bookmarks::BookmarkEntry,
     policy::ViewAction,
-    state::{ClusterSnapshot, ViewLoadState},
+    state::{
+        ClusterSnapshot, ViewLoadState,
+        alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
+    },
     ui::{
         components::{active_block, default_block, default_theme},
         theme::Theme,
@@ -1245,9 +1248,6 @@ fn render_pods_widget(
                 )),
                 "age" => Cell::from(Span::styled(age, theme.inactive_style())),
                 "cpu_usage" | "mem_usage" => {
-                    use crate::state::alerts::{
-                        format_mib, format_millicores, parse_mib, parse_millicores,
-                    };
                     let pm = pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str()));
                     match pm {
                         Some(pm) => {
@@ -1306,7 +1306,6 @@ fn render_pods_widget(
                     dim_style,
                 )),
                 "cpu_pct_req" | "mem_pct_req" | "cpu_pct_lim" | "mem_pct_lim" => {
-                    use crate::state::alerts::{parse_mib, parse_millicores};
                     let pm = pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str()));
                     match pm {
                         Some(pm) => {

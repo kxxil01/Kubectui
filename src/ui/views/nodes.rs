@@ -20,7 +20,10 @@ use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
     columns::ColumnDef,
-    state::ClusterSnapshot,
+    state::{
+        ClusterSnapshot,
+        alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
+    },
     ui::{
         bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
@@ -179,7 +182,6 @@ pub fn render_nodes(
                 "status" => Cell::from(Line::from(status_spans.take().unwrap_or_default())),
                 "roles" => Cell::from(Span::styled(node.role.as_str(), accent_style)),
                 "cpu" => {
-                    use crate::state::alerts::{format_millicores, parse_millicores};
                     let alloc = node.cpu_allocatable.as_deref().unwrap_or("N/A");
                     match metrics_by_node.get(node.name.as_str()) {
                         Some(nm) => {
@@ -196,7 +198,6 @@ pub fn render_nodes(
                     }
                 }
                 "memory" => {
-                    use crate::state::alerts::{format_mib, parse_mib};
                     let alloc = node.memory_allocatable.as_deref().unwrap_or("N/A");
                     match metrics_by_node.get(node.name.as_str()) {
                         Some(nm) => {
