@@ -116,3 +116,197 @@ pub fn pod_to_info(pod: Pod) -> PodInfo {
         memory_limit,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use k8s_openapi::api::core::v1::{
+        Container, ContainerState, ContainerStateWaiting, ContainerStatus, PodSpec, PodStatus,
+        ResourceRequirements,
+    };
+    use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+    use std::collections::BTreeMap;
+
+    fn minimal_pod(name: &str, namespace: &str) -> Pod {
+        Pod {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some(namespace.to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn minimal_pod_defaults() {
+        let info = pod_to_info(minimal_pod("my-pod", "default"));
+        assert_eq!(info.name, "my-pod");
+        assert_eq!(info.namespace, "default");
+        assert_eq!(info.status, "Unknown");
+        assert_eq!(info.restarts, 0);
+        assert!(info.node.is_none());
+        assert!(info.pod_ip.is_none());
+        assert!(info.labels.is_empty());
+        assert!(info.annotations.is_empty());
+        assert!(info.owner_references.is_empty());
+        assert!(info.waiting_reasons.is_empty());
+        assert!(info.cpu_request.is_none());
+        assert!(info.memory_request.is_none());
+        assert!(info.cpu_limit.is_none());
+        assert!(info.memory_limit.is_none());
+    }
+
+    #[test]
+    fn missing_name_uses_unknown() {
+        let pod = Pod {
+            metadata: ObjectMeta {
+                namespace: Some("ns".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let info = pod_to_info(pod);
+        assert_eq!(info.name, "<unknown>");
+    }
+
+    #[test]
+    fn missing_namespace_uses_default() {
+        let pod = Pod {
+            metadata: ObjectMeta {
+                name: Some("p".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let info = pod_to_info(pod);
+        assert_eq!(info.namespace, "default");
+    }
+
+    #[test]
+    fn extracts_status_phase() {
+        let mut pod = minimal_pod("p", "ns");
+        pod.status = Some(PodStatus {
+            phase: Some("Running".to_string()),
+            ..Default::default()
+        });
+        let info = pod_to_info(pod);
+        assert_eq!(info.status, "Running");
+    }
+
+    #[test]
+    fn extracts_node_and_pod_ip() {
+        let mut pod = minimal_pod("p", "ns");
+        pod.spec = Some(PodSpec {
+            node_name: Some("node-1".to_string()),
+            containers: vec![],
+            ..Default::default()
+        });
+        pod.status = Some(PodStatus {
+            pod_ip: Some("10.0.0.5".to_string()),
+            ..Default::default()
+        });
+        let info = pod_to_info(pod);
+        assert_eq!(info.node.as_deref(), Some("node-1"));
+        assert_eq!(info.pod_ip.as_deref(), Some("10.0.0.5"));
+    }
+
+    #[test]
+    fn sums_restarts_across_containers() {
+        let mut pod = minimal_pod("p", "ns");
+        pod.status = Some(PodStatus {
+            container_statuses: Some(vec![
+                ContainerStatus {
+                    name: "a".to_string(),
+                    restart_count: 3,
+                    ready: true,
+                    image: String::new(),
+                    image_id: String::new(),
+                    ..Default::default()
+                },
+                ContainerStatus {
+                    name: "b".to_string(),
+                    restart_count: 2,
+                    ready: true,
+                    image: String::new(),
+                    image_id: String::new(),
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        });
+        let info = pod_to_info(pod);
+        assert_eq!(info.restarts, 5);
+    }
+
+    #[test]
+    fn collects_waiting_reasons() {
+        let mut pod = minimal_pod("p", "ns");
+        pod.status = Some(PodStatus {
+            container_statuses: Some(vec![ContainerStatus {
+                name: "c".to_string(),
+                restart_count: 0,
+                ready: false,
+                image: String::new(),
+                image_id: String::new(),
+                state: Some(ContainerState {
+                    waiting: Some(ContainerStateWaiting {
+                        reason: Some("CrashLoopBackOff".to_string()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        });
+        let info = pod_to_info(pod);
+        assert_eq!(info.waiting_reasons, vec!["CrashLoopBackOff"]);
+    }
+
+    #[test]
+    fn parses_resource_requests_and_limits() {
+        let mut pod = minimal_pod("p", "ns");
+        let mut requests = BTreeMap::new();
+        requests.insert("cpu".to_string(), Quantity("250m".to_string()));
+        requests.insert("memory".to_string(), Quantity("128Mi".to_string()));
+        let mut limits = BTreeMap::new();
+        limits.insert("cpu".to_string(), Quantity("1".to_string()));
+        limits.insert("memory".to_string(), Quantity("512Mi".to_string()));
+        pod.spec = Some(PodSpec {
+            containers: vec![Container {
+                name: "app".to_string(),
+                resources: Some(ResourceRequirements {
+                    requests: Some(requests),
+                    limits: Some(limits),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }],
+            ..Default::default()
+        });
+        let info = pod_to_info(pod);
+        assert!(info.cpu_request.is_some());
+        assert!(info.memory_request.is_some());
+        assert!(info.cpu_limit.is_some());
+        assert!(info.memory_limit.is_some());
+    }
+
+    #[test]
+    fn extracts_labels_and_annotations() {
+        let mut pod = minimal_pod("p", "ns");
+        let mut labels = BTreeMap::new();
+        labels.insert("app".to_string(), "web".to_string());
+        let mut annotations = BTreeMap::new();
+        annotations.insert("note".to_string(), "test".to_string());
+        pod.metadata.labels = Some(labels);
+        pod.metadata.annotations = Some(annotations);
+        let info = pod_to_info(pod);
+        assert_eq!(info.labels, vec![("app".to_string(), "web".to_string())]);
+        assert_eq!(
+            info.annotations,
+            vec![("note".to_string(), "test".to_string())]
+        );
+    }
+}

@@ -2,13 +2,13 @@
 
 ## Current State
 
-- `kube = "0.92"` features: `["client", "ws", "runtime"]`
+- `kube = "0.94"` features: `["client", "ws", "runtime", "gzip"]`
 - `k8s-openapi = "0.22"` feature: `v1_30`
 - `chrono = "0.4"` — 185 occurrences across 21 files
 
 ## Target State
 
-- `kube = "3"` features: `["client", "ws", "runtime"]`
+- `kube = "3"` features: `["client", "ws", "runtime", "gzip"]`
 - `k8s-openapi = "0.27"` feature: `v1_35`
 - `jiff = "0.2"` features: `["serde"]`
 - `chrono` — keep as standalone dep if needed for non-k8s logic, otherwise remove
@@ -53,7 +53,7 @@
 ### Step 1: Bump to 0.94 (safe, zero changes)
 
 ```toml
-kube = { version = "0.94", features = ["client", "ws", "runtime"] }
+kube = { version = "0.94", features = ["client", "ws", "runtime", "gzip"] }
 ```
 
 ### Step 2: Bump to 0.99

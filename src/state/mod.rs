@@ -1245,6 +1245,11 @@ impl GlobalState {
                         changed = true;
                     }
                 }
+                watch::WatchPayload::Error { .. } => {
+                    // Watcher errors are informational — do not clear existing
+                    // snapshot data. Polling will continue to refresh on its
+                    // own schedule.
+                }
             }
         }
         if changed {

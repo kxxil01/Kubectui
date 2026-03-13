@@ -12,6 +12,7 @@ use kube::runtime::WatchStreamExt;
 use kube::runtime::watcher::{self, Event};
 use kube::{Api, Client, ResourceExt};
 use tokio::sync::mpsc;
+use tracing::warn;
 
 use crate::k8s::conversions::pod_to_info;
 use crate::k8s::dtos::PodInfo;
@@ -34,6 +35,11 @@ pub struct WatchUpdate {
 #[derive(Debug)]
 pub enum WatchPayload {
     Pods(Vec<PodInfo>),
+    /// A watcher encountered an error or terminated.
+    Error {
+        resource: WatchedResource,
+        message: String,
+    },
 }
 
 /// Session identity for stale-event rejection.
@@ -56,8 +62,8 @@ pub enum StoreReadiness {
 
 /// In-memory store for a single watched resource type.
 ///
-/// Keyed by Kubernetes UID for O(1) apply/delete. Publishes sorted
-/// `Vec<T>` snapshots matching the polling output format.
+/// Keyed by Kubernetes UID for O(1) apply/delete. Callers are responsible
+/// for sorting the published `Vec<T>` for stable output.
 #[derive(Debug)]
 pub struct ResourceStore<T> {
     items: HashMap<String, T>,
@@ -66,13 +72,13 @@ pub struct ResourceStore<T> {
     pub last_error: Option<String>,
 }
 
-impl<T: Clone> Default for ResourceStore<T> {
+impl<T> Default for ResourceStore<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<T: Clone> ResourceStore<T> {
+impl<T> ResourceStore<T> {
     /// Creates an empty store in [`StoreReadiness::Idle`] state.
     pub fn new() -> Self {
         Self {
@@ -112,11 +118,6 @@ impl<T: Clone> ResourceStore<T> {
         self.items.remove(uid);
     }
 
-    /// Publishes a sorted snapshot of all items.
-    pub fn publish(&self) -> Vec<T> {
-        self.items.values().cloned().collect()
-    }
-
     /// Resets the store to idle, discarding all data.
     pub fn clear(&mut self) {
         self.items.clear();
@@ -126,12 +127,23 @@ impl<T: Clone> ResourceStore<T> {
     }
 }
 
+impl<T: Clone> ResourceStore<T> {
+    /// Publishes a snapshot of all items (unsorted — caller must sort).
+    pub fn publish(&self) -> Vec<T> {
+        self.items.values().cloned().collect()
+    }
+}
+
 /// Publish helper: sorts pods by name for stable output.
 fn sort_pods(pods: &mut [PodInfo]) {
     pods.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
 /// Manages all watch tasks and their lifecycle.
+///
+/// Instances are single-use: after [`stop_all`](WatchManager::stop_all),
+/// create a new `WatchManager` with the updated session key rather than
+/// restarting watches on the same instance.
 pub struct WatchManager {
     session: WatchSessionKey,
     cancel_tx: Option<tokio::sync::watch::Sender<()>>,
@@ -210,11 +222,29 @@ fn start_pod_watch(
                             }
                         }
                         Ok(None) => {
+                            warn!("pod watch stream ended unexpectedly");
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Pods,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::Pods,
+                                    message: "watch stream terminated".to_string(),
+                                },
+                            }).await;
                             break;
                         }
                         Err(err) => {
+                            warn!(error = %err, "pod watch stream error");
                             store.readiness = StoreReadiness::Error;
                             store.last_error = Some(err.to_string());
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Pods,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::Pods,
+                                    message: err.to_string(),
+                                },
+                            }).await;
                         }
                     }
                 }
@@ -233,9 +263,14 @@ fn process_pod_event(store: &mut ResourceStore<PodInfo>, event: Event<Pod>) -> b
         }
         Event::InitApply(pod) => {
             let uid = pod.uid().unwrap_or_default();
-            if !uid.is_empty() {
-                store.apply_init_page(uid, pod_to_info(pod));
+            if uid.is_empty() {
+                warn!(
+                    pod_name = pod.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping pod with empty UID during init"
+                );
+                return false;
             }
+            store.apply_init_page(uid, pod_to_info(pod));
             false
         }
         Event::InitDone => {
@@ -244,21 +279,27 @@ fn process_pod_event(store: &mut ResourceStore<PodInfo>, event: Event<Pod>) -> b
         }
         Event::Apply(pod) => {
             let uid = pod.uid().unwrap_or_default();
-            if !uid.is_empty() {
-                store.apply_event(uid, pod_to_info(pod));
-                true
-            } else {
-                false
+            if uid.is_empty() {
+                warn!(
+                    pod_name = pod.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping pod with empty UID on apply"
+                );
+                return false;
             }
+            store.apply_event(uid, pod_to_info(pod));
+            true
         }
         Event::Delete(pod) => {
             let uid = pod.uid().unwrap_or_default();
-            if !uid.is_empty() {
-                store.remove(&uid);
-                true
-            } else {
-                false
+            if uid.is_empty() {
+                warn!(
+                    pod_name = pod.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping pod with empty UID on delete"
+                );
+                return false;
             }
+            store.remove(&uid);
+            true
         }
     }
 }
@@ -266,6 +307,7 @@ fn process_pod_event(store: &mut ResourceStore<PodInfo>, event: Event<Pod>) -> b
 #[cfg(test)]
 mod tests {
     use super::*;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 
     fn make_pod_info(name: &str) -> PodInfo {
         PodInfo {
@@ -275,6 +317,20 @@ mod tests {
             ..Default::default()
         }
     }
+
+    fn make_pod(name: &str, uid: &str) -> Pod {
+        Pod {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some("default".to_string()),
+                uid: Some(uid.to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    // ── ResourceStore tests ──
 
     #[test]
     fn resource_store_init_cycle() {
@@ -331,7 +387,7 @@ mod tests {
     }
 
     #[test]
-    fn resource_store_publish_sorted() {
+    fn resource_store_publish_unsorted() {
         let mut store = ResourceStore::<PodInfo>::new();
         store.apply_event("uid-3".to_string(), make_pod_info("pod-c"));
         store.apply_event("uid-1".to_string(), make_pod_info("pod-a"));
@@ -371,5 +427,100 @@ mod tests {
         assert_eq!(store.items.len(), 1);
         assert!(store.items.contains_key("uid-new"));
         assert!(!store.items.contains_key("uid-old"));
+    }
+
+    // ── process_pod_event tests ──
+
+    #[test]
+    fn process_event_init_clears_and_sets_listing() {
+        let mut store = ResourceStore::<PodInfo>::new();
+        store.apply_event("uid-1".to_string(), make_pod_info("old"));
+
+        let publish = process_pod_event(&mut store, Event::Init);
+        assert!(!publish);
+        assert_eq!(store.readiness, StoreReadiness::Listing);
+    }
+
+    #[test]
+    fn process_event_init_apply_buffers_without_publish() {
+        let mut store = ResourceStore::<PodInfo>::new();
+        store.begin_init();
+
+        let publish = process_pod_event(&mut store, Event::InitApply(make_pod("pod-a", "uid-a")));
+        assert!(!publish);
+        assert!(store.items.is_empty());
+        assert_eq!(store.init_buffer.len(), 1);
+    }
+
+    #[test]
+    fn process_event_init_done_commits_and_publishes() {
+        let mut store = ResourceStore::<PodInfo>::new();
+        store.begin_init();
+        store.apply_init_page("uid-a".to_string(), make_pod_info("pod-a"));
+
+        let publish = process_pod_event(&mut store, Event::InitDone);
+        assert!(publish);
+        assert_eq!(store.readiness, StoreReadiness::Watching);
+        assert_eq!(store.items.len(), 1);
+    }
+
+    #[test]
+    fn process_event_apply_upserts_and_publishes() {
+        let mut store = ResourceStore::<PodInfo>::new();
+
+        let publish = process_pod_event(&mut store, Event::Apply(make_pod("pod-a", "uid-a")));
+        assert!(publish);
+        assert_eq!(store.items.len(), 1);
+    }
+
+    #[test]
+    fn process_event_delete_removes_and_publishes() {
+        let mut store = ResourceStore::<PodInfo>::new();
+        store.apply_event("uid-a".to_string(), make_pod_info("pod-a"));
+
+        let publish = process_pod_event(&mut store, Event::Delete(make_pod("pod-a", "uid-a")));
+        assert!(publish);
+        assert!(store.items.is_empty());
+    }
+
+    #[test]
+    fn process_event_empty_uid_skipped() {
+        let mut store = ResourceStore::<PodInfo>::new();
+        let pod_no_uid = Pod {
+            metadata: ObjectMeta {
+                name: Some("no-uid-pod".to_string()),
+                uid: None,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+
+        assert!(!process_pod_event(
+            &mut store,
+            Event::Apply(pod_no_uid.clone())
+        ));
+        assert!(store.items.is_empty());
+
+        assert!(!process_pod_event(&mut store, Event::Delete(pod_no_uid)));
+        assert!(store.items.is_empty());
+    }
+
+    #[test]
+    fn process_event_full_init_cycle() {
+        let mut store = ResourceStore::<PodInfo>::new();
+
+        assert!(!process_pod_event(&mut store, Event::Init));
+        assert!(!process_pod_event(
+            &mut store,
+            Event::InitApply(make_pod("pod-a", "uid-a"))
+        ));
+        assert!(!process_pod_event(
+            &mut store,
+            Event::InitApply(make_pod("pod-b", "uid-b"))
+        ));
+        let publish = process_pod_event(&mut store, Event::InitDone);
+        assert!(publish);
+        assert_eq!(store.items.len(), 2);
+        assert_eq!(store.readiness, StoreReadiness::Watching);
     }
 }

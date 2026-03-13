@@ -49,7 +49,10 @@ use kubectui::{
     },
     policy::{DetailAction, ResourceActionContext},
     secret::{decode_secret_yaml, encode_secret_yaml},
-    state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
+    state::{
+        ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope,
+        watch::{WatchManager, WatchSessionKey, WatchUpdate},
+    },
     ui,
     workbench::{WorkbenchTabKey, WorkbenchTabState},
 };
@@ -1604,10 +1607,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let mut snapshot_dirty = false;
 
     // Watch-backed resource caches — pushes live updates for core resources.
-    let (watch_tx, mut watch_rx) =
-        tokio::sync::mpsc::channel::<kubectui::state::watch::WatchUpdate>(256);
+    let (watch_tx, mut watch_rx) = tokio::sync::mpsc::channel::<WatchUpdate>(32);
     let mut watch_manager = {
-        use kubectui::state::watch::{WatchManager, WatchSessionKey};
         let mut wm = WatchManager::new(WatchSessionKey {
             context_generation: refresh_state.context_generation,
             cluster_context: app.current_context_name.clone(),
@@ -2794,15 +2795,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 &mut snapshot_dirty,
                             );
                             // Restart watches for the new context.
-                            {
-                                use kubectui::state::watch::{WatchManager, WatchSessionKey};
-                                watch_manager = WatchManager::new(WatchSessionKey {
-                                    context_generation: refresh_state.context_generation,
-                                    cluster_context: app.current_context_name.clone(),
-                                    namespace: namespace_scope(app.get_namespace()).map(str::to_string),
-                                });
-                                watch_manager.start_watches(client.get_client(), watch_tx.clone());
-                            }
+                            watch_manager = WatchManager::new(WatchSessionKey {
+                                context_generation: refresh_state.context_generation,
+                                cluster_context: app.current_context_name.clone(),
+                                namespace: namespace_scope(app.get_namespace()).map(str::to_string),
+                            });
+                            watch_manager.start_watches(client.get_client(), watch_tx.clone());
                             if app.view() == AppView::Events {
                                 request_events_refresh(
                                     &events_tx,
@@ -3299,15 +3297,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         );
                     }
                     // Restart watches for the new namespace.
-                    {
-                        use kubectui::state::watch::{WatchManager, WatchSessionKey};
-                        watch_manager = WatchManager::new(WatchSessionKey {
-                            context_generation: refresh_state.context_generation,
-                            cluster_context: app.current_context_name.clone(),
-                            namespace: namespace_scope(app.get_namespace()).map(str::to_string),
-                        });
-                        watch_manager.start_watches(client.get_client(), watch_tx.clone());
-                    }
+                    watch_manager = WatchManager::new(WatchSessionKey {
+                        context_generation: refresh_state.context_generation,
+                        cluster_context: app.current_context_name.clone(),
+                        namespace: namespace_scope(app.get_namespace()).map(str::to_string),
+                    });
+                    watch_manager.start_watches(client.get_client(), watch_tx.clone());
                 }
                 AppAction::OpenDetail(resource) => {
                     open_detail_for_resource(
