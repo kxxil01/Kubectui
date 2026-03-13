@@ -212,7 +212,7 @@ pub async fn execute_scale(
         .scale_deployment(&request.deployment, &request.namespace, request.replicas)
         .await
     {
-        let err_msg = format!("{}", e);
+        let err_msg = e.to_string();
         let _ = progress_tx
             .send(ScaleProgress::Error(err_msg.clone()))
             .await;
@@ -245,7 +245,7 @@ pub async fn execute_scale(
             Ok(())
         }
         Err(e) => {
-            let err_msg = format!("{}", e);
+            let err_msg = e.to_string();
             let _ = progress_tx
                 .send(ScaleProgress::Error(err_msg.clone()))
                 .await;

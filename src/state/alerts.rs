@@ -373,7 +373,7 @@ pub fn compute_alerts(snapshot: &ClusterSnapshot) -> Vec<AlertItem> {
         },
     ];
 
-    alerts.sort_by_key(|item| severity_rank(item.severity));
+    alerts.sort_unstable_by_key(|item| severity_rank(item.severity));
     alerts.truncate(5);
     alerts
 }
@@ -425,7 +425,7 @@ pub(crate) fn parse_mib(raw: &str) -> u64 {
 
 pub(crate) fn format_millicores(m: u64) -> String {
     if m >= 1000 && m.is_multiple_of(1000) {
-        format!("{}", m / 1000)
+        (m / 1000).to_string()
     } else if m >= 1000 {
         let whole = m / 1000;
         let frac = m % 1000;
@@ -679,7 +679,7 @@ pub fn compute_namespace_utilization(
         };
     }
 
-    result.sort_by(|a, b| b.cpu_usage_m.cmp(&a.cpu_usage_m));
+    result.sort_unstable_by(|a, b| b.cpu_usage_m.cmp(&a.cpu_usage_m));
     result
 }
 

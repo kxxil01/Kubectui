@@ -1377,7 +1377,7 @@ fn queued_refresh_requires_two_phase(primary_scope: RefreshScope, options: Refre
 fn normalize_recent_events(
     mut events: Vec<kubectui::k8s::dtos::K8sEventInfo>,
 ) -> Vec<kubectui::k8s::dtos::K8sEventInfo> {
-    events.sort_by(|left, right| right.last_seen.cmp(&left.last_seen));
+    events.sort_unstable_by(|left, right| right.last_seen.cmp(&left.last_seen));
     events.truncate(MAX_RECENT_EVENTS_CACHE_ITEMS);
     events
 }

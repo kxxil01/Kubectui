@@ -108,7 +108,6 @@ pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
         pod_metrics,
         deployments,
         namespaces_count: namespaces.len(),
-        services_count: pod_count / 5,
         ..Default::default()
     }
 }

@@ -48,7 +48,7 @@ fn parse_helm_repositories(yaml_content: &str) -> Option<Vec<HelmRepoInfo>> {
         let url = entry.get("url")?.as_str()?.to_string();
         result.push(HelmRepoInfo { name, url });
     }
-    result.sort_by(|a, b| a.name.cmp(&b.name));
+    result.sort_unstable_by(|a, b| a.name.cmp(&b.name));
     Some(result)
 }
 

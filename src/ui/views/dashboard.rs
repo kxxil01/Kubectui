@@ -201,7 +201,7 @@ fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot
     let version = cluster_info
         .and_then(|i| i.git_version.as_deref())
         .unwrap_or("unknown");
-    let phase_label = format!("{}", snapshot.phase);
+    let phase_label = snapshot.phase.to_string();
 
     let phase_style = match snapshot.phase {
         crate::state::DataPhase::Ready => theme.badge_success_style(),
@@ -767,19 +767,19 @@ fn render_overcommit_governance(
         Line::from(vec![
             Span::styled("  No CPU Req  ", dim),
             Span::styled(
-                format!("{}", res.pods_missing_cpu_request),
+                res.pods_missing_cpu_request.to_string(),
                 missing_style(res.pods_missing_cpu_request),
             ),
             Span::styled("    No Mem Req  ", dim),
             Span::styled(
-                format!("{}", res.pods_missing_mem_request),
+                res.pods_missing_mem_request.to_string(),
                 missing_style(res.pods_missing_mem_request),
             ),
         ]),
         Line::from(vec![
             Span::styled("  No Limits   ", dim),
             Span::styled(
-                format!("{}", res.pods_missing_any_limit),
+                res.pods_missing_any_limit.to_string(),
                 missing_style(res.pods_missing_any_limit),
             ),
             Span::styled(

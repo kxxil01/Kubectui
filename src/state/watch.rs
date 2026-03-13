@@ -189,7 +189,7 @@ macro_rules! define_watcher {
     (@impl $name:ident, $K8sType:ty, $DtoType:ty, $converter:path, $variant:ident, $scope:ident) => {
         paste::paste! {
             fn [<sort_ $name s>](items: &mut [$DtoType]) {
-                items.sort_by(|a, b| a.name.cmp(&b.name));
+                items.sort_unstable_by(|a, b| a.name.cmp(&b.name));
             }
 
             fn [<start_ $name _watch>](

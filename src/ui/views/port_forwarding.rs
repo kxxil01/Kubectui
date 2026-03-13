@@ -76,8 +76,8 @@ pub fn render_port_forwarding(
             Row::new(vec![
                 Cell::from(t.target.pod_name.clone()),
                 Cell::from(t.target.namespace.clone()),
-                Cell::from(format!("{}", t.local_addr)),
-                Cell::from(format!("{}", t.target.remote_port)),
+                Cell::from(t.local_addr.to_string()),
+                Cell::from(t.target.remote_port.to_string()),
                 Cell::from(state_str),
             ])
             .style(style)

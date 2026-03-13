@@ -325,10 +325,4 @@ fn render_rule_tree(rules: &[RbacRule], theme: &crate::ui::theme::Theme) -> Vec<
     lines
 }
 
-fn join_or_all(items: &[String]) -> String {
-    if items.is_empty() {
-        "*".to_string()
-    } else {
-        items.join(", ")
-    }
-}
+use super::join_or_all;

@@ -89,6 +89,43 @@ impl ViewLoadState {
     }
 }
 
+/// Pre-computed Flux resource counts to avoid per-frame iteration over `flux_resources`.
+#[derive(Debug, Clone, Default)]
+pub struct FluxCounts {
+    pub kustomizations: usize,
+    pub helm_releases: usize,
+    pub helm_repositories: usize,
+    pub alert_providers: usize,
+    pub alerts: usize,
+    pub artifacts: usize,
+    pub images: usize,
+    pub receivers: usize,
+    pub sources: usize,
+}
+
+impl FluxCounts {
+    pub fn compute(resources: &[FluxResourceInfo]) -> Self {
+        let mut counts = Self::default();
+        for r in resources {
+            match (r.group.as_str(), r.kind.as_str()) {
+                ("kustomize.toolkit.fluxcd.io", "Kustomization") => counts.kustomizations += 1,
+                ("helm.toolkit.fluxcd.io", "HelmRelease") => counts.helm_releases += 1,
+                ("source.toolkit.fluxcd.io", "HelmRepository") => counts.helm_repositories += 1,
+                ("notification.toolkit.fluxcd.io", "AlertProvider") => counts.alert_providers += 1,
+                ("notification.toolkit.fluxcd.io", "Alert") => counts.alerts += 1,
+                ("notification.toolkit.fluxcd.io", "Receiver") => counts.receivers += 1,
+                ("image.toolkit.fluxcd.io", _) => counts.images += 1,
+                ("source.toolkit.fluxcd.io", _) => counts.sources += 1,
+                _ => {}
+            }
+            if r.artifact.is_some() {
+                counts.artifacts += 1;
+            }
+        }
+        counts
+    }
+}
+
 /// Snapshot used by rendering layer.
 #[derive(Debug, Clone)]
 pub struct ClusterSnapshot {
@@ -117,7 +154,6 @@ pub struct ClusterSnapshot {
     pub cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
     pub custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
     pub cluster_info: Option<ClusterInfo>,
-    // New fields for previously-placeholder views
     pub endpoints: Vec<EndpointInfo>,
     pub ingresses: Vec<IngressInfo>,
     pub ingress_classes: Vec<IngressClassInfo>,
@@ -134,11 +170,11 @@ pub struct ClusterSnapshot {
     pub priority_classes: Vec<PriorityClassInfo>,
     pub helm_releases: Vec<HelmReleaseInfo>,
     pub flux_resources: Vec<FluxResourceInfo>,
+    pub flux_counts: FluxCounts,
     pub helm_repositories: Vec<crate::k8s::dtos::HelmRepoInfo>,
     pub node_metrics: Vec<NodeMetricsInfo>,
     pub pod_metrics: Vec<PodMetricsInfo>,
     pub issue_count: usize,
-    pub services_count: usize,
     pub namespaces_count: usize,
     pub phase: DataPhase,
     pub last_updated: Option<DateTime<Utc>>,
@@ -190,11 +226,11 @@ impl Default for ClusterSnapshot {
             priority_classes: Vec::new(),
             helm_releases: Vec::new(),
             flux_resources: Vec::new(),
+            flux_counts: FluxCounts::default(),
             helm_repositories: Vec::new(),
             node_metrics: Vec::new(),
             pod_metrics: Vec::new(),
             issue_count: 0,
-            services_count: 0,
             namespaces_count: 0,
             phase: DataPhase::Idle,
             last_updated: None,
@@ -266,64 +302,15 @@ impl ClusterSnapshot {
             AppView::HelmReleases => Some(self.helm_releases.len()),
             AppView::HelmCharts => Some(self.helm_repositories.len()),
             AppView::FluxCDAll => Some(self.flux_resources.len()),
-            AppView::FluxCDKustomizations => Some(
-                self.flux_resources
-                    .iter()
-                    .filter(|r| {
-                        r.group == "kustomize.toolkit.fluxcd.io" && r.kind == "Kustomization"
-                    })
-                    .count(),
-            ),
-            AppView::FluxCDHelmReleases => Some(
-                self.flux_resources
-                    .iter()
-                    .filter(|r| r.group == "helm.toolkit.fluxcd.io" && r.kind == "HelmRelease")
-                    .count(),
-            ),
-            AppView::FluxCDHelmRepositories => Some(
-                self.flux_resources
-                    .iter()
-                    .filter(|r| r.group == "source.toolkit.fluxcd.io" && r.kind == "HelmRepository")
-                    .count(),
-            ),
-            AppView::FluxCDAlertProviders => Some(
-                self.flux_resources
-                    .iter()
-                    .filter(|r| {
-                        r.group == "notification.toolkit.fluxcd.io" && r.kind == "AlertProvider"
-                    })
-                    .count(),
-            ),
-            AppView::FluxCDAlerts => Some(
-                self.flux_resources
-                    .iter()
-                    .filter(|r| r.group == "notification.toolkit.fluxcd.io" && r.kind == "Alert")
-                    .count(),
-            ),
-            AppView::FluxCDArtifacts => Some(
-                self.flux_resources
-                    .iter()
-                    .filter(|r| r.artifact.is_some())
-                    .count(),
-            ),
-            AppView::FluxCDImages => Some(
-                self.flux_resources
-                    .iter()
-                    .filter(|r| r.group == "image.toolkit.fluxcd.io")
-                    .count(),
-            ),
-            AppView::FluxCDReceivers => Some(
-                self.flux_resources
-                    .iter()
-                    .filter(|r| r.group == "notification.toolkit.fluxcd.io" && r.kind == "Receiver")
-                    .count(),
-            ),
-            AppView::FluxCDSources => Some(
-                self.flux_resources
-                    .iter()
-                    .filter(|r| r.group == "source.toolkit.fluxcd.io")
-                    .count(),
-            ),
+            AppView::FluxCDKustomizations => Some(self.flux_counts.kustomizations),
+            AppView::FluxCDHelmReleases => Some(self.flux_counts.helm_releases),
+            AppView::FluxCDHelmRepositories => Some(self.flux_counts.helm_repositories),
+            AppView::FluxCDAlertProviders => Some(self.flux_counts.alert_providers),
+            AppView::FluxCDAlerts => Some(self.flux_counts.alerts),
+            AppView::FluxCDArtifacts => Some(self.flux_counts.artifacts),
+            AppView::FluxCDImages => Some(self.flux_counts.images),
+            AppView::FluxCDReceivers => Some(self.flux_counts.receivers),
+            AppView::FluxCDSources => Some(self.flux_counts.sources),
             AppView::Issues => Some(self.issue_count),
             // Dashboard, Bookmarks, and PortForwarding don't have direct collections
             AppView::Dashboard | AppView::Bookmarks | AppView::PortForwarding => None,
@@ -993,7 +980,6 @@ impl GlobalState {
             return;
         }
 
-        snap.services_count = snap.services.len();
         snap.namespaces_count = snap
             .pods
             .iter()
@@ -1010,6 +996,7 @@ impl GlobalState {
             )
             .collect::<HashSet<_>>()
             .len();
+        snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
         snap.snapshot_version = snap.snapshot_version.saturating_add(1);
         self.snapshot_dirty = true;
         self.publish_snapshot();
@@ -1265,7 +1252,6 @@ impl GlobalState {
                 }
                 watch::WatchPayload::Services(items) => {
                     apply_watched!(snap, changed, services, items);
-                    snap.services_count = snap.services.len();
                 }
                 watch::WatchPayload::Nodes(items) => {
                     apply_watched!(snap, changed, nodes, items);
@@ -2175,6 +2161,11 @@ impl GlobalState {
             }
         }
 
+        {
+            let snap = Arc::make_mut(&mut self.snapshot);
+            snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
+        }
+
         self.namespaces = Self::namespace_names_from_list(&self.snapshot.namespace_list);
 
         let all_failed = !skip_core
@@ -2224,7 +2215,6 @@ impl GlobalState {
         let prev_connection_health = self.snapshot.connection_health;
         {
             let snap = Arc::make_mut(&mut self.snapshot);
-            snap.services_count = snap.services.len();
             snap.namespaces_count = namespaces_count;
             if fetch_local_helm_repositories {
                 snap.helm_repositories = crate::k8s::helm::read_helm_repositories();
@@ -2981,7 +2971,7 @@ mod tests {
         assert_eq!(snapshot.phase, DataPhase::Ready);
         assert_eq!(snapshot.nodes.len(), 1);
         assert_eq!(snapshot.pods.len(), 2);
-        assert_eq!(snapshot.services_count, 1);
+        assert_eq!(snapshot.services.len(), 1);
         assert_eq!(snapshot.namespaces_count, 2);
         assert_eq!(snapshot.statefulsets.len(), 1);
         assert_eq!(snapshot.daemonsets.len(), 1);
@@ -3891,7 +3881,6 @@ mod tests {
             namespace: "default".to_string(),
             ..DeploymentInfo::default()
         }];
-        snap.services_count = 1;
         snap.namespaces_count = 1;
         snap.snapshot_version = 41;
         state.snapshot_dirty = true;
@@ -3994,7 +3983,6 @@ mod tests {
         let snapshot = state.snapshot();
         let stats = crate::state::alerts::compute_dashboard_stats(&snapshot);
 
-        assert_eq!(snapshot.services_count, stats.services_count);
         assert_eq!(snapshot.namespaces_count, stats.namespaces_count);
     }
 
@@ -4183,7 +4171,7 @@ mod tests {
         assert_eq!(snapshot.phase, DataPhase::Ready);
         assert_eq!(snapshot.nodes.len(), 0);
         assert_eq!(snapshot.pods.len(), 0);
-        assert_eq!(snapshot.services_count, 0);
+        assert_eq!(snapshot.services.len(), 0);
         assert_eq!(snapshot.namespaces_count, 0);
         assert!(snapshot.jobs.is_empty());
         assert!(snapshot.cronjobs.is_empty());

@@ -163,7 +163,7 @@ async fn list_pods_for_selector(
         .into_iter()
         .map(map_pod_to_target)
         .collect::<Result<Vec<_>>>()?;
-    targets.sort_by(|left, right| left.pod_name.cmp(&right.pod_name));
+    targets.sort_unstable_by(|left, right| left.pod_name.cmp(&right.pod_name));
 
     if targets.is_empty() {
         return Err(anyhow!("no pods matched selector '{selector}'"));
@@ -205,7 +205,7 @@ fn selector_to_string(selector: Option<LabelSelector>) -> Result<String> {
     let mut parts = Vec::new();
     if let Some(labels) = selector.match_labels {
         let mut labels = labels.into_iter().collect::<Vec<_>>();
-        labels.sort_by(|left, right| left.0.cmp(&right.0));
+        labels.sort_unstable_by(|left, right| left.0.cmp(&right.0));
         parts.extend(
             labels
                 .into_iter()
@@ -214,7 +214,7 @@ fn selector_to_string(selector: Option<LabelSelector>) -> Result<String> {
     }
     if let Some(expressions) = selector.match_expressions {
         let mut expressions = expressions;
-        expressions.sort_by(|left, right| left.key.cmp(&right.key));
+        expressions.sort_unstable_by(|left, right| left.key.cmp(&right.key));
         for expression in expressions {
             parts.push(expression_to_string(expression)?);
         }
