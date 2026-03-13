@@ -1603,6 +1603,20 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     let mut refresh_state = RefreshRuntimeState::default();
     let mut snapshot_dirty = false;
 
+    // Watch-backed resource caches — pushes live updates for core resources.
+    let (watch_tx, mut watch_rx) =
+        tokio::sync::mpsc::channel::<kubectui::state::watch::WatchUpdate>(256);
+    let mut watch_manager = {
+        use kubectui::state::watch::{WatchManager, WatchSessionKey};
+        let mut wm = WatchManager::new(WatchSessionKey {
+            context_generation: refresh_state.context_generation,
+            cluster_context: app.current_context_name.clone(),
+            namespace: namespace_scope(app.get_namespace()).map(str::to_string),
+        });
+        wm.start_watches(client.get_client(), watch_tx.clone());
+        wm
+    };
+
     // Start with view-scoped refresh (workload-first for core views, secondary deferred).
     let startup_include_flux = app.view().is_fluxcd();
     request_refresh(
@@ -2068,6 +2082,14 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             refresh_state.context_generation,
                         ));
                     }
+                }
+            }
+
+            // Watch-backed resource updates — live cluster changes via watch streams.
+            Some(update) = watch_rx.recv() => {
+                if update.context_generation == refresh_state.context_generation {
+                    global_state.apply_watch_update(update);
+                    snapshot_dirty = true;
                 }
             }
 
@@ -2743,6 +2765,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             port_forwarder.stop_all().await;
                             app.tunnel_registry.update_tunnels(Vec::new());
 
+                            watch_manager.stop_all();
+
                             client = new_client;
                             app.current_context_name = Some(ctx.clone());
                             coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
@@ -2769,6 +2793,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 &mut refresh_state,
                                 &mut snapshot_dirty,
                             );
+                            // Restart watches for the new context.
+                            {
+                                use kubectui::state::watch::{WatchManager, WatchSessionKey};
+                                watch_manager = WatchManager::new(WatchSessionKey {
+                                    context_generation: refresh_state.context_generation,
+                                    cluster_context: app.current_context_name.clone(),
+                                    namespace: namespace_scope(app.get_namespace()).map(str::to_string),
+                                });
+                                watch_manager.start_watches(client.get_client(), watch_tx.clone());
+                            }
                             if app.view() == AppView::Events {
                                 request_events_refresh(
                                     &events_tx,
@@ -3216,6 +3250,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.selected_idx = 0;
                     app.close_namespace_picker();
                     app.needs_config_save = true;
+                    watch_manager.stop_all();
                     // Invalidate stale async results from previous namespace selections.
                     refresh_state.context_generation =
                         refresh_state.context_generation.wrapping_add(1);
@@ -3262,6 +3297,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                             &mut events_state,
                             &mut snapshot_dirty,
                         );
+                    }
+                    // Restart watches for the new namespace.
+                    {
+                        use kubectui::state::watch::{WatchManager, WatchSessionKey};
+                        watch_manager = WatchManager::new(WatchSessionKey {
+                            context_generation: refresh_state.context_generation,
+                            cluster_context: app.current_context_name.clone(),
+                            namespace: namespace_scope(app.get_namespace()).map(str::to_string),
+                        });
+                        watch_manager.start_watches(client.get_client(), watch_tx.clone());
                     }
                 }
                 AppAction::OpenDetail(resource) => {
