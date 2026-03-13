@@ -45,6 +45,10 @@ pub struct PodInfo {
     pub annotations: Vec<(String, String)>,
     pub owner_references: Vec<OwnerRefInfo>,
     pub waiting_reasons: Vec<String>,
+    pub cpu_request: Option<String>,
+    pub memory_request: Option<String>,
+    pub cpu_limit: Option<String>,
+    pub memory_limit: Option<String>,
 }
 
 /// Lightweight service view used by list and detail pages.

@@ -1,5 +1,7 @@
 use chrono::Utc;
-use kubectui::k8s::dtos::{DeploymentInfo, NodeInfo, PodInfo};
+use kubectui::k8s::dtos::{
+    ContainerMetrics, DeploymentInfo, NodeInfo, NodeMetricsInfo, PodInfo, PodMetricsInfo,
+};
 use kubectui::state::ClusterSnapshot;
 
 pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
@@ -16,13 +18,36 @@ pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
     let now = Utc::now();
 
     let pods: Vec<PodInfo> = (0..pod_count)
-        .map(|i| PodInfo {
-            name: format!("pod-{i}"),
-            namespace: namespaces[i % namespaces.len()].to_string(),
-            status: statuses[i % statuses.len()].to_string(),
-            restarts: (i % 5) as i32,
-            created_at: Some(now - chrono::Duration::seconds((i * 60) as i64)),
-            ..Default::default()
+        .map(|i| {
+            let has_requests = i % 2 == 0;
+            PodInfo {
+                name: format!("pod-{i}"),
+                namespace: namespaces[i % namespaces.len()].to_string(),
+                status: statuses[i % statuses.len()].to_string(),
+                restarts: (i % 5) as i32,
+                created_at: Some(now - chrono::Duration::seconds((i * 60) as i64)),
+                cpu_request: if has_requests {
+                    Some(format!("{}m", 100 + (i % 10) * 50))
+                } else {
+                    None
+                },
+                memory_request: if has_requests {
+                    Some(format!("{}Mi", 64 + (i % 8) * 32))
+                } else {
+                    None
+                },
+                cpu_limit: if i % 3 == 0 {
+                    Some(format!("{}m", 200 + (i % 10) * 100))
+                } else {
+                    None
+                },
+                memory_limit: if i % 3 == 0 {
+                    Some(format!("{}Mi", 128 + (i % 8) * 64))
+                } else {
+                    None
+                },
+                ..Default::default()
+            }
         })
         .collect();
 
@@ -37,6 +62,29 @@ pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
             cpu_allocatable: Some("4000m".to_string()),
             memory_allocatable: Some("8192Mi".to_string()),
             created_at: Some(now - chrono::Duration::hours(i as i64)),
+            ..Default::default()
+        })
+        .collect();
+
+    let node_metrics: Vec<NodeMetricsInfo> = (0..node_count)
+        .map(|i| NodeMetricsInfo {
+            name: format!("node-{i}"),
+            cpu: format!("{}m", 1000 + (i % 6) * 500),
+            memory: format!("{}Mi", 2048 + (i % 4) * 1024),
+            ..Default::default()
+        })
+        .collect();
+
+    let pod_metrics: Vec<PodMetricsInfo> = (0..pod_count)
+        .filter(|i| statuses[i % statuses.len()] == "Running")
+        .map(|i| PodMetricsInfo {
+            name: format!("pod-{i}"),
+            namespace: namespaces[i % namespaces.len()].to_string(),
+            containers: vec![ContainerMetrics {
+                name: "main".to_string(),
+                cpu: format!("{}m", 10 + (i % 20) * 25),
+                memory: format!("{}Mi", 16 + (i % 16) * 16),
+            }],
             ..Default::default()
         })
         .collect();
@@ -56,6 +104,8 @@ pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
         snapshot_version: 1,
         pods,
         nodes,
+        node_metrics,
+        pod_metrics,
         deployments,
         namespaces_count: namespaces.len(),
         services_count: pod_count / 5,

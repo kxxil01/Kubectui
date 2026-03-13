@@ -16,6 +16,7 @@ pub mod k8s;
 pub mod policy;
 pub mod preferences;
 pub mod secret;
+pub mod shell_hook;
 pub mod state;
 pub mod timeline;
 pub mod ui;

@@ -70,6 +70,18 @@ pub(crate) fn format_small_int(value: i64) -> Cow<'static, str> {
     }
 }
 
+/// Returns a threshold-colored style for resource utilization percentage.
+/// Green <70%, yellow 70–90%, red >=90%.
+pub(crate) fn utilization_style(pct: u64, theme: &Theme) -> Style {
+    if pct >= 90 {
+        theme.badge_error_style()
+    } else if pct >= 70 {
+        theme.badge_warning_style()
+    } else {
+        theme.badge_success_style()
+    }
+}
+
 pub(crate) fn bookmarked_name_cell<'a>(
     resource: &ResourceRef,
     bookmarks: &[BookmarkEntry],
@@ -1175,6 +1187,15 @@ fn render_pods_widget(
     let dim_style = ratatui::prelude::Style::default().fg(theme.fg_dim);
     let now_unix = chrono::Utc::now().timestamp();
     let derived = cached_pod_derived(cluster, query, indices.as_ref(), now_unix, cache_variant);
+
+    // Build pod metrics lookup: (name, namespace) -> &PodMetricsInfo
+    use std::collections::HashMap;
+    let pod_metrics_map: HashMap<(&str, &str), &crate::k8s::dtos::PodMetricsInfo> = cluster
+        .pod_metrics
+        .iter()
+        .map(|pm| ((pm.name.as_str(), pm.namespace.as_str()), pm))
+        .collect();
+
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &pod_idx) in indices[window.start..window.end].iter().enumerate() {
         let idx = window.start + local_idx;
@@ -1223,6 +1244,115 @@ fn render_pods_widget(
                     restart_style,
                 )),
                 "age" => Cell::from(Span::styled(age, theme.inactive_style())),
+                "cpu_usage" | "mem_usage" => {
+                    use crate::state::alerts::{
+                        format_mib, format_millicores, parse_mib, parse_millicores,
+                    };
+                    let pm = pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str()));
+                    match pm {
+                        Some(pm) => {
+                            let is_cpu = col.id == "cpu_usage";
+                            let usage = pm.containers.iter().fold(0u64, |acc, c| {
+                                acc + if is_cpu {
+                                    parse_millicores(&c.cpu)
+                                } else {
+                                    parse_mib(&c.memory)
+                                }
+                            });
+                            let formatted = if is_cpu {
+                                format_millicores(usage)
+                            } else {
+                                format_mib(usage)
+                            };
+                            let request_raw = if is_cpu {
+                                pod.cpu_request.as_deref()
+                            } else {
+                                pod.memory_request.as_deref()
+                            };
+                            let style = match request_raw {
+                                Some(req) => {
+                                    let req_val = if is_cpu {
+                                        parse_millicores(req)
+                                    } else {
+                                        parse_mib(req)
+                                    };
+                                    if req_val > 0 {
+                                        utilization_style(usage * 100 / req_val, &theme)
+                                    } else {
+                                        dim_style
+                                    }
+                                }
+                                None => dim_style,
+                            };
+                            Cell::from(Span::styled(formatted, style))
+                        }
+                        None => Cell::from(Span::styled("-", dim_style)),
+                    }
+                }
+                "cpu_req" => Cell::from(Span::styled(
+                    pod.cpu_request.as_deref().unwrap_or("-"),
+                    dim_style,
+                )),
+                "mem_req" => Cell::from(Span::styled(
+                    pod.memory_request.as_deref().unwrap_or("-"),
+                    dim_style,
+                )),
+                "cpu_lim" => Cell::from(Span::styled(
+                    pod.cpu_limit.as_deref().unwrap_or("-"),
+                    dim_style,
+                )),
+                "mem_lim" => Cell::from(Span::styled(
+                    pod.memory_limit.as_deref().unwrap_or("-"),
+                    dim_style,
+                )),
+                "cpu_pct_req" | "mem_pct_req" | "cpu_pct_lim" | "mem_pct_lim" => {
+                    use crate::state::alerts::{parse_mib, parse_millicores};
+                    let pm = pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str()));
+                    match pm {
+                        Some(pm) => {
+                            let is_cpu = col.id.starts_with("cpu");
+                            let is_req = col.id.ends_with("req");
+                            let usage = pm.containers.iter().fold(0u64, |acc, c| {
+                                acc + if is_cpu {
+                                    parse_millicores(&c.cpu)
+                                } else {
+                                    parse_mib(&c.memory)
+                                }
+                            });
+                            let denom_str = if is_cpu {
+                                if is_req {
+                                    pod.cpu_request.as_deref()
+                                } else {
+                                    pod.cpu_limit.as_deref()
+                                }
+                            } else if is_req {
+                                pod.memory_request.as_deref()
+                            } else {
+                                pod.memory_limit.as_deref()
+                            };
+                            match denom_str {
+                                Some(d) => {
+                                    let denom = if is_cpu {
+                                        parse_millicores(d)
+                                    } else {
+                                        parse_mib(d)
+                                    };
+                                    if denom > 0 {
+                                        let pct = usage * 100 / denom;
+                                        Cell::from(Span::styled(
+                                            format!("{pct}%"),
+                                            utilization_style(pct, &theme),
+                                        ))
+                                    } else {
+                                        Cell::from(Span::styled("-", dim_style))
+                                    }
+                                }
+                                None => Cell::from(Span::styled("-", dim_style)),
+                            }
+                        }
+                        None => Cell::from(Span::styled("-", dim_style)),
+                    }
+                }
                 _ => Cell::from(""),
             })
             .collect();

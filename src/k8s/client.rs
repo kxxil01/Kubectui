@@ -425,6 +425,51 @@ impl K8sClient {
 
                 let restarts = container_statuses.iter().map(|s| s.restart_count).sum();
 
+                let containers = pod
+                    .spec
+                    .as_ref()
+                    .map(|spec| spec.containers.as_slice())
+                    .unwrap_or_default();
+                let (cpu_request, memory_request, cpu_limit, memory_limit) = {
+                    use crate::state::alerts::{
+                        format_mib, format_millicores, parse_mib, parse_millicores,
+                    };
+                    let mut cpu_req_m: u64 = 0;
+                    let mut mem_req_mib: u64 = 0;
+                    let mut cpu_lim_m: u64 = 0;
+                    let mut mem_lim_mib: u64 = 0;
+                    let mut has_req = false;
+                    let mut has_lim = false;
+                    for c in containers {
+                        if let Some(req) = c.resources.as_ref().and_then(|r| r.requests.as_ref()) {
+                            if let Some(cpu) = req.get("cpu") {
+                                cpu_req_m += parse_millicores(&cpu.0);
+                                has_req = true;
+                            }
+                            if let Some(mem) = req.get("memory") {
+                                mem_req_mib += parse_mib(&mem.0);
+                                has_req = true;
+                            }
+                        }
+                        if let Some(lim) = c.resources.as_ref().and_then(|r| r.limits.as_ref()) {
+                            if let Some(cpu) = lim.get("cpu") {
+                                cpu_lim_m += parse_millicores(&cpu.0);
+                                has_lim = true;
+                            }
+                            if let Some(mem) = lim.get("memory") {
+                                mem_lim_mib += parse_mib(&mem.0);
+                                has_lim = true;
+                            }
+                        }
+                    }
+                    (
+                        has_req.then(|| format_millicores(cpu_req_m)),
+                        has_req.then(|| format_mib(mem_req_mib)),
+                        has_lim.then(|| format_millicores(cpu_lim_m)),
+                        has_lim.then(|| format_mib(mem_lim_mib)),
+                    )
+                };
+
                 PodInfo {
                     name: pod.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
                     namespace: pod
@@ -464,6 +509,10 @@ impl K8sClient {
                         })
                         .collect(),
                     waiting_reasons,
+                    cpu_request,
+                    memory_request,
+                    cpu_limit,
+                    memory_limit,
                 }
             })
             .collect();
@@ -2115,6 +2164,38 @@ impl K8sClient {
             .filter_map(|obj| {
                 let name = obj.metadata.name.clone().unwrap_or_default();
                 NodeMetricsInfo::from_json(name, &obj.data)
+            })
+            .collect())
+    }
+
+    /// Fetches metrics for all pods at once via metrics.k8s.io list.
+    /// Returns empty vec (not an error) when metrics-server is absent.
+    pub async fn fetch_all_pod_metrics(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<PodMetricsInfo>> {
+        let gvk = GroupVersionKind::gvk("metrics.k8s.io", "v1beta1", "PodMetrics");
+        let mut ar = ApiResource::from_gvk(&gvk);
+        ar.plural = "pods".to_string();
+        let api: Api<DynamicObject> = match namespace {
+            Some(ns) => Api::namespaced_with(self.client.clone(), ns, &ar),
+            None => Api::all_with(self.client.clone(), &ar),
+        };
+
+        let list = match api.list(&ListParams::default()).await {
+            Ok(list) => list.items,
+            Err(err) if is_metrics_api_unavailable(&err) || is_forbidden_error(&err) => {
+                return Ok(Vec::new());
+            }
+            Err(err) => return Err(err).context("failed listing pod metrics"),
+        };
+
+        Ok(list
+            .into_iter()
+            .filter_map(|obj| {
+                let name = obj.metadata.name.clone().unwrap_or_default();
+                let ns = obj.metadata.namespace.clone().unwrap_or_default();
+                PodMetricsInfo::from_json(name, ns, &obj.data)
             })
             .collect())
     }

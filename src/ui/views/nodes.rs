@@ -127,6 +127,14 @@ pub fn render_nodes(
     let now_unix = Utc::now().timestamp();
     let derived = cached_node_derived(snapshot, query, indices.as_ref(), now_unix, cache_variant);
 
+    // Build node metrics lookup: name -> &NodeMetricsInfo
+    use std::collections::HashMap;
+    let metrics_by_node: HashMap<&str, &crate::k8s::dtos::NodeMetricsInfo> = snapshot
+        .node_metrics
+        .iter()
+        .map(|nm| (nm.name.as_str(), nm))
+        .collect();
+
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &node_idx) in indices[window.start..window.end].iter().enumerate() {
         let idx = window.start + local_idx;
@@ -170,14 +178,44 @@ pub fn render_nodes(
                 ),
                 "status" => Cell::from(Line::from(status_spans.take().unwrap_or_default())),
                 "roles" => Cell::from(Span::styled(node.role.as_str(), accent_style)),
-                "cpu" => Cell::from(Span::styled(
-                    node.cpu_allocatable.as_deref().unwrap_or("N/A"),
-                    dim_style,
-                )),
-                "memory" => Cell::from(Span::styled(
-                    node.memory_allocatable.as_deref().unwrap_or("N/A"),
-                    dim_style,
-                )),
+                "cpu" => {
+                    use crate::state::alerts::{format_millicores, parse_millicores};
+                    let alloc = node.cpu_allocatable.as_deref().unwrap_or("N/A");
+                    match metrics_by_node.get(node.name.as_str()) {
+                        Some(nm) => {
+                            let used = parse_millicores(&nm.cpu);
+                            let alloc_m = parse_millicores(alloc);
+                            let pct = if alloc_m > 0 { used * 100 / alloc_m } else { 0 };
+                            let text = format!("{}/{} {}%", format_millicores(used), alloc, pct);
+                            Cell::from(Span::styled(
+                                text,
+                                crate::ui::utilization_style(pct, &theme),
+                            ))
+                        }
+                        None => Cell::from(Span::styled(alloc, dim_style)),
+                    }
+                }
+                "memory" => {
+                    use crate::state::alerts::{format_mib, parse_mib};
+                    let alloc = node.memory_allocatable.as_deref().unwrap_or("N/A");
+                    match metrics_by_node.get(node.name.as_str()) {
+                        Some(nm) => {
+                            let used = parse_mib(&nm.memory);
+                            let alloc_mib = parse_mib(alloc);
+                            let pct = if alloc_mib > 0 {
+                                used * 100 / alloc_mib
+                            } else {
+                                0
+                            };
+                            let text = format!("{}/{} {}%", format_mib(used), alloc, pct);
+                            Cell::from(Span::styled(
+                                text,
+                                crate::ui::utilization_style(pct, &theme),
+                            ))
+                        }
+                        None => Cell::from(Span::styled(alloc, dim_style)),
+                    }
+                }
                 "age" => Cell::from(Span::styled(age.to_string(), theme.inactive_style())),
                 _ => Cell::from(""),
             })

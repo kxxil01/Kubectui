@@ -18,9 +18,9 @@ use crate::k8s::{
         CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo,
         FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
         K8sEventInfo, LimitRangeInfo, NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo,
-        PodDisruptionBudgetInfo, PodInfo, PriorityClassInfo, PvInfo, PvcInfo, ReplicaSetInfo,
-        ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo,
-        ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
+        PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo,
+        ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
+        SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
     },
 };
 
@@ -135,6 +135,7 @@ pub struct ClusterSnapshot {
     pub flux_resources: Vec<FluxResourceInfo>,
     pub helm_repositories: Vec<crate::k8s::dtos::HelmRepoInfo>,
     pub node_metrics: Vec<NodeMetricsInfo>,
+    pub pod_metrics: Vec<PodMetricsInfo>,
     pub issue_count: usize,
     pub services_count: usize,
     pub namespaces_count: usize,
@@ -190,6 +191,7 @@ impl Default for ClusterSnapshot {
             flux_resources: Vec::new(),
             helm_repositories: Vec::new(),
             node_metrics: Vec::new(),
+            pod_metrics: Vec::new(),
             issue_count: 0,
             services_count: 0,
             namespaces_count: 0,
@@ -413,6 +415,8 @@ pub trait ClusterDataSource {
     async fn fetch_flux_resources(&self, namespace: Option<&str>) -> Result<Vec<FluxResourceInfo>>;
     /// Fetches metrics for all nodes (best-effort, returns empty if metrics-server absent).
     async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>>;
+    /// Fetches metrics for all pods (best-effort, returns empty if metrics-server absent).
+    async fn fetch_all_pod_metrics(&self, namespace: Option<&str>) -> Result<Vec<PodMetricsInfo>>;
 }
 
 #[async_trait]
@@ -582,6 +586,10 @@ impl ClusterDataSource for K8sClient {
 
     async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> {
         K8sClient::fetch_all_node_metrics(self).await
+    }
+
+    async fn fetch_all_pod_metrics(&self, namespace: Option<&str>) -> Result<Vec<PodMetricsInfo>> {
+        K8sClient::fetch_all_pod_metrics(self, namespace).await
     }
 }
 
@@ -1422,6 +1430,7 @@ impl GlobalState {
         let prev_priority_classes = self.snapshot.priority_classes.clone();
         let prev_helm_releases = self.snapshot.helm_releases.clone();
         let prev_node_metrics = self.snapshot.node_metrics.clone();
+        let prev_pod_metrics = self.snapshot.pod_metrics.clone();
 
         // Wave 1 (core) and wave 2 (secondary) run concurrently with separate
         // semaphores: CORE_FETCH_SEMAPHORE (8 permits) and SECONDARY_FETCH_SEMAPHORE
@@ -1511,6 +1520,8 @@ impl GlobalState {
                         .fetch_helm_releases(namespace)),
                     Self::fetch_with_timeout("nodemetrics", &SECONDARY_FETCH_SEMAPHORE, || client
                         .fetch_all_node_metrics()),
+                    Self::fetch_with_timeout("podmetrics", &SECONDARY_FETCH_SEMAPHORE, || client
+                        .fetch_all_pod_metrics(namespace)),
                 )
             } else {
                 (
@@ -1536,6 +1547,7 @@ impl GlobalState {
                     Ok(prev_priority_classes),
                     Ok(prev_helm_releases),
                     Ok(prev_node_metrics),
+                    Ok(prev_pod_metrics),
                 )
             }
         };
@@ -1579,6 +1591,7 @@ impl GlobalState {
                 priority_classes_res,
                 helm_releases_res,
                 node_metrics_res,
+                pod_metrics_res,
             ),
         ) = tokio::join!(wave1, wave2);
 
@@ -1837,6 +1850,13 @@ impl GlobalState {
             &mut errors,
             &mut total_fetches,
         );
+        let pod_metrics = Self::keep_prev_vec_on_error(
+            pod_metrics_res,
+            &self.snapshot.pod_metrics,
+            "podmetrics",
+            &mut errors,
+            &mut total_fetches,
+        );
 
         let all_failed = nodes.is_empty()
             && pods.is_empty()
@@ -1921,6 +1941,7 @@ impl GlobalState {
             snap.flux_resources = flux_resources;
             snap.helm_repositories = crate::k8s::helm::read_helm_repositories();
             snap.node_metrics = node_metrics;
+            snap.pod_metrics = pod_metrics;
             snap.secondary_resources_loaded = if include_secondary_resources {
                 true
             } else {
@@ -1990,6 +2011,7 @@ mod tests {
         flux_resources: Vec<FluxResourceInfo>,
         helm_releases: Vec<HelmReleaseInfo>,
         helm_releases_ignore_namespace: bool,
+        pod_metrics: Vec<PodMetricsInfo>,
         cluster_info: Option<ClusterInfo>,
         nodes_err: Option<String>,
         pods_err: Option<String>,
@@ -2151,6 +2173,7 @@ mod tests {
                     },
                 ],
                 helm_releases_ignore_namespace: false,
+                pod_metrics: vec![],
                 cluster_info: Some(ClusterInfo {
                     server: "https://kind.local".to_string(),
                     node_count: 1,
@@ -2512,6 +2535,12 @@ mod tests {
         }
         async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> {
             Ok(vec![])
+        }
+        async fn fetch_all_pod_metrics(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<PodMetricsInfo>> {
+            Ok(self.pod_metrics.clone())
         }
     }
 
@@ -3041,6 +3070,7 @@ mod tests {
             flux_resources: vec![],
             helm_releases: vec![],
             helm_releases_ignore_namespace: false,
+            pod_metrics: vec![],
             cluster_info: None,
             nodes_err: Some("nodes down".to_string()),
             pods_err: Some("pods down".to_string()),
