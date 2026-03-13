@@ -1129,72 +1129,68 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize
 #[cfg(test)]
 mod tests {
     use super::{VisibleWindow, centered_window, scroll_window};
+    use crate::ui::truncate_message;
 
     #[test]
     fn short_message_unchanged() {
-        assert_eq!(crate::ui::truncate_message("hello", 60).as_ref(), "hello");
+        assert_eq!(truncate_message("hello", 60).as_ref(), "hello");
     }
 
     #[test]
     fn exact_length_unchanged() {
         let msg = "a".repeat(60);
-        assert_eq!(crate::ui::truncate_message(&msg, 60).as_ref(), msg);
+        assert_eq!(truncate_message(&msg, 60).as_ref(), msg);
     }
 
     #[test]
     fn one_over_truncated() {
         let msg = "a".repeat(61);
-        let result = crate::ui::truncate_message(&msg, 60);
+        let result = truncate_message(&msg, 60);
         assert!(result.ends_with("..."));
         assert_eq!(result.chars().count(), 60);
     }
 
     #[test]
     fn empty_string() {
-        assert_eq!(crate::ui::truncate_message("", 60).as_ref(), "");
+        assert_eq!(truncate_message("", 60).as_ref(), "");
     }
 
     #[test]
     fn multibyte_chars_counted_correctly() {
-        // 10 multi-byte chars (each 3 bytes in UTF-8) = byte len 30 > max_chars 15
-        // but char count 10 <= max_chars 15, so no truncation needed
-        let msg = "\u{00e9}".repeat(10); // é repeated 10 times
-        assert_eq!(crate::ui::truncate_message(&msg, 15).as_ref(), msg);
+        let msg = "\u{00e9}".repeat(10);
+        assert_eq!(truncate_message(&msg, 15).as_ref(), msg);
     }
 
     #[test]
     fn multibyte_chars_truncated_on_char_boundary() {
-        // 20 multi-byte chars, truncate to max 10 chars → 7 chars + "..."
         let msg = "\u{00e9}".repeat(20);
-        let result = crate::ui::truncate_message(&msg, 10);
+        let result = truncate_message(&msg, 10);
         assert!(result.ends_with("..."));
         assert_eq!(result.chars().count(), 10);
     }
 
     #[test]
     fn borrowed_when_short() {
-        let result = crate::ui::truncate_message("short", 60);
+        let result = truncate_message("short", 60);
         assert!(matches!(result, std::borrow::Cow::Borrowed(_)));
     }
 
     #[test]
     fn very_small_max_chars_no_ellipsis() {
-        // max_chars < 4: too small for "...", just truncate to max_chars
-        let result = crate::ui::truncate_message("hello world", 2);
+        let result = truncate_message("hello world", 2);
         assert_eq!(result.as_ref(), "he");
         assert_eq!(result.chars().count(), 2);
     }
 
     #[test]
     fn max_chars_zero() {
-        let result = crate::ui::truncate_message("hello", 0);
+        let result = truncate_message("hello", 0);
         assert_eq!(result.as_ref(), "");
     }
 
     #[test]
     fn max_chars_three_uses_ellipsis() {
-        // max_chars == 4 is the smallest that can fit "x..."
-        let result = crate::ui::truncate_message("hello world", 4);
+        let result = truncate_message("hello world", 4);
         assert_eq!(result.as_ref(), "h...");
         assert_eq!(result.chars().count(), 4);
     }

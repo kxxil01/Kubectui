@@ -1450,9 +1450,6 @@ pub(crate) fn format_age_from_timestamp(
         return "-".to_string();
     };
     let age_secs = now_unix.saturating_sub(created_at.timestamp());
-    if age_secs < 0 {
-        return "future".to_string();
-    }
     let days = age_secs / 86_400;
     let hours = (age_secs % 86_400) / 3_600;
     let mins = (age_secs % 3_600) / 60;
@@ -1467,18 +1464,18 @@ pub(crate) fn format_age_from_timestamp(
 
 /// Truncates a string to `max_chars` characters, appending "..." if truncated.
 /// Returns `Cow::Borrowed` when no truncation is needed to avoid allocation.
-pub(crate) fn truncate_message(msg: &str, max_chars: usize) -> std::borrow::Cow<'_, str> {
+pub(crate) fn truncate_message(msg: &str, max_chars: usize) -> Cow<'_, str> {
     if msg.len() <= max_chars {
-        return std::borrow::Cow::Borrowed(msg);
+        return Cow::Borrowed(msg);
     }
     let char_count = msg.chars().count();
     if char_count <= max_chars {
-        std::borrow::Cow::Borrowed(msg)
+        Cow::Borrowed(msg)
     } else if max_chars < 4 {
-        std::borrow::Cow::Owned(msg.chars().take(max_chars).collect())
+        Cow::Owned(msg.chars().take(max_chars).collect())
     } else {
         let truncated: String = msg.chars().take(max_chars - 3).collect();
-        std::borrow::Cow::Owned(format!("{truncated}..."))
+        Cow::Owned(format!("{truncated}..."))
     }
 }
 

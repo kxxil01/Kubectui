@@ -8,6 +8,8 @@ use ratatui::{
     },
 };
 
+use super::join_or_all;
+
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
@@ -348,8 +350,6 @@ fn render_rule_tree(rules: &[RbacRule], theme: &crate::ui::theme::Theme) -> Vec<
     }
     lines
 }
-
-use super::join_or_all;
 
 #[cfg(test)]
 mod tests {

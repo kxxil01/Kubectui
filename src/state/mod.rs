@@ -107,6 +107,13 @@ impl FluxCounts {
     pub fn compute(resources: &[FluxResourceInfo]) -> Self {
         let mut counts = Self::default();
         for r in resources {
+            // Group-level counters (non-exclusive with kind-level counters below).
+            match r.group.as_str() {
+                "source.toolkit.fluxcd.io" => counts.sources += 1,
+                "image.toolkit.fluxcd.io" => counts.images += 1,
+                _ => {}
+            }
+            // Kind-level counters.
             match (r.group.as_str(), r.kind.as_str()) {
                 ("kustomize.toolkit.fluxcd.io", "Kustomization") => counts.kustomizations += 1,
                 ("helm.toolkit.fluxcd.io", "HelmRelease") => counts.helm_releases += 1,
@@ -114,8 +121,6 @@ impl FluxCounts {
                 ("notification.toolkit.fluxcd.io", "AlertProvider") => counts.alert_providers += 1,
                 ("notification.toolkit.fluxcd.io", "Alert") => counts.alerts += 1,
                 ("notification.toolkit.fluxcd.io", "Receiver") => counts.receivers += 1,
-                ("image.toolkit.fluxcd.io", _) => counts.images += 1,
-                ("source.toolkit.fluxcd.io", _) => counts.sources += 1,
                 _ => {}
             }
             if r.artifact.is_some() {
@@ -2161,11 +2166,6 @@ impl GlobalState {
             }
         }
 
-        {
-            let snap = Arc::make_mut(&mut self.snapshot);
-            snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
-        }
-
         self.namespaces = Self::namespace_names_from_list(&self.snapshot.namespace_list);
 
         let all_failed = !skip_core
@@ -2216,6 +2216,7 @@ impl GlobalState {
         {
             let snap = Arc::make_mut(&mut self.snapshot);
             snap.namespaces_count = namespaces_count;
+            snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
             if fetch_local_helm_repositories {
                 snap.helm_repositories = crate::k8s::helm::read_helm_repositories();
             }
