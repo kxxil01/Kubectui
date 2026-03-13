@@ -13,9 +13,9 @@ use kubectui::{
         CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo,
         FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
         K8sEventInfo, LimitRangeInfo, NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo,
-        PodDisruptionBudgetInfo, PodInfo, PriorityClassInfo, PvInfo, PvcInfo, ReplicaSetInfo,
-        ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo,
-        ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
+        PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo,
+        ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
+        SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
     },
     state::ClusterDataSource,
 };
@@ -399,6 +399,9 @@ impl ClusterDataSource for MockDataSource {
         Ok(vec![])
     }
     async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_all_pod_metrics(&self, _namespace: Option<&str>) -> Result<Vec<PodMetricsInfo>> {
         Ok(vec![])
     }
 }

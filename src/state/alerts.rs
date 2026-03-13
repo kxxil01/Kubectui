@@ -394,15 +394,20 @@ fn ratio_percent_u64(numerator: u64, denominator: u64) -> u8 {
     ((numerator.saturating_mul(100) / denominator).min(100)) as u8
 }
 
-fn parse_millicores(raw: &str) -> u64 {
+pub(crate) fn parse_millicores(raw: &str) -> u64 {
     if let Some(m) = raw.strip_suffix('m') {
         m.parse().unwrap_or(0)
+    } else if let Some(n) = raw.strip_suffix('n') {
+        n.parse::<u64>().unwrap_or(0) / 1_000_000
+    } else if raw.contains('.') {
+        // Decimal cores (e.g. "0.5" → 500m, "1.25" → 1250m)
+        raw.parse::<f64>().map(|v| (v * 1000.0) as u64).unwrap_or(0)
     } else {
         raw.parse::<u64>().unwrap_or(0) * 1000
     }
 }
 
-fn parse_mib(raw: &str) -> u64 {
+pub(crate) fn parse_mib(raw: &str) -> u64 {
     if let Some(v) = raw.strip_suffix("Ki") {
         return v.parse::<u64>().unwrap_or(0) / 1024;
     }
@@ -416,6 +421,266 @@ fn parse_mib(raw: &str) -> u64 {
         return v.parse::<u64>().unwrap_or(0) * 1024 * 1024;
     }
     raw.parse::<u64>().unwrap_or(0) / (1024 * 1024)
+}
+
+pub(crate) fn format_millicores(m: u64) -> String {
+    if m >= 1000 && m.is_multiple_of(1000) {
+        format!("{}", m / 1000)
+    } else if m >= 1000 {
+        let whole = m / 1000;
+        let frac = m % 1000;
+        // Trim trailing zeros: 1500 → "1.5", 1250 → "1.25"
+        if frac.is_multiple_of(100) {
+            format!("{whole}.{}", frac / 100)
+        } else if frac.is_multiple_of(10) {
+            format!("{whole}.{:02}", frac / 10)
+        } else {
+            format!("{whole}.{frac:03}")
+        }
+    } else {
+        format!("{m}m")
+    }
+}
+
+pub(crate) fn format_mib(mib: u64) -> String {
+    if mib >= 1024 && mib.is_multiple_of(1024) {
+        format!("{}Gi", mib / 1024)
+    } else {
+        format!("{mib}Mi")
+    }
+}
+
+/// Cluster-wide resource utilization, overcommitment, and governance summary.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ClusterResourceSummary {
+    /// Total CPU used across all nodes (millicores, from node_metrics).
+    pub total_cpu_used_m: u64,
+    /// Total memory used across all nodes (MiB, from node_metrics).
+    pub total_mem_used_mib: u64,
+    /// Total CPU allocatable across all nodes (millicores).
+    pub total_cpu_allocatable_m: u64,
+    /// Total memory allocatable across all nodes (MiB).
+    pub total_mem_allocatable_mib: u64,
+    /// Cluster-wide CPU utilization percentage (used / allocatable).
+    pub cluster_cpu_pct: u8,
+    /// Cluster-wide memory utilization percentage (used / allocatable).
+    pub cluster_mem_pct: u8,
+    /// Total pod CPU requests / total allocatable (can exceed 100%).
+    pub cpu_request_commitment_pct: u16,
+    /// Total pod memory requests / total allocatable (can exceed 100%).
+    pub mem_request_commitment_pct: u16,
+    /// Total pod CPU limits / total allocatable (can exceed 100%).
+    pub cpu_limit_commitment_pct: u16,
+    /// Total pod memory limits / total allocatable (can exceed 100%).
+    pub mem_limit_commitment_pct: u16,
+    /// Running pods missing a CPU request.
+    pub pods_missing_cpu_request: usize,
+    /// Running pods missing a memory request.
+    pub pods_missing_mem_request: usize,
+    /// Running pods missing at least one limit (CPU or memory).
+    pub pods_missing_any_limit: usize,
+    /// Total running pods considered for governance.
+    pub total_running_pods: usize,
+}
+
+/// Computes cluster-wide resource utilization, overcommitment, and governance.
+pub fn compute_cluster_resource_summary(snapshot: &ClusterSnapshot) -> ClusterResourceSummary {
+    let mut summary = ClusterResourceSummary::default();
+
+    // Sum allocatable capacity from nodes
+    for node in &snapshot.nodes {
+        if let Some(ref cpu) = node.cpu_allocatable {
+            summary.total_cpu_allocatable_m += parse_millicores(cpu);
+        }
+        if let Some(ref mem) = node.memory_allocatable {
+            summary.total_mem_allocatable_mib += parse_mib(mem);
+        }
+    }
+
+    // Sum actual usage from node metrics
+    for nm in &snapshot.node_metrics {
+        summary.total_cpu_used_m += parse_millicores(&nm.cpu);
+        summary.total_mem_used_mib += parse_mib(&nm.memory);
+    }
+
+    // Utilization percentages
+    summary.cluster_cpu_pct =
+        ratio_percent_u64(summary.total_cpu_used_m, summary.total_cpu_allocatable_m);
+    summary.cluster_mem_pct = ratio_percent_u64(
+        summary.total_mem_used_mib,
+        summary.total_mem_allocatable_mib,
+    );
+
+    // Aggregate pod requests/limits and governance (running pods only)
+    let mut total_cpu_req: u64 = 0;
+    let mut total_mem_req: u64 = 0;
+    let mut total_cpu_lim: u64 = 0;
+    let mut total_mem_lim: u64 = 0;
+
+    for pod in &snapshot.pods {
+        if !pod.status.eq_ignore_ascii_case("running") {
+            continue;
+        }
+        summary.total_running_pods += 1;
+
+        if let Some(ref req) = pod.cpu_request {
+            total_cpu_req += parse_millicores(req);
+        } else {
+            summary.pods_missing_cpu_request += 1;
+        }
+        if let Some(ref req) = pod.memory_request {
+            total_mem_req += parse_mib(req);
+        } else {
+            summary.pods_missing_mem_request += 1;
+        }
+        if let Some(ref lim) = pod.cpu_limit {
+            total_cpu_lim += parse_millicores(lim);
+        }
+        if let Some(ref lim) = pod.memory_limit {
+            total_mem_lim += parse_mib(lim);
+        }
+        if pod.cpu_limit.is_none() || pod.memory_limit.is_none() {
+            summary.pods_missing_any_limit += 1;
+        }
+    }
+
+    // Commitment percentages (can exceed 100%)
+    if summary.total_cpu_allocatable_m > 0 {
+        summary.cpu_request_commitment_pct =
+            (total_cpu_req * 100 / summary.total_cpu_allocatable_m).min(999) as u16;
+        summary.cpu_limit_commitment_pct =
+            (total_cpu_lim * 100 / summary.total_cpu_allocatable_m).min(999) as u16;
+    }
+    if summary.total_mem_allocatable_mib > 0 {
+        summary.mem_request_commitment_pct =
+            (total_mem_req * 100 / summary.total_mem_allocatable_mib).min(999) as u16;
+        summary.mem_limit_commitment_pct =
+            (total_mem_lim * 100 / summary.total_mem_allocatable_mib).min(999) as u16;
+    }
+
+    summary
+}
+
+/// A single pod's resource usage for "top consumers" display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PodConsumerSummary {
+    pub name: String,
+    pub namespace: String,
+    pub cpu_usage_m: u64,
+    pub mem_usage_mib: u64,
+}
+
+/// Maximum entries shown in top-consumer and namespace utilization panels.
+pub(crate) const TOP_N: usize = 5;
+
+/// Returns (top_cpu_pods, top_mem_pods), each sorted by respective metric descending.
+pub fn compute_top_pod_consumers(
+    snapshot: &ClusterSnapshot,
+) -> (Vec<PodConsumerSummary>, Vec<PodConsumerSummary>) {
+    let mut consumers: Vec<PodConsumerSummary> = snapshot
+        .pod_metrics
+        .iter()
+        .map(|pm| {
+            let (cpu, mem) = pm.containers.iter().fold((0u64, 0u64), |(ac, am), c| {
+                (ac + parse_millicores(&c.cpu), am + parse_mib(&c.memory))
+            });
+            PodConsumerSummary {
+                name: pm.name.clone(),
+                namespace: pm.namespace.clone(),
+                cpu_usage_m: cpu,
+                mem_usage_mib: mem,
+            }
+        })
+        .collect();
+
+    // Sort by CPU, take top N, then re-sort remainder by memory
+    consumers.sort_unstable_by(|a, b| b.cpu_usage_m.cmp(&a.cpu_usage_m));
+    let by_cpu: Vec<PodConsumerSummary> = consumers.iter().take(TOP_N).cloned().collect();
+
+    consumers.sort_unstable_by(|a, b| b.mem_usage_mib.cmp(&a.mem_usage_mib));
+    consumers.truncate(TOP_N);
+
+    (by_cpu, consumers)
+}
+
+/// Per-namespace resource utilization aggregation for the dashboard.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NamespaceUtilizationSummary {
+    pub namespace: String,
+    pub pod_count: usize,
+    pub cpu_usage_m: u64,
+    pub mem_usage_mib: u64,
+    pub cpu_request_m: u64,
+    pub mem_request_mib: u64,
+    /// Actual CPU usage / CPU requests percentage. `None` if no requests.
+    /// Can exceed 100% when pods burst above requests.
+    pub cpu_req_utilization_pct: Option<u16>,
+    /// Actual memory usage / memory requests percentage. `None` if no requests.
+    /// Can exceed 100% when pods burst above requests.
+    pub mem_req_utilization_pct: Option<u16>,
+}
+
+/// Aggregates pod metrics and resource requests by namespace.
+/// Returns top namespaces sorted by CPU usage descending.
+pub fn compute_namespace_utilization(
+    snapshot: &ClusterSnapshot,
+) -> Vec<NamespaceUtilizationSummary> {
+    let mut by_ns: HashMap<&str, NamespaceUtilizationSummary> = HashMap::new();
+
+    // Aggregate resource requests from running pods only
+    for pod in &snapshot.pods {
+        if !pod.status.eq_ignore_ascii_case("running") {
+            continue;
+        }
+        let entry =
+            by_ns
+                .entry(pod.namespace.as_str())
+                .or_insert_with(|| NamespaceUtilizationSummary {
+                    namespace: pod.namespace.clone(),
+                    ..Default::default()
+                });
+        entry.pod_count += 1;
+        if let Some(ref req) = pod.cpu_request {
+            entry.cpu_request_m += parse_millicores(req);
+        }
+        if let Some(ref req) = pod.memory_request {
+            entry.mem_request_mib += parse_mib(req);
+        }
+    }
+
+    // Aggregate actual usage from pod metrics
+    for pm in &snapshot.pod_metrics {
+        let entry =
+            by_ns
+                .entry(pm.namespace.as_str())
+                .or_insert_with(|| NamespaceUtilizationSummary {
+                    namespace: pm.namespace.clone(),
+                    ..Default::default()
+                });
+        for c in &pm.containers {
+            entry.cpu_usage_m += parse_millicores(&c.cpu);
+            entry.mem_usage_mib += parse_mib(&c.memory);
+        }
+    }
+
+    let mut result: Vec<NamespaceUtilizationSummary> = by_ns.into_values().collect();
+
+    // Compute request utilization percentages (uncapped — can exceed 100% on burst)
+    for ns in &mut result {
+        ns.cpu_req_utilization_pct = if ns.cpu_request_m > 0 {
+            Some((ns.cpu_usage_m * 100 / ns.cpu_request_m).min(999) as u16)
+        } else {
+            None
+        };
+        ns.mem_req_utilization_pct = if ns.mem_request_mib > 0 {
+            Some((ns.mem_usage_mib * 100 / ns.mem_request_mib).min(999) as u16)
+        } else {
+            None
+        };
+    }
+
+    result.sort_by(|a, b| b.cpu_usage_m.cmp(&a.cpu_usage_m));
+    result
 }
 
 fn has_reason(reasons: &[String], expected_reason: &str) -> bool {
@@ -788,5 +1053,492 @@ mod tests {
             compute_workload_ready_percent(&ClusterSnapshot::default()),
             100
         );
+    }
+
+    #[test]
+    fn format_millicores_whole_cores() {
+        assert_eq!(format_millicores(1000), "1");
+        assert_eq!(format_millicores(2000), "2");
+    }
+
+    #[test]
+    fn format_millicores_fractional() {
+        assert_eq!(format_millicores(500), "500m");
+        assert_eq!(format_millicores(1500), "1.5");
+        assert_eq!(format_millicores(1250), "1.25");
+        assert_eq!(format_millicores(1001), "1.001");
+    }
+
+    #[test]
+    fn format_millicores_zero() {
+        assert_eq!(format_millicores(0), "0m");
+    }
+
+    #[test]
+    fn format_mib_gibibytes() {
+        assert_eq!(format_mib(1024), "1Gi");
+        assert_eq!(format_mib(2048), "2Gi");
+    }
+
+    #[test]
+    fn format_mib_mebibytes() {
+        assert_eq!(format_mib(256), "256Mi");
+        assert_eq!(format_mib(512), "512Mi");
+    }
+
+    #[test]
+    fn format_mib_zero() {
+        assert_eq!(format_mib(0), "0Mi");
+    }
+
+    #[test]
+    fn parse_millicores_nanocores() {
+        assert_eq!(parse_millicores("500000000n"), 500);
+        assert_eq!(parse_millicores("0n"), 0);
+    }
+
+    #[test]
+    fn parse_millicores_whole_cores() {
+        assert_eq!(parse_millicores("2"), 2000);
+        assert_eq!(parse_millicores("250m"), 250);
+    }
+
+    #[test]
+    fn parse_millicores_decimal_cores() {
+        assert_eq!(parse_millicores("0.5"), 500);
+        assert_eq!(parse_millicores("1.25"), 1250);
+        assert_eq!(parse_millicores("0.1"), 100);
+        assert_eq!(parse_millicores("2.0"), 2000);
+    }
+
+    #[test]
+    fn compute_namespace_utilization_empty_snapshot() {
+        let snapshot = ClusterSnapshot::default();
+        let result = compute_namespace_utilization(&snapshot);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn compute_namespace_utilization_aggregates_by_namespace() {
+        use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("100m".to_string()),
+            memory_request: Some("256Mi".to_string()),
+            ..PodInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "p2".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("200m".to_string()),
+            memory_request: Some("512Mi".to_string()),
+            ..PodInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "p3".to_string(),
+            namespace: "ns-b".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("500m".to_string()),
+            memory_request: Some("1024Mi".to_string()),
+            ..PodInfo::default()
+        });
+
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "50m".to_string(),
+                memory: "128Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "p2".to_string(),
+            namespace: "ns-a".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "100m".to_string(),
+                memory: "256Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "p3".to_string(),
+            namespace: "ns-b".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "400m".to_string(),
+                memory: "512Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+
+        let result = compute_namespace_utilization(&snapshot);
+        assert_eq!(result.len(), 2);
+
+        // Sorted by CPU usage descending: ns-b (400m) > ns-a (150m)
+        assert_eq!(result[0].namespace, "ns-b");
+        assert_eq!(result[0].pod_count, 1);
+        assert_eq!(result[0].cpu_usage_m, 400);
+        assert_eq!(result[0].mem_usage_mib, 512);
+        assert_eq!(result[0].cpu_request_m, 500);
+        assert_eq!(result[0].mem_request_mib, 1024);
+
+        assert_eq!(result[1].namespace, "ns-a");
+        assert_eq!(result[1].pod_count, 2);
+        assert_eq!(result[1].cpu_usage_m, 150);
+        assert_eq!(result[1].mem_usage_mib, 384);
+        assert_eq!(result[1].cpu_request_m, 300);
+        assert_eq!(result[1].mem_request_mib, 768);
+    }
+
+    #[test]
+    fn compute_cluster_resource_summary_empty() {
+        let summary = compute_cluster_resource_summary(&ClusterSnapshot::default());
+        assert_eq!(summary.total_cpu_used_m, 0);
+        assert_eq!(summary.total_mem_used_mib, 0);
+        assert_eq!(summary.total_cpu_allocatable_m, 0);
+        assert_eq!(summary.total_mem_allocatable_mib, 0);
+        assert_eq!(summary.cluster_cpu_pct, 0);
+        assert_eq!(summary.cluster_mem_pct, 0);
+        assert_eq!(summary.total_running_pods, 0);
+    }
+
+    #[test]
+    fn compute_cluster_resource_summary_with_metrics() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "n1".to_string(),
+            ready: true,
+            cpu_allocatable: Some("4000m".to_string()),
+            memory_allocatable: Some("8192Mi".to_string()),
+            ..NodeInfo::default()
+        });
+        snapshot
+            .node_metrics
+            .push(crate::k8s::dtos::NodeMetricsInfo {
+                name: "n1".to_string(),
+                cpu: "2000m".to_string(),
+                memory: "4096Mi".to_string(),
+                ..crate::k8s::dtos::NodeMetricsInfo::default()
+            });
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("1000m".to_string()),
+            memory_request: Some("2048Mi".to_string()),
+            cpu_limit: Some("2000m".to_string()),
+            memory_limit: Some("4096Mi".to_string()),
+            ..PodInfo::default()
+        });
+
+        let summary = compute_cluster_resource_summary(&snapshot);
+        assert_eq!(summary.cluster_cpu_pct, 50);
+        assert_eq!(summary.cluster_mem_pct, 50);
+        assert_eq!(summary.cpu_request_commitment_pct, 25);
+        assert_eq!(summary.mem_request_commitment_pct, 25);
+        assert_eq!(summary.cpu_limit_commitment_pct, 50);
+        assert_eq!(summary.mem_limit_commitment_pct, 50);
+        assert_eq!(summary.total_running_pods, 1);
+        assert_eq!(summary.pods_missing_cpu_request, 0);
+        assert_eq!(summary.pods_missing_mem_request, 0);
+        assert_eq!(summary.pods_missing_any_limit, 0);
+    }
+
+    #[test]
+    fn compute_cluster_resource_summary_overcommitted() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "n1".to_string(),
+            cpu_allocatable: Some("1000m".to_string()),
+            memory_allocatable: Some("1024Mi".to_string()),
+            ..NodeInfo::default()
+        });
+        // Pod requests exceed allocatable
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("800m".to_string()),
+            memory_request: Some("512Mi".to_string()),
+            ..PodInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "p2".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("500m".to_string()),
+            memory_request: Some("768Mi".to_string()),
+            ..PodInfo::default()
+        });
+
+        let summary = compute_cluster_resource_summary(&snapshot);
+        assert_eq!(summary.cpu_request_commitment_pct, 130); // 1300m / 1000m
+        assert_eq!(summary.mem_request_commitment_pct, 125); // 1280Mi / 1024Mi
+    }
+
+    #[test]
+    fn compute_cluster_resource_summary_no_metrics_server() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "n1".to_string(),
+            cpu_allocatable: Some("2000m".to_string()),
+            memory_allocatable: Some("4096Mi".to_string()),
+            ..NodeInfo::default()
+        });
+        // No node_metrics → usage stays 0
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("500m".to_string()),
+            memory_request: Some("1024Mi".to_string()),
+            ..PodInfo::default()
+        });
+
+        let summary = compute_cluster_resource_summary(&snapshot);
+        assert_eq!(summary.cluster_cpu_pct, 0);
+        assert_eq!(summary.cluster_mem_pct, 0);
+        assert_eq!(summary.cpu_request_commitment_pct, 25);
+        assert_eq!(summary.mem_request_commitment_pct, 25);
+    }
+
+    #[test]
+    fn compute_cluster_resource_summary_missing_requests_count() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "n1".to_string(),
+            cpu_allocatable: Some("2000m".to_string()),
+            memory_allocatable: Some("4096Mi".to_string()),
+            ..NodeInfo::default()
+        });
+        // Pod with no requests or limits
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        // Pod with CPU request but no memory request, and one limit
+        snapshot.pods.push(PodInfo {
+            name: "p2".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("100m".to_string()),
+            cpu_limit: Some("200m".to_string()),
+            ..PodInfo::default()
+        });
+        // Non-running pod should be ignored
+        snapshot.pods.push(PodInfo {
+            name: "p3".to_string(),
+            namespace: "default".to_string(),
+            status: "Pending".to_string(),
+            ..PodInfo::default()
+        });
+
+        let summary = compute_cluster_resource_summary(&snapshot);
+        assert_eq!(summary.total_running_pods, 2);
+        assert_eq!(summary.pods_missing_cpu_request, 1); // p1
+        assert_eq!(summary.pods_missing_mem_request, 2); // p1 + p2
+        assert_eq!(summary.pods_missing_any_limit, 2); // p1 (no limits) + p2 (no mem_limit)
+    }
+
+    #[test]
+    fn compute_top_pod_consumers_empty() {
+        let (cpu, mem) = compute_top_pod_consumers(&ClusterSnapshot::default());
+        assert!(cpu.is_empty());
+        assert!(mem.is_empty());
+    }
+
+    #[test]
+    fn compute_top_pod_consumers_ordering() {
+        use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
+
+        let mut snapshot = ClusterSnapshot::default();
+        // Pod A: high CPU, low mem
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "pod-a".to_string(),
+            namespace: "default".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "500m".to_string(),
+                memory: "100Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+        // Pod B: low CPU, high mem
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "pod-b".to_string(),
+            namespace: "default".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "100m".to_string(),
+                memory: "2048Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+
+        let (by_cpu, by_mem) = compute_top_pod_consumers(&snapshot);
+        assert_eq!(by_cpu[0].name, "pod-a");
+        assert_eq!(by_cpu[1].name, "pod-b");
+        assert_eq!(by_mem[0].name, "pod-b");
+        assert_eq!(by_mem[1].name, "pod-a");
+    }
+
+    #[test]
+    fn compute_top_pod_consumers_fewer_than_5() {
+        use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
+
+        let mut snapshot = ClusterSnapshot::default();
+        for i in 0..3 {
+            snapshot.pod_metrics.push(PodMetricsInfo {
+                name: format!("pod-{i}"),
+                namespace: "default".to_string(),
+                containers: vec![ContainerMetrics {
+                    name: "c1".to_string(),
+                    cpu: format!("{}m", (i + 1) * 100),
+                    memory: format!("{}Mi", (i + 1) * 256),
+                }],
+                ..PodMetricsInfo::default()
+            });
+        }
+
+        let (by_cpu, by_mem) = compute_top_pod_consumers(&snapshot);
+        assert_eq!(by_cpu.len(), 3);
+        assert_eq!(by_mem.len(), 3);
+    }
+
+    #[test]
+    fn compute_namespace_utilization_includes_req_pct() {
+        use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("200m".to_string()),
+            memory_request: Some("1024Mi".to_string()),
+            ..PodInfo::default()
+        });
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "100m".to_string(),
+                memory: "512Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+
+        let result = compute_namespace_utilization(&snapshot);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].cpu_req_utilization_pct, Some(50));
+        assert_eq!(result[0].mem_req_utilization_pct, Some(50));
+    }
+
+    #[test]
+    fn compute_namespace_utilization_no_requests_yields_none() {
+        use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "100m".to_string(),
+                memory: "512Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+
+        let result = compute_namespace_utilization(&snapshot);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].cpu_req_utilization_pct, None);
+        assert_eq!(result[0].mem_req_utilization_pct, None);
+    }
+
+    #[test]
+    fn compute_namespace_utilization_excludes_non_running_pods() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "running".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("100m".to_string()),
+            memory_request: Some("256Mi".to_string()),
+            ..PodInfo::default()
+        });
+        // Completed pod should not inflate request denominators
+        snapshot.pods.push(PodInfo {
+            name: "completed".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Succeeded".to_string(),
+            cpu_request: Some("500m".to_string()),
+            memory_request: Some("1024Mi".to_string()),
+            ..PodInfo::default()
+        });
+
+        let result = compute_namespace_utilization(&snapshot);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].pod_count, 1);
+        assert_eq!(result[0].cpu_request_m, 100);
+        assert_eq!(result[0].mem_request_mib, 256);
+    }
+
+    #[test]
+    fn compute_namespace_utilization_over_100_pct() {
+        use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("100m".to_string()),
+            memory_request: Some("256Mi".to_string()),
+            ..PodInfo::default()
+        });
+        // Usage exceeds requests (burst)
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "300m".to_string(),
+                memory: "768Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+
+        let result = compute_namespace_utilization(&snapshot);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].cpu_req_utilization_pct, Some(300));
+        assert_eq!(result[0].mem_req_utilization_pct, Some(300));
+    }
+
+    #[test]
+    fn parse_millicores_edge_cases() {
+        assert_eq!(parse_millicores(""), 0);
+        assert_eq!(parse_millicores("abc"), 0);
+        assert_eq!(parse_millicores("0"), 0);
+        assert_eq!(parse_millicores("0m"), 0);
+        assert_eq!(parse_millicores("0.0"), 0);
+        assert_eq!(parse_millicores("-100m"), 0); // negative → unwrap_or(0)
     }
 }
