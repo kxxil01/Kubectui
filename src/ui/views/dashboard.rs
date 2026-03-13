@@ -16,17 +16,18 @@ use crate::{
         ClusterSnapshot,
         alerts::{
             ClusterResourceSummary, DashboardHealthState, DashboardInsights, DashboardStats,
-            NamespaceUtilizationSummary, PodConsumerSummary, compute_alerts,
+            NamespaceUtilizationSummary, PodConsumerSummary, TOP_N, compute_alerts,
             compute_cluster_resource_summary, compute_dashboard_insights, compute_dashboard_stats,
             compute_namespace_utilization, compute_top_pod_consumers,
             compute_workload_ready_percent, format_mib, format_millicores,
         },
     },
-    ui::{components::default_theme, theme::Theme},
+    ui::{components::default_theme, theme::Theme, utilization_style},
 };
 
 // ── dashboard computation cache ──────────────────────────────────────────────
 
+#[derive(Clone)]
 struct DashboardData {
     stats: DashboardStats,
     alerts: Vec<AlertItem>,
@@ -51,16 +52,7 @@ fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
     if let Some(ref c) = *guard
         && c.version == snapshot.snapshot_version
     {
-        return DashboardData {
-            stats: c.data.stats,
-            alerts: c.data.alerts.clone(),
-            insights: c.data.insights.clone(),
-            workload_pct: c.data.workload_pct,
-            ns_utilization: c.data.ns_utilization.clone(),
-            cluster_resources: c.data.cluster_resources,
-            top_cpu_pods: c.data.top_cpu_pods.clone(),
-            top_mem_pods: c.data.top_mem_pods.clone(),
-        };
+        return c.data.clone();
     }
 
     let stats = compute_dashboard_stats(snapshot);
@@ -85,17 +77,7 @@ fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
         },
     });
 
-    let cached = &guard.as_ref().unwrap().data;
-    DashboardData {
-        stats: cached.stats,
-        alerts: cached.alerts.clone(),
-        insights: cached.insights.clone(),
-        workload_pct: cached.workload_pct,
-        ns_utilization: cached.ns_utilization.clone(),
-        cluster_resources: cached.cluster_resources,
-        top_cpu_pods: cached.top_cpu_pods.clone(),
-        top_mem_pods: cached.top_mem_pods.clone(),
-    }
+    guard.as_ref().unwrap().data.clone()
 }
 
 // ── metric parsing helpers ────────────────────────────────────────────────────
@@ -495,7 +477,7 @@ fn render_utilization_gauge(
     percent: u8,
     theme: &Theme,
 ) {
-    let style = crate::ui::utilization_style(u64::from(percent), theme);
+    let style = utilization_style(u64::from(percent), theme);
     let gauge = Gauge::default()
         .block(
             Block::default()
@@ -913,7 +895,7 @@ fn render_namespace_utilization(
     let mut lines = Vec::with_capacity(7);
     lines.push(header);
 
-    for ns in ns_util.iter().take(5) {
+    for ns in ns_util.iter().take(TOP_N) {
         let cpu_used = format_millicores(ns.cpu_usage_m);
         let cpu_req = if ns.cpu_request_m > 0 {
             format_millicores(ns.cpu_request_m)
@@ -938,7 +920,7 @@ fn render_namespace_utilization(
             .unwrap_or_else(|| "    -".to_string());
         let cpu_pct_style = ns
             .cpu_req_utilization_pct
-            .map(|p| crate::ui::utilization_style(u64::from(p), theme))
+            .map(|p| utilization_style(u64::from(p), theme))
             .unwrap_or(dim);
         let mid = format!(" {:>8} {:>8} ", mem_used, mem_req);
         let mem_pct_str = ns
@@ -947,7 +929,7 @@ fn render_namespace_utilization(
             .unwrap_or_else(|| "    -".to_string());
         let mem_pct_style = ns
             .mem_req_utilization_pct
-            .map(|p| crate::ui::utilization_style(u64::from(p), theme))
+            .map(|p| utilization_style(u64::from(p), theme))
             .unwrap_or(dim);
 
         lines.push(Line::from(vec![

@@ -56,6 +56,7 @@ pub use crate::k8s::{
     },
     events::EventInfo,
 };
+use crate::state::alerts::{format_mib, format_millicores, parse_mib, parse_millicores};
 
 const MAX_EVENTS_LIST_LIMIT: u32 = 1000;
 const MAX_RECENT_EVENTS_ITEMS: usize = 250;
@@ -431,9 +432,6 @@ impl K8sClient {
                     .map(|spec| spec.containers.as_slice())
                     .unwrap_or_default();
                 let (cpu_request, memory_request, cpu_limit, memory_limit) = {
-                    use crate::state::alerts::{
-                        format_mib, format_millicores, parse_mib, parse_millicores,
-                    };
                     let mut cpu_req_m: u64 = 0;
                     let mut mem_req_mib: u64 = 0;
                     let mut cpu_lim_m: u64 = 0;

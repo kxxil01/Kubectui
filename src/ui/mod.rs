@@ -1192,12 +1192,32 @@ fn render_pods_widget(
     let now_unix = chrono::Utc::now().timestamp();
     let derived = cached_pod_derived(cluster, query, indices.as_ref(), now_unix, cache_variant);
 
-    // Build pod metrics lookup: (name, namespace) -> &PodMetricsInfo
-    let pod_metrics_map: HashMap<(&str, &str), &crate::k8s::dtos::PodMetricsInfo> = cluster
-        .pod_metrics
-        .iter()
-        .map(|pm| ((pm.name.as_str(), pm.namespace.as_str()), pm))
-        .collect();
+    // Build pod metrics lookup only when metric columns are visible
+    let needs_metrics = visible_columns.iter().any(|c| {
+        matches!(
+            c.id,
+            "cpu_usage"
+                | "mem_usage"
+                | "cpu_pct_req"
+                | "mem_pct_req"
+                | "cpu_pct_lim"
+                | "mem_pct_lim"
+        )
+    });
+    let pod_metrics_map: HashMap<(&str, &str), (u64, u64)> = if needs_metrics {
+        cluster
+            .pod_metrics
+            .iter()
+            .map(|pm| {
+                let (cpu, mem) = pm.containers.iter().fold((0u64, 0u64), |(ac, am), c| {
+                    (ac + parse_millicores(&c.cpu), am + parse_mib(&c.memory))
+                });
+                ((pm.name.as_str(), pm.namespace.as_str()), (cpu, mem))
+            })
+            .collect()
+    } else {
+        HashMap::new()
+    };
 
     let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &pod_idx) in indices[window.start..window.end].iter().enumerate() {
@@ -1248,17 +1268,10 @@ fn render_pods_widget(
                 )),
                 "age" => Cell::from(Span::styled(age, theme.inactive_style())),
                 "cpu_usage" | "mem_usage" => {
-                    let pm = pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str()));
-                    match pm {
-                        Some(pm) => {
+                    match pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str())) {
+                        Some(&(cpu_m, mem_mib)) => {
                             let is_cpu = col.id == "cpu_usage";
-                            let usage = pm.containers.iter().fold(0u64, |acc, c| {
-                                acc + if is_cpu {
-                                    parse_millicores(&c.cpu)
-                                } else {
-                                    parse_mib(&c.memory)
-                                }
-                            });
+                            let usage = if is_cpu { cpu_m } else { mem_mib };
                             let formatted = if is_cpu {
                                 format_millicores(usage)
                             } else {
@@ -1306,18 +1319,11 @@ fn render_pods_widget(
                     dim_style,
                 )),
                 "cpu_pct_req" | "mem_pct_req" | "cpu_pct_lim" | "mem_pct_lim" => {
-                    let pm = pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str()));
-                    match pm {
-                        Some(pm) => {
+                    match pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str())) {
+                        Some(&(cpu_m, mem_mib)) => {
                             let is_cpu = col.id.starts_with("cpu");
                             let is_req = col.id.ends_with("req");
-                            let usage = pm.containers.iter().fold(0u64, |acc, c| {
-                                acc + if is_cpu {
-                                    parse_millicores(&c.cpu)
-                                } else {
-                                    parse_mib(&c.memory)
-                                }
-                            });
+                            let usage = if is_cpu { cpu_m } else { mem_mib };
                             let denom_str = if is_cpu {
                                 if is_req {
                                     pod.cpu_request.as_deref()

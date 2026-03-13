@@ -559,11 +559,14 @@ pub struct PodConsumerSummary {
     pub mem_usage_mib: u64,
 }
 
-/// Returns (top_cpu_pods, top_mem_pods), each sorted by respective metric descending, up to 5.
+/// Maximum entries shown in top-consumer and namespace utilization panels.
+pub(crate) const TOP_N: usize = 5;
+
+/// Returns (top_cpu_pods, top_mem_pods), each sorted by respective metric descending.
 pub fn compute_top_pod_consumers(
     snapshot: &ClusterSnapshot,
 ) -> (Vec<PodConsumerSummary>, Vec<PodConsumerSummary>) {
-    let consumers: Vec<PodConsumerSummary> = snapshot
+    let mut consumers: Vec<PodConsumerSummary> = snapshot
         .pod_metrics
         .iter()
         .map(|pm| {
@@ -579,15 +582,14 @@ pub fn compute_top_pod_consumers(
         })
         .collect();
 
-    let mut by_cpu = consumers.clone();
-    by_cpu.sort_by(|a, b| b.cpu_usage_m.cmp(&a.cpu_usage_m));
-    by_cpu.truncate(5);
+    // Sort by CPU, take top N, then re-sort remainder by memory
+    consumers.sort_unstable_by(|a, b| b.cpu_usage_m.cmp(&a.cpu_usage_m));
+    let by_cpu: Vec<PodConsumerSummary> = consumers.iter().take(TOP_N).cloned().collect();
 
-    let mut by_mem = consumers;
-    by_mem.sort_by(|a, b| b.mem_usage_mib.cmp(&a.mem_usage_mib));
-    by_mem.truncate(5);
+    consumers.sort_unstable_by(|a, b| b.mem_usage_mib.cmp(&a.mem_usage_mib));
+    consumers.truncate(TOP_N);
 
-    (by_cpu, by_mem)
+    (by_cpu, consumers)
 }
 
 /// Per-namespace resource utilization aggregation for the dashboard.
@@ -600,9 +602,11 @@ pub struct NamespaceUtilizationSummary {
     pub cpu_request_m: u64,
     pub mem_request_mib: u64,
     /// Actual CPU usage / CPU requests percentage. `None` if no requests.
-    pub cpu_req_utilization_pct: Option<u8>,
+    /// Can exceed 100% when pods burst above requests.
+    pub cpu_req_utilization_pct: Option<u16>,
     /// Actual memory usage / memory requests percentage. `None` if no requests.
-    pub mem_req_utilization_pct: Option<u8>,
+    /// Can exceed 100% when pods burst above requests.
+    pub mem_req_utilization_pct: Option<u16>,
 }
 
 /// Aggregates pod metrics and resource requests by namespace.
@@ -650,15 +654,15 @@ pub fn compute_namespace_utilization(
 
     let mut result: Vec<NamespaceUtilizationSummary> = by_ns.into_values().collect();
 
-    // Compute request utilization percentages
+    // Compute request utilization percentages (uncapped — can exceed 100% on burst)
     for ns in &mut result {
         ns.cpu_req_utilization_pct = if ns.cpu_request_m > 0 {
-            Some(ratio_percent_u64(ns.cpu_usage_m, ns.cpu_request_m))
+            Some((ns.cpu_usage_m * 100 / ns.cpu_request_m).min(999) as u16)
         } else {
             None
         };
         ns.mem_req_utilization_pct = if ns.mem_request_mib > 0 {
-            Some(ratio_percent_u64(ns.mem_usage_mib, ns.mem_request_mib))
+            Some((ns.mem_usage_mib * 100 / ns.mem_request_mib).min(999) as u16)
         } else {
             None
         };
@@ -1482,5 +1486,46 @@ mod tests {
         assert_eq!(result[0].pod_count, 1);
         assert_eq!(result[0].cpu_request_m, 100);
         assert_eq!(result[0].mem_request_mib, 256);
+    }
+
+    #[test]
+    fn compute_namespace_utilization_over_100_pct() {
+        use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Running".to_string(),
+            cpu_request: Some("100m".to_string()),
+            memory_request: Some("256Mi".to_string()),
+            ..PodInfo::default()
+        });
+        // Usage exceeds requests (burst)
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "p1".to_string(),
+            namespace: "ns-a".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "300m".to_string(),
+                memory: "768Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+
+        let result = compute_namespace_utilization(&snapshot);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].cpu_req_utilization_pct, Some(300));
+        assert_eq!(result[0].mem_req_utilization_pct, Some(300));
+    }
+
+    #[test]
+    fn parse_millicores_edge_cases() {
+        assert_eq!(parse_millicores(""), 0);
+        assert_eq!(parse_millicores("abc"), 0);
+        assert_eq!(parse_millicores("0"), 0);
+        assert_eq!(parse_millicores("0m"), 0);
+        assert_eq!(parse_millicores("0.0"), 0);
+        assert_eq!(parse_millicores("-100m"), 0); // negative → unwrap_or(0)
     }
 }
