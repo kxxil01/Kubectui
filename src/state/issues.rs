@@ -8,7 +8,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::app::ResourceRef;
 use crate::k8s::dtos::AlertSeverity;
-use crate::state::ClusterSnapshot;
+use crate::state::{ClusterSnapshot, RefreshScope};
 use crate::ui::contains_ci;
 
 const MAX_ISSUES: usize = 500;
@@ -388,7 +388,8 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         .iter()
         .map(|ep| ((ep.name.as_str(), ep.namespace.as_str()), ep))
         .collect();
-    let endpoints_loaded = !snapshot.endpoints.is_empty() || snapshot.secondary_resources_loaded;
+    let endpoints_loaded =
+        !snapshot.endpoints.is_empty() || snapshot.loaded_scope.contains(RefreshScope::NETWORK);
     for svc in &snapshot.services {
         if svc.type_ == "ExternalName" {
             continue;
@@ -986,7 +987,7 @@ mod tests {
     #[test]
     fn service_no_endpoint_object_detected_when_endpoints_loaded() {
         let mut snap = empty_snapshot();
-        snap.secondary_resources_loaded = true;
+        snap.loaded_scope = RefreshScope::NETWORK;
         snap.services.push(ServiceInfo {
             name: "orphan-svc".into(),
             namespace: "default".into(),
@@ -1003,7 +1004,7 @@ mod tests {
     #[test]
     fn service_no_endpoint_object_not_flagged_when_endpoints_not_loaded() {
         let mut snap = empty_snapshot();
-        snap.secondary_resources_loaded = false;
+        snap.loaded_scope = RefreshScope::NONE;
         // No endpoints loaded at all — don't flag missing endpoint objects
         snap.services.push(ServiceInfo {
             name: "orphan-svc".into(),

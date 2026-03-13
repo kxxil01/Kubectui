@@ -258,7 +258,7 @@ fn cached_sidebar_lines(
     collapsed: &HashSet<NavGroup>,
     focus: crate::app::Focus,
     theme: &Theme,
-    counts: &[(AppView, usize)],
+    counts: &[(AppView, Option<usize>)],
 ) -> SidebarCacheValue {
     use crate::app::{SidebarItem, sidebar_rows};
     use std::hash::{Hash, Hasher};
@@ -315,12 +315,16 @@ fn cached_sidebar_lines(
                     SidebarItem::View(view) => {
                         let is_active = *view == active;
                         let base = view.sidebar_text();
-                        let line: String =
-                            if let Some((_, count)) = counts.iter().find(|(v, _)| v == view) {
-                                format!("{base} ({count})")
-                            } else {
-                                base.to_string()
-                            };
+                        let line = counts
+                            .iter()
+                            .find(|(candidate, _)| candidate == view)
+                            .map_or_else(
+                                || base.to_string(),
+                                |(_, count)| match count {
+                                    Some(count) => format!("{base} ({count})"),
+                                    None => format!("{base} (…)"),
+                                },
+                            );
                         if is_cursor && is_active && sidebar_active {
                             Line::from(vec![Span::styled(line, selected_active_style)])
                         } else if is_cursor && sidebar_active {
@@ -412,7 +416,7 @@ pub fn render_sidebar(
     sidebar_cursor: usize,
     collapsed: &HashSet<NavGroup>,
     focus: crate::app::Focus,
-    counts: &[(AppView, usize)],
+    counts: &[(AppView, Option<usize>)],
 ) {
     use crate::app::Focus;
     use ratatui::layout::Margin;

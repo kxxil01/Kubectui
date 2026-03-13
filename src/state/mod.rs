@@ -14,8 +14,8 @@ use crate::app::{AppView, ResourceRef};
 use crate::k8s::{
     client::K8sClient,
     dtos::{
-        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
-        CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo,
+        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ClusterVersionInfo, ConfigMapInfo,
+        CronJobInfo, CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo,
         FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
         K8sEventInfo, LimitRangeInfo, NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo,
         PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo,
@@ -93,8 +93,8 @@ impl ViewLoadState {
 pub struct ClusterSnapshot {
     /// Monotonic snapshot revision incremented whenever snapshot data is replaced.
     pub snapshot_version: u64,
-    /// True once the current scope has completed at least one secondary-resource fetch.
-    pub secondary_resources_loaded: bool,
+    /// Buckets that have completed at least one fetch in the current scope.
+    pub loaded_scope: RefreshScope,
     pub view_load_states: [ViewLoadState; AppView::COUNT],
     pub nodes: Vec<NodeInfo>,
     pub pods: Vec<PodInfo>,
@@ -151,7 +151,7 @@ impl Default for ClusterSnapshot {
     fn default() -> Self {
         Self {
             snapshot_version: 0,
-            secondary_resources_loaded: false,
+            loaded_scope: RefreshScope::NONE,
             view_load_states: [ViewLoadState::Idle; AppView::COUNT],
             nodes: Vec::new(),
             pods: Vec::new(),
@@ -217,9 +217,18 @@ impl ClusterSnapshot {
         self.view_load_states[view.index()]
     }
 
+    pub const fn scope_loaded(&self, scope: RefreshScope) -> bool {
+        self.loaded_scope.contains(scope)
+    }
+
     /// Returns the count of resources for a given view, or None if the view
     /// doesn't map to a direct collection.
     pub fn resource_count(&self, view: AppView) -> Option<usize> {
+        let required_scope = GlobalState::view_ready_scope(view);
+        if !required_scope.is_empty() && !self.loaded_scope.contains(required_scope) {
+            return None;
+        }
+
         match view {
             AppView::Nodes => Some(self.nodes.len()),
             AppView::Pods => Some(self.pods.len()),
@@ -326,6 +335,8 @@ impl ClusterSnapshot {
 pub trait ClusterDataSource {
     /// Returns cluster API URL for status header.
     fn cluster_url(&self) -> &str;
+    /// Returns the current kube context name when known.
+    fn cluster_context(&self) -> Option<&str>;
     /// Fetches node list.
     async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>>;
     /// Fetches available namespaces.
@@ -378,8 +389,10 @@ pub trait ClusterDataSource {
     async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>>;
     /// Fetches CRD list used by Extensions view.
     async fn fetch_custom_resource_definitions(&self) -> Result<Vec<CustomResourceDefinitionInfo>>;
-    /// Fetches cluster metadata.
-    async fn fetch_cluster_info(&self) -> Result<ClusterInfo>;
+    /// Fetches cached API server version metadata.
+    async fn fetch_cluster_version(&self) -> Result<ClusterVersionInfo>;
+    /// Fetches the cluster-wide pod count regardless of active namespace scope.
+    async fn fetch_cluster_pod_count(&self) -> Result<usize>;
     /// Fetches Endpoints.
     async fn fetch_endpoints(&self, namespace: Option<&str>) -> Result<Vec<EndpointInfo>>;
     /// Fetches Ingresses.
@@ -423,6 +436,10 @@ pub trait ClusterDataSource {
 impl ClusterDataSource for K8sClient {
     fn cluster_url(&self) -> &str {
         K8sClient::cluster_url(self)
+    }
+
+    fn cluster_context(&self) -> Option<&str> {
+        K8sClient::cluster_context(self)
     }
 
     async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>> {
@@ -517,8 +534,12 @@ impl ClusterDataSource for K8sClient {
         K8sClient::fetch_custom_resource_definitions(self).await
     }
 
-    async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {
-        K8sClient::fetch_cluster_info(self).await
+    async fn fetch_cluster_version(&self) -> Result<ClusterVersionInfo> {
+        K8sClient::fetch_cluster_version(self).await
+    }
+
+    async fn fetch_cluster_pod_count(&self) -> Result<usize> {
+        K8sClient::fetch_cluster_pod_count(self).await
     }
 
     async fn fetch_endpoints(&self, namespace: Option<&str>) -> Result<Vec<EndpointInfo>> {
@@ -608,82 +629,108 @@ pub struct GlobalState {
 }
 
 /// Runtime refresh knobs for optional expensive fetch paths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct RefreshScope(u32);
+
+impl RefreshScope {
+    pub const NONE: Self = Self(0);
+    pub const NODES: Self = Self(1 << 0);
+    pub const PODS: Self = Self(1 << 1);
+    pub const SERVICES: Self = Self(1 << 2);
+    pub const DEPLOYMENTS: Self = Self(1 << 3);
+    pub const STATEFULSETS: Self = Self(1 << 4);
+    pub const DAEMONSETS: Self = Self(1 << 5);
+    pub const REPLICASETS: Self = Self(1 << 6);
+    pub const REPLICATION_CONTROLLERS: Self = Self(1 << 7);
+    pub const JOBS: Self = Self(1 << 8);
+    pub const CRONJOBS: Self = Self(1 << 9);
+    pub const NAMESPACES: Self = Self(1 << 10);
+    pub const METRICS: Self = Self(1 << 11);
+    pub const NETWORK: Self = Self(1 << 12);
+    pub const CONFIG: Self = Self(1 << 13);
+    pub const STORAGE: Self = Self(1 << 14);
+    pub const SECURITY: Self = Self(1 << 15);
+    pub const HELM: Self = Self(1 << 16);
+    pub const EXTENSIONS: Self = Self(1 << 17);
+    pub const FLUX: Self = Self(1 << 18);
+    pub const EVENTS: Self = Self(1 << 19);
+    pub const CORE_OVERVIEW: Self = Self(
+        Self::NODES.0
+            | Self::PODS.0
+            | Self::SERVICES.0
+            | Self::DEPLOYMENTS.0
+            | Self::STATEFULSETS.0
+            | Self::DAEMONSETS.0
+            | Self::REPLICASETS.0
+            | Self::REPLICATION_CONTROLLERS.0
+            | Self::JOBS.0
+            | Self::CRONJOBS.0
+            | Self::NAMESPACES.0,
+    );
+    pub const LEGACY_SECONDARY: Self = Self(
+        Self::NETWORK.0
+            | Self::CONFIG.0
+            | Self::STORAGE.0
+            | Self::SECURITY.0
+            | Self::HELM.0
+            | Self::EXTENSIONS.0,
+    );
+    pub const DEFAULT: Self =
+        Self(Self::CORE_OVERVIEW.0 | Self::METRICS.0 | Self::LEGACY_SECONDARY.0 | Self::FLUX.0);
+
+    pub const fn is_empty(self) -> bool {
+        self.0 == 0
+    }
+
+    pub const fn contains(self, other: Self) -> bool {
+        (self.0 & other.0) == other.0
+    }
+
+    pub const fn intersects(self, other: Self) -> bool {
+        (self.0 & other.0) != 0
+    }
+
+    pub const fn union(self, other: Self) -> Self {
+        Self(self.0 | other.0)
+    }
+
+    pub const fn intersection(self, other: Self) -> Self {
+        Self(self.0 & other.0)
+    }
+
+    pub const fn without(self, other: Self) -> Self {
+        Self(self.0 & !other.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct RefreshOptions {
-    pub include_flux: bool,
+    pub scope: RefreshScope,
     pub include_cluster_info: bool,
-    pub include_secondary_resources: bool,
     /// When true, wave1 (core resources) returns previous snapshot values
     /// instead of fetching — used for secondary-only backfill passes.
     pub skip_core: bool,
 }
 
-impl Default for RefreshOptions {
-    fn default() -> Self {
-        Self {
-            include_flux: true,
-            include_cluster_info: true,
-            include_secondary_resources: true,
-            skip_core: false,
+impl RefreshOptions {
+    pub const fn completed_scope(self) -> RefreshScope {
+        if self.skip_core {
+            self.scope.without(RefreshScope::CORE_OVERVIEW)
+        } else {
+            self.scope
         }
     }
 }
 
-const CORE_REFRESH_VIEWS: &[AppView] = &[
-    AppView::Dashboard,
-    AppView::Issues,
-    AppView::Nodes,
-    AppView::Namespaces,
-    AppView::Pods,
-    AppView::Deployments,
-    AppView::StatefulSets,
-    AppView::DaemonSets,
-    AppView::ReplicaSets,
-    AppView::ReplicationControllers,
-    AppView::Jobs,
-    AppView::CronJobs,
-    AppView::Services,
-    AppView::HelmCharts,
-];
-
-const SECONDARY_REFRESH_VIEWS: &[AppView] = &[
-    AppView::Endpoints,
-    AppView::Ingresses,
-    AppView::IngressClasses,
-    AppView::NetworkPolicies,
-    AppView::ConfigMaps,
-    AppView::Secrets,
-    AppView::ResourceQuotas,
-    AppView::LimitRanges,
-    AppView::HPAs,
-    AppView::PodDisruptionBudgets,
-    AppView::PriorityClasses,
-    AppView::PersistentVolumeClaims,
-    AppView::PersistentVolumes,
-    AppView::StorageClasses,
-    AppView::HelmReleases,
-    AppView::ServiceAccounts,
-    AppView::ClusterRoles,
-    AppView::Roles,
-    AppView::ClusterRoleBindings,
-    AppView::RoleBindings,
-    AppView::Extensions,
-];
-
-const FLUX_REFRESH_VIEWS: &[AppView] = &[
-    AppView::FluxCDAlertProviders,
-    AppView::FluxCDAlerts,
-    AppView::FluxCDAll,
-    AppView::FluxCDArtifacts,
-    AppView::FluxCDHelmReleases,
-    AppView::FluxCDHelmRepositories,
-    AppView::FluxCDImages,
-    AppView::FluxCDKustomizations,
-    AppView::FluxCDReceivers,
-    AppView::FluxCDSources,
-];
-
-const EVENT_REFRESH_VIEWS: &[AppView] = &[AppView::Events];
+impl Default for RefreshOptions {
+    fn default() -> Self {
+        Self {
+            scope: RefreshScope::DEFAULT,
+            include_cluster_info: true,
+            skip_core: false,
+        }
+    }
+}
 
 fn remove_named<T, F>(items: &mut Vec<T>, key: F, expected_name: &str) -> bool
 where
@@ -1001,7 +1048,66 @@ impl GlobalState {
         self.publish_snapshot();
     }
 
+    const fn view_ready_scope(view: AppView) -> RefreshScope {
+        match view {
+            AppView::Dashboard => RefreshScope::CORE_OVERVIEW,
+            AppView::Bookmarks | AppView::PortForwarding => RefreshScope::NONE,
+            AppView::Issues => RefreshScope::CORE_OVERVIEW
+                .union(RefreshScope::LEGACY_SECONDARY)
+                .union(RefreshScope::FLUX),
+            AppView::Nodes => RefreshScope::NODES,
+            AppView::Namespaces => RefreshScope::NAMESPACES,
+            AppView::Pods => RefreshScope::PODS,
+            AppView::Deployments => RefreshScope::DEPLOYMENTS,
+            AppView::StatefulSets => RefreshScope::STATEFULSETS,
+            AppView::DaemonSets => RefreshScope::DAEMONSETS,
+            AppView::ReplicaSets => RefreshScope::REPLICASETS,
+            AppView::ReplicationControllers => RefreshScope::REPLICATION_CONTROLLERS,
+            AppView::Jobs => RefreshScope::JOBS,
+            AppView::CronJobs => RefreshScope::CRONJOBS,
+            AppView::Services => RefreshScope::SERVICES,
+            AppView::HelmCharts => RefreshScope::NONE,
+            AppView::Endpoints
+            | AppView::Ingresses
+            | AppView::IngressClasses
+            | AppView::NetworkPolicies => RefreshScope::NETWORK,
+            AppView::ConfigMaps
+            | AppView::Secrets
+            | AppView::ResourceQuotas
+            | AppView::LimitRanges
+            | AppView::HPAs
+            | AppView::PodDisruptionBudgets
+            | AppView::PriorityClasses => RefreshScope::CONFIG,
+            AppView::PersistentVolumeClaims
+            | AppView::PersistentVolumes
+            | AppView::StorageClasses => RefreshScope::STORAGE,
+            AppView::HelmReleases => RefreshScope::HELM,
+            AppView::FluxCDAlertProviders
+            | AppView::FluxCDAlerts
+            | AppView::FluxCDAll
+            | AppView::FluxCDArtifacts
+            | AppView::FluxCDHelmReleases
+            | AppView::FluxCDHelmRepositories
+            | AppView::FluxCDImages
+            | AppView::FluxCDKustomizations
+            | AppView::FluxCDReceivers
+            | AppView::FluxCDSources => RefreshScope::FLUX,
+            AppView::ServiceAccounts
+            | AppView::ClusterRoles
+            | AppView::Roles
+            | AppView::ClusterRoleBindings
+            | AppView::RoleBindings => RefreshScope::SECURITY,
+            AppView::Extensions => RefreshScope::EXTENSIONS,
+            AppView::Events => RefreshScope::EVENTS,
+        }
+    }
+
     fn has_view_data(&self, view: AppView) -> bool {
+        let required_scope = Self::view_ready_scope(view);
+        if !required_scope.is_empty() && self.snapshot.loaded_scope.contains(required_scope) {
+            return true;
+        }
+
         match view {
             AppView::Dashboard => {
                 self.snapshot.cluster_info.is_some()
@@ -1069,14 +1175,13 @@ impl GlobalState {
         true
     }
 
-    fn set_many_view_load_states(&mut self, views: &[AppView], state: ViewLoadState) -> bool {
-        views.iter().fold(false, |changed, &view| {
-            self.set_view_load_state(view, state) || changed
-        })
-    }
+    fn mark_scope_requested(&mut self, scope: RefreshScope) -> bool {
+        AppView::tabs().iter().fold(false, |changed, &view| {
+            let required_scope = Self::view_ready_scope(view);
+            if required_scope.is_empty() || !scope.intersects(required_scope) {
+                return changed;
+            }
 
-    fn mark_views_requested(&mut self, views: &[AppView]) -> bool {
-        views.iter().fold(false, |changed, &view| {
             let next = if self.has_view_data(view) {
                 ViewLoadState::Refreshing
             } else {
@@ -1088,13 +1193,7 @@ impl GlobalState {
 
     pub fn mark_refresh_requested(&mut self, options: RefreshOptions) {
         let mut changed = false;
-        changed |= self.mark_views_requested(CORE_REFRESH_VIEWS);
-        if options.include_secondary_resources || !self.snapshot.secondary_resources_loaded {
-            changed |= self.mark_views_requested(SECONDARY_REFRESH_VIEWS);
-        }
-        if options.include_flux {
-            changed |= self.mark_views_requested(FLUX_REFRESH_VIEWS);
-        }
+        changed |= self.mark_scope_requested(options.scope);
         changed |= self.set_view_load_state(AppView::PortForwarding, ViewLoadState::Ready);
 
         if changed {
@@ -1104,7 +1203,7 @@ impl GlobalState {
     }
 
     pub fn mark_events_refresh_requested(&mut self) -> bool {
-        let mut changed = self.mark_views_requested(EVENT_REFRESH_VIEWS);
+        let mut changed = self.mark_scope_requested(RefreshScope::EVENTS);
         {
             let snap = Arc::make_mut(&mut self.snapshot);
             if snap.events_last_error.take().is_some() {
@@ -1163,15 +1262,15 @@ impl GlobalState {
     }
 
     fn mark_refresh_completed(&mut self, options: RefreshOptions) {
+        let loaded_scope = self.snapshot.loaded_scope.union(options.completed_scope());
         let mut changed = false;
-        changed |= self.set_many_view_load_states(CORE_REFRESH_VIEWS, ViewLoadState::Ready);
-        if options.include_secondary_resources {
-            changed |=
-                self.set_many_view_load_states(SECONDARY_REFRESH_VIEWS, ViewLoadState::Ready);
-        }
-        if options.include_flux {
-            changed |= self.set_many_view_load_states(FLUX_REFRESH_VIEWS, ViewLoadState::Ready);
-        }
+        changed |= AppView::tabs().iter().fold(false, |acc, &view| {
+            let required_scope = Self::view_ready_scope(view);
+            if required_scope.is_empty() || !loaded_scope.contains(required_scope) {
+                return acc;
+            }
+            self.set_view_load_state(view, ViewLoadState::Ready) || acc
+        });
         changed |= self.set_view_load_state(AppView::PortForwarding, ViewLoadState::Ready);
 
         if changed {
@@ -1280,20 +1379,73 @@ impl GlobalState {
         })
     }
 
-    fn keep_prev_vec_on_error<T: Clone>(
-        result: Result<Vec<T>>,
-        previous: &[T],
+    async fn maybe_fetch<T, F, Fut>(
+        enabled: bool,
+        label: &'static str,
+        semaphore: &Semaphore,
+        make_fut: F,
+    ) -> Option<Result<T>>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<T>>,
+    {
+        if enabled {
+            Some(Self::fetch_with_timeout(label, semaphore, make_fut).await)
+        } else {
+            None
+        }
+    }
+
+    fn apply_vec_fetch_result<T>(
+        slot: &mut Vec<T>,
+        result: Option<Result<Vec<T>>>,
         label: &str,
         errors: &mut Vec<String>,
         total_fetches: &mut usize,
-    ) -> Vec<T> {
+    ) {
+        let Some(result) = result else {
+            return;
+        };
         *total_fetches += 1;
         match result {
-            Ok(items) => items,
+            Ok(items) => *slot = items,
             Err(err) => {
                 errors.push(format!("{label}: {err}"));
-                previous.to_vec()
             }
+        }
+    }
+
+    fn apply_optional_fetch_result<T>(
+        result: Option<Result<T>>,
+        label: &str,
+        errors: &mut Vec<String>,
+        total_fetches: &mut usize,
+    ) -> Option<T> {
+        let result = result?;
+        *total_fetches += 1;
+        match result {
+            Ok(value) => Some(value),
+            Err(err) => {
+                errors.push(format!("{label}: {err}"));
+                None
+            }
+        }
+    }
+
+    fn build_cluster_info(
+        client: &impl ClusterDataSource,
+        nodes: &[NodeInfo],
+        pod_count: usize,
+        version: ClusterVersionInfo,
+    ) -> ClusterInfo {
+        ClusterInfo {
+            context: client.cluster_context().map(str::to_string),
+            server: client.cluster_url().to_string(),
+            git_version: Some(version.git_version),
+            platform: Some(version.platform),
+            node_count: nodes.len(),
+            ready_nodes: nodes.iter().filter(|node| node.ready).count(),
+            pod_count,
         }
     }
 
@@ -1384,237 +1536,229 @@ impl GlobalState {
         snap.last_error = None;
         snap.cluster_url = Some(client.cluster_url().to_string());
 
-        let prev_flux_resources = snap.flux_resources.clone();
-        let prev_cluster_info = snap.cluster_info.clone();
-        let include_flux = options.include_flux;
-        let include_cluster_info = options.include_cluster_info;
-        let include_secondary_resources = options.include_secondary_resources;
+        let fetch_nodes = options.scope.intersects(RefreshScope::NODES);
+        let fetch_pods = options.scope.intersects(RefreshScope::PODS);
+        let fetch_services = options.scope.intersects(RefreshScope::SERVICES);
+        let fetch_deployments = options.scope.intersects(RefreshScope::DEPLOYMENTS);
+        let fetch_statefulsets = options.scope.intersects(RefreshScope::STATEFULSETS);
+        let fetch_daemonsets = options.scope.intersects(RefreshScope::DAEMONSETS);
+        let fetch_replicasets = options.scope.intersects(RefreshScope::REPLICASETS);
+        let fetch_replication_controllers = options
+            .scope
+            .intersects(RefreshScope::REPLICATION_CONTROLLERS);
+        let fetch_jobs = options.scope.intersects(RefreshScope::JOBS);
+        let fetch_cronjobs = options.scope.intersects(RefreshScope::CRONJOBS);
+        let fetch_namespaces = options.scope.intersects(RefreshScope::NAMESPACES);
+        let fetch_metrics = options.scope.intersects(RefreshScope::METRICS);
+        let fetch_network = options.scope.intersects(RefreshScope::NETWORK);
+        let fetch_config = options.scope.intersects(RefreshScope::CONFIG);
+        let fetch_storage = options.scope.intersects(RefreshScope::STORAGE);
+        let fetch_security = options.scope.intersects(RefreshScope::SECURITY);
+        let fetch_helm = options.scope.intersects(RefreshScope::HELM);
+        let fetch_extensions = options.scope.intersects(RefreshScope::EXTENSIONS);
+        let fetch_flux = options.scope.intersects(RefreshScope::FLUX);
+        let fetch_cluster_info = options.include_cluster_info;
         let skip_core = options.skip_core;
+        let wave1 = tokio::join!(
+            Self::maybe_fetch(
+                fetch_nodes && !skip_core,
+                "nodes",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_nodes()
+            ),
+            Self::maybe_fetch(
+                fetch_pods && !skip_core,
+                "pods",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_pods(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_services && !skip_core,
+                "services",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_services(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_deployments && !skip_core,
+                "deployments",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_deployments(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_statefulsets && !skip_core,
+                "statefulsets",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_statefulsets(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_daemonsets && !skip_core,
+                "daemonsets",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_daemonsets(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_replicasets && !skip_core,
+                "replicasets",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_replicasets(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_replication_controllers && !skip_core,
+                "replicationcontrollers",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_replication_controllers(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_jobs && !skip_core,
+                "jobs",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_jobs(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_cronjobs && !skip_core,
+                "cronjobs",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_cronjobs(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_namespaces && !skip_core,
+                "namespacelist",
+                &CORE_FETCH_SEMAPHORE,
+                || { client.fetch_namespace_list() }
+            ),
+            Self::maybe_fetch(fetch_flux, "fluxresources", &CORE_FETCH_SEMAPHORE, || {
+                client.fetch_flux_resources(namespace)
+            }),
+            Self::maybe_fetch(fetch_metrics, "cluster info", &CORE_FETCH_SEMAPHORE, || {
+                client.fetch_cluster_version()
+            }),
+            Self::maybe_fetch(
+                fetch_cluster_info && namespace.is_some(),
+                "cluster pod count",
+                &CORE_FETCH_SEMAPHORE,
+                || client.fetch_cluster_pod_count()
+            ),
+        );
 
-        // Capture previous core resource data only when skip_core is set,
-        // avoiding 11 Vec clones on every normal refresh cycle.
-        let prev_core = if skip_core {
-            Some((
-                self.snapshot.nodes.clone(),
-                self.snapshot.pods.clone(),
-                self.snapshot.services.clone(),
-                self.snapshot.deployments.clone(),
-                self.snapshot.statefulsets.clone(),
-                self.snapshot.daemonsets.clone(),
-                self.snapshot.replicasets.clone(),
-                self.snapshot.replication_controllers.clone(),
-                self.snapshot.jobs.clone(),
-                self.snapshot.cronjobs.clone(),
-                self.snapshot.namespace_list.clone(),
-            ))
-        } else {
-            None
-        };
-
-        let flux_fetch = async move {
-            if include_flux {
-                Self::fetch_with_timeout("fluxresources", &CORE_FETCH_SEMAPHORE, || {
-                    client.fetch_flux_resources(namespace)
-                })
-                .await
-            } else {
-                Ok(prev_flux_resources)
-            }
-        };
-        let cluster_info_fetch = async move {
-            if include_cluster_info {
-                Self::fetch_with_timeout("cluster info", &CORE_FETCH_SEMAPHORE, || {
-                    client.fetch_cluster_info()
-                })
-                .await
-                .map(Some)
-            } else {
-                Ok(None)
-            }
-        };
-
-        // Capture previous secondary resource data for fallback when skipped.
-        let prev_resource_quotas = self.snapshot.resource_quotas.clone();
-        let prev_limit_ranges = self.snapshot.limit_ranges.clone();
-        let prev_pdbs = self.snapshot.pod_disruption_budgets.clone();
-        let prev_service_accounts = self.snapshot.service_accounts.clone();
-        let prev_roles = self.snapshot.roles.clone();
-        let prev_role_bindings = self.snapshot.role_bindings.clone();
-        let prev_cluster_roles = self.snapshot.cluster_roles.clone();
-        let prev_cluster_role_bindings = self.snapshot.cluster_role_bindings.clone();
-        let prev_crds = self.snapshot.custom_resource_definitions.clone();
-        let prev_endpoints = self.snapshot.endpoints.clone();
-        let prev_ingresses = self.snapshot.ingresses.clone();
-        let prev_ingress_classes = self.snapshot.ingress_classes.clone();
-        let prev_network_policies = self.snapshot.network_policies.clone();
-        let prev_config_maps = self.snapshot.config_maps.clone();
-        let prev_secrets = self.snapshot.secrets.clone();
-        let prev_hpas = self.snapshot.hpas.clone();
-        let prev_pvcs = self.snapshot.pvcs.clone();
-        let prev_pvs = self.snapshot.pvs.clone();
-        let prev_storage_classes = self.snapshot.storage_classes.clone();
-        let prev_priority_classes = self.snapshot.priority_classes.clone();
-        let prev_helm_releases = self.snapshot.helm_releases.clone();
-        let prev_node_metrics = self.snapshot.node_metrics.clone();
-        let prev_pod_metrics = self.snapshot.pod_metrics.clone();
-
-        // Wave 1 (core) and wave 2 (secondary) run concurrently with separate
-        // semaphores: CORE_FETCH_SEMAPHORE (8 permits) and SECONDARY_FETCH_SEMAPHORE
-        // (4 permits). This ensures core resources are never starved by secondary fetches.
-        //
-        // When skip_core is true (secondary-only backfill pass), wave1 returns previous
-        // snapshot values to avoid redundant API calls for core resources.
-        let wave1 = async {
-            if let Some((
-                prev_nodes,
-                prev_pods,
-                prev_services,
-                prev_deployments,
-                prev_statefulsets,
-                prev_daemonsets,
-                prev_replicasets,
-                prev_replication_controllers,
-                prev_jobs,
-                prev_cronjobs,
-                prev_namespace_list,
-            )) = prev_core
-            {
-                let (flux_res, cluster_info_res) = tokio::join!(flux_fetch, cluster_info_fetch);
-                (
-                    Ok(prev_nodes),
-                    Ok(prev_pods),
-                    Ok(prev_services),
-                    Ok(prev_deployments),
-                    Ok(prev_statefulsets),
-                    Ok(prev_daemonsets),
-                    Ok(prev_replicasets),
-                    Ok(prev_replication_controllers),
-                    Ok(prev_jobs),
-                    Ok(prev_cronjobs),
-                    Ok(prev_namespace_list),
-                    flux_res,
-                    cluster_info_res,
-                )
-            } else {
-                tokio::join!(
-                    Self::fetch_with_timeout("nodes", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_nodes()),
-                    Self::fetch_with_timeout("pods", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_pods(namespace)),
-                    Self::fetch_with_timeout("services", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_services(namespace)),
-                    Self::fetch_with_timeout("deployments", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_deployments(namespace)),
-                    Self::fetch_with_timeout("statefulsets", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_statefulsets(namespace)),
-                    Self::fetch_with_timeout("daemonsets", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_daemonsets(namespace)),
-                    Self::fetch_with_timeout("replicasets", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_replicasets(namespace)),
-                    Self::fetch_with_timeout(
-                        "replicationcontrollers",
-                        &CORE_FETCH_SEMAPHORE,
-                        || { client.fetch_replication_controllers(namespace) }
-                    ),
-                    Self::fetch_with_timeout("jobs", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_jobs(namespace)),
-                    Self::fetch_with_timeout("cronjobs", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_cronjobs(namespace)),
-                    Self::fetch_with_timeout("namespacelist", &CORE_FETCH_SEMAPHORE, || client
-                        .fetch_namespace_list()),
-                    flux_fetch,
-                    cluster_info_fetch,
-                )
-            }
-        };
-
-        let wave2 = async {
-            if include_secondary_resources {
-                tokio::join!(
-                    Self::fetch_with_timeout("resourcequotas", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_resource_quotas(namespace)
-                    }),
-                    Self::fetch_with_timeout("limitranges", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_limit_ranges(namespace)),
-                    Self::fetch_with_timeout("pdbs", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_pod_disruption_budgets(namespace)),
-                    Self::fetch_with_timeout("serviceaccounts", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_service_accounts(namespace)
-                    }),
-                    Self::fetch_with_timeout("roles", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_roles(namespace)),
-                    Self::fetch_with_timeout("rolebindings", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_role_bindings(namespace)),
-                    Self::fetch_with_timeout("clusterroles", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_cluster_roles()),
-                    Self::fetch_with_timeout(
-                        "clusterrolebindings",
-                        &SECONDARY_FETCH_SEMAPHORE,
-                        || client.fetch_cluster_role_bindings()
-                    ),
-                    Self::fetch_with_timeout("crds", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_custom_resource_definitions()),
-                    Self::fetch_with_timeout("endpoints", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_endpoints(namespace)),
-                    Self::fetch_with_timeout("ingresses", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_ingresses(namespace)),
-                    Self::fetch_with_timeout("ingressclasses", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_ingress_classes()
-                    }),
-                    Self::fetch_with_timeout("networkpolicies", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_network_policies(namespace)
-                    }),
-                    Self::fetch_with_timeout("configmaps", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_config_maps(namespace)),
-                    Self::fetch_with_timeout("secrets", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_secrets(namespace)),
-                    Self::fetch_with_timeout("hpas", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_hpas(namespace)),
-                    Self::fetch_with_timeout("pvcs", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_pvcs(namespace)),
-                    Self::fetch_with_timeout("pvs", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_pvs()),
-                    Self::fetch_with_timeout("storageclasses", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_storage_classes()
-                    }),
-                    Self::fetch_with_timeout("priorityclasses", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_priority_classes()
-                    }),
-                    Self::fetch_with_timeout("helmreleases", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_helm_releases(namespace)),
-                    Self::fetch_with_timeout("nodemetrics", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_all_node_metrics()),
-                    Self::fetch_with_timeout("podmetrics", &SECONDARY_FETCH_SEMAPHORE, || client
-                        .fetch_all_pod_metrics(namespace)),
-                )
-            } else {
-                (
-                    Ok(prev_resource_quotas),
-                    Ok(prev_limit_ranges),
-                    Ok(prev_pdbs),
-                    Ok(prev_service_accounts),
-                    Ok(prev_roles),
-                    Ok(prev_role_bindings),
-                    Ok(prev_cluster_roles),
-                    Ok(prev_cluster_role_bindings),
-                    Ok(prev_crds),
-                    Ok(prev_endpoints),
-                    Ok(prev_ingresses),
-                    Ok(prev_ingress_classes),
-                    Ok(prev_network_policies),
-                    Ok(prev_config_maps),
-                    Ok(prev_secrets),
-                    Ok(prev_hpas),
-                    Ok(prev_pvcs),
-                    Ok(prev_pvs),
-                    Ok(prev_storage_classes),
-                    Ok(prev_priority_classes),
-                    Ok(prev_helm_releases),
-                    Ok(prev_node_metrics),
-                    Ok(prev_pod_metrics),
-                )
-            }
-        };
+        let wave2 = tokio::join!(
+            Self::maybe_fetch(
+                fetch_config,
+                "resourcequotas",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_resource_quotas(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_config,
+                "limitranges",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_limit_ranges(namespace)
+            ),
+            Self::maybe_fetch(fetch_config, "pdbs", &SECONDARY_FETCH_SEMAPHORE, || {
+                client.fetch_pod_disruption_budgets(namespace)
+            }),
+            Self::maybe_fetch(
+                fetch_security,
+                "serviceaccounts",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_service_accounts(namespace)
+            ),
+            Self::maybe_fetch(fetch_security, "roles", &SECONDARY_FETCH_SEMAPHORE, || {
+                client.fetch_roles(namespace)
+            }),
+            Self::maybe_fetch(
+                fetch_security,
+                "rolebindings",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_role_bindings(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_security,
+                "clusterroles",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_cluster_roles()
+            ),
+            Self::maybe_fetch(
+                fetch_security,
+                "clusterrolebindings",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_cluster_role_bindings()
+            ),
+            Self::maybe_fetch(fetch_extensions, "crds", &SECONDARY_FETCH_SEMAPHORE, || {
+                client.fetch_custom_resource_definitions()
+            }),
+            Self::maybe_fetch(
+                fetch_network,
+                "endpoints",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || { client.fetch_endpoints(namespace) }
+            ),
+            Self::maybe_fetch(
+                fetch_network,
+                "ingresses",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || { client.fetch_ingresses(namespace) }
+            ),
+            Self::maybe_fetch(
+                fetch_network,
+                "ingressclasses",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_ingress_classes()
+            ),
+            Self::maybe_fetch(
+                fetch_network,
+                "networkpolicies",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_network_policies(namespace)
+            ),
+            Self::maybe_fetch(
+                fetch_config,
+                "configmaps",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || { client.fetch_config_maps(namespace) }
+            ),
+            Self::maybe_fetch(fetch_config, "secrets", &SECONDARY_FETCH_SEMAPHORE, || {
+                client.fetch_secrets(namespace)
+            }),
+            Self::maybe_fetch(fetch_config, "hpas", &SECONDARY_FETCH_SEMAPHORE, || {
+                client.fetch_hpas(namespace)
+            }),
+            Self::maybe_fetch(fetch_storage, "pvcs", &SECONDARY_FETCH_SEMAPHORE, || {
+                client.fetch_pvcs(namespace)
+            }),
+            Self::maybe_fetch(fetch_storage, "pvs", &SECONDARY_FETCH_SEMAPHORE, || {
+                client.fetch_pvs()
+            }),
+            Self::maybe_fetch(
+                fetch_storage,
+                "storageclasses",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_storage_classes()
+            ),
+            Self::maybe_fetch(
+                fetch_config,
+                "priorityclasses",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_priority_classes()
+            ),
+            Self::maybe_fetch(
+                fetch_helm,
+                "helmreleases",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || { client.fetch_helm_releases(namespace) }
+            ),
+            Self::maybe_fetch(
+                fetch_metrics,
+                "nodemetrics",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || { client.fetch_all_node_metrics() }
+            ),
+            Self::maybe_fetch(
+                fetch_metrics,
+                "podmetrics",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || { client.fetch_all_pod_metrics(namespace) }
+            ),
+        );
 
         let (
             (
@@ -1631,6 +1775,7 @@ impl GlobalState {
                 namespace_list_res,
                 flux_resources_res,
                 cluster_info_res,
+                cluster_pod_count_res,
             ),
             (
                 resource_quotas_res,
@@ -1657,282 +1802,307 @@ impl GlobalState {
                 node_metrics_res,
                 pod_metrics_res,
             ),
-        ) = tokio::join!(wave1, wave2);
+        ) = (wave1, wave2);
+
+        let core_fetch_succeeded = matches!(nodes_res.as_ref(), Some(Ok(_)))
+            || matches!(pods_res.as_ref(), Some(Ok(_)))
+            || matches!(services_res.as_ref(), Some(Ok(_)))
+            || matches!(deployments_res.as_ref(), Some(Ok(_)))
+            || matches!(statefulsets_res.as_ref(), Some(Ok(_)))
+            || matches!(daemonsets_res.as_ref(), Some(Ok(_)))
+            || matches!(jobs_res.as_ref(), Some(Ok(_)))
+            || matches!(cronjobs_res.as_ref(), Some(Ok(_)))
+            || matches!(cluster_info_res.as_ref(), Some(Ok(_)));
 
         let mut errors = Vec::new();
         let mut total_fetches: usize = 0;
 
-        let nodes = Self::keep_prev_vec_on_error(
-            nodes_res,
-            &self.snapshot.nodes,
-            "nodes",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let pods = Self::keep_prev_vec_on_error(
-            pods_res,
-            &self.snapshot.pods,
-            "pods",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let services = Self::keep_prev_vec_on_error(
-            services_res,
-            &self.snapshot.services,
-            "services",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let deployments = Self::keep_prev_vec_on_error(
-            deployments_res,
-            &self.snapshot.deployments,
-            "deployments",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let statefulsets = Self::keep_prev_vec_on_error(
-            statefulsets_res,
-            &self.snapshot.statefulsets,
-            "statefulsets",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let daemonsets = Self::keep_prev_vec_on_error(
-            daemonsets_res,
-            &self.snapshot.daemonsets,
-            "daemonsets",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let replicasets = Self::keep_prev_vec_on_error(
-            replicasets_res,
-            &self.snapshot.replicasets,
-            "replicasets",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let replication_controllers = Self::keep_prev_vec_on_error(
-            replication_controllers_res,
-            &self.snapshot.replication_controllers,
-            "replicationcontrollers",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let jobs = Self::keep_prev_vec_on_error(
-            jobs_res,
-            &self.snapshot.jobs,
-            "jobs",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let cronjobs = Self::keep_prev_vec_on_error(
-            cronjobs_res,
-            &self.snapshot.cronjobs,
-            "cronjobs",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let resource_quotas = Self::keep_prev_vec_on_error(
-            resource_quotas_res,
-            &self.snapshot.resource_quotas,
-            "resourcequotas",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let limit_ranges = Self::keep_prev_vec_on_error(
-            limit_ranges_res,
-            &self.snapshot.limit_ranges,
-            "limitranges",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let pod_disruption_budgets = Self::keep_prev_vec_on_error(
-            pod_disruption_budgets_res,
-            &self.snapshot.pod_disruption_budgets,
-            "pdbs",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let service_accounts = Self::keep_prev_vec_on_error(
-            service_accounts_res,
-            &self.snapshot.service_accounts,
-            "serviceaccounts",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let roles = Self::keep_prev_vec_on_error(
-            roles_res,
-            &self.snapshot.roles,
-            "roles",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let role_bindings = Self::keep_prev_vec_on_error(
-            role_bindings_res,
-            &self.snapshot.role_bindings,
-            "rolebindings",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let cluster_roles = Self::keep_prev_vec_on_error(
-            cluster_roles_res,
-            &self.snapshot.cluster_roles,
-            "clusterroles",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let cluster_role_bindings = Self::keep_prev_vec_on_error(
-            cluster_role_bindings_res,
-            &self.snapshot.cluster_role_bindings,
-            "clusterrolebindings",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let custom_resource_definitions = Self::keep_prev_vec_on_error(
-            custom_resource_definitions_res,
-            &self.snapshot.custom_resource_definitions,
-            "crds",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let cluster_info = match cluster_info_res {
-            Ok(Some(info)) => Some(info),
-            Ok(None) => prev_cluster_info,
-            Err(err) => {
-                errors.push(format!("cluster info: {err}"));
-                prev_cluster_info
-            }
-        };
-
-        let endpoints = Self::keep_prev_vec_on_error(
-            endpoints_res,
-            &self.snapshot.endpoints,
-            "endpoints",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let ingresses = Self::keep_prev_vec_on_error(
-            ingresses_res,
-            &self.snapshot.ingresses,
-            "ingresses",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let ingress_classes = Self::keep_prev_vec_on_error(
-            ingress_classes_res,
-            &self.snapshot.ingress_classes,
-            "ingressclasses",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let network_policies = Self::keep_prev_vec_on_error(
-            network_policies_res,
-            &self.snapshot.network_policies,
-            "networkpolicies",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let config_maps = Self::keep_prev_vec_on_error(
-            config_maps_res,
-            &self.snapshot.config_maps,
-            "configmaps",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let secrets = Self::keep_prev_vec_on_error(
-            secrets_res,
-            &self.snapshot.secrets,
-            "secrets",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let hpas = Self::keep_prev_vec_on_error(
-            hpas_res,
-            &self.snapshot.hpas,
-            "hpas",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let pvcs = Self::keep_prev_vec_on_error(
-            pvcs_res,
-            &self.snapshot.pvcs,
-            "pvcs",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let pvs = Self::keep_prev_vec_on_error(
-            pvs_res,
-            &self.snapshot.pvs,
-            "pvs",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let storage_classes = Self::keep_prev_vec_on_error(
-            storage_classes_res,
-            &self.snapshot.storage_classes,
-            "storageclasses",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let namespace_list = Self::keep_prev_vec_on_error(
-            namespace_list_res,
-            &self.snapshot.namespace_list,
-            "namespacelist",
-            &mut errors,
-            &mut total_fetches,
-        );
-        self.namespaces = Self::namespace_names_from_list(&namespace_list);
-        let priority_classes = Self::keep_prev_vec_on_error(
-            priority_classes_res,
-            &self.snapshot.priority_classes,
-            "priorityclasses",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let helm_releases = Self::filter_namespace(
-            Self::keep_prev_vec_on_error(
+        {
+            let snap = Arc::make_mut(&mut self.snapshot);
+            Self::apply_vec_fetch_result(
+                &mut snap.nodes,
+                nodes_res,
+                "nodes",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.pods,
+                pods_res,
+                "pods",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.services,
+                services_res,
+                "services",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.deployments,
+                deployments_res,
+                "deployments",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.statefulsets,
+                statefulsets_res,
+                "statefulsets",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.daemonsets,
+                daemonsets_res,
+                "daemonsets",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.replicasets,
+                replicasets_res,
+                "replicasets",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.replication_controllers,
+                replication_controllers_res,
+                "replicationcontrollers",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.jobs,
+                jobs_res,
+                "jobs",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.cronjobs,
+                cronjobs_res,
+                "cronjobs",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.namespace_list,
+                namespace_list_res,
+                "namespacelist",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.resource_quotas,
+                resource_quotas_res,
+                "resourcequotas",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.limit_ranges,
+                limit_ranges_res,
+                "limitranges",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.pod_disruption_budgets,
+                pod_disruption_budgets_res,
+                "pdbs",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.service_accounts,
+                service_accounts_res,
+                "serviceaccounts",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.roles,
+                roles_res,
+                "roles",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.role_bindings,
+                role_bindings_res,
+                "rolebindings",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.cluster_roles,
+                cluster_roles_res,
+                "clusterroles",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.cluster_role_bindings,
+                cluster_role_bindings_res,
+                "clusterrolebindings",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.custom_resource_definitions,
+                custom_resource_definitions_res,
+                "crds",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.endpoints,
+                endpoints_res,
+                "endpoints",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.ingresses,
+                ingresses_res,
+                "ingresses",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.ingress_classes,
+                ingress_classes_res,
+                "ingressclasses",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.network_policies,
+                network_policies_res,
+                "networkpolicies",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.config_maps,
+                config_maps_res,
+                "configmaps",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.secrets,
+                secrets_res,
+                "secrets",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.hpas,
+                hpas_res,
+                "hpas",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.pvcs,
+                pvcs_res,
+                "pvcs",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.pvs,
+                pvs_res,
+                "pvs",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.storage_classes,
+                storage_classes_res,
+                "storageclasses",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.priority_classes,
+                priority_classes_res,
+                "priorityclasses",
+                &mut errors,
+                &mut total_fetches,
+            );
+            if let Some(helm_releases) = Self::apply_optional_fetch_result(
                 helm_releases_res,
-                &self.snapshot.helm_releases,
                 "helmreleases",
                 &mut errors,
                 &mut total_fetches,
-            ),
-            namespace,
-            |release| release.namespace.as_str(),
-        );
-        let flux_resources = Self::keep_prev_vec_on_error(
-            flux_resources_res,
-            &self.snapshot.flux_resources,
-            "fluxresources",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let node_metrics = Self::keep_prev_vec_on_error(
-            node_metrics_res,
-            &self.snapshot.node_metrics,
-            "nodemetrics",
-            &mut errors,
-            &mut total_fetches,
-        );
-        let pod_metrics = Self::keep_prev_vec_on_error(
-            pod_metrics_res,
-            &self.snapshot.pod_metrics,
-            "podmetrics",
-            &mut errors,
-            &mut total_fetches,
-        );
+            ) {
+                snap.helm_releases = Self::filter_namespace(helm_releases, namespace, |release| {
+                    release.namespace.as_str()
+                });
+            }
+            Self::apply_vec_fetch_result(
+                &mut snap.flux_resources,
+                flux_resources_res,
+                "fluxresources",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.node_metrics,
+                node_metrics_res,
+                "nodemetrics",
+                &mut errors,
+                &mut total_fetches,
+            );
+            Self::apply_vec_fetch_result(
+                &mut snap.pod_metrics,
+                pod_metrics_res,
+                "podmetrics",
+                &mut errors,
+                &mut total_fetches,
+            );
+            if let Some(cluster_version) = Self::apply_optional_fetch_result(
+                cluster_info_res,
+                "cluster info",
+                &mut errors,
+                &mut total_fetches,
+            ) && !snap.nodes.is_empty()
+            {
+                let cluster_pod_count = if namespace.is_some() {
+                    Self::apply_optional_fetch_result(
+                        cluster_pod_count_res,
+                        "cluster pod count",
+                        &mut errors,
+                        &mut total_fetches,
+                    )
+                } else {
+                    None
+                };
+                if let Some(pod_count) =
+                    cluster_pod_count.or_else(|| namespace.is_none().then_some(snap.pods.len()))
+                {
+                    snap.cluster_info = Some(Self::build_cluster_info(
+                        client,
+                        &snap.nodes,
+                        pod_count,
+                        cluster_version,
+                    ));
+                }
+            }
+        }
 
-        let all_failed = nodes.is_empty()
-            && pods.is_empty()
-            && services.is_empty()
-            && deployments.is_empty()
-            && statefulsets.is_empty()
-            && daemonsets.is_empty()
-            && replicasets.is_empty()
-            && replication_controllers.is_empty()
-            && jobs.is_empty()
-            && cronjobs.is_empty()
-            && cluster_info.is_none();
+        self.namespaces = Self::namespace_names_from_list(&self.snapshot.namespace_list);
+
+        let all_failed = !skip_core
+            && total_fetches > 0
+            && errors.len() >= total_fetches
+            && !core_fetch_succeeded;
 
         if all_failed {
             let message = if errors.is_empty() {
@@ -1952,65 +2122,33 @@ impl GlobalState {
             return Err(anyhow!(message));
         }
 
-        let namespaces_count = pods
+        let namespaces_count = self
+            .snapshot
+            .pods
             .iter()
             .map(|pod| pod.namespace.as_str())
-            .chain(services.iter().map(|service| service.namespace.as_str()))
             .chain(
-                deployments
+                self.snapshot
+                    .services
+                    .iter()
+                    .map(|service| service.namespace.as_str()),
+            )
+            .chain(
+                self.snapshot
+                    .deployments
                     .iter()
                     .map(|deployment| deployment.namespace.as_str()),
             )
             .collect::<HashSet<_>>()
             .len();
 
-        let prev_secondary_loaded = self.snapshot.secondary_resources_loaded;
+        let prev_loaded_scope = self.snapshot.loaded_scope;
         {
             let snap = Arc::make_mut(&mut self.snapshot);
-            snap.services_count = services.len();
+            snap.services_count = snap.services.len();
             snap.namespaces_count = namespaces_count;
-            snap.nodes = nodes;
-            snap.pods = pods;
-            snap.services = services;
-            snap.deployments = deployments;
-            snap.statefulsets = statefulsets;
-            snap.daemonsets = daemonsets;
-            snap.replicasets = replicasets;
-            snap.replication_controllers = replication_controllers;
-            snap.jobs = jobs;
-            snap.cronjobs = cronjobs;
-            snap.resource_quotas = resource_quotas;
-            snap.limit_ranges = limit_ranges;
-            snap.pod_disruption_budgets = pod_disruption_budgets;
-            snap.service_accounts = service_accounts;
-            snap.roles = roles;
-            snap.role_bindings = role_bindings;
-            snap.cluster_roles = cluster_roles;
-            snap.cluster_role_bindings = cluster_role_bindings;
-            snap.custom_resource_definitions = custom_resource_definitions;
-            snap.cluster_info = cluster_info;
-            snap.endpoints = endpoints;
-            snap.ingresses = ingresses;
-            snap.ingress_classes = ingress_classes;
-            snap.network_policies = network_policies;
-            snap.config_maps = config_maps;
-            snap.secrets = secrets;
-            snap.hpas = hpas;
-            snap.pvcs = pvcs;
-            snap.pvs = pvs;
-            snap.storage_classes = storage_classes;
-            snap.namespace_list = namespace_list;
-            snap.priority_classes = priority_classes;
-            snap.helm_releases = helm_releases;
-            snap.flux_resources = flux_resources;
             snap.helm_repositories = crate::k8s::helm::read_helm_repositories();
-            snap.node_metrics = node_metrics;
-            snap.pod_metrics = pod_metrics;
-            snap.secondary_resources_loaded = if include_secondary_resources {
-                true
-            } else {
-                prev_secondary_loaded
-            };
+            snap.loaded_scope = prev_loaded_scope.union(options.completed_scope());
         }
         self.mark_refresh_completed(options);
         // Arc refcount is 1 here — make_mut is a no-op pointer return.
@@ -2048,10 +2186,47 @@ impl GlobalState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
+    fn refresh_options(scope: RefreshScope, skip_core: bool) -> RefreshOptions {
+        RefreshOptions {
+            scope,
+            include_cluster_info: false,
+            skip_core,
+        }
+    }
+
+    #[derive(Default)]
+    struct MockFetchCounters {
+        total: AtomicUsize,
+        nodes: AtomicUsize,
+        pods: AtomicUsize,
+        services: AtomicUsize,
+        namespaces: AtomicUsize,
+        workload_calls: AtomicUsize,
+        network_calls: AtomicUsize,
+        config_calls: AtomicUsize,
+        storage_calls: AtomicUsize,
+        security_calls: AtomicUsize,
+        helm_calls: AtomicUsize,
+        extension_calls: AtomicUsize,
+        flux_resources: AtomicUsize,
+        cluster_version: AtomicUsize,
+        cluster_pod_count: AtomicUsize,
+        node_metrics: AtomicUsize,
+        pod_metrics: AtomicUsize,
+        service_accounts: AtomicUsize,
+        pvcs: AtomicUsize,
+    }
 
     #[derive(Clone)]
     struct MockDataSource {
         url: String,
+        context: Option<String>,
+        fetch_counters: Arc<MockFetchCounters>,
         nodes: Vec<NodeInfo>,
         namespaces: Vec<String>,
         pods: Vec<PodInfo>,
@@ -2094,6 +2269,12 @@ mod tests {
         cluster_roles_err: Option<String>,
         cluster_role_bindings_err: Option<String>,
         cluster_info_err: Option<String>,
+        node_metrics_err: Option<String>,
+        pod_metrics_err: Option<String>,
+        config_maps_err: Option<String>,
+        secrets_err: Option<String>,
+        hpas_err: Option<String>,
+        priority_classes_err: Option<String>,
         delay_ms: u64,
     }
 
@@ -2101,6 +2282,8 @@ mod tests {
         fn success() -> Self {
             Self {
                 url: "https://kind.local".to_string(),
+                context: Some("kind-kind".to_string()),
+                fetch_counters: Arc::new(MockFetchCounters::default()),
                 nodes: vec![NodeInfo {
                     name: "n1".to_string(),
                     ready: true,
@@ -2262,6 +2445,12 @@ mod tests {
                 cluster_roles_err: None,
                 cluster_role_bindings_err: None,
                 cluster_info_err: None,
+                node_metrics_err: None,
+                pod_metrics_err: None,
+                config_maps_err: None,
+                secrets_err: None,
+                hpas_err: None,
+                priority_classes_err: None,
                 delay_ms: 0,
             }
         }
@@ -2269,6 +2458,11 @@ mod tests {
         fn with_delay(mut self, delay_ms: u64) -> Self {
             self.delay_ms = delay_ms;
             self
+        }
+
+        fn bump(&self, counter: &AtomicUsize) {
+            self.fetch_counters.total.fetch_add(1, Ordering::Relaxed);
+            counter.fetch_add(1, Ordering::Relaxed);
         }
 
         fn filter_namespace<T: Clone, F>(
@@ -2296,7 +2490,12 @@ mod tests {
             &self.url
         }
 
+        fn cluster_context(&self) -> Option<&str> {
+            self.context.as_deref()
+        }
+
         async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>> {
+            self.bump(&self.fetch_counters.nodes);
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
@@ -2311,6 +2510,7 @@ mod tests {
         }
 
         async fn fetch_pods(&self, namespace: Option<&str>) -> Result<Vec<PodInfo>> {
+            self.bump(&self.fetch_counters.pods);
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
@@ -2323,6 +2523,7 @@ mod tests {
         }
 
         async fn fetch_services(&self, namespace: Option<&str>) -> Result<Vec<ServiceInfo>> {
+            self.bump(&self.fetch_counters.services);
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
@@ -2337,6 +2538,7 @@ mod tests {
         }
 
         async fn fetch_deployments(&self, namespace: Option<&str>) -> Result<Vec<DeploymentInfo>> {
+            self.bump(&self.fetch_counters.workload_calls);
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
@@ -2354,6 +2556,7 @@ mod tests {
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<StatefulSetInfo>> {
+            self.bump(&self.fetch_counters.workload_calls);
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
@@ -2368,6 +2571,7 @@ mod tests {
         }
 
         async fn fetch_daemonsets(&self, namespace: Option<&str>) -> Result<Vec<DaemonSetInfo>> {
+            self.bump(&self.fetch_counters.workload_calls);
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
@@ -2380,6 +2584,7 @@ mod tests {
         }
 
         async fn fetch_replicasets(&self, namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>> {
+            self.bump(&self.fetch_counters.workload_calls);
             Ok(Self::filter_namespace(
                 &self.replicasets,
                 namespace,
@@ -2391,6 +2596,7 @@ mod tests {
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<ReplicationControllerInfo>> {
+            self.bump(&self.fetch_counters.workload_calls);
             Ok(Self::filter_namespace(
                 &self.replication_controllers,
                 namespace,
@@ -2399,6 +2605,7 @@ mod tests {
         }
 
         async fn fetch_jobs(&self, namespace: Option<&str>) -> Result<Vec<JobInfo>> {
+            self.bump(&self.fetch_counters.workload_calls);
             if let Some(err) = &self.jobs_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2408,6 +2615,7 @@ mod tests {
         }
 
         async fn fetch_cronjobs(&self, namespace: Option<&str>) -> Result<Vec<CronJobInfo>> {
+            self.bump(&self.fetch_counters.workload_calls);
             if let Some(err) = &self.cronjobs_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2420,6 +2628,7 @@ mod tests {
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<ResourceQuotaInfo>> {
+            self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.resource_quotas_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2431,6 +2640,7 @@ mod tests {
         }
 
         async fn fetch_limit_ranges(&self, namespace: Option<&str>) -> Result<Vec<LimitRangeInfo>> {
+            self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.limit_ranges_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2445,6 +2655,7 @@ mod tests {
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<PodDisruptionBudgetInfo>> {
+            self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.pod_disruption_budgets_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2459,6 +2670,10 @@ mod tests {
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<ServiceAccountInfo>> {
+            self.bump(&self.fetch_counters.security_calls);
+            self.fetch_counters
+                .service_accounts
+                .fetch_add(1, Ordering::Relaxed);
             if let Some(err) = &self.service_accounts_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2470,6 +2685,7 @@ mod tests {
         }
 
         async fn fetch_roles(&self, namespace: Option<&str>) -> Result<Vec<RoleInfo>> {
+            self.bump(&self.fetch_counters.security_calls);
             if let Some(err) = &self.roles_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2482,6 +2698,7 @@ mod tests {
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<RoleBindingInfo>> {
+            self.bump(&self.fetch_counters.security_calls);
             if let Some(err) = &self.role_bindings_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2493,6 +2710,7 @@ mod tests {
         }
 
         async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>> {
+            self.bump(&self.fetch_counters.security_calls);
             if let Some(err) = &self.cluster_roles_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2500,6 +2718,7 @@ mod tests {
         }
 
         async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>> {
+            self.bump(&self.fetch_counters.security_calls);
             if let Some(err) = &self.cluster_role_bindings_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -2509,55 +2728,98 @@ mod tests {
         async fn fetch_custom_resource_definitions(
             &self,
         ) -> Result<Vec<CustomResourceDefinitionInfo>> {
+            self.bump(&self.fetch_counters.extension_calls);
             Ok(self.custom_resource_definitions.clone())
         }
 
-        async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {
+        async fn fetch_cluster_version(&self) -> Result<ClusterVersionInfo> {
+            self.bump(&self.fetch_counters.cluster_version);
             if self.delay_ms > 0 {
                 tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
             }
             if let Some(err) = &self.cluster_info_err {
                 return Err(anyhow!(err.clone()));
             }
-            self.cluster_info
-                .clone()
-                .ok_or_else(|| anyhow!("cluster info missing"))
+            let info = self
+                .cluster_info
+                .as_ref()
+                .ok_or_else(|| anyhow!("cluster info missing"))?;
+            Ok(ClusterVersionInfo {
+                git_version: info.git_version.clone().unwrap_or_default(),
+                platform: info.platform.clone().unwrap_or_default(),
+            })
+        }
+
+        async fn fetch_cluster_pod_count(&self) -> Result<usize> {
+            self.bump(&self.fetch_counters.cluster_pod_count);
+            if self.delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            }
+            if let Some(err) = &self.cluster_info_err {
+                return Err(anyhow!(err.clone()));
+            }
+            let info = self
+                .cluster_info
+                .as_ref()
+                .ok_or_else(|| anyhow!("cluster info missing"))?;
+            Ok(info.pod_count)
         }
 
         async fn fetch_endpoints(&self, _namespace: Option<&str>) -> Result<Vec<EndpointInfo>> {
+            self.bump(&self.fetch_counters.network_calls);
             Ok(vec![])
         }
         async fn fetch_ingresses(&self, _namespace: Option<&str>) -> Result<Vec<IngressInfo>> {
+            self.bump(&self.fetch_counters.network_calls);
             Ok(vec![])
         }
         async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
+            self.bump(&self.fetch_counters.network_calls);
             Ok(vec![])
         }
         async fn fetch_network_policies(
             &self,
             _namespace: Option<&str>,
         ) -> Result<Vec<NetworkPolicyInfo>> {
+            self.bump(&self.fetch_counters.network_calls);
             Ok(vec![])
         }
         async fn fetch_config_maps(&self, _namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> {
+            self.bump(&self.fetch_counters.config_calls);
+            if let Some(err) = &self.config_maps_err {
+                return Err(anyhow!(err.clone()));
+            }
             Ok(vec![])
         }
         async fn fetch_secrets(&self, _namespace: Option<&str>) -> Result<Vec<SecretInfo>> {
+            self.bump(&self.fetch_counters.config_calls);
+            if let Some(err) = &self.secrets_err {
+                return Err(anyhow!(err.clone()));
+            }
             Ok(vec![])
         }
         async fn fetch_hpas(&self, _namespace: Option<&str>) -> Result<Vec<HpaInfo>> {
+            self.bump(&self.fetch_counters.config_calls);
+            if let Some(err) = &self.hpas_err {
+                return Err(anyhow!(err.clone()));
+            }
             Ok(vec![])
         }
         async fn fetch_pvcs(&self, _namespace: Option<&str>) -> Result<Vec<PvcInfo>> {
+            self.bump(&self.fetch_counters.storage_calls);
+            self.fetch_counters.pvcs.fetch_add(1, Ordering::Relaxed);
             Ok(vec![])
         }
         async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> {
+            self.bump(&self.fetch_counters.storage_calls);
             Ok(vec![])
         }
         async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> {
+            self.bump(&self.fetch_counters.storage_calls);
             Ok(vec![])
         }
         async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
+            self.bump(&self.fetch_counters.namespaces);
             Ok(self
                 .namespaces
                 .iter()
@@ -2572,12 +2834,17 @@ mod tests {
             Ok(vec![])
         }
         async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
+            self.bump(&self.fetch_counters.config_calls);
+            if let Some(err) = &self.priority_classes_err {
+                return Err(anyhow!(err.clone()));
+            }
             Ok(vec![])
         }
         async fn fetch_helm_releases(
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<HelmReleaseInfo>> {
+            self.bump(&self.fetch_counters.helm_calls);
             if self.helm_releases_ignore_namespace {
                 return Ok(self.helm_releases.clone());
             }
@@ -2591,6 +2858,7 @@ mod tests {
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<FluxResourceInfo>> {
+            self.bump(&self.fetch_counters.flux_resources);
             Ok(Self::filter_namespace(
                 &self.flux_resources,
                 namespace,
@@ -2598,12 +2866,20 @@ mod tests {
             ))
         }
         async fn fetch_all_node_metrics(&self) -> Result<Vec<NodeMetricsInfo>> {
+            self.bump(&self.fetch_counters.node_metrics);
+            if let Some(err) = &self.node_metrics_err {
+                return Err(anyhow!(err.clone()));
+            }
             Ok(vec![])
         }
         async fn fetch_all_pod_metrics(
             &self,
             _namespace: Option<&str>,
         ) -> Result<Vec<PodMetricsInfo>> {
+            self.bump(&self.fetch_counters.pod_metrics);
+            if let Some(err) = &self.pod_metrics_err {
+                return Err(anyhow!(err.clone()));
+            }
             Ok(self.pod_metrics.clone())
         }
     }
@@ -2812,12 +3088,12 @@ mod tests {
             .refresh_with_options(
                 &updated,
                 Some("default"),
-                RefreshOptions {
-                    include_flux: false,
-                    include_cluster_info: true,
-                    include_secondary_resources: true,
-                    skip_core: false,
-                },
+                refresh_options(
+                    RefreshScope::CORE_OVERVIEW
+                        .union(RefreshScope::METRICS)
+                        .union(RefreshScope::LEGACY_SECONDARY),
+                    false,
+                ),
             )
             .await
             .expect("refresh should succeed while skipping flux");
@@ -2832,13 +3108,18 @@ mod tests {
         let source = MockDataSource::success();
 
         state.begin_loading_transition(false);
-        assert!(!state.snapshot().secondary_resources_loaded);
-        state.mark_refresh_requested(RefreshOptions {
-            include_flux: true,
-            include_cluster_info: true,
-            include_secondary_resources: false,
-            skip_core: false,
-        });
+        assert!(
+            !state
+                .snapshot()
+                .loaded_scope
+                .contains(RefreshScope::LEGACY_SECONDARY)
+        );
+        state.mark_refresh_requested(refresh_options(
+            RefreshScope::CORE_OVERVIEW
+                .union(RefreshScope::METRICS)
+                .union(RefreshScope::FLUX),
+            false,
+        ));
         let pending_snapshot = state.snapshot();
         assert_eq!(
             pending_snapshot.view_load_state(AppView::Pods),
@@ -2850,60 +3131,69 @@ mod tests {
         );
         assert_eq!(
             pending_snapshot.view_load_state(AppView::NetworkPolicies),
-            ViewLoadState::Loading
+            ViewLoadState::Idle
         );
         assert_eq!(
             pending_snapshot.view_load_state(AppView::StorageClasses),
-            ViewLoadState::Loading
+            ViewLoadState::Idle
         );
 
         state
             .refresh_with_options(
                 &source,
                 Some("default"),
-                RefreshOptions {
-                    include_flux: true,
-                    include_cluster_info: true,
-                    include_secondary_resources: false,
-                    skip_core: false,
-                },
+                refresh_options(
+                    RefreshScope::CORE_OVERVIEW
+                        .union(RefreshScope::METRICS)
+                        .union(RefreshScope::FLUX),
+                    false,
+                ),
             )
             .await
             .expect("fast refresh should succeed");
         let snapshot = state.snapshot();
-        assert!(!snapshot.secondary_resources_loaded);
+        assert!(
+            !snapshot
+                .loaded_scope
+                .contains(RefreshScope::LEGACY_SECONDARY)
+        );
         assert_eq!(
             snapshot.view_load_state(AppView::Pods),
             ViewLoadState::Ready
         );
         assert_eq!(
             snapshot.view_load_state(AppView::Issues),
-            ViewLoadState::Ready
+            ViewLoadState::Loading
         );
         assert_eq!(
             snapshot.view_load_state(AppView::NetworkPolicies),
-            ViewLoadState::Loading
+            ViewLoadState::Idle
         );
         assert_eq!(
             snapshot.view_load_state(AppView::StorageClasses),
-            ViewLoadState::Loading
+            ViewLoadState::Idle
         );
 
         state
             .refresh_with_options(
                 &source,
                 Some("default"),
-                RefreshOptions {
-                    include_flux: true,
-                    include_cluster_info: true,
-                    include_secondary_resources: true,
-                    skip_core: false,
-                },
+                refresh_options(
+                    RefreshScope::CORE_OVERVIEW
+                        .union(RefreshScope::METRICS)
+                        .union(RefreshScope::LEGACY_SECONDARY)
+                        .union(RefreshScope::FLUX),
+                    false,
+                ),
             )
             .await
             .expect("full refresh should succeed");
         let snapshot = state.snapshot();
-        assert!(snapshot.secondary_resources_loaded);
+        assert!(
+            snapshot
+                .loaded_scope
+                .contains(RefreshScope::LEGACY_SECONDARY)
+        );
         assert_eq!(
             snapshot.view_load_state(AppView::NetworkPolicies),
             ViewLoadState::Ready
@@ -2924,12 +3214,13 @@ mod tests {
             .refresh_with_options(
                 &source,
                 Some("default"),
-                RefreshOptions {
-                    include_flux: true,
-                    include_cluster_info: true,
-                    include_secondary_resources: true,
-                    skip_core: false,
-                },
+                refresh_options(
+                    RefreshScope::CORE_OVERVIEW
+                        .union(RefreshScope::METRICS)
+                        .union(RefreshScope::LEGACY_SECONDARY)
+                        .union(RefreshScope::FLUX),
+                    false,
+                ),
             )
             .await
             .expect("initial full refresh should succeed");
@@ -2937,7 +3228,11 @@ mod tests {
         let initial = state.snapshot();
         let initial_pods_len = initial.pods.len();
         let initial_nodes_len = initial.nodes.len();
-        assert!(initial.secondary_resources_loaded);
+        assert!(
+            initial
+                .loaded_scope
+                .contains(RefreshScope::LEGACY_SECONDARY)
+        );
 
         // Create an updated source with different secondary data but same core.
         let mut updated = source.clone();
@@ -2948,12 +3243,7 @@ mod tests {
             .refresh_with_options(
                 &updated,
                 Some("default"),
-                RefreshOptions {
-                    include_flux: false,
-                    include_cluster_info: false,
-                    include_secondary_resources: true,
-                    skip_core: true,
-                },
+                refresh_options(RefreshScope::LEGACY_SECONDARY, true),
             )
             .await
             .expect("skip_core refresh should succeed");
@@ -2964,6 +3254,465 @@ mod tests {
         assert_eq!(after.nodes.len(), initial_nodes_len);
         // Secondary data updated (service_accounts cleared in updated source).
         assert!(after.service_accounts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn refresh_skip_core_counts_only_attempted_fetches_for_health() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+
+        state
+            .refresh_with_options(
+                &source,
+                Some("default"),
+                refresh_options(
+                    RefreshScope::CORE_OVERVIEW
+                        .union(RefreshScope::METRICS)
+                        .union(RefreshScope::LEGACY_SECONDARY)
+                        .union(RefreshScope::FLUX),
+                    false,
+                ),
+            )
+            .await
+            .expect("initial full refresh should succeed");
+
+        let mut failing = source.clone();
+        failing.cluster_info_err = Some("cluster down".to_string());
+        failing.node_metrics_err = Some("node metrics down".to_string());
+        failing.pod_metrics_err = Some("pod metrics down".to_string());
+
+        state
+            .refresh_with_options(
+                &failing,
+                Some("default"),
+                refresh_options(RefreshScope::METRICS, true),
+            )
+            .await
+            .expect("skip_core refresh should preserve prior data on failure");
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.failed_resource_count, 3);
+        assert_eq!(snapshot.connection_health, ConnectionHealth::Disconnected);
+        let last_error = snapshot.last_error.as_deref().unwrap_or_default();
+        assert!(last_error.contains("cluster info: cluster down"));
+        assert!(last_error.contains("nodemetrics: node metrics down"));
+        assert!(last_error.contains("podmetrics: pod metrics down"));
+    }
+
+    #[tokio::test]
+    async fn refresh_with_metrics_fetches_core_lists_only_once() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+        let counters = Arc::clone(&source.fetch_counters);
+
+        state
+            .refresh_with_options(
+                &source,
+                Some("default"),
+                refresh_options(
+                    RefreshScope::NODES
+                        .union(RefreshScope::PODS)
+                        .union(RefreshScope::METRICS),
+                    false,
+                ),
+            )
+            .await
+            .expect("metrics refresh should succeed");
+
+        assert_eq!(counters.nodes.load(Ordering::Relaxed), 1);
+        assert_eq!(counters.pods.load(Ordering::Relaxed), 1);
+        assert_eq!(counters.cluster_version.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn refresh_with_cluster_info_keeps_cluster_wide_pod_count_when_namespaced() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+        let counters = Arc::clone(&source.fetch_counters);
+
+        state
+            .refresh_with_options(
+                &source,
+                Some("default"),
+                RefreshOptions {
+                    scope: RefreshScope::CORE_OVERVIEW.union(RefreshScope::METRICS),
+                    include_cluster_info: true,
+                    skip_core: false,
+                },
+            )
+            .await
+            .expect("namespaced refresh should succeed");
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.pods.len(), 1);
+        assert_eq!(
+            snapshot.cluster_info.as_ref().map(|info| info.pod_count),
+            Some(2)
+        );
+        assert_eq!(counters.cluster_version.load(Ordering::Relaxed), 1);
+        assert_eq!(counters.cluster_pod_count.load(Ordering::Relaxed), 1);
+    }
+
+    #[derive(Debug, Clone, Copy)]
+    struct ExpectedFetchCounts {
+        total: usize,
+        nodes: usize,
+        pods: usize,
+        services: usize,
+        namespaces: usize,
+        workload_calls: usize,
+        network_calls: usize,
+        config_calls: usize,
+        storage_calls: usize,
+        security_calls: usize,
+        helm_calls: usize,
+        extension_calls: usize,
+        flux_resources: usize,
+        cluster_version: usize,
+        cluster_pod_count: usize,
+        node_metrics: usize,
+        pod_metrics: usize,
+        service_accounts: usize,
+        pvcs: usize,
+    }
+
+    fn assert_fetch_counts(
+        scenario: &str,
+        counters: &MockFetchCounters,
+        expected: ExpectedFetchCounts,
+    ) {
+        assert_eq!(
+            counters.total.load(Ordering::Relaxed),
+            expected.total,
+            "{scenario}: total API calls"
+        );
+        assert_eq!(
+            counters.nodes.load(Ordering::Relaxed),
+            expected.nodes,
+            "{scenario}: nodes"
+        );
+        assert_eq!(
+            counters.pods.load(Ordering::Relaxed),
+            expected.pods,
+            "{scenario}: pods"
+        );
+        assert_eq!(
+            counters.services.load(Ordering::Relaxed),
+            expected.services,
+            "{scenario}: services"
+        );
+        assert_eq!(
+            counters.namespaces.load(Ordering::Relaxed),
+            expected.namespaces,
+            "{scenario}: namespaces"
+        );
+        assert_eq!(
+            counters.workload_calls.load(Ordering::Relaxed),
+            expected.workload_calls,
+            "{scenario}: workload calls"
+        );
+        assert_eq!(
+            counters.network_calls.load(Ordering::Relaxed),
+            expected.network_calls,
+            "{scenario}: network bucket"
+        );
+        assert_eq!(
+            counters.config_calls.load(Ordering::Relaxed),
+            expected.config_calls,
+            "{scenario}: config bucket"
+        );
+        assert_eq!(
+            counters.storage_calls.load(Ordering::Relaxed),
+            expected.storage_calls,
+            "{scenario}: storage bucket"
+        );
+        assert_eq!(
+            counters.security_calls.load(Ordering::Relaxed),
+            expected.security_calls,
+            "{scenario}: security bucket"
+        );
+        assert_eq!(
+            counters.helm_calls.load(Ordering::Relaxed),
+            expected.helm_calls,
+            "{scenario}: helm bucket"
+        );
+        assert_eq!(
+            counters.extension_calls.load(Ordering::Relaxed),
+            expected.extension_calls,
+            "{scenario}: extension bucket"
+        );
+        assert_eq!(
+            counters.flux_resources.load(Ordering::Relaxed),
+            expected.flux_resources,
+            "{scenario}: flux resources"
+        );
+        assert_eq!(
+            counters.cluster_version.load(Ordering::Relaxed),
+            expected.cluster_version,
+            "{scenario}: cluster version"
+        );
+        assert_eq!(
+            counters.cluster_pod_count.load(Ordering::Relaxed),
+            expected.cluster_pod_count,
+            "{scenario}: cluster pod count"
+        );
+        assert_eq!(
+            counters.node_metrics.load(Ordering::Relaxed),
+            expected.node_metrics,
+            "{scenario}: node metrics"
+        );
+        assert_eq!(
+            counters.pod_metrics.load(Ordering::Relaxed),
+            expected.pod_metrics,
+            "{scenario}: pod metrics"
+        );
+        assert_eq!(
+            counters.service_accounts.load(Ordering::Relaxed),
+            expected.service_accounts,
+            "{scenario}: service accounts"
+        );
+        assert_eq!(
+            counters.pvcs.load(Ordering::Relaxed),
+            expected.pvcs,
+            "{scenario}: pvcs"
+        );
+    }
+
+    #[tokio::test]
+    async fn view_refresh_scopes_limit_api_calls_to_expected_buckets() {
+        let scenarios = [
+            (
+                "dashboard",
+                RefreshScope::CORE_OVERVIEW.union(RefreshScope::METRICS),
+                ExpectedFetchCounts {
+                    total: 14,
+                    nodes: 1,
+                    pods: 1,
+                    services: 1,
+                    namespaces: 1,
+                    workload_calls: 7,
+                    network_calls: 0,
+                    config_calls: 0,
+                    storage_calls: 0,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 1,
+                    cluster_pod_count: 0,
+                    node_metrics: 1,
+                    pod_metrics: 1,
+                    service_accounts: 0,
+                    pvcs: 0,
+                },
+            ),
+            (
+                "pods",
+                RefreshScope::PODS.union(RefreshScope::METRICS),
+                ExpectedFetchCounts {
+                    total: 4,
+                    nodes: 0,
+                    pods: 1,
+                    services: 0,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 0,
+                    config_calls: 0,
+                    storage_calls: 0,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 1,
+                    cluster_pod_count: 0,
+                    node_metrics: 1,
+                    pod_metrics: 1,
+                    service_accounts: 0,
+                    pvcs: 0,
+                },
+            ),
+            (
+                "nodes",
+                RefreshScope::NODES.union(RefreshScope::METRICS),
+                ExpectedFetchCounts {
+                    total: 4,
+                    nodes: 1,
+                    pods: 0,
+                    services: 0,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 0,
+                    config_calls: 0,
+                    storage_calls: 0,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 1,
+                    cluster_pod_count: 0,
+                    node_metrics: 1,
+                    pod_metrics: 1,
+                    service_accounts: 0,
+                    pvcs: 0,
+                },
+            ),
+            (
+                "services",
+                RefreshScope::SERVICES.union(RefreshScope::NETWORK),
+                ExpectedFetchCounts {
+                    total: 5,
+                    nodes: 0,
+                    pods: 0,
+                    services: 1,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 4,
+                    config_calls: 0,
+                    storage_calls: 0,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 0,
+                    cluster_pod_count: 0,
+                    node_metrics: 0,
+                    pod_metrics: 0,
+                    service_accounts: 0,
+                    pvcs: 0,
+                },
+            ),
+            (
+                "service_accounts",
+                RefreshScope::SECURITY,
+                ExpectedFetchCounts {
+                    total: 5,
+                    nodes: 0,
+                    pods: 0,
+                    services: 0,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 0,
+                    config_calls: 0,
+                    storage_calls: 0,
+                    security_calls: 5,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 0,
+                    cluster_pod_count: 0,
+                    node_metrics: 0,
+                    pod_metrics: 0,
+                    service_accounts: 1,
+                    pvcs: 0,
+                },
+            ),
+            (
+                "pvcs",
+                RefreshScope::STORAGE,
+                ExpectedFetchCounts {
+                    total: 3,
+                    nodes: 0,
+                    pods: 0,
+                    services: 0,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 0,
+                    config_calls: 0,
+                    storage_calls: 3,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 0,
+                    cluster_pod_count: 0,
+                    node_metrics: 0,
+                    pod_metrics: 0,
+                    service_accounts: 0,
+                    pvcs: 1,
+                },
+            ),
+            (
+                "flux",
+                RefreshScope::FLUX,
+                ExpectedFetchCounts {
+                    total: 1,
+                    nodes: 0,
+                    pods: 0,
+                    services: 0,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 0,
+                    config_calls: 0,
+                    storage_calls: 0,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 1,
+                    cluster_version: 0,
+                    cluster_pod_count: 0,
+                    node_metrics: 0,
+                    pod_metrics: 0,
+                    service_accounts: 0,
+                    pvcs: 0,
+                },
+            ),
+            (
+                "issues",
+                RefreshScope::CORE_OVERVIEW
+                    .union(RefreshScope::LEGACY_SECONDARY)
+                    .union(RefreshScope::FLUX),
+                ExpectedFetchCounts {
+                    total: 33,
+                    nodes: 1,
+                    pods: 1,
+                    services: 1,
+                    namespaces: 1,
+                    workload_calls: 7,
+                    network_calls: 4,
+                    config_calls: 7,
+                    storage_calls: 3,
+                    security_calls: 5,
+                    helm_calls: 1,
+                    extension_calls: 1,
+                    flux_resources: 1,
+                    cluster_version: 0,
+                    cluster_pod_count: 0,
+                    node_metrics: 0,
+                    pod_metrics: 0,
+                    service_accounts: 1,
+                    pvcs: 1,
+                },
+            ),
+        ];
+
+        for (scenario, scope, expected) in scenarios {
+            let mut state = GlobalState::default();
+            let source = MockDataSource::success();
+            let counters = Arc::clone(&source.fetch_counters);
+
+            state
+                .refresh_with_options(&source, Some("default"), refresh_options(scope, false))
+                .await
+                .unwrap_or_else(|err| panic!("{scenario}: refresh should succeed: {err}"));
+
+            assert_fetch_counts(scenario, &counters, expected);
+        }
+    }
+
+    #[test]
+    fn resource_count_stays_unknown_until_view_scope_is_loaded() {
+        let snapshot = ClusterSnapshot::default();
+        assert_eq!(snapshot.resource_count(AppView::NetworkPolicies), None);
+        assert_eq!(snapshot.resource_count(AppView::Pods), None);
+
+        let mut snapshot = ClusterSnapshot {
+            loaded_scope: RefreshScope::PODS,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.pods.push(PodInfo::default());
+
+        assert_eq!(snapshot.resource_count(AppView::Pods), Some(1));
+        assert_eq!(snapshot.resource_count(AppView::NetworkPolicies), None);
     }
 
     #[test]
@@ -3167,6 +3916,8 @@ mod tests {
         let mut state = GlobalState::default();
         let source = MockDataSource {
             url: "https://broken".to_string(),
+            context: Some("broken".to_string()),
+            fetch_counters: Arc::new(MockFetchCounters::default()),
             nodes: vec![],
             namespaces: vec![],
             pods: vec![],
@@ -3209,10 +3960,35 @@ mod tests {
             cluster_roles_err: Some("clusterroles down".to_string()),
             cluster_role_bindings_err: Some("clusterrolebindings down".to_string()),
             cluster_info_err: Some("cluster down".to_string()),
+            node_metrics_err: Some("node metrics down".to_string()),
+            pod_metrics_err: Some("pod metrics down".to_string()),
+            config_maps_err: Some("configmaps down".to_string()),
+            secrets_err: Some("secrets down".to_string()),
+            hpas_err: Some("hpas down".to_string()),
+            priority_classes_err: Some("priorityclasses down".to_string()),
             delay_ms: 0,
         };
 
-        let result = state.refresh(&source, None).await;
+        let result = state
+            .refresh_with_options(
+                &source,
+                None,
+                refresh_options(
+                    RefreshScope::NODES
+                        .union(RefreshScope::PODS)
+                        .union(RefreshScope::SERVICES)
+                        .union(RefreshScope::DEPLOYMENTS)
+                        .union(RefreshScope::STATEFULSETS)
+                        .union(RefreshScope::DAEMONSETS)
+                        .union(RefreshScope::JOBS)
+                        .union(RefreshScope::CRONJOBS)
+                        .union(RefreshScope::METRICS)
+                        .union(RefreshScope::CONFIG)
+                        .union(RefreshScope::SECURITY),
+                    false,
+                ),
+            )
+            .await;
         assert!(result.is_err());
 
         let snapshot = state.snapshot();

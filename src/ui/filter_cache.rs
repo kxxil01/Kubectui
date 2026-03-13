@@ -177,3 +177,38 @@ pub(crate) fn filter_cache_stats() -> FilterCacheStats {
             acc
         })
 }
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct DerivedRowsCacheKey {
+    pub query: String,
+    pub snapshot_version: u64,
+    pub data_fingerprint: u64,
+    pub variant: u64,
+    pub freshness_bucket: i64,
+}
+
+pub(crate) type DerivedRowsCacheValue<T> = Arc<Vec<T>>;
+pub(crate) type DerivedRowsCache<T> =
+    Mutex<Option<(DerivedRowsCacheKey, DerivedRowsCacheValue<T>)>>;
+
+pub(crate) fn cached_derived_rows<T, F>(
+    cache: &DerivedRowsCache<T>,
+    key: DerivedRowsCacheKey,
+    build: F,
+) -> DerivedRowsCacheValue<T>
+where
+    F: FnOnce() -> Vec<T>,
+{
+    if let Ok(cache) = cache.lock()
+        && let Some((cached_key, cached_value)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return cached_value.clone();
+    }
+
+    let built = Arc::new(build());
+    if let Ok(mut cache) = cache.lock() {
+        *cache = Some((key, built.clone()));
+    }
+    built
+}
