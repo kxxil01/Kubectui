@@ -4,10 +4,12 @@
 //! the watch path (`state/watch.rs`) to produce identical typed DTOs.
 
 use chrono::Utc;
-use k8s_openapi::api::apps::v1::{Deployment, ReplicaSet};
+use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
 use k8s_openapi::api::core::v1::{Pod, PodSpec};
 
-use crate::k8s::dtos::{DeploymentInfo, OwnerRefInfo, PodInfo, ReplicaSetInfo};
+use crate::k8s::dtos::{
+    DaemonSetInfo, DeploymentInfo, OwnerRefInfo, PodInfo, ReplicaSetInfo, StatefulSetInfo,
+};
 use crate::state::alerts::{format_mib, format_millicores, parse_mib, parse_millicores};
 
 /// Extracts the first container image from a pod spec.
@@ -202,6 +204,85 @@ pub fn replicaset_to_info(rs: ReplicaSet) -> ReplicaSetInfo {
                 uid: oref.uid,
             })
             .collect(),
+    }
+}
+
+/// Converts a raw Kubernetes `StatefulSet` into a [`StatefulSetInfo`] DTO.
+pub fn statefulset_to_info(ss: StatefulSet) -> StatefulSetInfo {
+    let now = Utc::now();
+    let spec = ss.spec.as_ref();
+    let status = ss.status.as_ref();
+    let created_at = ss.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+    StatefulSetInfo {
+        name: ss.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: ss
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        desired_replicas: spec.and_then(|s| s.replicas).unwrap_or(1),
+        ready_replicas: status.and_then(|s| s.ready_replicas).unwrap_or(0),
+        service_name: spec
+            .map(|s| s.service_name.clone())
+            .unwrap_or_else(|| "<none>".to_string()),
+        pod_management_policy: spec
+            .and_then(|s| s.pod_management_policy.clone())
+            .unwrap_or_else(|| "OrderedReady".to_string()),
+        image: extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
+    }
+}
+
+/// Converts a raw Kubernetes `DaemonSet` into a [`DaemonSetInfo`] DTO.
+pub fn daemonset_to_info(ds: DaemonSet) -> DaemonSetInfo {
+    let now = Utc::now();
+    let spec = ds.spec.as_ref();
+    let status = ds.status.as_ref();
+    let created_at = ds.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+
+    let desired_count = status.map(|s| s.desired_number_scheduled).unwrap_or(0);
+    let ready_count = status.map(|s| s.number_ready).unwrap_or(0);
+    let unavailable_count = status.and_then(|s| s.number_unavailable).unwrap_or(0);
+
+    DaemonSetInfo {
+        name: ds.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: ds
+            .metadata
+            .namespace
+            .unwrap_or_else(|| "default".to_string()),
+        desired_count,
+        ready_count,
+        unavailable_count,
+        selector: spec
+            .and_then(|s| s.selector.match_labels.as_ref())
+            .map(|labels| {
+                labels
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            })
+            .unwrap_or_else(|| "<none>".to_string()),
+        update_strategy: spec
+            .and_then(|s| s.update_strategy.as_ref())
+            .and_then(|us| us.type_.clone())
+            .unwrap_or_else(|| "RollingUpdate".to_string()),
+        labels: ds
+            .metadata
+            .labels
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
+        status_message: if unavailable_count == 0 {
+            "Ready".to_string()
+        } else {
+            format!("{unavailable_count} pods unavailable")
+        },
+        image: extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        created_at,
     }
 }
 

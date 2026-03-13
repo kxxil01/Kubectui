@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use futures::TryStreamExt;
-use k8s_openapi::api::apps::v1::{Deployment, ReplicaSet};
+use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
 use k8s_openapi::api::core::v1::Pod;
 use kube::runtime::WatchStreamExt;
 use kube::runtime::watcher::{self, Event};
@@ -15,8 +15,10 @@ use kube::{Api, Client, ResourceExt};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::k8s::conversions::{deployment_to_info, pod_to_info, replicaset_to_info};
-use crate::k8s::dtos::{DeploymentInfo, PodInfo, ReplicaSetInfo};
+use crate::k8s::conversions::{
+    daemonset_to_info, deployment_to_info, pod_to_info, replicaset_to_info, statefulset_to_info,
+};
+use crate::k8s::dtos::{DaemonSetInfo, DeploymentInfo, PodInfo, ReplicaSetInfo, StatefulSetInfo};
 
 /// Identifies which watched resource produced an update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,6 +26,8 @@ pub enum WatchedResource {
     Pods,
     Deployments,
     ReplicaSets,
+    StatefulSets,
+    DaemonSets,
 }
 
 /// A snapshot update published by a watcher task.
@@ -40,6 +44,8 @@ pub enum WatchPayload {
     Pods(Vec<PodInfo>),
     Deployments(Vec<DeploymentInfo>),
     ReplicaSets(Vec<ReplicaSetInfo>),
+    StatefulSets(Vec<StatefulSetInfo>),
+    DaemonSets(Vec<DaemonSetInfo>),
     /// A watcher encountered an error or terminated.
     Error {
         resource: WatchedResource,
@@ -152,6 +158,14 @@ fn sort_replicasets(items: &mut [ReplicaSetInfo]) {
     items.sort_by(|a, b| a.name.cmp(&b.name));
 }
 
+fn sort_statefulsets(items: &mut [StatefulSetInfo]) {
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
+fn sort_daemonsets(items: &mut [DaemonSetInfo]) {
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+}
+
 /// Manages all watch tasks and their lifecycle.
 ///
 /// Instances are single-use: after [`stop_all`](WatchManager::stop_all),
@@ -193,7 +207,19 @@ impl WatchManager {
             watch_tx.clone(),
             cancel_rx.clone(),
         );
-        start_replicaset_watch(client, self.session.clone(), watch_tx, cancel_rx);
+        start_replicaset_watch(
+            client.clone(),
+            self.session.clone(),
+            watch_tx.clone(),
+            cancel_rx.clone(),
+        );
+        start_statefulset_watch(
+            client.clone(),
+            self.session.clone(),
+            watch_tx.clone(),
+            cancel_rx.clone(),
+        );
+        start_daemonset_watch(client, self.session.clone(), watch_tx, cancel_rx);
     }
 
     /// Stops all running watch tasks.
@@ -562,6 +588,248 @@ fn process_replicaset_event(
                 warn!(
                     name = rs.metadata.name.as_deref().unwrap_or("<unknown>"),
                     "skipping replicaset with empty UID on delete"
+                );
+                return false;
+            }
+            store.remove(&uid);
+            true
+        }
+    }
+}
+
+// ── StatefulSet watcher ──
+
+fn start_statefulset_watch(
+    client: Client,
+    session: WatchSessionKey,
+    watch_tx: mpsc::Sender<WatchUpdate>,
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        let api: Api<StatefulSet> = match &session.namespace {
+            Some(ns) => Api::namespaced(client, ns),
+            None => Api::all(client),
+        };
+
+        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
+        let mut store = ResourceStore::<StatefulSetInfo>::new();
+        tokio::pin!(stream);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => break,
+                item = stream.try_next() => {
+                    match item {
+                        Ok(Some(event)) => {
+                            if process_statefulset_event(&mut store, event) {
+                                let mut snapshot = store.publish();
+                                sort_statefulsets(&mut snapshot);
+                                if watch_tx.send(WatchUpdate {
+                                    resource: WatchedResource::StatefulSets,
+                                    context_generation: session.context_generation,
+                                    data: WatchPayload::StatefulSets(snapshot),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            warn!("statefulset watch stream ended unexpectedly");
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::StatefulSets,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::StatefulSets,
+                                    message: "watch stream terminated".to_string(),
+                                },
+                            }).await;
+                            break;
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "statefulset watch stream error");
+                            store.readiness = StoreReadiness::Error;
+                            store.last_error = Some(err.to_string());
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::StatefulSets,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::StatefulSets,
+                                    message: err.to_string(),
+                                },
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn process_statefulset_event(
+    store: &mut ResourceStore<StatefulSetInfo>,
+    event: Event<StatefulSet>,
+) -> bool {
+    match event {
+        Event::Init => {
+            store.begin_init();
+            false
+        }
+        Event::InitApply(ss) => {
+            let uid = ss.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = ss.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping statefulset with empty UID during init"
+                );
+                return false;
+            }
+            store.apply_init_page(uid, statefulset_to_info(ss));
+            false
+        }
+        Event::InitDone => {
+            store.commit_init();
+            true
+        }
+        Event::Apply(ss) => {
+            let uid = ss.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = ss.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping statefulset with empty UID on apply"
+                );
+                return false;
+            }
+            store.apply_event(uid, statefulset_to_info(ss));
+            true
+        }
+        Event::Delete(ss) => {
+            let uid = ss.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = ss.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping statefulset with empty UID on delete"
+                );
+                return false;
+            }
+            store.remove(&uid);
+            true
+        }
+    }
+}
+
+// ── DaemonSet watcher ──
+
+fn start_daemonset_watch(
+    client: Client,
+    session: WatchSessionKey,
+    watch_tx: mpsc::Sender<WatchUpdate>,
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        let api: Api<DaemonSet> = match &session.namespace {
+            Some(ns) => Api::namespaced(client, ns),
+            None => Api::all(client),
+        };
+
+        let stream = watcher::watcher(api, watcher::Config::default()).default_backoff();
+        let mut store = ResourceStore::<DaemonSetInfo>::new();
+        tokio::pin!(stream);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => break,
+                item = stream.try_next() => {
+                    match item {
+                        Ok(Some(event)) => {
+                            if process_daemonset_event(&mut store, event) {
+                                let mut snapshot = store.publish();
+                                sort_daemonsets(&mut snapshot);
+                                if watch_tx.send(WatchUpdate {
+                                    resource: WatchedResource::DaemonSets,
+                                    context_generation: session.context_generation,
+                                    data: WatchPayload::DaemonSets(snapshot),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
+                        }
+                        Ok(None) => {
+                            warn!("daemonset watch stream ended unexpectedly");
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::DaemonSets,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::DaemonSets,
+                                    message: "watch stream terminated".to_string(),
+                                },
+                            }).await;
+                            break;
+                        }
+                        Err(err) => {
+                            warn!(error = %err, "daemonset watch stream error");
+                            store.readiness = StoreReadiness::Error;
+                            store.last_error = Some(err.to_string());
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::DaemonSets,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    resource: WatchedResource::DaemonSets,
+                                    message: err.to_string(),
+                                },
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+fn process_daemonset_event(
+    store: &mut ResourceStore<DaemonSetInfo>,
+    event: Event<DaemonSet>,
+) -> bool {
+    match event {
+        Event::Init => {
+            store.begin_init();
+            false
+        }
+        Event::InitApply(ds) => {
+            let uid = ds.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = ds.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping daemonset with empty UID during init"
+                );
+                return false;
+            }
+            store.apply_init_page(uid, daemonset_to_info(ds));
+            false
+        }
+        Event::InitDone => {
+            store.commit_init();
+            true
+        }
+        Event::Apply(ds) => {
+            let uid = ds.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = ds.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping daemonset with empty UID on apply"
+                );
+                return false;
+            }
+            store.apply_event(uid, daemonset_to_info(ds));
+            true
+        }
+        Event::Delete(ds) => {
+            let uid = ds.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = ds.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping daemonset with empty UID on delete"
                 );
                 return false;
             }
