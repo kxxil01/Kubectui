@@ -613,6 +613,9 @@ pub struct RefreshOptions {
     pub include_flux: bool,
     pub include_cluster_info: bool,
     pub include_secondary_resources: bool,
+    /// When true, wave1 (core resources) returns previous snapshot values
+    /// instead of fetching — used for secondary-only backfill passes.
+    pub skip_core: bool,
 }
 
 impl Default for RefreshOptions {
@@ -621,6 +624,7 @@ impl Default for RefreshOptions {
             include_flux: true,
             include_cluster_info: true,
             include_secondary_resources: true,
+            skip_core: false,
         }
     }
 }
@@ -1385,6 +1389,21 @@ impl GlobalState {
         let include_flux = options.include_flux;
         let include_cluster_info = options.include_cluster_info;
         let include_secondary_resources = options.include_secondary_resources;
+        let skip_core = options.skip_core;
+
+        // Capture previous core resource data for fallback when skip_core is set.
+        let prev_nodes = self.snapshot.nodes.clone();
+        let prev_pods = self.snapshot.pods.clone();
+        let prev_services = self.snapshot.services.clone();
+        let prev_deployments = self.snapshot.deployments.clone();
+        let prev_statefulsets = self.snapshot.statefulsets.clone();
+        let prev_daemonsets = self.snapshot.daemonsets.clone();
+        let prev_replicasets = self.snapshot.replicasets.clone();
+        let prev_replication_controllers = self.snapshot.replication_controllers.clone();
+        let prev_jobs = self.snapshot.jobs.clone();
+        let prev_cronjobs = self.snapshot.cronjobs.clone();
+        let prev_namespace_list = self.snapshot.namespace_list.clone();
+
         let flux_fetch = async move {
             if include_flux {
                 Self::fetch_with_timeout("fluxresources", &CORE_FETCH_SEMAPHORE, || {
@@ -1435,33 +1454,57 @@ impl GlobalState {
         // Wave 1 (core) and wave 2 (secondary) run concurrently with separate
         // semaphores: CORE_FETCH_SEMAPHORE (8 permits) and SECONDARY_FETCH_SEMAPHORE
         // (4 permits). This ensures core resources are never starved by secondary fetches.
+        //
+        // When skip_core is true (secondary-only backfill pass), wave1 returns previous
+        // snapshot values to avoid redundant API calls for core resources.
         let wave1 = async {
-            tokio::join!(
-                Self::fetch_with_timeout("nodes", &CORE_FETCH_SEMAPHORE, || client.fetch_nodes()),
-                Self::fetch_with_timeout("pods", &CORE_FETCH_SEMAPHORE, || client
-                    .fetch_pods(namespace)),
-                Self::fetch_with_timeout("services", &CORE_FETCH_SEMAPHORE, || client
-                    .fetch_services(namespace)),
-                Self::fetch_with_timeout("deployments", &CORE_FETCH_SEMAPHORE, || client
-                    .fetch_deployments(namespace)),
-                Self::fetch_with_timeout("statefulsets", &CORE_FETCH_SEMAPHORE, || client
-                    .fetch_statefulsets(namespace)),
-                Self::fetch_with_timeout("daemonsets", &CORE_FETCH_SEMAPHORE, || client
-                    .fetch_daemonsets(namespace)),
-                Self::fetch_with_timeout("replicasets", &CORE_FETCH_SEMAPHORE, || client
-                    .fetch_replicasets(namespace)),
-                Self::fetch_with_timeout("replicationcontrollers", &CORE_FETCH_SEMAPHORE, || {
-                    client.fetch_replication_controllers(namespace)
-                }),
-                Self::fetch_with_timeout("jobs", &CORE_FETCH_SEMAPHORE, || client
-                    .fetch_jobs(namespace)),
-                Self::fetch_with_timeout("cronjobs", &CORE_FETCH_SEMAPHORE, || client
-                    .fetch_cronjobs(namespace)),
-                Self::fetch_with_timeout("namespacelist", &CORE_FETCH_SEMAPHORE, || client
-                    .fetch_namespace_list()),
-                flux_fetch,
-                cluster_info_fetch,
-            )
+            if skip_core {
+                (
+                    Ok(prev_nodes),
+                    Ok(prev_pods),
+                    Ok(prev_services),
+                    Ok(prev_deployments),
+                    Ok(prev_statefulsets),
+                    Ok(prev_daemonsets),
+                    Ok(prev_replicasets),
+                    Ok(prev_replication_controllers),
+                    Ok(prev_jobs),
+                    Ok(prev_cronjobs),
+                    Ok(prev_namespace_list),
+                    flux_fetch.await,
+                    cluster_info_fetch.await,
+                )
+            } else {
+                tokio::join!(
+                    Self::fetch_with_timeout("nodes", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_nodes()),
+                    Self::fetch_with_timeout("pods", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_pods(namespace)),
+                    Self::fetch_with_timeout("services", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_services(namespace)),
+                    Self::fetch_with_timeout("deployments", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_deployments(namespace)),
+                    Self::fetch_with_timeout("statefulsets", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_statefulsets(namespace)),
+                    Self::fetch_with_timeout("daemonsets", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_daemonsets(namespace)),
+                    Self::fetch_with_timeout("replicasets", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_replicasets(namespace)),
+                    Self::fetch_with_timeout(
+                        "replicationcontrollers",
+                        &CORE_FETCH_SEMAPHORE,
+                        || { client.fetch_replication_controllers(namespace) }
+                    ),
+                    Self::fetch_with_timeout("jobs", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_jobs(namespace)),
+                    Self::fetch_with_timeout("cronjobs", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_cronjobs(namespace)),
+                    Self::fetch_with_timeout("namespacelist", &CORE_FETCH_SEMAPHORE, || client
+                        .fetch_namespace_list()),
+                    flux_fetch,
+                    cluster_info_fetch,
+                )
+            }
         };
 
         let wave2 = async {
@@ -2752,6 +2795,7 @@ mod tests {
                     include_flux: false,
                     include_cluster_info: true,
                     include_secondary_resources: true,
+                    skip_core: false,
                 },
             )
             .await
@@ -2772,6 +2816,7 @@ mod tests {
             include_flux: true,
             include_cluster_info: true,
             include_secondary_resources: false,
+            skip_core: false,
         });
         let pending_snapshot = state.snapshot();
         assert_eq!(
@@ -2799,6 +2844,7 @@ mod tests {
                     include_flux: true,
                     include_cluster_info: true,
                     include_secondary_resources: false,
+                    skip_core: false,
                 },
             )
             .await
@@ -2830,6 +2876,7 @@ mod tests {
                     include_flux: true,
                     include_cluster_info: true,
                     include_secondary_resources: true,
+                    skip_core: false,
                 },
             )
             .await
@@ -2844,6 +2891,58 @@ mod tests {
             snapshot.view_load_state(AppView::StorageClasses),
             ViewLoadState::Ready
         );
+    }
+
+    #[tokio::test]
+    async fn refresh_skip_core_preserves_core_and_updates_secondary() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+
+        // First: full refresh to populate everything.
+        state
+            .refresh_with_options(
+                &source,
+                Some("default"),
+                RefreshOptions {
+                    include_flux: true,
+                    include_cluster_info: true,
+                    include_secondary_resources: true,
+                    skip_core: false,
+                },
+            )
+            .await
+            .expect("initial full refresh should succeed");
+
+        let initial = state.snapshot();
+        let initial_pods_len = initial.pods.len();
+        let initial_nodes_len = initial.nodes.len();
+        assert!(initial.secondary_resources_loaded);
+
+        // Create an updated source with different secondary data but same core.
+        let mut updated = source.clone();
+        updated.service_accounts = vec![]; // clear secondary
+
+        // Refresh with skip_core: core fields should stay, secondary updates.
+        state
+            .refresh_with_options(
+                &updated,
+                Some("default"),
+                RefreshOptions {
+                    include_flux: false,
+                    include_cluster_info: false,
+                    include_secondary_resources: true,
+                    skip_core: true,
+                },
+            )
+            .await
+            .expect("skip_core refresh should succeed");
+
+        let after = state.snapshot();
+        // Core data preserved (came from prev snapshot, not re-fetched).
+        assert_eq!(after.pods.len(), initial_pods_len);
+        assert_eq!(after.nodes.len(), initial_nodes_len);
+        // Secondary data updated (service_accounts cleared in updated source).
+        assert!(after.service_accounts.is_empty());
     }
 
     #[test]

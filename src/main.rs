@@ -734,6 +734,7 @@ fn fast_refresh_options(include_flux: bool) -> RefreshOptions {
         include_flux,
         include_cluster_info: false,
         include_secondary_resources: false,
+        skip_core: false,
     }
 }
 
@@ -950,6 +951,7 @@ fn full_refresh_options(include_flux: bool, include_cluster_info: bool) -> Refre
         include_flux,
         include_cluster_info,
         include_secondary_resources: true,
+        skip_core: false,
     }
 }
 
@@ -1152,13 +1154,25 @@ fn request_refresh(
     snapshot_dirty: &mut bool,
 ) {
     let snapshot = global_state.snapshot();
-    let should_queue_secondary_backfill =
-        !options.include_secondary_resources && !snapshot.secondary_resources_loaded;
-    let visible_options = RefreshOptions {
+
+    // Two-phase refresh: always run core-only first, then queue secondary as
+    // a separate backfill pass. This ensures workloads are visible immediately
+    // while slower secondary resources (metrics, RBAC, etc.) load afterward.
+    let needs_secondary =
+        options.include_secondary_resources || !snapshot.secondary_resources_loaded;
+
+    // The immediate task is always core-only.
+    let core_options = RefreshOptions {
         include_flux: options.include_flux,
         include_cluster_info: options.include_cluster_info,
-        include_secondary_resources: options.include_secondary_resources
-            || should_queue_secondary_backfill,
+        include_secondary_resources: false,
+        skip_core: false,
+    };
+
+    // Report to UI that secondary is coming (for loading state indicators).
+    let visible_options = RefreshOptions {
+        include_secondary_resources: needs_secondary,
+        ..core_options
     };
     global_state.mark_refresh_requested(visible_options);
     *snapshot_dirty = true;
@@ -1174,11 +1188,11 @@ fn request_refresh(
             global_state.clone(),
             client.clone(),
             namespace,
-            options,
+            core_options,
             request_id,
             refresh_state.context_generation,
         ));
-        if should_queue_secondary_backfill {
+        if needs_secondary {
             refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
             refresh_state.queued_refresh = Some(QueuedRefresh {
                 request_id: refresh_state.request_seq,
@@ -1187,11 +1201,13 @@ fn request_refresh(
                     include_flux: options.include_flux,
                     include_cluster_info: false,
                     include_secondary_resources: true,
+                    skip_core: true,
                 },
                 context_generation: refresh_state.context_generation,
             });
         }
     } else {
+        // Merge into the already-queued request.
         let merged_include_flux = refresh_state
             .queued_refresh
             .as_ref()
@@ -1202,19 +1218,26 @@ fn request_refresh(
             .as_ref()
             .is_some_and(|queued| queued.options.include_cluster_info)
             || options.include_cluster_info;
-        let merged_include_secondary_resources = refresh_state
+        let merged_include_secondary = refresh_state
             .queued_refresh
             .as_ref()
             .is_some_and(|queued| queued.options.include_secondary_resources)
-            || options.include_secondary_resources
-            || should_queue_secondary_backfill;
+            || needs_secondary;
+        // If we're merging a full request into a secondary-only backfill, we need
+        // to re-fetch core too (can't skip core if the merged request needs it).
+        let merged_skip_core = refresh_state
+            .queued_refresh
+            .as_ref()
+            .is_some_and(|queued| queued.options.skip_core)
+            && options.skip_core;
         refresh_state.queued_refresh = Some(QueuedRefresh {
             request_id,
             namespace,
             options: RefreshOptions {
                 include_flux: merged_include_flux,
                 include_cluster_info: merged_include_cluster_info,
-                include_secondary_resources: merged_include_secondary_resources,
+                include_secondary_resources: merged_include_secondary,
+                skip_core: merged_skip_core,
             },
             context_generation: refresh_state.context_generation,
         });
