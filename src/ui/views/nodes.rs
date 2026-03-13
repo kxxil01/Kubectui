@@ -1,10 +1,6 @@
 //! Nodes list renderer.
 
-use std::{
-    borrow::Cow,
-    collections::HashMap,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{borrow::Cow, collections::HashMap, sync::LazyLock};
 
 use chrono::Utc;
 use ratatui::{
@@ -29,7 +25,10 @@ use crate::{
     ui::{
         bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
-        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
+        filter_cache::{
+            DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+            cached_filter_indices_with_variant, data_fingerprint,
+        },
         loading_or_empty_message, loading_or_empty_message_no_search, responsive_table_widths_vec,
         sort_header_cell, table_viewport_rows, table_window, utilization_style,
         views::filtering::filtered_node_indices,
@@ -37,23 +36,14 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NodeDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    minute_bucket: i64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct NodeDerivedCell {
     age: String,
 }
 
-type NodeDerivedCacheValue = Arc<Vec<NodeDerivedCell>>;
-static NODE_DERIVED_CACHE: LazyLock<Mutex<Option<(NodeDerivedCacheKey, NodeDerivedCacheValue)>>> =
-    LazyLock::new(|| Mutex::new(None));
+type NodeDerivedCacheValue = DerivedRowsCacheValue<NodeDerivedCell>;
+static NODE_DERIVED_CACHE: LazyLock<DerivedRowsCache<NodeDerivedCell>> =
+    LazyLock::new(Default::default);
 
 /// Renders the nodes table with stateful selection, scrollbar, and theme-aware styling.
 #[allow(clippy::too_many_arguments)]
@@ -275,22 +265,15 @@ fn cached_node_derived(
     now_unix: i64,
     variant: u64,
 ) -> NodeDerivedCacheValue {
-    let key = NodeDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.nodes, snapshot.snapshot_version),
-        minute_bucket: now_unix / 60,
         variant,
+        freshness_bucket: now_unix / 60,
     };
 
-    if let Ok(cache) = NODE_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&NODE_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&node_idx| {
@@ -299,14 +282,8 @@ fn cached_node_derived(
                     age: format_age(node.created_at, now_unix),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = NODE_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 #[inline]

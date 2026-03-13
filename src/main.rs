@@ -49,7 +49,7 @@ use kubectui::{
     },
     policy::{DetailAction, ResourceActionContext},
     secret::{decode_secret_yaml, encode_secret_yaml},
-    state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions},
+    state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
     ui,
     workbench::{WorkbenchTabKey, WorkbenchTabState},
 };
@@ -525,6 +525,7 @@ struct RefreshAsyncResult {
 struct QueuedRefresh {
     request_id: u64,
     namespace: Option<String>,
+    primary_scope: RefreshScope,
     options: RefreshOptions,
     context_generation: u64,
 }
@@ -705,7 +706,7 @@ struct NodeOpsAsyncResult {
 struct DeferredRefreshTrigger {
     context_generation: u64,
     view: AppView,
-    include_flux: bool,
+    dispatch: RefreshDispatch,
     namespace: Option<String>,
 }
 
@@ -729,12 +730,31 @@ const MUTATION_REFRESH_DELAYS_SECS: &[u64] = &[2, 5];
 const FLUX_RECONCILE_REFRESH_DELAYS_SECS: &[u64] = &[2, 5, 9];
 const MAX_RECENT_EVENTS_CACHE_ITEMS: usize = 250;
 
-fn fast_refresh_options(include_flux: bool) -> RefreshOptions {
-    RefreshOptions {
-        include_flux,
-        include_cluster_info: false,
-        include_secondary_resources: false,
+#[derive(Debug, Clone, Copy)]
+struct RefreshDispatch {
+    primary_scope: RefreshScope,
+    options: RefreshOptions,
+}
+
+impl RefreshDispatch {
+    const fn new(primary_scope: RefreshScope, scope: RefreshScope) -> Self {
+        Self {
+            primary_scope,
+            options: RefreshOptions {
+                scope,
+                include_cluster_info: false,
+                skip_core: false,
+            },
+        }
     }
+}
+
+fn fast_refresh_options(include_flux: bool) -> RefreshDispatch {
+    let mut scope = RefreshScope::CORE_OVERVIEW;
+    if include_flux {
+        scope = scope.union(RefreshScope::FLUX);
+    }
+    RefreshDispatch::new(scope, scope)
 }
 
 fn queue_deferred_refreshes(
@@ -742,7 +762,7 @@ fn queue_deferred_refreshes(
     context_generation: u64,
     view: AppView,
     namespace: Option<String>,
-    include_flux: bool,
+    dispatch: RefreshDispatch,
     delays_secs: &[u64],
 ) {
     for &delay_secs in delays_secs {
@@ -750,7 +770,7 @@ fn queue_deferred_refreshes(
         let trigger = DeferredRefreshTrigger {
             context_generation,
             view,
-            include_flux,
+            dispatch,
             namespace: namespace.clone(),
         };
         tokio::spawn(async move {
@@ -924,13 +944,14 @@ fn finish_mutation_success(
 ) {
     let active_namespace_scope = active_namespace_scope(app);
     let include_flux = force_include_flux || origin_view.is_fluxcd();
+    let mutation_dispatch = mutation_refresh_options(origin_view, include_flux);
     set_transient_status(app, runtime.status_message_clear_at, message);
     request_refresh(
         runtime.refresh_tx,
         runtime.global_state,
         runtime.client,
         active_namespace_scope.clone(),
-        refresh_options_for_view(origin_view, include_flux, false),
+        mutation_dispatch,
         runtime.refresh_state,
         runtime.snapshot_dirty,
     );
@@ -939,18 +960,25 @@ fn finish_mutation_success(
         runtime.refresh_state.context_generation,
         origin_view,
         active_namespace_scope,
-        include_flux,
+        mutation_dispatch,
         delays_secs,
     );
     runtime.auto_refresh.reset();
 }
 
-fn full_refresh_options(include_flux: bool, include_cluster_info: bool) -> RefreshOptions {
-    RefreshOptions {
-        include_flux,
-        include_cluster_info,
-        include_secondary_resources: true,
+fn full_refresh_options(include_flux: bool, include_cluster_info: bool) -> RefreshDispatch {
+    let mut scope = RefreshScope::CORE_OVERVIEW
+        .union(RefreshScope::LEGACY_SECONDARY)
+        .union(RefreshScope::LOCAL_HELM_REPOSITORIES);
+    if include_flux {
+        scope = scope.union(RefreshScope::FLUX);
     }
+    if include_cluster_info {
+        scope = scope.union(RefreshScope::METRICS);
+    }
+    let mut dispatch = RefreshDispatch::new(scope.without(RefreshScope::LEGACY_SECONDARY), scope);
+    dispatch.options.include_cluster_info = include_cluster_info;
+    dispatch
 }
 
 fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
@@ -1050,10 +1078,108 @@ fn refresh_options_for_view(
     view: AppView,
     include_flux: bool,
     force_cluster_info: bool,
-) -> RefreshOptions {
+) -> RefreshDispatch {
     let include_cluster_info = force_cluster_info || view_wants_cluster_info(view);
+    match view {
+        AppView::Dashboard => {
+            let mut dispatch = RefreshDispatch::new(
+                RefreshScope::CORE_OVERVIEW,
+                RefreshScope::CORE_OVERVIEW.union(RefreshScope::METRICS),
+            );
+            dispatch.options.include_cluster_info = include_cluster_info;
+            dispatch
+        }
+        AppView::Pods => RefreshDispatch::new(
+            RefreshScope::PODS,
+            RefreshScope::PODS.union(RefreshScope::METRICS),
+        ),
+        AppView::Services => RefreshDispatch::new(
+            RefreshScope::SERVICES,
+            RefreshScope::SERVICES.union(RefreshScope::NETWORK),
+        ),
+        AppView::Nodes => RefreshDispatch::new(
+            RefreshScope::NODES,
+            RefreshScope::NODES.union(RefreshScope::METRICS),
+        ),
+        AppView::Deployments => {
+            RefreshDispatch::new(RefreshScope::DEPLOYMENTS, RefreshScope::DEPLOYMENTS)
+        }
+        AppView::StatefulSets => {
+            RefreshDispatch::new(RefreshScope::STATEFULSETS, RefreshScope::STATEFULSETS)
+        }
+        AppView::DaemonSets => {
+            RefreshDispatch::new(RefreshScope::DAEMONSETS, RefreshScope::DAEMONSETS)
+        }
+        AppView::ReplicaSets => {
+            RefreshDispatch::new(RefreshScope::REPLICASETS, RefreshScope::REPLICASETS)
+        }
+        AppView::ReplicationControllers => RefreshDispatch::new(
+            RefreshScope::REPLICATION_CONTROLLERS,
+            RefreshScope::REPLICATION_CONTROLLERS,
+        ),
+        AppView::Jobs => RefreshDispatch::new(RefreshScope::JOBS, RefreshScope::JOBS),
+        AppView::CronJobs => RefreshDispatch::new(RefreshScope::CRONJOBS, RefreshScope::CRONJOBS),
+        AppView::Namespaces => {
+            RefreshDispatch::new(RefreshScope::NAMESPACES, RefreshScope::NAMESPACES)
+        }
+        AppView::Bookmarks => full_refresh_options(include_flux, include_cluster_info),
+        AppView::HelmCharts => RefreshDispatch::new(
+            RefreshScope::LOCAL_HELM_REPOSITORIES,
+            RefreshScope::LOCAL_HELM_REPOSITORIES,
+        ),
+        AppView::PortForwarding => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
+        AppView::Issues => RefreshDispatch::new(
+            RefreshScope::CORE_OVERVIEW,
+            RefreshScope::CORE_OVERVIEW
+                .union(RefreshScope::LEGACY_SECONDARY)
+                .union(RefreshScope::FLUX),
+        ),
+        AppView::Events => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
+        AppView::Endpoints
+        | AppView::Ingresses
+        | AppView::IngressClasses
+        | AppView::NetworkPolicies => {
+            RefreshDispatch::new(RefreshScope::NETWORK, RefreshScope::NETWORK)
+        }
+        AppView::ConfigMaps
+        | AppView::Secrets
+        | AppView::ResourceQuotas
+        | AppView::LimitRanges
+        | AppView::HPAs
+        | AppView::PodDisruptionBudgets
+        | AppView::PriorityClasses => {
+            RefreshDispatch::new(RefreshScope::CONFIG, RefreshScope::CONFIG)
+        }
+        AppView::PersistentVolumeClaims | AppView::PersistentVolumes | AppView::StorageClasses => {
+            RefreshDispatch::new(RefreshScope::STORAGE, RefreshScope::STORAGE)
+        }
+        AppView::HelmReleases => RefreshDispatch::new(RefreshScope::HELM, RefreshScope::HELM),
+        AppView::FluxCDAlertProviders
+        | AppView::FluxCDAlerts
+        | AppView::FluxCDAll
+        | AppView::FluxCDArtifacts
+        | AppView::FluxCDHelmReleases
+        | AppView::FluxCDHelmRepositories
+        | AppView::FluxCDImages
+        | AppView::FluxCDKustomizations
+        | AppView::FluxCDReceivers
+        | AppView::FluxCDSources => RefreshDispatch::new(RefreshScope::FLUX, RefreshScope::FLUX),
+        AppView::ServiceAccounts
+        | AppView::ClusterRoles
+        | AppView::Roles
+        | AppView::ClusterRoleBindings
+        | AppView::RoleBindings => {
+            RefreshDispatch::new(RefreshScope::SECURITY, RefreshScope::SECURITY)
+        }
+        AppView::Extensions => {
+            RefreshDispatch::new(RefreshScope::EXTENSIONS, RefreshScope::EXTENSIONS)
+        }
+    }
+}
+
+fn mutation_refresh_options(view: AppView, include_flux: bool) -> RefreshDispatch {
     if view_prefers_secondary_refresh(view) {
-        full_refresh_options(include_flux, include_cluster_info)
+        refresh_options_for_view(view, include_flux, false)
     } else {
         fast_refresh_options(include_flux)
     }
@@ -1147,18 +1273,29 @@ fn request_refresh(
     global_state: &mut GlobalState,
     client: &K8sClient,
     namespace: Option<String>,
-    options: RefreshOptions,
+    dispatch: RefreshDispatch,
     refresh_state: &mut RefreshRuntimeState,
     snapshot_dirty: &mut bool,
 ) {
-    let snapshot = global_state.snapshot();
-    let should_queue_secondary_backfill =
-        !options.include_secondary_resources && !snapshot.secondary_resources_loaded;
+    if dispatch.options.scope.is_empty() {
+        return;
+    }
+
+    let options = dispatch.options;
+    let immediate_scope = dispatch.primary_scope.intersection(options.scope);
+    let background_scope = options.scope.without(immediate_scope);
+
+    let core_options = RefreshOptions {
+        scope: immediate_scope,
+        include_cluster_info: options.include_cluster_info
+            && immediate_scope.contains(RefreshScope::METRICS),
+        skip_core: false,
+    };
+
     let visible_options = RefreshOptions {
-        include_flux: options.include_flux,
-        include_cluster_info: options.include_cluster_info,
-        include_secondary_resources: options.include_secondary_resources
-            || should_queue_secondary_backfill,
+        scope: immediate_scope.union(background_scope),
+        include_cluster_info: false,
+        skip_core: false,
     };
     global_state.mark_refresh_requested(visible_options);
     *snapshot_dirty = true;
@@ -1174,51 +1311,64 @@ fn request_refresh(
             global_state.clone(),
             client.clone(),
             namespace,
-            options,
+            core_options,
             request_id,
             refresh_state.context_generation,
         ));
-        if should_queue_secondary_backfill {
+        if !background_scope.is_empty() {
             refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
             refresh_state.queued_refresh = Some(QueuedRefresh {
                 request_id: refresh_state.request_seq,
                 namespace: queued_namespace,
+                primary_scope: RefreshScope::NONE,
                 options: RefreshOptions {
-                    include_flux: options.include_flux,
-                    include_cluster_info: false,
-                    include_secondary_resources: true,
+                    scope: background_scope,
+                    include_cluster_info: options.include_cluster_info,
+                    skip_core: true,
                 },
                 context_generation: refresh_state.context_generation,
             });
         }
     } else {
-        let merged_include_flux = refresh_state
+        // Merge into the already-queued request.
+        let merged_scope = refresh_state
             .queued_refresh
             .as_ref()
-            .is_some_and(|queued| queued.options.include_flux)
-            || options.include_flux;
-        let merged_include_cluster_info = refresh_state
+            .map_or(RefreshScope::NONE, |queued| queued.options.scope)
+            .union(options.scope)
+            .union(background_scope);
+        let merged_primary_scope = refresh_state
             .queued_refresh
             .as_ref()
-            .is_some_and(|queued| queued.options.include_cluster_info)
-            || options.include_cluster_info;
-        let merged_include_secondary_resources = refresh_state
+            .map_or(RefreshScope::NONE, |queued| queued.primary_scope)
+            .union(dispatch.primary_scope);
+        let merged_skip_core = refresh_state
             .queued_refresh
             .as_ref()
-            .is_some_and(|queued| queued.options.include_secondary_resources)
-            || options.include_secondary_resources
-            || should_queue_secondary_backfill;
+            .is_some_and(|queued| queued.options.skip_core)
+            && merged_primary_scope.is_empty();
         refresh_state.queued_refresh = Some(QueuedRefresh {
             request_id,
             namespace,
+            primary_scope: merged_primary_scope,
             options: RefreshOptions {
-                include_flux: merged_include_flux,
-                include_cluster_info: merged_include_cluster_info,
-                include_secondary_resources: merged_include_secondary_resources,
+                scope: merged_scope,
+                include_cluster_info: refresh_state
+                    .queued_refresh
+                    .as_ref()
+                    .is_some_and(|queued| queued.options.include_cluster_info)
+                    || options.include_cluster_info,
+                skip_core: merged_skip_core,
             },
             context_generation: refresh_state.context_generation,
         });
     }
+}
+
+fn queued_refresh_requires_two_phase(primary_scope: RefreshScope, options: RefreshOptions) -> bool {
+    !primary_scope.is_empty()
+        && !options.skip_core
+        && !options.scope.without(primary_scope).is_empty()
 }
 
 fn normalize_recent_events(
@@ -1847,16 +1997,31 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     if let Some(queued) = refresh_state.queued_refresh.take()
                         && queued.context_generation == refresh_state.context_generation
                     {
-                        refresh_state.in_flight_id = Some(queued.request_id);
-                        refresh_state.in_flight_task = Some(spawn_refresh_task(
-                            refresh_tx.clone(),
-                            global_state.clone(),
-                            client.clone(),
-                            queued.namespace,
-                            queued.options,
-                            queued.request_id,
-                            queued.context_generation,
-                        ));
+                        if queued_refresh_requires_two_phase(queued.primary_scope, queued.options) {
+                            request_refresh(
+                                &refresh_tx,
+                                &mut global_state,
+                                &client,
+                                queued.namespace,
+                                RefreshDispatch {
+                                    primary_scope: queued.primary_scope,
+                                    options: queued.options,
+                                },
+                                &mut refresh_state,
+                                &mut snapshot_dirty,
+                            );
+                        } else {
+                            refresh_state.in_flight_id = Some(queued.request_id);
+                            refresh_state.in_flight_task = Some(spawn_refresh_task(
+                                refresh_tx.clone(),
+                                global_state.clone(),
+                                client.clone(),
+                                queued.namespace,
+                                queued.options,
+                                queued.request_id,
+                                queued.context_generation,
+                            ));
+                        }
                     }
                 }
             }
@@ -2643,7 +2808,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         &mut global_state,
                         &client,
                         trigger.namespace,
-                        refresh_options_for_view(trigger.view, trigger.include_flux, false),
+                        trigger.dispatch,
                         &mut refresh_state,
                         &mut snapshot_dirty,
                     );
@@ -7146,10 +7311,11 @@ mod tests {
     use super::{
         ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
         apply_extension_fetch_result, flux_observed_state, flux_reconcile_progress_observed,
-        map_palette_detail_action, normalize_recent_events, palette_action_requires_loaded_detail,
-        prepare_bookmark_target, process_flux_reconcile_verifications, refresh_options_for_view,
-        selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
-        workbench_follow_streams_to_stop,
+        map_palette_detail_action, mutation_refresh_options, normalize_recent_events,
+        palette_action_requires_loaded_detail, prepare_bookmark_target,
+        process_flux_reconcile_verifications, queued_refresh_requires_two_phase,
+        refresh_options_for_view, selected_extension_crd, selected_flux_reconcile_resource,
+        selected_resource, workbench_follow_streams_to_stop,
     };
     use chrono::{DateTime, Utc};
     use kubectui::{
@@ -7158,7 +7324,7 @@ mod tests {
         bookmarks::BookmarkEntry,
         k8s::dtos::{CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo},
         policy::DetailAction,
-        state::ClusterSnapshot,
+        state::{ClusterSnapshot, RefreshOptions, RefreshScope},
         workbench::{PodLogsTabState, WorkbenchTabState},
     };
     use std::time::{Duration, Instant};
@@ -7393,8 +7559,167 @@ mod tests {
     #[test]
     fn events_view_uses_fast_refresh_profile() {
         let options = refresh_options_for_view(AppView::Events, false, false);
-        assert!(!options.include_secondary_resources);
-        assert!(!options.include_cluster_info);
+        assert_eq!(options.primary_scope, RefreshScope::NONE);
+        assert_eq!(options.options.scope, RefreshScope::NONE);
+    }
+
+    #[test]
+    fn dashboard_refresh_profile_runs_metrics_in_background() {
+        let dispatch = refresh_options_for_view(AppView::Dashboard, false, false);
+        assert_eq!(dispatch.primary_scope, RefreshScope::CORE_OVERVIEW);
+        assert!(dispatch.options.scope.contains(RefreshScope::METRICS));
+        assert!(dispatch.options.include_cluster_info);
+    }
+
+    #[test]
+    fn pods_and_nodes_refresh_profiles_backfill_metrics() {
+        let pods = refresh_options_for_view(AppView::Pods, false, false);
+        let nodes = refresh_options_for_view(AppView::Nodes, false, false);
+
+        assert_eq!(pods.primary_scope, RefreshScope::PODS);
+        assert!(pods.options.scope.contains(RefreshScope::METRICS));
+        assert!(!pods.options.include_cluster_info);
+        assert_eq!(nodes.primary_scope, RefreshScope::NODES);
+        assert!(nodes.options.scope.contains(RefreshScope::METRICS));
+        assert!(!nodes.options.include_cluster_info);
+    }
+
+    #[test]
+    fn services_and_issues_refresh_profiles_split_background_scopes() {
+        let services = refresh_options_for_view(AppView::Services, false, false);
+        let issues = refresh_options_for_view(AppView::Issues, false, false);
+
+        assert_eq!(services.primary_scope, RefreshScope::SERVICES);
+        assert!(services.options.scope.contains(RefreshScope::NETWORK));
+        assert_eq!(issues.primary_scope, RefreshScope::CORE_OVERVIEW);
+        assert!(
+            issues
+                .options
+                .scope
+                .contains(RefreshScope::LEGACY_SECONDARY)
+        );
+        assert!(issues.options.scope.contains(RefreshScope::FLUX));
+    }
+
+    #[test]
+    fn bucket_views_refresh_only_their_own_scope() {
+        let network = refresh_options_for_view(AppView::Endpoints, false, false);
+        let config = refresh_options_for_view(AppView::ConfigMaps, false, false);
+        let storage = refresh_options_for_view(AppView::PersistentVolumes, false, false);
+        let helm_charts = refresh_options_for_view(AppView::HelmCharts, false, false);
+        let helm_releases = refresh_options_for_view(AppView::HelmReleases, false, false);
+        let security = refresh_options_for_view(AppView::ServiceAccounts, false, false);
+        let flux = refresh_options_for_view(AppView::FluxCDAll, false, false);
+        let events = refresh_options_for_view(AppView::Events, false, false);
+        let extensions = refresh_options_for_view(AppView::Extensions, false, false);
+
+        assert_eq!(network.primary_scope, RefreshScope::NETWORK);
+        assert_eq!(network.options.scope, RefreshScope::NETWORK);
+        assert_eq!(config.primary_scope, RefreshScope::CONFIG);
+        assert_eq!(config.options.scope, RefreshScope::CONFIG);
+        assert_eq!(storage.primary_scope, RefreshScope::STORAGE);
+        assert_eq!(storage.options.scope, RefreshScope::STORAGE);
+        assert_eq!(
+            helm_charts.primary_scope,
+            RefreshScope::LOCAL_HELM_REPOSITORIES
+        );
+        assert_eq!(
+            helm_charts.options.scope,
+            RefreshScope::LOCAL_HELM_REPOSITORIES
+        );
+        assert_eq!(helm_releases.primary_scope, RefreshScope::HELM);
+        assert_eq!(helm_releases.options.scope, RefreshScope::HELM);
+        assert_eq!(security.primary_scope, RefreshScope::SECURITY);
+        assert_eq!(security.options.scope, RefreshScope::SECURITY);
+        assert_eq!(flux.primary_scope, RefreshScope::FLUX);
+        assert_eq!(flux.options.scope, RefreshScope::FLUX);
+        assert_eq!(events.primary_scope, RefreshScope::NONE);
+        assert_eq!(events.options.scope, RefreshScope::NONE);
+        assert_eq!(extensions.primary_scope, RefreshScope::EXTENSIONS);
+        assert_eq!(extensions.options.scope, RefreshScope::EXTENSIONS);
+    }
+
+    #[test]
+    fn workload_views_refresh_only_their_specific_bucket() {
+        let deployments = refresh_options_for_view(AppView::Deployments, false, false);
+        let statefulsets = refresh_options_for_view(AppView::StatefulSets, false, false);
+        let daemonsets = refresh_options_for_view(AppView::DaemonSets, false, false);
+        let replicasets = refresh_options_for_view(AppView::ReplicaSets, false, false);
+        let controllers = refresh_options_for_view(AppView::ReplicationControllers, false, false);
+        let jobs = refresh_options_for_view(AppView::Jobs, false, false);
+        let cronjobs = refresh_options_for_view(AppView::CronJobs, false, false);
+        let namespaces = refresh_options_for_view(AppView::Namespaces, false, false);
+
+        assert_eq!(deployments.primary_scope, RefreshScope::DEPLOYMENTS);
+        assert_eq!(deployments.options.scope, RefreshScope::DEPLOYMENTS);
+        assert_eq!(statefulsets.primary_scope, RefreshScope::STATEFULSETS);
+        assert_eq!(statefulsets.options.scope, RefreshScope::STATEFULSETS);
+        assert_eq!(daemonsets.primary_scope, RefreshScope::DAEMONSETS);
+        assert_eq!(daemonsets.options.scope, RefreshScope::DAEMONSETS);
+        assert_eq!(replicasets.primary_scope, RefreshScope::REPLICASETS);
+        assert_eq!(replicasets.options.scope, RefreshScope::REPLICASETS);
+        assert_eq!(
+            controllers.primary_scope,
+            RefreshScope::REPLICATION_CONTROLLERS
+        );
+        assert_eq!(
+            controllers.options.scope,
+            RefreshScope::REPLICATION_CONTROLLERS
+        );
+        assert_eq!(jobs.primary_scope, RefreshScope::JOBS);
+        assert_eq!(jobs.options.scope, RefreshScope::JOBS);
+        assert_eq!(cronjobs.primary_scope, RefreshScope::CRONJOBS);
+        assert_eq!(cronjobs.options.scope, RefreshScope::CRONJOBS);
+        assert_eq!(namespaces.primary_scope, RefreshScope::NAMESPACES);
+        assert_eq!(namespaces.options.scope, RefreshScope::NAMESPACES);
+    }
+
+    #[test]
+    fn mutation_refresh_profiles_prioritize_active_scope() {
+        let deployments = mutation_refresh_options(AppView::Deployments, false);
+        let cronjobs = mutation_refresh_options(AppView::CronJobs, false);
+        let config = mutation_refresh_options(AppView::ConfigMaps, false);
+        let network = mutation_refresh_options(AppView::Endpoints, false);
+        let helm = mutation_refresh_options(AppView::HelmReleases, false);
+
+        assert_eq!(deployments.primary_scope, RefreshScope::CORE_OVERVIEW);
+        assert_eq!(deployments.options.scope, RefreshScope::CORE_OVERVIEW);
+        assert_eq!(cronjobs.primary_scope, RefreshScope::CORE_OVERVIEW);
+        assert_eq!(cronjobs.options.scope, RefreshScope::CORE_OVERVIEW);
+        assert_eq!(config.primary_scope, RefreshScope::CONFIG);
+        assert_eq!(config.options.scope, RefreshScope::CONFIG);
+        assert_eq!(network.primary_scope, RefreshScope::NETWORK);
+        assert_eq!(network.options.scope, RefreshScope::NETWORK);
+        assert_eq!(helm.primary_scope, RefreshScope::HELM);
+        assert_eq!(helm.options.scope, RefreshScope::HELM);
+    }
+
+    #[test]
+    fn queued_refresh_only_reruns_two_phase_for_full_refreshes() {
+        assert!(queued_refresh_requires_two_phase(
+            RefreshScope::CORE_OVERVIEW,
+            RefreshOptions {
+                scope: RefreshScope::CORE_OVERVIEW.union(RefreshScope::LEGACY_SECONDARY),
+                include_cluster_info: false,
+                skip_core: false,
+            },
+        ));
+        assert!(!queued_refresh_requires_two_phase(
+            RefreshScope::NONE,
+            RefreshOptions {
+                scope: RefreshScope::LEGACY_SECONDARY,
+                include_cluster_info: false,
+                skip_core: true,
+            },
+        ));
+        assert!(!queued_refresh_requires_two_phase(
+            RefreshScope::PODS,
+            RefreshOptions {
+                scope: RefreshScope::PODS,
+                include_cluster_info: false,
+                skip_core: false,
+            },
+        ));
     }
 
     #[test]

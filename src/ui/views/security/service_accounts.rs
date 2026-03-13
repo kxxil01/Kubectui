@@ -1,7 +1,4 @@
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
     layout::{Constraint, Margin, Rect},
@@ -20,7 +17,10 @@ use crate::{
     ui::{
         bookmarked_name_cell,
         components::{active_block, default_block, default_theme},
-        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
+        filter_cache::{
+            DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+            cached_filter_indices_with_variant, data_fingerprint,
+        },
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
         sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_service_account_indices,
@@ -28,29 +28,15 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ServiceAccountDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct ServiceAccountDerivedCell {
     age: String,
     automount_label: &'static str,
 }
 
-type ServiceAccountDerivedCacheValue = Arc<Vec<ServiceAccountDerivedCell>>;
-static SERVICE_ACCOUNT_DERIVED_CACHE: LazyLock<
-    Mutex<
-        Option<(
-            ServiceAccountDerivedCacheKey,
-            ServiceAccountDerivedCacheValue,
-        )>,
-    >,
-> = LazyLock::new(|| Mutex::new(None));
+type ServiceAccountDerivedCacheValue = DerivedRowsCacheValue<ServiceAccountDerivedCell>;
+static SERVICE_ACCOUNT_DERIVED_CACHE: LazyLock<DerivedRowsCache<ServiceAccountDerivedCell>> =
+    LazyLock::new(Default::default);
 
 pub fn render_service_accounts(
     frame: &mut Frame,
@@ -216,21 +202,15 @@ fn cached_service_account_derived(
     indices: &[usize],
     variant: u64,
 ) -> ServiceAccountDerivedCacheValue {
-    let key = ServiceAccountDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.service_accounts, cluster.snapshot_version),
         variant,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = SERVICE_ACCOUNT_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&SERVICE_ACCOUNT_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&sa_idx| {
@@ -240,14 +220,8 @@ fn cached_service_account_derived(
                     automount_label: automount_label(sa.automount_service_account_token),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = SERVICE_ACCOUNT_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 fn automount_label(value: Option<bool>) -> &'static str {

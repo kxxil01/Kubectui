@@ -645,20 +645,6 @@ impl PodSortState {
 }
 
 #[inline]
-fn contains_ci_ascii(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    if needle.len() > haystack.len() {
-        return false;
-    }
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
-}
-
-#[inline]
 fn cmp_ci_ascii(left: &str, right: &str) -> std::cmp::Ordering {
     let mut l = left.bytes();
     let mut r = right.bytes();
@@ -694,9 +680,9 @@ pub fn filtered_pod_indices(
         pods.iter()
             .enumerate()
             .filter_map(|(idx, pod)| {
-                if contains_ci_ascii(&pod.name, query)
-                    || contains_ci_ascii(&pod.namespace, query)
-                    || contains_ci_ascii(&pod.status, query)
+                if contains_ci(&pod.name, query)
+                    || contains_ci(&pod.namespace, query)
+                    || contains_ci(&pod.status, query)
                 {
                     Some(idx)
                 } else {

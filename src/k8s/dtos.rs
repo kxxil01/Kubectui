@@ -433,6 +433,13 @@ pub struct ClusterInfo {
     pub pod_count: usize,
 }
 
+/// Kubernetes API server version metadata cached per client context.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ClusterVersionInfo {
+    pub git_version: String,
+    pub platform: String,
+}
+
 /// Dashboard alert severity used for color coding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum AlertSeverity {

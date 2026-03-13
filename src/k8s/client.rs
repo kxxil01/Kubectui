@@ -45,14 +45,14 @@ use crate::{
 
 pub use crate::k8s::{
     dtos::{
-        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
-        CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo, DeploymentInfo,
-        EndpointInfo, FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo,
-        JobInfo, K8sEventInfo, LimitRangeInfo, LimitSpec, NamespaceInfo, NetworkPolicyInfo,
-        NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo,
-        PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo, ReplicationControllerInfo,
-        ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject, RoleInfo, SecretInfo,
-        ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
+        ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ClusterVersionInfo, ConfigMapInfo,
+        CronJobInfo, CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo,
+        DeploymentInfo, EndpointInfo, FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo,
+        IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo, LimitSpec, NamespaceInfo,
+        NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo,
+        PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo,
+        ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject,
+        RoleInfo, SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
     },
     events::EventInfo,
 };
@@ -67,6 +67,7 @@ pub struct K8sClient {
     client: Client,
     cluster_url: String,
     cluster_context: Option<String>,
+    cluster_version_cache: Arc<tokio::sync::RwLock<Option<ClusterVersionInfo>>>,
     flux_targets_cache: Arc<tokio::sync::RwLock<Option<Vec<FluxApiTarget>>>>,
     access_review_cache: Arc<tokio::sync::RwLock<HashMap<ResourceAccessCheck, bool>>>,
 }
@@ -95,6 +96,7 @@ impl K8sClient {
             client,
             cluster_url,
             cluster_context,
+            cluster_version_cache: Arc::new(tokio::sync::RwLock::new(None)),
             flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
             access_review_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         })
@@ -117,6 +119,7 @@ impl K8sClient {
             client,
             cluster_url,
             cluster_context: Some(context.to_string()),
+            cluster_version_cache: Arc::new(tokio::sync::RwLock::new(None)),
             flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
             access_review_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         })
@@ -148,6 +151,10 @@ impl K8sClient {
     /// Returns the configured Kubernetes cluster API endpoint.
     pub fn cluster_url(&self) -> &str {
         &self.cluster_url
+    }
+
+    pub fn cluster_context(&self) -> Option<&str> {
+        self.cluster_context.as_deref()
     }
 
     /// Returns reference to the underlying Kubernetes client.
@@ -2200,33 +2207,38 @@ impl K8sClient {
             .collect())
     }
 
-    /// Fetches cluster summary information.
-    pub async fn fetch_cluster_info(&self) -> Result<ClusterInfo> {
-        let nodes = self
-            .fetch_nodes()
-            .await
-            .context("failed gathering node list for cluster summary")?;
-        let pods = self
-            .fetch_pods(None)
-            .await
-            .context("failed gathering pod list for cluster summary")?;
+    /// Fetches and caches API server version metadata for the current context.
+    pub async fn fetch_cluster_version(&self) -> Result<ClusterVersionInfo> {
+        if let Some(version) = self.cluster_version_cache.read().await.clone() {
+            return Ok(version);
+        }
 
-        let ready_nodes = nodes.iter().filter(|node| node.ready).count();
         let version = self
             .client
             .apiserver_version()
             .await
             .context("failed fetching API server version")?;
+        let info = ClusterVersionInfo {
+            git_version: version.git_version,
+            platform: version.platform,
+        };
 
-        Ok(ClusterInfo {
-            context: self.cluster_context.clone(),
-            server: self.cluster_url.clone(),
-            git_version: Some(version.git_version),
-            platform: Some(version.platform),
-            node_count: nodes.len(),
-            ready_nodes,
-            pod_count: pods.len(),
+        let mut cache = self.cluster_version_cache.write().await;
+        if let Some(version) = cache.clone() {
+            return Ok(version);
+        }
+        *cache = Some(info.clone());
+        Ok(info)
+    }
+
+    /// Fetches the cluster-wide pod count regardless of the active namespace scope.
+    pub async fn fetch_cluster_pod_count(&self) -> Result<usize> {
+        let pods: Api<Pod> = Api::all(self.client.clone());
+        let list = list_items_or_empty(&pods, &ListParams::default(), || {
+            "failed fetching pod count".to_string()
         })
+        .await?;
+        Ok(list.len())
     }
 
     pub async fn fetch_detail_action_authorizations(
@@ -3618,6 +3630,7 @@ mod tests {
             client,
             cluster_url: "http://127.0.0.1:1".to_string(),
             cluster_context: Some("test".to_string()),
+            cluster_version_cache: Arc::new(tokio::sync::RwLock::new(None)),
             flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
             access_review_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         };
