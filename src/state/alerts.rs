@@ -463,7 +463,7 @@ pub struct ClusterResourceSummary {
     pub pods_missing_cpu_request: usize,
     /// Running pods missing a memory request.
     pub pods_missing_mem_request: usize,
-    /// Running pods missing both CPU and memory limits.
+    /// Running pods missing at least one limit (CPU or memory).
     pub pods_missing_any_limit: usize,
     /// Total running pods considered for governance.
     pub total_running_pods: usize,
@@ -525,7 +525,7 @@ pub fn compute_cluster_resource_summary(snapshot: &ClusterSnapshot) -> ClusterRe
         if let Some(ref lim) = pod.memory_limit {
             total_mem_lim += parse_mib(lim);
         }
-        if pod.cpu_limit.is_none() && pod.memory_limit.is_none() {
+        if pod.cpu_limit.is_none() || pod.memory_limit.is_none() {
             summary.pods_missing_any_limit += 1;
         }
     }
@@ -1316,7 +1316,7 @@ mod tests {
         assert_eq!(summary.total_running_pods, 2);
         assert_eq!(summary.pods_missing_cpu_request, 1); // p1
         assert_eq!(summary.pods_missing_mem_request, 2); // p1 + p2
-        assert_eq!(summary.pods_missing_any_limit, 1); // p1 (both limits missing)
+        assert_eq!(summary.pods_missing_any_limit, 2); // p1 (no limits) + p2 (no mem_limit)
     }
 
     #[test]

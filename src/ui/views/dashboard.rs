@@ -27,104 +27,76 @@ use crate::{
 
 // ── dashboard computation cache ──────────────────────────────────────────────
 
-struct DashboardCache {
-    version: u64,
+struct DashboardData {
     stats: DashboardStats,
     alerts: Vec<AlertItem>,
     insights: DashboardInsights,
     workload_pct: u8,
-    status_counts: (usize, usize, usize, usize, usize),
     ns_utilization: Vec<NamespaceUtilizationSummary>,
     cluster_resources: ClusterResourceSummary,
     top_cpu_pods: Vec<PodConsumerSummary>,
     top_mem_pods: Vec<PodConsumerSummary>,
 }
 
+struct DashboardCache {
+    version: u64,
+    data: DashboardData,
+}
+
 static DASHBOARD_CACHE: LazyLock<Mutex<Option<DashboardCache>>> =
     LazyLock::new(|| Mutex::new(None));
-
-type StatusCounts = (usize, usize, usize, usize, usize);
-type DashboardData = (
-    DashboardStats,
-    Vec<AlertItem>,
-    DashboardInsights,
-    u8,
-    StatusCounts,
-    Vec<NamespaceUtilizationSummary>,
-    ClusterResourceSummary,
-    Vec<PodConsumerSummary>,
-    Vec<PodConsumerSummary>,
-);
 
 fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
     let mut guard = DASHBOARD_CACHE.lock().unwrap();
     if let Some(ref c) = *guard
         && c.version == snapshot.snapshot_version
     {
-        return (
-            c.stats,
-            c.alerts.clone(),
-            c.insights.clone(),
-            c.workload_pct,
-            c.status_counts,
-            c.ns_utilization.clone(),
-            c.cluster_resources,
-            c.top_cpu_pods.clone(),
-            c.top_mem_pods.clone(),
-        );
+        return DashboardData {
+            stats: c.data.stats,
+            alerts: c.data.alerts.clone(),
+            insights: c.data.insights.clone(),
+            workload_pct: c.data.workload_pct,
+            ns_utilization: c.data.ns_utilization.clone(),
+            cluster_resources: c.data.cluster_resources,
+            top_cpu_pods: c.data.top_cpu_pods.clone(),
+            top_mem_pods: c.data.top_mem_pods.clone(),
+        };
     }
 
     let stats = compute_dashboard_stats(snapshot);
     let alerts = compute_alerts(snapshot);
     let insights = compute_dashboard_insights(snapshot);
     let workload_pct = compute_workload_ready_percent(snapshot);
-
-    let (mut running, mut pending, mut failed, mut succeeded) = (0usize, 0usize, 0usize, 0usize);
-    for pod in &snapshot.pods {
-        if pod.status.eq_ignore_ascii_case("running") {
-            running += 1;
-        } else if pod.status.eq_ignore_ascii_case("pending") {
-            pending += 1;
-        } else if pod.status.eq_ignore_ascii_case("failed") {
-            failed += 1;
-        } else if pod.status.eq_ignore_ascii_case("succeeded") {
-            succeeded += 1;
-        }
-    }
-    let other = snapshot
-        .pods
-        .len()
-        .saturating_sub(running + pending + failed + succeeded);
-    let status_counts = (running, pending, failed, succeeded, other);
-
     let ns_utilization = compute_namespace_utilization(snapshot);
     let cluster_resources = compute_cluster_resource_summary(snapshot);
     let (top_cpu_pods, top_mem_pods) = compute_top_pod_consumers(snapshot);
 
-    *guard = Some(DashboardCache {
-        version: snapshot.snapshot_version,
+    let data = DashboardData {
         stats,
         alerts: alerts.clone(),
         insights: insights.clone(),
         workload_pct,
-        status_counts,
         ns_utilization: ns_utilization.clone(),
         cluster_resources,
         top_cpu_pods: top_cpu_pods.clone(),
         top_mem_pods: top_mem_pods.clone(),
+    };
+
+    *guard = Some(DashboardCache {
+        version: snapshot.snapshot_version,
+        data: DashboardData {
+            stats,
+            alerts,
+            insights,
+            workload_pct,
+            ns_utilization,
+            cluster_resources,
+            top_cpu_pods,
+            top_mem_pods,
+        },
     });
 
-    (
-        stats,
-        alerts,
-        insights,
-        workload_pct,
-        status_counts,
-        ns_utilization,
-        cluster_resources,
-        top_cpu_pods,
-        top_mem_pods,
-    )
+    data
 }
 
 // ── metric parsing helpers ────────────────────────────────────────────────────
@@ -155,37 +127,31 @@ fn truncate_label(s: &str, max_chars: usize) -> Cow<'_, str> {
 /// Renders the dashboard view.
 pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot) {
     let theme = default_theme();
-    let (
-        stats,
-        alerts,
-        insights,
-        workload_pct,
-        _status_counts,
-        ns_utilization,
-        cluster_resources,
-        top_cpu_pods,
-        top_mem_pods,
-    ) = cached_dashboard(snapshot);
+    let d = cached_dashboard(snapshot);
 
-    // Layout:
-    //  row 0 (8)  : cluster info | health summary
-    //  row 1 (5)  : 5 gauges (nodes ready, pods running, workload ready, cluster CPU, cluster mem)
-    //  row 2 (9)  : node utilization summary | top node pressure
-    //  row 3 (7)  : resource counts | overcommit & governance
-    //  row 4 (9)  : namespace utilization (enhanced, top 5)
-    //  row 5 (9)  : top CPU pods | top memory pods
-    //  row 6 (min): alerts
+    // On small terminals (<40 rows) show a compact 4-row layout; otherwise full 7 rows.
+    let compact = area.height < 40;
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(8),
-            Constraint::Length(5),
-            Constraint::Length(9),
-            Constraint::Length(7),
-            Constraint::Length(9),
-            Constraint::Length(9),
-            Constraint::Min(6),
-        ])
+        .constraints(if compact {
+            // Compact: cluster info + gauges + resource/overcommit + alerts
+            vec![
+                Constraint::Length(8),
+                Constraint::Length(5),
+                Constraint::Length(7),
+                Constraint::Min(4),
+            ]
+        } else {
+            vec![
+                Constraint::Length(8), // row 0: cluster info | health summary
+                Constraint::Length(5), // row 1: 5 gauges
+                Constraint::Length(9), // row 2: node saturation | top node pressure
+                Constraint::Length(7), // row 3: resource counts | overcommit & governance
+                Constraint::Length(9), // row 4: namespace utilization
+                Constraint::Length(9), // row 5: top CPU pods | top memory pods
+                Constraint::Min(6),    // row 6: alerts
+            ]
+        })
         .split(area);
 
     let top_cols = Layout::default()
@@ -197,37 +163,48 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
     render_cluster_health_summary(
         frame,
         top_cols[1],
-        &stats,
-        &insights,
+        &d.stats,
+        &d.insights,
         snapshot.issue_count,
         &theme,
     );
     render_health_gauges(
         frame,
         rows[1],
-        &stats,
-        workload_pct,
-        &cluster_resources,
+        &d.stats,
+        d.workload_pct,
+        &d.cluster_resources,
         &theme,
     );
 
-    let node_rows = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(rows[2]);
-    render_node_utilization_summary(frame, node_rows[0], &insights, &theme);
-    render_hot_nodes(frame, node_rows[1], &insights, &theme);
+    if compact {
+        // Compact layout: rows[2] = resource/overcommit, rows[3] = alerts
+        let summary_cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(rows[2]);
+        render_resource_counts(frame, summary_cols[0], &d.stats, &theme);
+        render_overcommit_governance(frame, summary_cols[1], &d.cluster_resources, &theme);
+        render_alerts(frame, rows[3], &d.alerts, &theme);
+    } else {
+        // Full layout: rows[2..6]
+        let node_rows = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(rows[2]);
+        render_node_utilization_summary(frame, node_rows[0], &d.insights, &theme);
+        render_hot_nodes(frame, node_rows[1], &d.insights, &theme);
 
-    let summary_cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
-        .split(rows[3]);
-
-    render_resource_counts(frame, summary_cols[0], &stats, &theme);
-    render_overcommit_governance(frame, summary_cols[1], &cluster_resources, &theme);
-    render_namespace_utilization(frame, rows[4], &ns_utilization, &theme);
-    render_top_pod_consumers(frame, rows[5], &top_cpu_pods, &top_mem_pods, &theme);
-    render_alerts(frame, rows[6], &alerts, &theme);
+        let summary_cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+            .split(rows[3]);
+        render_resource_counts(frame, summary_cols[0], &d.stats, &theme);
+        render_overcommit_governance(frame, summary_cols[1], &d.cluster_resources, &theme);
+        render_namespace_utilization(frame, rows[4], &d.ns_utilization, &theme);
+        render_top_pod_consumers(frame, rows[5], &d.top_cpu_pods, &d.top_mem_pods, &theme);
+        render_alerts(frame, rows[6], &d.alerts, &theme);
+    }
 }
 
 // ── cluster info ──────────────────────────────────────────────────────────────
@@ -792,7 +769,7 @@ fn render_overcommit_governance(
             ),
         ]),
         Line::from(Span::styled(
-            "  ─────────────────────────────────────────",
+            format!("  {}", "─".repeat(inner.width.saturating_sub(4) as usize)),
             dim,
         )),
         Line::from(vec![
