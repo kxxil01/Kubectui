@@ -38,35 +38,6 @@ fn default_workbench_height() -> u16 {
     DEFAULT_WORKBENCH_HEIGHT
 }
 
-fn nav_group_from_str(s: &str) -> Option<NavGroup> {
-    match s {
-        "overview" => Some(NavGroup::Overview),
-        "workloads" => Some(NavGroup::Workloads),
-        "network" => Some(NavGroup::Network),
-        "config" => Some(NavGroup::Config),
-        "storage" => Some(NavGroup::Storage),
-        "helm" => Some(NavGroup::Helm),
-        "flux" | "fluxcd" => Some(NavGroup::FluxCD),
-        "access_control" | "rbac" => Some(NavGroup::AccessControl),
-        "custom_resources" | "extensions" => Some(NavGroup::CustomResources),
-        _ => None,
-    }
-}
-
-fn nav_group_to_str(g: NavGroup) -> &'static str {
-    match g {
-        NavGroup::Overview => "overview",
-        NavGroup::Workloads => "workloads",
-        NavGroup::Network => "network",
-        NavGroup::Config => "config",
-        NavGroup::Storage => "storage",
-        NavGroup::Helm => "helm",
-        NavGroup::FluxCD => "flux",
-        NavGroup::AccessControl => "access_control",
-        NavGroup::CustomResources => "custom_resources",
-    }
-}
-
 /// Loads app state config from a given path.
 pub fn load_config_from_path(path: &Path) -> AppState {
     let mut app = AppState::default();
@@ -90,11 +61,9 @@ pub fn load_config_from_path(path: &Path) -> AppState {
         app.refresh_interval_secs = cfg.refresh_interval_secs;
         app.workbench
             .set_open_and_height(cfg.workbench_open, cfg.workbench_height);
-        for name in &cfg.collapsed_nav_groups {
-            if let Some(g) = nav_group_from_str(name) {
-                app.collapsed_groups.insert(g);
-            }
-        }
+        // collapsed_nav_groups is auto-managed by sync_collapsed_to_active_view();
+        // ignore any saved values.
+        let _ = &cfg.collapsed_nav_groups;
         app.preferences = cfg.preferences;
         app.cluster_preferences = cfg.clusters;
     }
@@ -109,18 +78,13 @@ pub fn load_config_from_path(path: &Path) -> AppState {
 /// Saves app namespace config to a given path.
 pub fn save_config_to_path(app: &AppState, path: &Path) {
     let theme_name = crate::ui::theme::active_theme().name;
-    let collapsed: Vec<String> = app
-        .collapsed_groups
-        .iter()
-        .map(|g| nav_group_to_str(*g).to_string())
-        .collect();
     let cfg = AppConfig {
         namespace: app.current_namespace.clone(),
         theme: Some(theme_name.to_string()),
         refresh_interval_secs: app.refresh_interval_secs,
         workbench_open: app.workbench.open,
         workbench_height: app.workbench.height,
-        collapsed_nav_groups: collapsed,
+        collapsed_nav_groups: Vec::new(),
         preferences: app.preferences.clone(),
         clusters: app.cluster_preferences.clone(),
     };
