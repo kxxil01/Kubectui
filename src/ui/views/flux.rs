@@ -209,7 +209,11 @@ pub fn filtered_flux_indices_for_view(
                 },
                 |resource| resource.name.as_str(),
                 |resource| resource.namespace.as_deref().unwrap_or(""),
-                |resource| resource.age,
+                |resource| {
+                    resource
+                        .created_at
+                        .map(crate::ui::views::filtering::age_duration_now)
+                },
             )
         },
     )

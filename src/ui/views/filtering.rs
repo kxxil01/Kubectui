@@ -49,7 +49,7 @@ pub fn filtered_node_indices(
         |node, needle| contains_ci(&node.name, needle),
         |node| node.name.as_str(),
         |_node| "",
-        |node| node.created_at.map(node_age_duration),
+        |node| node.created_at.map(age_duration_now),
     )
 }
 
@@ -69,7 +69,7 @@ pub fn filtered_service_indices(
         },
         |service| service.name.as_str(),
         |service| service.namespace.as_str(),
-        |service| service.age,
+        |service| service.created_at.map(age_duration_now),
     )
 }
 
@@ -87,7 +87,7 @@ pub fn filtered_deployment_indices(
         },
         |deployment| deployment.name.as_str(),
         |deployment| deployment.namespace.as_str(),
-        |deployment| deployment.age,
+        |deployment| deployment.created_at.map(age_duration_now),
     )
 }
 
@@ -107,7 +107,7 @@ pub fn filtered_statefulset_indices(
         },
         |statefulset| statefulset.name.as_str(),
         |statefulset| statefulset.namespace.as_str(),
-        |statefulset| statefulset.age,
+        |statefulset| statefulset.created_at.map(age_duration_now),
     )
 }
 
@@ -132,7 +132,7 @@ pub fn filtered_daemonset_indices(
         },
         |daemonset| daemonset.name.as_str(),
         |daemonset| daemonset.namespace.as_str(),
-        |daemonset| daemonset.age,
+        |daemonset| daemonset.created_at.map(age_duration_now),
     )
 }
 
@@ -152,7 +152,7 @@ pub fn filtered_job_indices(
         },
         |job| job.name.as_str(),
         |job| job.namespace.as_str(),
-        |job| job.age,
+        |job| job.created_at.map(age_duration_now),
     )
 }
 
@@ -172,7 +172,7 @@ pub fn filtered_cronjob_indices(
         },
         |cronjob| cronjob.name.as_str(),
         |cronjob| cronjob.namespace.as_str(),
-        |cronjob| cronjob.age,
+        |cronjob| cronjob.created_at.map(age_duration_now),
     )
 }
 
@@ -192,7 +192,7 @@ pub fn filtered_resource_quota_indices(
         },
         |quota| quota.name.as_str(),
         |quota| quota.namespace.as_str(),
-        |quota| quota.age,
+        |quota| quota.created_at.map(age_duration_now),
     )
 }
 
@@ -215,7 +215,7 @@ pub fn filtered_limit_range_indices(
         },
         |limit_range| limit_range.name.as_str(),
         |limit_range| limit_range.namespace.as_str(),
-        |limit_range| limit_range.age,
+        |limit_range| limit_range.created_at.map(age_duration_now),
     )
 }
 
@@ -236,7 +236,7 @@ pub fn filtered_pdb_indices(
         },
         |pdb| pdb.name.as_str(),
         |pdb| pdb.namespace.as_str(),
-        |pdb| pdb.age,
+        |pdb| pdb.created_at.map(age_duration_now),
     )
 }
 
@@ -288,7 +288,7 @@ pub fn filtered_replicaset_indices(
         },
         |replicaset| replicaset.name.as_str(),
         |replicaset| replicaset.namespace.as_str(),
-        |replicaset| replicaset.age,
+        |replicaset| replicaset.created_at.map(age_duration_now),
     )
 }
 
@@ -306,7 +306,7 @@ pub fn filtered_replication_controller_indices(
         },
         |controller| controller.name.as_str(),
         |controller| controller.namespace.as_str(),
-        |controller| controller.age,
+        |controller| controller.created_at.map(age_duration_now),
     )
 }
 
@@ -325,7 +325,7 @@ pub fn filtered_service_account_indices(
         },
         |service_account| service_account.name.as_str(),
         |service_account| service_account.namespace.as_str(),
-        |service_account| service_account.age,
+        |service_account| service_account.created_at.map(age_duration_now),
     )
 }
 
@@ -341,7 +341,7 @@ pub fn filtered_role_indices(
         |role, needle| contains_ci(&role.name, needle) || contains_ci(&role.namespace, needle),
         |role| role.name.as_str(),
         |role| role.namespace.as_str(),
-        |role| role.age,
+        |role| role.created_at.map(age_duration_now),
     )
 }
 
@@ -361,7 +361,7 @@ pub fn filtered_role_binding_indices(
         },
         |binding| binding.name.as_str(),
         |binding| binding.namespace.as_str(),
-        |binding| binding.age,
+        |binding| binding.created_at.map(age_duration_now),
     )
 }
 
@@ -377,7 +377,7 @@ pub fn filtered_cluster_role_indices(
         |role, needle| contains_ci(&role.name, needle),
         |role| role.name.as_str(),
         |_role| "",
-        |role| role.age,
+        |role| role.created_at.map(age_duration_now),
     )
 }
 
@@ -395,7 +395,7 @@ pub fn filtered_cluster_role_binding_indices(
         },
         |binding| binding.name.as_str(),
         |_binding| "",
-        |binding| binding.age,
+        |binding| binding.created_at.map(age_duration_now),
     )
 }
 
@@ -606,7 +606,8 @@ pub fn filtered_indices_for_view(
     }
 }
 
-fn node_age_duration(created_at: chrono::DateTime<chrono::Utc>) -> std::time::Duration {
+/// Computes a fresh age duration from a creation timestamp, used for sorting.
+pub(crate) fn age_duration_now(created_at: chrono::DateTime<chrono::Utc>) -> std::time::Duration {
     let age_secs = (chrono::Utc::now().timestamp() - created_at.timestamp()).max(0) as u64;
     std::time::Duration::from_secs(age_secs)
 }
