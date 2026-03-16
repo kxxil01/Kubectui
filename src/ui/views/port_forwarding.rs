@@ -19,8 +19,14 @@ pub fn render_port_forwarding(
     registry: &TunnelRegistry,
     selected: usize,
     search: &str,
+    focused: bool,
 ) {
     let theme = default_theme();
+    let border_style = if focused {
+        theme.border_active_style()
+    } else {
+        theme.border_style()
+    };
     let tunnels = registry.ordered_tunnels();
 
     let items: Vec<_> = tunnels
@@ -51,7 +57,7 @@ pub fn render_port_forwarding(
             ]))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(theme.border_active_style());
+            .border_style(border_style);
         let p = Paragraph::new(Span::styled(msg, theme.muted_style())).block(block);
         frame.render_widget(p, area);
         return;
@@ -118,7 +124,7 @@ pub fn render_port_forwarding(
             }))
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
-            .border_style(theme.border_active_style()),
+            .border_style(border_style),
     );
 
     frame.render_widget(table, area);

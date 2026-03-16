@@ -496,3 +496,12 @@ pub fn active_block(title: &str) -> Block<'static> {
         .border_style(theme.border_active_style())
         .style(Style::default().bg(theme.bg))
 }
+
+/// Returns an active or default block based on whether the panel is focused.
+pub fn content_block(title: &str, focused: bool) -> Block<'static> {
+    if focused {
+        active_block(title)
+    } else {
+        default_block(title)
+    }
+}

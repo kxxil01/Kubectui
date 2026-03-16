@@ -1984,6 +1984,11 @@ impl AppState {
 
     pub fn workbench_close_active_tab(&mut self) {
         self.workbench.close_active_tab();
+        self.sync_workbench_focus();
+    }
+
+    /// Resets focus to Content when the workbench has no tabs left.
+    pub fn sync_workbench_focus(&mut self) {
         if self.workbench.tabs.is_empty() && self.focus == Focus::Workbench {
             self.focus = Focus::Content;
         }
@@ -2674,6 +2679,9 @@ impl AppState {
         // Common workbench keys (apply to all tab types)
         if key.code == KeyCode::Char('z') {
             return AppAction::WorkbenchToggleMaximize;
+        }
+        if key.code == KeyCode::Char('b') {
+            return AppAction::ToggleWorkbench;
         }
 
         let action_history_len = self.action_history.entries().len();
@@ -4284,6 +4292,8 @@ mod tests {
 
     #[test]
     fn workbench_keybindings_emit_expected_actions() {
+        use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+
         let mut app = AppState::default();
 
         assert_eq!(
@@ -4291,6 +4301,11 @@ mod tests {
             AppAction::ToggleWorkbench
         );
 
+        // Add a tab (background so open stays false), then toggle open
+        app.workbench
+            .ensure_background_tab(WorkbenchTabState::ActionHistory(
+                ActionHistoryTabState::default(),
+            ));
         app.toggle_workbench();
         assert_eq!(
             app.handle_key_event(KeyEvent::from(KeyCode::Char(']'))),
@@ -4311,6 +4326,23 @@ mod tests {
         assert_eq!(
             app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)),
             AppAction::WorkbenchDecreaseHeight
+        );
+    }
+
+    #[test]
+    fn workbench_b_key_toggles_from_workbench_focus() {
+        use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+
+        let mut app = AppState::default();
+        app.workbench
+            .ensure_background_tab(WorkbenchTabState::ActionHistory(
+                ActionHistoryTabState::default(),
+            ));
+        app.toggle_workbench();
+        app.focus = Focus::Workbench;
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
+            AppAction::ToggleWorkbench
         );
     }
 
@@ -4470,11 +4502,17 @@ mod tests {
     /// Verifies namespace persistence round-trip via config helpers.
     #[test]
     fn test_namespace_persistence() {
+        use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+
         let path =
             std::env::temp_dir().join(format!("kubectui-config-test-{}.json", std::process::id()));
 
         let mut app = AppState::default();
         app.set_namespace("demo".to_string());
+        app.workbench
+            .ensure_background_tab(WorkbenchTabState::ActionHistory(
+                ActionHistoryTabState::default(),
+            ));
         app.toggle_workbench();
         app.workbench.height = 15;
         save_config_to_path(&app, &path);

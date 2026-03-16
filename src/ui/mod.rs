@@ -30,7 +30,7 @@ use crate::{
         alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
     },
     ui::{
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         theme::Theme,
     },
 };
@@ -535,10 +535,14 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         }
     };
 
+    let content_focused = app.focus == Focus::Content;
+
     {
         let _view_scope = profiling::span_scope(app.view().profiling_key());
         match app.view() {
-            AppView::Dashboard => views::dashboard::render_dashboard(frame, content, cluster),
+            AppView::Dashboard => {
+                views::dashboard::render_dashboard(frame, content, cluster, content_focused)
+            }
             AppView::Nodes => views::nodes::render_nodes(
                 frame,
                 content,
@@ -548,6 +552,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 app.workload_sort(),
                 &visible_columns,
+                content_focused,
             ),
             AppView::Pods => {
                 render_pods_widget(
@@ -559,6 +564,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     app.search_query(),
                     app.pod_sort(),
                     &visible_columns,
+                    content_focused,
                 );
             }
             AppView::ReplicaSets => views::replicasets::render_replicasets(
@@ -569,6 +575,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::ReplicationControllers => {
                 views::replication_controllers::render_replication_controllers(
@@ -579,6 +586,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     app.selected_idx(),
                     app.search_query(),
                     app.workload_sort(),
+                    content_focused,
                 )
             }
             AppView::HelmCharts => views::helm::render_helm_repos(
@@ -587,6 +595,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::HelmReleases => views::helm::render_helm_releases(
                 frame,
@@ -595,6 +604,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::FluxCDAlertProviders
             | AppView::FluxCDAlerts
@@ -614,6 +624,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 app.view(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::Endpoints => views::endpoints::render_endpoints(
                 frame,
@@ -622,6 +633,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::Ingresses => views::ingresses::render_ingresses(
                 frame,
@@ -630,6 +642,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::IngressClasses => views::ingresses::render_ingress_classes(
                 frame,
@@ -638,6 +651,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::NetworkPolicies => views::network_policies::render_network_policies(
                 frame,
@@ -646,6 +660,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::PortForwarding => views::port_forwarding::render_port_forwarding(
                 frame,
@@ -653,6 +668,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 &app.tunnel_registry,
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::ConfigMaps => views::config::render_config_maps(
                 frame,
@@ -661,6 +677,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::Secrets => views::config::render_secrets(
                 frame,
@@ -669,6 +686,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::HPAs => views::hpas::render_hpas(
                 frame,
@@ -677,6 +695,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::PriorityClasses => views::priority_classes::render_priority_classes(
                 frame,
@@ -685,6 +704,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::PersistentVolumeClaims => views::storage::render_pvcs(
                 frame,
@@ -694,6 +714,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::PersistentVolumes => views::storage::render_pvs(
                 frame,
@@ -703,6 +724,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::StorageClasses => views::storage::render_storage_classes(
                 frame,
@@ -712,6 +734,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::Namespaces => views::namespaces::render_namespaces(
                 frame,
@@ -720,6 +743,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::Events => views::events::render_events(
                 frame,
@@ -728,6 +752,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::Issues => views::issue_center::render_issues(
                 frame,
@@ -735,6 +760,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::Bookmarks => views::bookmarks::render_bookmarks(
                 frame,
@@ -743,6 +769,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.bookmarks(),
                 app.selected_idx(),
                 app.search_query(),
+                content_focused,
             ),
             AppView::Services => views::services::render_services(
                 frame,
@@ -752,6 +779,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::Deployments => views::deployments::render_deployments(
                 frame,
@@ -762,6 +790,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 app.workload_sort(),
                 &visible_columns,
+                content_focused,
             ),
             AppView::StatefulSets => views::statefulsets::render_statefulsets(
                 frame,
@@ -771,6 +800,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::DaemonSets => views::daemonsets::render_daemonsets(
                 frame,
@@ -780,6 +810,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::Jobs => views::jobs::render_jobs(
                 frame,
@@ -789,6 +820,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::CronJobs => views::cronjobs::render_cronjobs(
                 frame,
@@ -798,6 +830,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::ServiceAccounts => views::security::service_accounts::render_service_accounts(
                 frame,
@@ -807,6 +840,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::Roles => views::security::roles::render_roles(
                 frame,
@@ -816,6 +850,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::RoleBindings => views::security::role_bindings::render_role_bindings(
                 frame,
@@ -825,6 +860,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::ClusterRoles => views::security::cluster_roles::render_cluster_roles(
                 frame,
@@ -834,6 +870,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::ClusterRoleBindings => {
                 views::security::cluster_role_bindings::render_cluster_role_bindings(
@@ -844,6 +881,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     app.selected_idx(),
                     app.search_query(),
                     app.workload_sort(),
+                    content_focused,
                 )
             }
             AppView::ResourceQuotas => views::governance::quotas::render_resource_quotas(
@@ -854,6 +892,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::LimitRanges => views::governance::limits::render_limit_ranges(
                 frame,
@@ -863,6 +902,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::PodDisruptionBudgets => views::governance::pdbs::render_pdbs(
                 frame,
@@ -872,9 +912,10 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                content_focused,
             ),
             AppView::Extensions => {
-                views::extensions::render_extensions(frame, content, cluster, app)
+                views::extensions::render_extensions(frame, content, cluster, app, content_focused)
             }
         }
     }
@@ -1069,6 +1110,7 @@ fn render_pods_widget(
     query: &str,
     pod_sort: Option<PodSortState>,
     visible_columns: &[crate::columns::ColumnDef],
+    focused: bool,
 ) {
     let theme = default_theme();
     let cache_variant = pod_sort.map_or(0, PodSortState::cache_variant);
@@ -1349,12 +1391,13 @@ fn render_pods_widget(
         .unwrap_or_default();
     let title = format!(" 🐳 Pods ({total}){sort_suffix} ");
     let block = if query.is_empty() {
-        active_block(&title)
+        content_block(&title, focused)
     } else {
         let all = cluster.pods.len();
-        active_block(&format!(
-            " 🐳 Pods ({total} of {all}) [/{query}]{sort_suffix}"
-        ))
+        content_block(
+            &format!(" 🐳 Pods ({total} of {all}) [/{query}]{sort_suffix}"),
+            focused,
+        )
     };
 
     let constraints = crate::columns::visible_constraints(visible_columns);

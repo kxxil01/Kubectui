@@ -15,7 +15,7 @@ use crate::{
     bookmarks::{BookmarkEntry, filtered_bookmark_indices, resource_exists},
     state::ClusterSnapshot,
     ui::{
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         format_age, responsive_table_widths, table_viewport_rows, table_window,
     },
 };
@@ -27,6 +27,7 @@ pub fn render_bookmarks(
     bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search.trim();
@@ -129,7 +130,7 @@ pub fn render_bookmarks(
         ),
     )
     .header(header)
-    .block(active_block(&title))
+    .block(content_block(&title, focused))
     .row_highlight_style(theme.selection_style())
     .highlight_symbol(theme.highlight_symbol())
     .highlight_spacing(HighlightSpacing::Always);
@@ -163,7 +164,15 @@ mod tests {
         let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
         terminal
             .draw(|frame| {
-                render_bookmarks(frame, frame.area(), &ClusterSnapshot::default(), &[], 0, "");
+                render_bookmarks(
+                    frame,
+                    frame.area(),
+                    &ClusterSnapshot::default(),
+                    &[],
+                    0,
+                    "",
+                    true,
+                );
             })
             .expect("draw bookmarks");
     }
@@ -184,7 +193,7 @@ mod tests {
         }];
         terminal
             .draw(|frame| {
-                render_bookmarks(frame, frame.area(), &snapshot, &bookmarks, 0, "");
+                render_bookmarks(frame, frame.area(), &snapshot, &bookmarks, 0, "", true);
             })
             .expect("draw bookmarks");
     }
