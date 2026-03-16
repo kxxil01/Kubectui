@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Gauge, LineGauge, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Cell, Gauge, LineGauge, Paragraph, Row, Table, Wrap},
 };
 
 use crate::{
@@ -909,59 +909,81 @@ fn render_namespace_utilization(
         return;
     }
 
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
-
     let dim = Style::default().fg(theme.fg_dim);
-    let header = Line::from(vec![Span::styled(
-        format!(
-            "  {:<18} {:>5} {:>8} {:>8} {:>6} {:>8} {:>8} {:>6}",
-            "Namespace", "Pods", "CPU Use", "CPU Req", "%CPU/R", "Mem Use", "Mem Req", "%MEM/R"
-        ),
-        theme.header_style(),
-    )]);
 
-    let mut lines = Vec::with_capacity(7);
-    lines.push(header);
+    let header = Row::new([
+        Cell::from(Span::styled("Namespace", theme.header_style())),
+        Cell::from(Span::styled("Pods", theme.header_style())),
+        Cell::from(Span::styled("CPU Use", theme.header_style())),
+        Cell::from(Span::styled("CPU Req", theme.header_style())),
+        Cell::from(Span::styled("%CPU/R", theme.header_style())),
+        Cell::from(Span::styled("Mem Use", theme.header_style())),
+        Cell::from(Span::styled("Mem Req", theme.header_style())),
+        Cell::from(Span::styled("%MEM/R", theme.header_style())),
+    ])
+    .height(1)
+    .style(theme.header_style());
 
-    for ns in ns_util.iter().take(TOP_N) {
-        let cpu_used = format_millicores(ns.cpu_usage_m);
-        let cpu_req = if ns.cpu_request_m > 0 {
-            format_millicores(ns.cpu_request_m)
-        } else {
-            "-".to_string()
-        };
-        let mem_used = format_mib(ns.mem_usage_mib);
-        let mem_req = if ns.mem_request_mib > 0 {
-            format_mib(ns.mem_request_mib)
-        } else {
-            "-".to_string()
-        };
-        let ns_name = truncate_label(&ns.namespace, 18);
+    let rows: Vec<Row> = ns_util
+        .iter()
+        .take(TOP_N)
+        .map(|ns| {
+            let cpu_used = format_millicores(ns.cpu_usage_m);
+            let cpu_req = if ns.cpu_request_m > 0 {
+                format_millicores(ns.cpu_request_m)
+            } else {
+                "-".to_string()
+            };
+            let mem_used = format_mib(ns.mem_usage_mib);
+            let mem_req = if ns.mem_request_mib > 0 {
+                format_mib(ns.mem_request_mib)
+            } else {
+                "-".to_string()
+            };
+            let ns_name = truncate_label(&ns.namespace, 24);
 
-        let prefix = format!(
-            "  {:<18} {:>5} {:>8} {:>8} ",
-            ns_name, ns.pod_count, cpu_used, cpu_req
-        );
-        let cpu_bar = ns
-            .cpu_req_utilization_pct
-            .map(|p| mini_bar(u64::from(p), theme))
-            .unwrap_or_else(|| vec![Span::styled("    -", dim)]);
-        let mid = format!(" {:>8} {:>8} ", mem_used, mem_req);
-        let mem_bar = ns
-            .mem_req_utilization_pct
-            .map(|p| mini_bar(u64::from(p), theme))
-            .unwrap_or_else(|| vec![Span::styled("    -", dim)]);
+            let cpu_bar_spans = ns
+                .cpu_req_utilization_pct
+                .map(|p| mini_bar(u64::from(p), theme))
+                .unwrap_or_else(|| vec![Span::styled("    -", dim)]);
+            let mem_bar_spans = ns
+                .mem_req_utilization_pct
+                .map(|p| mini_bar(u64::from(p), theme))
+                .unwrap_or_else(|| vec![Span::styled("    -", dim)]);
 
-        let mut spans = vec![Span::styled(prefix, dim)];
-        spans.extend(cpu_bar);
-        spans.push(Span::styled(mid, dim));
-        spans.extend(mem_bar);
-        lines.push(Line::from(spans));
-    }
+            Row::new(vec![
+                Cell::from(Span::styled(ns_name.into_owned(), dim)),
+                Cell::from(Span::styled(
+                    format!("{}", ns.pod_count),
+                    Style::default().fg(theme.fg),
+                )),
+                Cell::from(Span::styled(cpu_used, Style::default().fg(theme.accent))),
+                Cell::from(Span::styled(cpu_req, dim)),
+                Cell::from(Line::from(cpu_bar_spans)),
+                Cell::from(Span::styled(mem_used, Style::default().fg(theme.accent2))),
+                Cell::from(Span::styled(mem_req, dim)),
+                Cell::from(Line::from(mem_bar_spans)),
+            ])
+        })
+        .collect();
 
-    let para = Paragraph::new(lines);
-    frame.render_widget(para, inner);
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Min(16),    // Namespace
+            Constraint::Length(6),  // Pods
+            Constraint::Length(9),  // CPU Use
+            Constraint::Length(9),  // CPU Req
+            Constraint::Length(11), // %CPU/R (bar + pct)
+            Constraint::Length(9),  // Mem Use
+            Constraint::Length(9),  // Mem Req
+            Constraint::Min(11),    // %MEM/R (bar + pct, stretches)
+        ],
+    )
+    .header(header)
+    .block(block);
+
+    frame.render_widget(table, area);
 }
 
 // ── alerts ────────────────────────────────────────────────────────────────────
