@@ -45,21 +45,27 @@ pub fn render_port_forwarding(
     };
 
     if items.is_empty() {
-        let msg = if search.is_empty() {
-            "No active port forwards. Open a Pod detail and press [f] to create one."
+        let (icon, icon_color, msg) = if search.is_empty() {
+            (
+                "○ ",
+                theme.fg_dim,
+                "No active port forwards. Open a Pod detail and press [f] to create one.",
+            )
         } else {
-            "No matching tunnels."
+            ("⊘ ", theme.warning, "No matching tunnels.")
         };
-        let block = Block::default()
-            .title(Line::from(vec![
-                Span::styled(" Port Forwarding ", theme.title_style()),
-                Span::styled("(0) ", theme.muted_style()),
+        frame.render_widget(
+            Paragraph::new(Line::from(vec![
+                Span::styled(icon, Style::default().fg(icon_color)),
+                Span::styled(msg, theme.inactive_style()),
             ]))
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_style);
-        let p = Paragraph::new(Span::styled(msg, theme.muted_style())).block(block);
-        frame.render_widget(p, area);
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(crate::ui::components::content_block(
+                "Port Forwarding",
+                focused,
+            )),
+            area,
+        );
         return;
     }
 
