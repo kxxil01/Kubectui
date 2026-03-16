@@ -85,6 +85,26 @@ pub(crate) fn utilization_style(pct: u64, theme: &Theme) -> Style {
     }
 }
 
+/// Builds a compact utilization bar with percentage for use in table cells.
+///
+/// Example output: `▓▓▓▓▓▓░░ 45%` (8-char bar + percentage).
+pub(crate) fn utilization_bar(pct: u64, theme: &Theme) -> Line<'static> {
+    let pct = pct.min(100);
+    const BAR_WIDTH: usize = 8;
+    let filled = ((pct as usize) * BAR_WIDTH + 50) / 100; // round
+    let empty = BAR_WIDTH - filled;
+    let bar_filled: String = "▓".repeat(filled);
+    let bar_empty: String = "░".repeat(empty);
+    let label = format!(" {pct:>3}%");
+    let style = utilization_style(pct, theme);
+    let dim = Style::default().fg(theme.fg_dim);
+    Line::from(vec![
+        Span::styled(bar_filled, style),
+        Span::styled(bar_empty, dim),
+        Span::styled(label, style),
+    ])
+}
+
 pub(crate) fn bookmarked_name_cell<'a>(
     resource: &ResourceRef,
     bookmarks: &[BookmarkEntry],
@@ -1364,10 +1384,7 @@ fn render_pods_widget(
                                     };
                                     if denom > 0 {
                                         let pct = usage * 100 / denom;
-                                        Cell::from(Span::styled(
-                                            format!("{pct}%"),
-                                            utilization_style(pct, &theme),
-                                        ))
+                                        Cell::from(utilization_bar(pct, &theme))
                                     } else {
                                         Cell::from(Span::styled("-", dim_style))
                                     }
