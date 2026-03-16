@@ -2958,6 +2958,50 @@ mod tests {
     }
 
     #[test]
+    fn search_esc_resets_selected_idx() {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
+        app.selected_idx = 5;
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        assert_eq!(app.selected_idx, 0);
+        assert!(app.search_query().is_empty());
+    }
+
+    #[test]
+    fn delete_confirm_accepts_lowercase_d() {
+        let mut app = AppState::default();
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".into(), "default".into())),
+            yaml: Some("kind: Pod".into()),
+            confirm_delete: true,
+            ..DetailViewState::default()
+        });
+        let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('d')));
+        assert_eq!(action, AppAction::DeleteResource);
+    }
+
+    #[test]
+    fn sync_workbench_focus_resets_when_tabs_empty() {
+        let mut app = AppState::default();
+        app.focus = Focus::Workbench;
+        app.sync_workbench_focus();
+        assert_eq!(app.focus, Focus::Content);
+    }
+
+    #[test]
+    fn sync_workbench_focus_preserves_when_tabs_exist() {
+        use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+        let mut app = AppState::default();
+        app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
+        app.focus = Focus::Workbench;
+        app.sync_workbench_focus();
+        assert_eq!(app.focus, Focus::Workbench);
+    }
+
+    #[test]
     fn pod_logs_search_mode_accepts_shortcut_characters_as_text() {
         let mut app = AppState::default();
         app.detail_view = Some(DetailViewState {
