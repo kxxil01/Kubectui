@@ -33,7 +33,7 @@ cargo build --release
 
 ## Features
 
-- **46 resource views** across 9 sidebar groups — Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Services, Endpoints, Ingresses, ConfigMaps, Secrets, HPAs, PVCs, PVs, StorageClasses, RBAC, Events, Namespaces, FluxCD resources, and more
+- **46 resource views** across 9 auto-collapsing sidebar groups — Pods, Deployments, StatefulSets, DaemonSets, Jobs, CronJobs, Services, Endpoints, Ingresses, ConfigMaps, Secrets, HPAs, PVCs, PVs, StorageClasses, RBAC, Events, Namespaces, FluxCD resources, and more
 - **Custom Resource Definitions** — browse CRDs, drill into instances, view full YAML via dynamic API
 - **Bottom workbench** with 9 persistent tab types — Action History, YAML, Decoded Secret, Timeline, Pod Logs, Workload Logs, Exec, Port-Forward, and Relations
 - **Action palette** (`:`) — unified fuzzy search for navigation, column toggles, and context-aware resource actions
@@ -63,11 +63,12 @@ cargo build --release
 - **Namespace filtering** across all views
 - **Fuzzy search** (`/`) on every resource list
 - **Dashboard** with 5 health/utilization gauges (Nodes Ready, Pods Running, Workload Ready, Cluster CPU, Cluster Mem), overcommitment & governance panel, top-5 CPU/memory pod consumers, namespace utilization with %CPU/R and %MEM/R, alerts, and compact layout for small terminals
-- **Resource utilization** — 10 hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), node CPU/Memory columns with used/alloc/pct% and threshold coloring, powered by metrics-server with graceful degradation
+- **Resource utilization** — 10 hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), node CPU/Memory columns with human-readable units (e.g., `4.2Gi/13.0Gi`), threshold coloring, powered by metrics-server with graceful degradation
 - **Live watch updates** — 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs) update in real-time via Kubernetes watch streams instead of polling, with automatic reconnect and drift-protection relist on manual refresh
 - **Network resilience** — connection health indicator (●/◐/○), graceful backoff on API failures, staleness indicator, manual refresh bypass, error truncation
 - **UI/UX polish** — loading spinners, sort direction colors, persistent search bar with result count, YAML syntax highlighting, toast notifications, detail metadata expand/collapse
 - **Configuration persistence** — namespace, theme, workbench state, refresh interval
+- **Auto-collapsing sidebar** — only the active view's group is expanded; other groups collapse automatically to keep all 9 group headers visible on any terminal size
 
 ---
 
@@ -134,13 +135,14 @@ Press `:` from anywhere to open. Shows context-aware resource actions when a res
 
 | Key | Action |
 |-----|--------|
-| Type | Filter by action name or view name |
+| Type | Filter by action name or view name (all keys including `j`/`k` type into the search) |
 | `↑` / `↓` | Navigate results |
 | `Enter` | Execute action or navigate to view |
 | `Esc` | Close |
 
 > Tip: type `scl` to find Scale, `lg` for Logs, `dep` for Deployments, etc. Actions are filtered by what the current resource supports.
 > Tip: permission-gated actions are also filtered by your current RBAC when KubecTUI can determine it.
+> Tip: namespace (`~`) and context (`c`) pickers also support type-to-filter — all keys go to search, use arrow keys to navigate.
 
 ### Workbench
 
@@ -228,6 +230,7 @@ kubectui [OPTIONS]
 - **Metrics**: CPU/memory metrics require `metrics-server` to be installed in the cluster
 - **Restart vs Scale**: use `R` for a rolling restart (zero-downtime), use `s` to change replica count
 - **Auto-refresh**: cluster data refreshes every 30 seconds. Customize via `refresh_interval_secs` in config
+- **Sidebar groups**: groups auto-collapse when you switch views — only the active view's group stays expanded. Press `Enter` on any group header to temporarily expand it
 
 ---
 
