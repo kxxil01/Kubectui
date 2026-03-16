@@ -94,24 +94,6 @@ impl NamespacePicker {
                 }
                 NamespacePickerAction::None
             }
-            KeyCode::Char('j') if key.modifiers == KeyModifiers::NONE => {
-                let len = self.filtered_namespaces().len();
-                if len > 0 {
-                    self.selected_index = (self.selected_index + 1) % len;
-                }
-                NamespacePickerAction::None
-            }
-            KeyCode::Char('k') if key.modifiers == KeyModifiers::NONE => {
-                let len = self.filtered_namespaces().len();
-                if len > 0 {
-                    self.selected_index = if self.selected_index == 0 {
-                        len - 1
-                    } else {
-                        self.selected_index - 1
-                    };
-                }
-                NamespacePickerAction::None
-            }
             KeyCode::Backspace => {
                 self.search_query.pop();
                 self.selected_index = 0;
@@ -301,7 +283,7 @@ mod tests {
     }
 
     #[test]
-    fn test_namespace_picker_vim_navigation() {
+    fn test_namespace_picker_arrow_navigation() {
         let mut picker = NamespacePicker::new(vec![
             "all".to_string(),
             "default".to_string(),
@@ -309,11 +291,26 @@ mod tests {
         ]);
         picker.open();
 
-        picker.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
         assert_eq!(picker.selected_index(), 1);
 
-        picker.handle_key(KeyEvent::from(KeyCode::Char('k')));
+        picker.handle_key(KeyEvent::from(KeyCode::Up));
         assert_eq!(picker.selected_index(), 0);
+    }
+
+    #[test]
+    fn test_namespace_picker_j_k_appends_to_search() {
+        let mut picker = NamespacePicker::new(vec![
+            "all".to_string(),
+            "default".to_string(),
+            "kube-system".to_string(),
+        ]);
+        picker.open();
+
+        picker.handle_key(KeyEvent::from(KeyCode::Char('k')));
+        // 'k' should filter to "kube-system", not navigate
+        let filtered = picker.filtered_namespaces();
+        assert!(filtered.iter().any(|ns| ns.contains("kube")));
     }
 
     #[test]
