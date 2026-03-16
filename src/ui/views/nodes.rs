@@ -192,7 +192,11 @@ pub fn render_nodes(
                             let used = parse_millicores(&nm.cpu);
                             let alloc_m = parse_millicores(alloc);
                             let pct = if alloc_m > 0 { used * 100 / alloc_m } else { 0 };
-                            let label = format!("{}/{}", format_millicores(used), alloc);
+                            let label = format!(
+                                "{}/{}",
+                                format_millicores(used),
+                                format_millicores(alloc_m)
+                            );
                             Cell::from(utilization_bar_labeled(&label, pct, &theme))
                         }
                         None => Cell::from(Span::styled(alloc, dim_style)),
@@ -209,7 +213,7 @@ pub fn render_nodes(
                             } else {
                                 0
                             };
-                            let label = format!("{}/{}", format_mib(used), alloc);
+                            let label = format!("{}/{}", format_mib(used), format_mib(alloc_mib));
                             Cell::from(utilization_bar_labeled(&label, pct, &theme))
                         }
                         None => Cell::from(Span::styled(alloc, dim_style)),
