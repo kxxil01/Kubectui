@@ -364,7 +364,11 @@ impl ExecTabState {
         self.container_cursor = 0;
         self.exited = false;
         self.error = None;
-        if self.containers.len() > 1 {
+        if self.containers.is_empty() {
+            self.picking_container = false;
+            self.loading = false;
+            self.error = Some("No containers found in this pod.".to_string());
+        } else if self.containers.len() > 1 {
             self.picking_container = true;
             self.loading = false;
         } else if let Some(container) = self.containers.first() {
@@ -372,6 +376,9 @@ impl ExecTabState {
             self.picking_container = false;
         }
     }
+
+    /// Max pending fragment size before force-flushing (1 MB).
+    const MAX_PENDING_FRAGMENT: usize = 1_048_576;
 
     pub fn append_output(&mut self, chunk: &str) {
         for segment in chunk.split_inclusive('\n') {
@@ -382,6 +389,10 @@ impl ExecTabState {
             } else {
                 self.pending_fragment.push_str(segment);
             }
+        }
+        // Force-flush oversized fragments (e.g. binary output without newlines).
+        if self.pending_fragment.len() > Self::MAX_PENDING_FRAGMENT {
+            self.lines.push(std::mem::take(&mut self.pending_fragment));
         }
         if self.lines.len() > MAX_EXEC_OUTPUT_LINES {
             let excess = self.lines.len() - MAX_EXEC_OUTPUT_LINES;

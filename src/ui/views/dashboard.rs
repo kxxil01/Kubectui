@@ -48,7 +48,7 @@ static DASHBOARD_CACHE: LazyLock<Mutex<Option<DashboardCache>>> =
     LazyLock::new(|| Mutex::new(None));
 
 fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
-    let mut guard = DASHBOARD_CACHE.lock().unwrap();
+    let mut guard = DASHBOARD_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref c) = *guard
         && c.version == snapshot.snapshot_version
     {
@@ -600,7 +600,7 @@ fn render_line_gauge(
     theme: &Theme,
 ) {
     let ratio = if total > 0 {
-        ready as f64 / total as f64
+        (ready as f64 / total as f64).clamp(0.0, 1.0)
     } else {
         1.0
     };
@@ -621,7 +621,7 @@ fn render_line_gauge(
                 Style::default().fg(color).add_modifier(Modifier::BOLD),
             ),
         ]))
-        .ratio(ratio.clamp(0.0, 1.0))
+        .ratio(ratio)
         .filled_style(Style::default().fg(color).bg(theme.bg_surface))
         .filled_symbol("━")
         .unfilled_symbol("─");
