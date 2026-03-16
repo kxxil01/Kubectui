@@ -10,6 +10,7 @@ pub mod clipboard;
 pub mod columns;
 pub mod coordinator;
 pub mod cronjob;
+pub mod detail_sections;
 pub mod events;
 pub mod export;
 pub mod k8s;
