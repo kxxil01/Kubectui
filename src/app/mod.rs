@@ -1315,39 +1315,41 @@ impl AppState {
                 KeyCode::Enter => AppAction::ActionHistoryOpenSelected,
                 _ => AppAction::None,
             },
-            WorkbenchTabState::ResourceYaml(tab) => match key.code {
-                KeyCode::Esc => AppAction::EscapePressed,
-                KeyCode::Char('j') | KeyCode::Down => {
-                    tab.scroll = tab.scroll.saturating_add(1);
-                    AppAction::None
+            WorkbenchTabState::ResourceYaml(tab) => {
+                let max_scroll = tab
+                    .yaml
+                    .as_ref()
+                    .map(|yaml| yaml.lines().count().saturating_sub(1))
+                    .unwrap_or(0);
+                match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.scroll = tab.scroll.saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.scroll = 0;
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        tab.scroll = max_scroll;
+                        AppAction::None
+                    }
+                    KeyCode::PageDown => {
+                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::PageUp => {
+                        tab.scroll = tab.scroll.saturating_sub(10);
+                        AppAction::None
+                    }
+                    _ => AppAction::None,
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    tab.scroll = tab.scroll.saturating_sub(1);
-                    AppAction::None
-                }
-                KeyCode::Char('g') => {
-                    tab.scroll = 0;
-                    AppAction::None
-                }
-                KeyCode::Char('G') => {
-                    let total = tab
-                        .yaml
-                        .as_ref()
-                        .map(|yaml| yaml.lines().count())
-                        .unwrap_or(0);
-                    tab.scroll = total.saturating_sub(1);
-                    AppAction::None
-                }
-                KeyCode::PageDown => {
-                    tab.scroll = tab.scroll.saturating_add(10);
-                    AppAction::None
-                }
-                KeyCode::PageUp => {
-                    tab.scroll = tab.scroll.saturating_sub(10);
-                    AppAction::None
-                }
-                _ => AppAction::None,
-            },
+            }
             WorkbenchTabState::DecodedSecret(tab) => {
                 if tab.editing {
                     match key.code {
@@ -1634,7 +1636,12 @@ impl AppState {
             WorkbenchTabState::Exec(tab) => {
                 if tab.picking_container {
                     match key.code {
-                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Esc => {
+                            // Exit container picker back to command input,
+                            // don't close the entire workbench.
+                            tab.picking_container = false;
+                            AppAction::None
+                        }
                         KeyCode::Char('k') | KeyCode::Up => {
                             tab.container_cursor = tab.container_cursor.saturating_sub(1);
                             AppAction::None
@@ -1720,6 +1727,9 @@ impl AppState {
                     {
                         tab.expanded.insert(node.tree_index);
                     }
+                    // Re-clamp cursor after tree shape change.
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
                     AppAction::None
                 }
                 KeyCode::Char('h') | KeyCode::Left => {
@@ -1736,6 +1746,9 @@ impl AppState {
                             }
                         }
                     }
+                    // Re-clamp cursor after tree shape change.
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
                     AppAction::None
                 }
                 KeyCode::Enter => {
@@ -2162,7 +2175,7 @@ impl AppState {
             {
                 AppAction::ForceDeleteResource
             }
-            KeyCode::Char('D') | KeyCode::Char('y') | KeyCode::Enter
+            KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Char('y') | KeyCode::Enter
                 if self
                     .detail_view
                     .as_ref()
@@ -2477,6 +2490,8 @@ impl AppState {
             KeyCode::Esc => {
                 self.search_query.clear();
                 self.is_search_mode = false;
+                // Reset selection so the user doesn't land on a stale filtered index.
+                self.selected_idx = 0;
             }
             KeyCode::Enter => {
                 self.is_search_mode = false;
