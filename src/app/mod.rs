@@ -1726,10 +1726,11 @@ impl AppState {
                         && !node.expanded
                     {
                         tab.expanded.insert(node.tree_index);
+                        // Re-clamp cursor after tree shape change.
+                        let flat =
+                            crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
                     }
-                    // Re-clamp cursor after tree shape change.
-                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                    tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
                     AppAction::None
                 }
                 KeyCode::Char('h') | KeyCode::Left => {
@@ -1737,6 +1738,10 @@ impl AppState {
                     if let Some(node) = flat.get(tab.cursor) {
                         if node.expanded {
                             tab.expanded.remove(&node.tree_index);
+                            // Re-clamp cursor after tree shape change.
+                            let flat =
+                                crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                            tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
                         } else if tab.cursor > 0 {
                             for i in (0..tab.cursor).rev() {
                                 if flat[i].depth < node.depth {
@@ -1746,9 +1751,6 @@ impl AppState {
                             }
                         }
                     }
-                    // Re-clamp cursor after tree shape change.
-                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
-                    tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
                     AppAction::None
                 }
                 KeyCode::Enter => {

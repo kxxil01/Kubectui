@@ -282,9 +282,10 @@ impl WorkloadLogsTabState {
             self.scroll = self.scroll.saturating_sub(excess);
         }
         if self.follow_mode {
-            // Track filtered count so scroll doesn't overshoot when filters are active.
-            let visible = self.lines.iter().filter(|l| self.matches_filter(l)).count();
-            self.scroll = visible.saturating_sub(1);
+            // Set scroll past the end; the renderer's scroll_window clamps it
+            // to the last visible filtered line. This avoids an O(n) filter
+            // scan on every push.
+            self.scroll = self.lines.len();
         }
     }
 
