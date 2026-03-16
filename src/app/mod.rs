@@ -602,6 +602,8 @@ impl AppState {
     pub fn set_namespace(&mut self, ns: String) {
         self.current_namespace = ns;
         self.selected_idx = 0;
+        self.search_query.clear();
+        self.is_search_mode = false;
     }
 
     /// Returns currently active namespace (`all` means cluster-wide listing).
@@ -691,6 +693,8 @@ impl AppState {
     fn next_view(&mut self) {
         self.view = self.view.next();
         self.selected_idx = 0;
+        self.search_query.clear();
+        self.is_search_mode = false;
         self.sync_sidebar_cursor_to_view();
         self.apply_sort_from_preferences(crate::columns::view_key(self.view));
     }
@@ -701,6 +705,8 @@ impl AppState {
     fn previous_view(&mut self) {
         self.view = self.view.previous();
         self.selected_idx = 0;
+        self.search_query.clear();
+        self.is_search_mode = false;
         self.sync_sidebar_cursor_to_view();
         self.apply_sort_from_preferences(crate::columns::view_key(self.view));
     }

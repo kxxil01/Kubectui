@@ -2434,6 +2434,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.command_palette.close();
                     app.view = view;
                     app.selected_idx = 0;
+                    app.search_query.clear();
+                    app.is_search_mode = false;
                     app.focus = kubectui::app::Focus::Content;
                     app.extension_in_instances = false;
                     if !matches!(
@@ -2487,6 +2489,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     // Show loading state immediately; TLS handshake runs in background.
                     global_state.begin_loading_transition(true);
                     app.selected_idx = 0;
+                    app.search_query.clear();
+                    app.is_search_mode = false;
                     app.detail_view = None;
                     app.workbench.close_resource_tabs();
                     app.sync_workbench_focus();

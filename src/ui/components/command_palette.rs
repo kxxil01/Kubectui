@@ -335,25 +335,7 @@ impl CommandPalette {
                 }
                 CommandPaletteAction::None
             }
-            KeyCode::Char('j') => {
-                let len = self.filtered().len();
-                if len > 0 {
-                    self.selected_index = (self.selected_index + 1) % len;
-                }
-                CommandPaletteAction::None
-            }
             KeyCode::Up => {
-                let len = self.filtered().len();
-                if len > 0 {
-                    self.selected_index = if self.selected_index == 0 {
-                        len - 1
-                    } else {
-                        self.selected_index - 1
-                    };
-                }
-                CommandPaletteAction::None
-            }
-            KeyCode::Char('k') => {
                 let len = self.filtered().len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {
@@ -740,12 +722,22 @@ mod tests {
     }
 
     #[test]
-    fn vim_navigation_moves_selection() {
+    fn arrow_navigation_moves_selection() {
+        let mut p = CommandPalette::default();
+        p.open();
+        p.handle_key(KeyEvent::from(KeyCode::Down));
+        assert_eq!(p.selected_index, 1);
+        p.handle_key(KeyEvent::from(KeyCode::Up));
+        assert_eq!(p.selected_index, 0);
+    }
+
+    #[test]
+    fn typing_j_k_appends_to_query() {
         let mut p = CommandPalette::default();
         p.open();
         p.handle_key(KeyEvent::from(KeyCode::Char('j')));
-        assert_eq!(p.selected_index, 1);
         p.handle_key(KeyEvent::from(KeyCode::Char('k')));
+        assert_eq!(p.query, "jk");
         assert_eq!(p.selected_index, 0);
     }
 

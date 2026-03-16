@@ -90,24 +90,6 @@ impl ContextPicker {
                 }
                 ContextPickerAction::None
             }
-            KeyCode::Char('j') if key.modifiers == KeyModifiers::NONE => {
-                let len = self.filtered_contexts().len();
-                if len > 0 {
-                    self.selected_index = (self.selected_index + 1) % len;
-                }
-                ContextPickerAction::None
-            }
-            KeyCode::Char('k') if key.modifiers == KeyModifiers::NONE => {
-                let len = self.filtered_contexts().len();
-                if len > 0 {
-                    self.selected_index = if self.selected_index == 0 {
-                        len - 1
-                    } else {
-                        self.selected_index - 1
-                    };
-                }
-                ContextPickerAction::None
-            }
             KeyCode::Backspace => {
                 self.search_query.pop();
                 self.selected_index = 0;
@@ -317,7 +299,7 @@ mod tests {
     }
 
     #[test]
-    fn context_picker_vim_navigation_wraps() {
+    fn context_picker_arrow_navigation_wraps() {
         let mut picker = ContextPicker::new(
             vec![
                 "ctx-a".to_string(),
@@ -328,10 +310,23 @@ mod tests {
         );
         picker.open();
 
-        picker.handle_key(KeyEvent::from(KeyCode::Char('j')));
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
         assert_eq!(picker.selected_index, 1);
 
+        picker.handle_key(KeyEvent::from(KeyCode::Up));
+        assert_eq!(picker.selected_index, 0);
+    }
+
+    #[test]
+    fn context_picker_j_k_appends_to_search() {
+        let mut picker = ContextPicker::new(
+            vec!["ctx-a".to_string(), "ctx-b".to_string()],
+            Some("ctx-a".to_string()),
+        );
+        picker.open();
+
         picker.handle_key(KeyEvent::from(KeyCode::Char('k')));
+        assert_eq!(picker.search_query, "k");
         assert_eq!(picker.selected_index, 0);
     }
 
