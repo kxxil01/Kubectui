@@ -4287,6 +4287,8 @@ mod tests {
 
     #[test]
     fn workbench_keybindings_emit_expected_actions() {
+        use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+
         let mut app = AppState::default();
 
         assert_eq!(
@@ -4294,6 +4296,11 @@ mod tests {
             AppAction::ToggleWorkbench
         );
 
+        // Add a tab (background so open stays false), then toggle open
+        app.workbench
+            .ensure_background_tab(WorkbenchTabState::ActionHistory(
+                ActionHistoryTabState::default(),
+            ));
         app.toggle_workbench();
         assert_eq!(
             app.handle_key_event(KeyEvent::from(KeyCode::Char(']'))),
@@ -4319,7 +4326,13 @@ mod tests {
 
     #[test]
     fn workbench_b_key_toggles_from_workbench_focus() {
+        use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+
         let mut app = AppState::default();
+        app.workbench
+            .ensure_background_tab(WorkbenchTabState::ActionHistory(
+                ActionHistoryTabState::default(),
+            ));
         app.toggle_workbench();
         app.focus = Focus::Workbench;
         assert_eq!(
@@ -4484,11 +4497,17 @@ mod tests {
     /// Verifies namespace persistence round-trip via config helpers.
     #[test]
     fn test_namespace_persistence() {
+        use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+
         let path =
             std::env::temp_dir().join(format!("kubectui-config-test-{}.json", std::process::id()));
 
         let mut app = AppState::default();
         app.set_namespace("demo".to_string());
+        app.workbench
+            .ensure_background_tab(WorkbenchTabState::ActionHistory(
+                ActionHistoryTabState::default(),
+            ));
         app.toggle_workbench();
         app.workbench.height = 15;
         save_config_to_path(&app, &path);
