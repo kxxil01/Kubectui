@@ -3231,10 +3231,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.selected_idx = 0;
                     app.detail_view = None;
                     app.workbench.close_resource_tabs();
-                    if app.workbench.tabs.is_empty() && app.focus == kubectui::app::Focus::Workbench
-                    {
-                        app.focus = kubectui::app::Focus::Content;
-                    }
+                    app.sync_workbench_focus();
                     snapshot_dirty = true;
                     needs_redraw = true;
 
@@ -3283,10 +3280,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     snapshot_dirty = true;
                     app.detail_view = None;
                     app.workbench.close_resource_tabs();
-                    if app.workbench.tabs.is_empty() && app.focus == kubectui::app::Focus::Workbench
-                    {
-                        app.focus = kubectui::app::Focus::Content;
-                    }
+                    app.sync_workbench_focus();
 
                     // Queue newest namespace refresh; if one is in flight it gets coalesced.
                     request_refresh(

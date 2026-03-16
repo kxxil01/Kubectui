@@ -1984,6 +1984,11 @@ impl AppState {
 
     pub fn workbench_close_active_tab(&mut self) {
         self.workbench.close_active_tab();
+        self.sync_workbench_focus();
+    }
+
+    /// Resets focus to Content when the workbench has no tabs left.
+    pub fn sync_workbench_focus(&mut self) {
         if self.workbench.tabs.is_empty() && self.focus == Focus::Workbench {
             self.focus = Focus::Content;
         }
