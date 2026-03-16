@@ -18,18 +18,40 @@ pub fn render_custom_resources(
     is_focused: bool,
 ) {
     if let Some(err) = error {
+        let theme = crate::ui::components::default_theme();
         frame.render_widget(
-            Paragraph::new(format!("Metrics/instances unavailable: {err}"))
-                .block(crate::ui::components::default_block("Custom Resources")),
+            Paragraph::new(ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled("⊘ ", Style::default().fg(theme.warning)),
+                ratatui::text::Span::styled(
+                    format!("Metrics/instances unavailable: {err}"),
+                    theme.inactive_style(),
+                ),
+            ]))
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(crate::ui::components::content_block(
+                "Custom Resources",
+                is_focused,
+            )),
             area,
         );
         return;
     }
 
     if resources.is_empty() {
+        let theme = crate::ui::components::default_theme();
         frame.render_widget(
-            Paragraph::new("Select a CRD to browse instances")
-                .block(crate::ui::components::default_block("Custom Resources")),
+            Paragraph::new(ratatui::text::Line::from(vec![
+                ratatui::text::Span::styled("○ ", Style::default().fg(theme.fg_dim)),
+                ratatui::text::Span::styled(
+                    "Select a CRD to browse instances",
+                    theme.inactive_style(),
+                ),
+            ]))
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(crate::ui::components::content_block(
+                "Custom Resources",
+                is_focused,
+            )),
             area,
         );
         return;
