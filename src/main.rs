@@ -468,7 +468,7 @@ fn refresh_port_forward_workbench(
     );
 }
 
-fn next_request_id(sequence: &mut u64) -> u64 {
+pub(crate) fn next_request_id(sequence: &mut u64) -> u64 {
     *sequence = sequence.wrapping_add(1).max(1);
     *sequence
 }
@@ -2606,309 +2606,58 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.detail_view = None;
                 }
                 AppAction::OpenResourceYaml => {
-                    let resource = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| detail.resource.clone())
-                        .or_else(|| selected_resource(&app, &cached_snapshot));
-                    let Some(resource) = resource else {
-                        app.set_error("No resource selected for YAML inspection.".to_string());
-                        continue;
-                    };
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::ViewYaml)
-                        .await
-                    {
-                        app.set_error(detail_action_denied_message(
-                            DetailAction::ViewYaml,
-                            &resource,
-                        ));
-                        continue;
-                    }
-                    let cached_yaml = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| {
-                            (detail.resource.as_ref() == Some(&resource))
-                                .then(|| detail.yaml.clone())
-                        })
-                        .flatten();
-                    let pending_request_id = cached_yaml
-                        .is_none()
-                        .then(|| next_request_id(&mut detail_request_seq));
-                    app.detail_view = None;
-                    app.open_resource_yaml_tab(
-                        resource.clone(),
-                        cached_yaml.clone(),
-                        None,
-                        pending_request_id,
-                    );
-                    if let Some(request_id) = pending_request_id {
-                        let client_clone = client.clone();
-                        let snapshot_clone = cached_snapshot.clone();
-                        let tx = detail_tx.clone();
-                        let requested_resource = resource.clone();
-                        tokio::spawn(async move {
-                            let result = fetch_detail_view(
-                                &client_clone,
-                                &snapshot_clone,
-                                requested_resource.clone(),
-                            )
-                            .await
-                            .map_err(|err| err.to_string());
-                            let _ = tx
-                                .send(DetailAsyncResult {
-                                    request_id,
-                                    resource: requested_resource,
-                                    result,
-                                })
-                                .await;
-                        });
-                    }
-                }
-                AppAction::OpenDecodedSecret => {
-                    let resource = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| detail.resource.clone())
-                        .or_else(|| selected_resource(&app, &cached_snapshot));
-                    let Some(resource) = resource else {
-                        app.set_error("No Secret selected for decoded inspection.".to_string());
-                        continue;
-                    };
-                    if !matches!(resource, ResourceRef::Secret(_, _)) {
-                        app.set_error(
-                            "Decoded Secret view is only available for Secret resources."
-                                .to_string(),
-                        );
-                        continue;
-                    }
-                    if !detail_action_allowed(
-                        &app,
+                    if action::detail_tabs::handle_open_resource_yaml(
+                        &mut app,
                         &client,
-                        &resource,
-                        DetailAction::ViewDecodedSecret,
+                        &cached_snapshot,
+                        &detail_tx,
+                        &mut detail_request_seq,
                     )
                     .await
                     {
-                        app.set_error(detail_action_denied_message(
-                            DetailAction::ViewDecodedSecret,
-                            &resource,
-                        ));
                         continue;
                     }
-                    let cached_yaml = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| {
-                            (detail.resource.as_ref() == Some(&resource))
-                                .then(|| detail.yaml.clone())
-                        })
-                        .flatten();
-                    let cached_error = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| {
-                            (detail.resource.as_ref() == Some(&resource))
-                                .then(|| detail.yaml_error.clone())
-                        })
-                        .flatten();
-                    let pending_request_id = (cached_yaml.is_none() && cached_error.is_none())
-                        .then(|| next_request_id(&mut detail_request_seq));
-                    app.detail_view = None;
-                    app.open_decoded_secret_tab(
-                        resource.clone(),
-                        cached_yaml.clone(),
-                        cached_error,
-                        pending_request_id,
-                    );
-                    if let Some(tab) = app
-                        .workbench_mut()
-                        .find_tab_mut(&WorkbenchTabKey::DecodedSecret(resource.clone()))
-                        && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
-                        && let Some(yaml) = cached_yaml.as_deref()
+                }
+                AppAction::OpenDecodedSecret => {
+                    if action::detail_tabs::handle_open_decoded_secret(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                        &detail_tx,
+                        &mut detail_request_seq,
+                    )
+                    .await
                     {
-                        match decode_secret_yaml(yaml) {
-                            Ok(entries) => {
-                                secret_tab.source_yaml = Some(yaml.to_string());
-                                secret_tab.entries = entries;
-                                secret_tab.loading = false;
-                                secret_tab.error = None;
-                                secret_tab.clamp_selected();
-                            }
-                            Err(err) => {
-                                secret_tab.loading = false;
-                                secret_tab.error = Some(err.to_string());
-                            }
-                        }
-                    }
-                    if let Some(request_id) = pending_request_id {
-                        let client_clone = client.clone();
-                        let snapshot_clone = cached_snapshot.clone();
-                        let tx = detail_tx.clone();
-                        let requested_resource = resource.clone();
-                        tokio::spawn(async move {
-                            let result = fetch_detail_view(
-                                &client_clone,
-                                &snapshot_clone,
-                                requested_resource.clone(),
-                            )
-                            .await
-                            .map_err(|err| err.to_string());
-                            let _ = tx
-                                .send(DetailAsyncResult {
-                                    request_id,
-                                    resource: requested_resource,
-                                    result,
-                                })
-                                .await;
-                        });
+                        continue;
                     }
                 }
                 AppAction::ToggleBookmark => {
-                    let resource = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| detail.resource.clone())
-                        .or_else(|| selected_resource(&app, &cached_snapshot));
-                    let Some(resource) = resource else {
-                        app.set_error("No resource selected to bookmark.".to_string());
+                    if action::detail_tabs::handle_toggle_bookmark(&mut app, &cached_snapshot) {
                         continue;
-                    };
-
-                    match app.toggle_bookmark(resource.clone()) {
-                        Ok(kubectui::bookmarks::BookmarkToggleResult::Added) => {
-                            app.clear_error();
-                            app.set_status(format!(
-                                "Bookmarked {} '{}'{}.",
-                                resource.kind(),
-                                resource.name(),
-                                resource
-                                    .namespace()
-                                    .map(|namespace| format!(" in namespace '{namespace}'"))
-                                    .unwrap_or_default()
-                            ));
-                        }
-                        Ok(kubectui::bookmarks::BookmarkToggleResult::Removed) => {
-                            app.clear_error();
-                            app.set_status(format!(
-                                "Removed bookmark for {} '{}'{}.",
-                                resource.kind(),
-                                resource.name(),
-                                resource
-                                    .namespace()
-                                    .map(|namespace| format!(" in namespace '{namespace}'"))
-                                    .unwrap_or_default()
-                            ));
-                            if app.view() == AppView::Bookmarks {
-                                app.selected_idx = app
-                                    .selected_idx()
-                                    .min(app.bookmark_count().saturating_sub(1));
-                            }
-                        }
-                        Err(err) => app.set_error(err),
                     }
                 }
                 AppAction::OpenRelationships => {
-                    let resource = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| detail.resource.clone())
-                        .or_else(|| selected_resource(&app, &cached_snapshot));
-                    let Some(resource) = resource else {
-                        app.set_error(
-                            "No resource selected for relationship exploration.".to_string(),
-                        );
-                        continue;
-                    };
-                    app.detail_view = None;
-                    let request_id = next_request_id(&mut relations_request_seq);
-                    let mut relations_tab =
-                        kubectui::workbench::RelationsTabState::new(resource.clone());
-                    relations_tab.pending_request_id = Some(request_id);
-                    app.workbench
-                        .open_tab(WorkbenchTabState::Relations(relations_tab));
-                    app.focus = kubectui::app::Focus::Workbench;
-
-                    let tx = relations_tx.clone();
-                    let client_clone = client.clone();
-                    let snapshot_clone = cached_snapshot.clone();
-                    let requested_resource = resource.clone();
-                    tokio::spawn(async move {
-                        let result = kubectui::k8s::relationships::resolve_relationships(
-                            &requested_resource,
-                            &snapshot_clone,
-                            &client_clone,
-                        )
-                        .await
-                        .map_err(|err| format!("{err:#}"));
-                        let _ = tx
-                            .send(RelationsAsyncResult {
-                                request_id,
-                                resource: requested_resource,
-                                result,
-                            })
-                            .await;
-                    });
-                }
-                AppAction::OpenResourceEvents => {
-                    let resource = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| detail.resource.clone())
-                        .or_else(|| selected_resource(&app, &cached_snapshot));
-                    let Some(resource) = resource else {
-                        app.set_error("No resource selected for event inspection.".to_string());
-                        continue;
-                    };
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::ViewEvents)
-                        .await
-                    {
-                        app.set_error(detail_action_denied_message(
-                            DetailAction::ViewEvents,
-                            &resource,
-                        ));
+                    if action::detail_tabs::handle_open_relationships(
+                        &mut app,
+                        &cached_snapshot,
+                        &client,
+                        &relations_tx,
+                        &mut relations_request_seq,
+                    ) {
                         continue;
                     }
-                    let cached_events = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| {
-                            (detail.resource.as_ref() == Some(&resource))
-                                .then(|| detail.events.clone())
-                        })
-                        .unwrap_or_default();
-                    let loading = cached_events.is_empty();
-                    let pending_request_id =
-                        loading.then(|| next_request_id(&mut detail_request_seq));
-                    app.detail_view = None;
-                    app.open_resource_events_tab(
-                        resource.clone(),
-                        cached_events,
-                        loading,
-                        None,
-                        pending_request_id,
-                    );
-                    if let Some(request_id) = pending_request_id {
-                        let client_clone = client.clone();
-                        let snapshot_clone = cached_snapshot.clone();
-                        let tx = detail_tx.clone();
-                        let requested_resource = resource.clone();
-                        tokio::spawn(async move {
-                            let result = fetch_detail_view(
-                                &client_clone,
-                                &snapshot_clone,
-                                requested_resource.clone(),
-                            )
-                            .await
-                            .map_err(|err| err.to_string());
-                            let _ = tx
-                                .send(DetailAsyncResult {
-                                    request_id,
-                                    resource: requested_resource,
-                                    result,
-                                })
-                                .await;
-                        });
+                }
+                AppAction::OpenResourceEvents => {
+                    if action::detail_tabs::handle_open_resource_events(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                        &detail_tx,
+                        &mut detail_request_seq,
+                    )
+                    .await
+                    {
+                        continue;
                     }
                 }
                 AppAction::LogsViewerOpen => {
@@ -4149,7 +3898,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     Ok(())
 }
 
-async fn fetch_detail_view(
+pub(crate) async fn fetch_detail_view(
     client: &K8sClient,
     snapshot: &ClusterSnapshot,
     resource: ResourceRef,
