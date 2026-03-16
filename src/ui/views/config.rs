@@ -21,7 +21,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
         views::filtering::{filtered_config_map_indices, filtered_secret_indices},
@@ -91,6 +91,7 @@ pub fn render_config_maps(
     bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search.trim();
@@ -185,7 +186,7 @@ pub fn render_config_maps(
         ],
     )
     .header(header)
-    .block(active_block(&title))
+    .block(content_block(&title, focused))
     .row_highlight_style(theme.selection_style())
     .highlight_symbol(theme.highlight_symbol())
     .highlight_spacing(HighlightSpacing::Always);
@@ -272,6 +273,7 @@ pub fn render_secrets(
     bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search.trim();
@@ -372,7 +374,7 @@ pub fn render_secrets(
         ],
     )
     .header(header)
-    .block(active_block(&title))
+    .block(content_block(&title, focused))
     .row_highlight_style(theme.selection_style())
     .highlight_symbol(theme.highlight_symbol())
     .highlight_spacing(HighlightSpacing::Always);

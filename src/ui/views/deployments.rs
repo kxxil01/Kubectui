@@ -19,7 +19,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
@@ -53,6 +53,7 @@ pub fn render_deployments(
     query: &str,
     sort: Option<WorkloadSortState>,
     visible_columns: &[ColumnDef],
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = query.trim();
@@ -160,12 +161,13 @@ pub fn render_deployments(
     let sort_suffix = workload_sort_suffix(sort);
     let title = format!(" 🚀 Deployments ({total}){sort_suffix} ");
     let block = if query.is_empty() {
-        active_block(&title)
+        content_block(&title, focused)
     } else {
         let all = snapshot.deployments.len();
-        active_block(&format!(
-            " 🚀 Deployments ({total} of {all}) [/{query}]{sort_suffix}"
-        ))
+        content_block(
+            &format!(" 🚀 Deployments ({total} of {all}) [/{query}]{sort_suffix}"),
+            focused,
+        )
     };
 
     let constraints = crate::columns::visible_constraints(visible_columns);

@@ -3231,6 +3231,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.selected_idx = 0;
                     app.detail_view = None;
                     app.workbench.close_resource_tabs();
+                    app.sync_workbench_focus();
                     snapshot_dirty = true;
                     needs_redraw = true;
 
@@ -3279,6 +3280,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     snapshot_dirty = true;
                     app.detail_view = None;
                     app.workbench.close_resource_tabs();
+                    app.sync_workbench_focus();
 
                     // Queue newest namespace refresh; if one is in flight it gets coalesced.
                     request_refresh(
@@ -4375,6 +4377,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                 }
                 AppAction::DeleteResource => {
+                    // Dismiss the confirmation dialog before the capability
+                    // check so that `has_blocking_detail_overlay` no longer
+                    // vetoes the action.
+                    if let Some(detail) = &mut app.detail_view {
+                        detail.confirm_delete = false;
+                    }
                     if !app
                         .detail_view
                         .as_ref()
@@ -4402,7 +4410,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
 
                         if let Some(detail) = &mut app.detail_view {
-                            detail.confirm_delete = false;
                             detail.loading = true;
                         }
 
@@ -4436,6 +4443,12 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                 }
                 AppAction::ForceDeleteResource => {
+                    // Dismiss the confirmation dialog before the capability
+                    // check so that `has_blocking_detail_overlay` no longer
+                    // vetoes the action.
+                    if let Some(detail) = &mut app.detail_view {
+                        detail.confirm_delete = false;
+                    }
                     if !app
                         .detail_view
                         .as_ref()
@@ -4463,7 +4476,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         }
 
                         if let Some(detail) = &mut app.detail_view {
-                            detail.confirm_delete = false;
                             detail.loading = true;
                         }
 

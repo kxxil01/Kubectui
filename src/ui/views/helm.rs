@@ -21,7 +21,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{active_block, default_theme},
+        components::{content_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         loading_or_empty_message, table_viewport_rows, table_window,
         views::filtering::{filtered_helm_release_indices, filtered_helm_repo_indices},
@@ -103,6 +103,7 @@ pub fn render_helm_releases(
     bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search_query: &str,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search_query.trim();
@@ -147,7 +148,7 @@ pub fn render_helm_releases(
                 format!("  {empty_msg}"),
                 Style::default().fg(theme.fg_dim),
             ))
-            .block(active_block(&title)),
+            .block(content_block(&title, focused)),
             area,
         );
         return;
@@ -231,7 +232,7 @@ pub fn render_helm_releases(
         let all = cluster.helm_releases.len();
         format!(" Helm Releases ({total} of {all}) [/{query}]")
     };
-    let block = active_block(&title);
+    let block = content_block(&title, focused);
 
     let table = Table::new(
         rows,
@@ -263,6 +264,7 @@ pub fn render_helm_repos(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search_query: &str,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search_query.trim();
@@ -302,7 +304,7 @@ pub fn render_helm_repos(
                 format!("  {empty_msg}"),
                 Style::default().fg(theme.fg_dim),
             ))
-            .block(active_block(&title)),
+            .block(content_block(&title, focused)),
             area,
         );
         return;
@@ -343,7 +345,7 @@ pub fn render_helm_repos(
         let all = cluster.helm_repositories.len();
         format!(" Helm Repositories ({total} of {all}) [/{query}]")
     };
-    let block = active_block(&title);
+    let block = content_block(&title, focused);
 
     let table = Table::new(
         rows,

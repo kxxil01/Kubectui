@@ -585,7 +585,12 @@ impl WorkbenchState {
     }
 
     pub fn toggle_open(&mut self) {
-        self.open = !self.open;
+        if self.open {
+            self.open = false;
+            self.maximized = false;
+        } else if !self.tabs.is_empty() {
+            self.open = true;
+        }
     }
 
     pub fn close(&mut self) {
@@ -594,12 +599,15 @@ impl WorkbenchState {
     }
 
     pub fn toggle_maximize(&mut self) {
-        self.maximized = !self.maximized;
+        if !self.tabs.is_empty() {
+            self.maximized = !self.maximized;
+        }
     }
 
     pub fn close_active_tab(&mut self) {
         if self.tabs.is_empty() {
             self.open = false;
+            self.maximized = false;
             self.active_tab = 0;
             return;
         }
@@ -608,6 +616,7 @@ impl WorkbenchState {
         self.tabs.remove(idx);
         if self.tabs.is_empty() {
             self.open = false;
+            self.maximized = false;
             self.active_tab = 0;
             return;
         }
@@ -677,6 +686,7 @@ impl WorkbenchState {
         });
         if self.tabs.is_empty() {
             self.open = false;
+            self.maximized = false;
             self.active_tab = 0;
         } else {
             self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
@@ -838,6 +848,9 @@ mod tests {
     #[test]
     fn toggle_maximize() {
         let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
         assert!(!state.maximized);
         state.toggle_maximize();
         assert!(state.maximized);
@@ -850,6 +863,31 @@ mod tests {
         let mut state = WorkbenchState::default();
         state.maximized = true;
         state.close();
+        assert!(!state.maximized);
+    }
+
+    #[test]
+    fn toggle_open_clears_maximized_on_close() {
+        let mut state = WorkbenchState::default();
+        state.open = true;
+        state.maximized = true;
+        state.toggle_open();
+        assert!(!state.open);
+        assert!(!state.maximized);
+    }
+
+    #[test]
+    fn toggle_open_does_not_open_empty_workbench() {
+        let mut state = WorkbenchState::default();
+        assert!(!state.open);
+        state.toggle_open();
+        assert!(!state.open);
+    }
+
+    #[test]
+    fn toggle_maximize_does_nothing_when_empty() {
+        let mut state = WorkbenchState::default();
+        state.toggle_maximize();
         assert!(!state.maximized);
     }
 

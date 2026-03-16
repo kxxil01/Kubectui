@@ -21,7 +21,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
         loading_or_empty_message, table_viewport_rows, table_window,
         views::filtering::{filtered_ingress_class_indices, filtered_ingress_indices},
@@ -99,6 +99,7 @@ pub fn render_ingresses(
     bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search.trim();
@@ -217,7 +218,7 @@ pub fn render_ingresses(
         ],
     )
     .header(header)
-    .block(active_block(&title))
+    .block(content_block(&title, focused))
     .row_highlight_style(theme.selection_style())
     .highlight_symbol(theme.highlight_symbol())
     .highlight_spacing(HighlightSpacing::Always);
@@ -248,6 +249,7 @@ pub fn render_ingress_classes(
     bookmarks: &[BookmarkEntry],
     selected_idx: usize,
     search: &str,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search.trim();
@@ -343,7 +345,7 @@ pub fn render_ingress_classes(
         ],
     )
     .header(header)
-    .block(active_block(&title))
+    .block(content_block(&title, focused))
     .row_highlight_style(theme.selection_style())
     .highlight_symbol(theme.highlight_symbol())
     .highlight_spacing(HighlightSpacing::Always);
