@@ -23,7 +23,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         render_centered_message, responsive_table_widths, sort_header_cell, table_viewport_rows,
@@ -296,11 +296,15 @@ pub fn render_flux_resources(
 ) {
     let Some(mode) = FluxMode::from_view(view) else {
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                "  FluxCD view is not available",
-                default_theme().inactive_style(),
-            ))
-            .block(default_block("FluxCD")),
+            Paragraph::new(ratatui::text::Line::from(vec![
+                Span::styled("○ ", Style::default().fg(default_theme().fg_dim)),
+                Span::styled(
+                    "FluxCD view is not available",
+                    default_theme().inactive_style(),
+                ),
+            ]))
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(content_block("FluxCD", focused)),
             area,
         );
         return;

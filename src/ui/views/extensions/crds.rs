@@ -3,6 +3,7 @@
 use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Color, Frame, Style},
+    text::Span,
     widgets::{Cell, Paragraph, Row, Table},
 };
 
@@ -48,15 +49,21 @@ pub fn render_crd_picker(
     let query_trimmed = query.trim();
 
     if filtered.is_empty() {
-        let empty_msg = if is_loading {
-            "Loading CRDs..."
+        let theme = crate::ui::components::default_theme();
+        let (icon, icon_color, msg) = if is_loading {
+            ("⟳ ", theme.accent, "Loading CRDs...")
         } else if query_trimmed.is_empty() {
-            "No CRDs found"
+            ("○ ", theme.fg_dim, "No CRDs found")
         } else {
-            "No CRDs match search"
+            ("⊘ ", theme.warning, "No CRDs match search")
         };
         frame.render_widget(
-            Paragraph::new(empty_msg).block(crate::ui::components::default_block("CRDs")),
+            Paragraph::new(ratatui::text::Line::from(vec![
+                Span::styled(icon, Style::default().fg(icon_color)),
+                Span::styled(msg, theme.inactive_style()),
+            ]))
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(crate::ui::components::content_block("CRDs", is_focused)),
             area,
         );
         return;

@@ -15,7 +15,7 @@ use crate::{
     bookmarks::{BookmarkEntry, filtered_bookmark_indices, resource_exists},
     state::ClusterSnapshot,
     ui::{
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         format_age, responsive_table_widths, table_viewport_rows, table_window,
     },
 };
@@ -35,13 +35,17 @@ pub fn render_bookmarks(
 
     if indices.is_empty() {
         let message = if query.is_empty() {
-            "  No bookmarks saved for this cluster"
+            "No bookmarks saved for this cluster"
         } else {
-            "  No bookmarks match the search query"
+            "No bookmarks match the search query"
         };
         frame.render_widget(
-            Paragraph::new(Span::styled(message, theme.inactive_style()))
-                .block(default_block("Bookmarks")),
+            Paragraph::new(ratatui::text::Line::from(vec![
+                Span::styled("○ ", Style::default().fg(theme.fg_dim)),
+                Span::styled(message, theme.inactive_style()),
+            ]))
+            .alignment(ratatui::layout::Alignment::Center)
+            .block(content_block("Bookmarks", focused)),
             area,
         );
         return;
