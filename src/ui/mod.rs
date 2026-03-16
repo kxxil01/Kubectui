@@ -87,22 +87,30 @@ pub(crate) fn utilization_style(pct: u64, theme: &Theme) -> Style {
 
 /// Builds a compact utilization bar with percentage for use in table cells.
 ///
-/// Example output: `▓▓▓▓▓▓░░ 45%` (8-char bar + percentage).
+/// Example output: `▓▓▓▓▓▓░░  45%` (8-char bar + percentage).
 pub(crate) fn utilization_bar(pct: u64, theme: &Theme) -> Line<'static> {
+    utilization_bar_labeled("", pct, theme)
+}
+
+/// Builds a utilization bar prefixed with a text label (e.g. `250m/4 ▓░░░  6%`).
+pub(crate) fn utilization_bar_labeled(label: &str, pct: u64, theme: &Theme) -> Line<'static> {
     let pct = pct.min(100);
     const BAR_WIDTH: usize = 8;
     let filled = ((pct as usize) * BAR_WIDTH + 50) / 100; // round
     let empty = BAR_WIDTH - filled;
     let bar_filled: String = "▓".repeat(filled);
     let bar_empty: String = "░".repeat(empty);
-    let label = format!(" {pct:>3}%");
+    let pct_label = format!(" {pct:>3}%");
     let style = utilization_style(pct, theme);
     let dim = Style::default().fg(theme.fg_dim);
-    Line::from(vec![
-        Span::styled(bar_filled, style),
-        Span::styled(bar_empty, dim),
-        Span::styled(label, style),
-    ])
+    let mut spans = Vec::with_capacity(4);
+    if !label.is_empty() {
+        spans.push(Span::styled(format!("{label} "), dim));
+    }
+    spans.push(Span::styled(bar_filled, style));
+    spans.push(Span::styled(bar_empty, dim));
+    spans.push(Span::styled(pct_label, style));
+    Line::from(spans)
 }
 
 pub(crate) fn bookmarked_name_cell<'a>(
