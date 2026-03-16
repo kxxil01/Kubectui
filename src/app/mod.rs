@@ -338,20 +338,6 @@ fn default_workbench_height() -> u16 {
     DEFAULT_WORKBENCH_HEIGHT
 }
 
-fn nav_group_to_str(g: NavGroup) -> &'static str {
-    match g {
-        NavGroup::Overview => "overview",
-        NavGroup::Workloads => "workloads",
-        NavGroup::Network => "network",
-        NavGroup::Config => "config",
-        NavGroup::Storage => "storage",
-        NavGroup::Helm => "helm",
-        NavGroup::FluxCD => "flux",
-        NavGroup::AccessControl => "access_control",
-        NavGroup::CustomResources => "custom_resources",
-    }
-}
-
 impl AppState {
     /// Returns the active top-level view.
     pub fn view(&self) -> AppView {
@@ -2567,18 +2553,13 @@ pub fn load_config_from_path(path: &Path) -> AppState {
 /// Saves app namespace config to a given path.
 pub fn save_config_to_path(app: &AppState, path: &Path) {
     let theme_name = crate::ui::theme::active_theme().name;
-    let collapsed: Vec<String> = app
-        .collapsed_groups
-        .iter()
-        .map(|g| nav_group_to_str(*g).to_string())
-        .collect();
     let cfg = AppConfig {
         namespace: app.current_namespace.clone(),
         theme: Some(theme_name.to_string()),
         refresh_interval_secs: app.refresh_interval_secs,
         workbench_open: app.workbench.open,
         workbench_height: app.workbench.height,
-        collapsed_nav_groups: collapsed,
+        collapsed_nav_groups: Vec::new(),
         preferences: app.preferences.clone(),
         clusters: app.cluster_preferences.clone(),
     };
