@@ -1,0 +1,2 @@
+{"type":"config","name":"render-performance","metric_name":"render_total","metric_unit":"ms","direction":"lower","timestamp":"2026-03-16T00:00:00Z"}
+{"run":1,"metric":316.756,"status":"keep","description":"baseline","timestamp":"2026-03-16T00:00:00Z"}
