@@ -70,6 +70,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             app_state.selected_idx = 0;
             app_state.search_query.clear();
             app_state.is_search_mode = false;
+            app_state.sync_collapsed_to_active_view();
             app_state.apply_sort_from_preferences(crate::columns::view_key(view));
             true
         }

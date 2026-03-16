@@ -277,7 +277,16 @@ impl Default for AppState {
             context_picker: ContextPicker::default(),
             command_palette: CommandPalette::default(),
             help_overlay: crate::ui::components::help_overlay::HelpOverlay::default(),
-            collapsed_groups: HashSet::new(),
+            collapsed_groups: {
+                // Start with all groups collapsed except Overview (default view's group).
+                let mut collapsed = HashSet::new();
+                for group in sidebar::all_groups() {
+                    if group != NavGroup::Overview {
+                        collapsed.insert(group);
+                    }
+                }
+                collapsed
+            },
             sidebar_cursor: 0,
             focus: Focus::Sidebar,
             extension_instances: Vec::new(),
@@ -327,21 +336,6 @@ fn default_refresh_interval() -> u64 {
 
 fn default_workbench_height() -> u16 {
     DEFAULT_WORKBENCH_HEIGHT
-}
-
-fn nav_group_from_str(s: &str) -> Option<NavGroup> {
-    match s {
-        "overview" => Some(NavGroup::Overview),
-        "workloads" => Some(NavGroup::Workloads),
-        "network" => Some(NavGroup::Network),
-        "config" => Some(NavGroup::Config),
-        "storage" => Some(NavGroup::Storage),
-        "helm" => Some(NavGroup::Helm),
-        "flux" | "fluxcd" => Some(NavGroup::FluxCD),
-        "access_control" | "rbac" => Some(NavGroup::AccessControl),
-        "custom_resources" | "extensions" => Some(NavGroup::CustomResources),
-        _ => None,
-    }
 }
 
 fn nav_group_to_str(g: NavGroup) -> &'static str {
@@ -695,7 +689,7 @@ impl AppState {
         self.selected_idx = 0;
         self.search_query.clear();
         self.is_search_mode = false;
-        self.sync_sidebar_cursor_to_view();
+        self.sync_collapsed_to_active_view();
         self.apply_sort_from_preferences(crate::columns::view_key(self.view));
     }
 
@@ -707,7 +701,7 @@ impl AppState {
         self.selected_idx = 0;
         self.search_query.clear();
         self.is_search_mode = false;
-        self.sync_sidebar_cursor_to_view();
+        self.sync_collapsed_to_active_view();
         self.apply_sort_from_preferences(crate::columns::view_key(self.view));
     }
 
@@ -1014,6 +1008,19 @@ impl AppState {
         if let Some(idx) = rows.iter().position(|r| *r == SidebarItem::View(self.view)) {
             self.sidebar_cursor = idx;
         }
+    }
+
+    /// Collapses all sidebar groups except the one containing the active view.
+    /// This keeps the sidebar compact so all groups remain visible.
+    pub fn sync_collapsed_to_active_view(&mut self) {
+        let active_group = sidebar::group_for_view(self.view);
+        self.collapsed_groups.clear();
+        for group in sidebar::all_groups() {
+            if Some(group) != active_group {
+                self.collapsed_groups.insert(group);
+            }
+        }
+        self.sync_sidebar_cursor_to_view();
     }
 
     /// Toggles a nav group collapsed/expanded and clamps the cursor.
@@ -2542,11 +2549,10 @@ pub fn load_config_from_path(path: &Path) -> AppState {
         app.refresh_interval_secs = cfg.refresh_interval_secs;
         app.workbench
             .set_open_and_height(cfg.workbench_open, cfg.workbench_height);
-        for name in &cfg.collapsed_nav_groups {
-            if let Some(g) = nav_group_from_str(name) {
-                app.collapsed_groups.insert(g);
-            }
-        }
+        // Collapsed groups are now auto-managed by sync_collapsed_to_active_view(),
+        // so we ignore the saved config and rely on the default (all collapsed
+        // except the active view's group).
+        let _ = &cfg.collapsed_nav_groups;
         app.preferences = cfg.preferences;
         app.cluster_preferences = cfg.clusters;
     }
@@ -3856,6 +3862,9 @@ mod tests {
         assert_eq!(prod.bookmarks.len(), 1);
         assert_eq!(prod.bookmarks[0].bookmarked_at_unix, 42);
 
+        // Collapsed groups are now auto-managed — saved config is ignored.
+        // Default state: all groups collapsed except the active view's group (Overview).
+        assert!(!loaded.collapsed_groups.contains(&NavGroup::Overview));
         assert!(loaded.collapsed_groups.contains(&NavGroup::FluxCD));
         assert!(loaded.collapsed_groups.contains(&NavGroup::AccessControl));
     }
@@ -3871,7 +3880,9 @@ mod tests {
         let loaded = load_config_from_path(&path);
         assert!(loaded.preferences.is_none());
         assert!(loaded.cluster_preferences.is_none());
-        assert!(loaded.collapsed_groups.is_empty());
+        // All groups collapsed except Overview (default view's group).
+        assert!(!loaded.collapsed_groups.contains(&NavGroup::Overview));
+        assert!(loaded.collapsed_groups.contains(&NavGroup::Workloads));
     }
 
     #[test]
