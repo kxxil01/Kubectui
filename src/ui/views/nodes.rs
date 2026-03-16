@@ -8,8 +8,8 @@ use ratatui::{
     prelude::{Frame, Line, Style},
     text::Span,
     widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
+        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState,
     },
 };
 
@@ -24,13 +24,13 @@ use crate::{
     },
     ui::{
         bookmarked_name_cell,
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        loading_or_empty_message, loading_or_empty_message_no_search, responsive_table_widths_vec,
-        sort_header_cell, table_viewport_rows, table_window, utilization_bar_labeled,
+        render_centered_message, responsive_table_widths_vec, sort_header_cell,
+        table_viewport_rows, table_window, utilization_bar_labeled,
         views::filtering::filtered_node_indices,
         workload_sort_suffix,
     },
@@ -62,18 +62,18 @@ pub fn render_nodes(
     let query = query.trim();
 
     if snapshot.nodes.is_empty() {
-        let msg = loading_or_empty_message_no_search(
+        render_centered_message(
+            frame,
+            area,
             snapshot,
             AppView::Nodes,
-            "  Loading nodes...",
-            "  No nodes available",
+            "",
+            "Nodes",
+            "Loading nodes...",
+            "No nodes available",
+            "No nodes available",
+            focused,
         );
-        let widget = Paragraph::new(Line::from(vec![
-            Span::styled("  ", theme.inactive_style()),
-            Span::styled(msg, theme.inactive_style()),
-        ]))
-        .block(default_block("Nodes"));
-        frame.render_widget(widget, area);
         return;
     }
 
@@ -88,17 +88,18 @@ pub fn render_nodes(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             snapshot,
             AppView::Nodes,
             query,
-            "  Loading nodes...",
-            "  No nodes available",
-            "  No nodes match the search query",
+            "Nodes",
+            "Loading nodes...",
+            "No nodes available",
+            "No nodes match the search query",
+            focused,
         );
-        let widget = Paragraph::new(Line::from(vec![Span::styled(msg, theme.inactive_style())]))
-            .block(default_block("Nodes"));
-        frame.render_widget(widget, area);
         return;
     }
 

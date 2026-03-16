@@ -10,8 +10,8 @@ use ratatui::{
     prelude::{Frame, Style},
     text::Span,
     widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
+        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState,
     },
 };
 
@@ -21,9 +21,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        format_age, format_image, format_small_int, loading_or_empty_message,
+        format_age, format_image, format_small_int, render_centered_message,
         responsive_table_widths, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_daemonset_indices,
         workload_sort_suffix,
@@ -74,18 +74,17 @@ pub fn render_daemonsets(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::DaemonSets,
             query,
-            "  Loading daemonsets...",
-            "  No daemonsets found",
-            "  No daemonsets match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("DaemonSets")),
-            area,
+            "DaemonSets",
+            "Loading daemonsets...",
+            "No daemonsets found",
+            "No daemonsets match the search query",
+            focused,
         );
         return;
     }

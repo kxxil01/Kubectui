@@ -5,8 +5,8 @@ use ratatui::{
     prelude::{Frame, Style},
     text::Span,
     widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
+        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState,
     },
 };
 
@@ -17,8 +17,8 @@ use crate::{
         issues::{compute_issues, filtered_issue_indices},
     },
     ui::{
-        components::{content_block, default_block, default_theme},
-        loading_or_empty_message, responsive_table_widths, table_viewport_rows, table_window,
+        components::{content_block, default_theme},
+        render_centered_message, responsive_table_widths, table_viewport_rows, table_window,
     },
 };
 
@@ -44,22 +44,21 @@ pub fn render_issues(
     let indices = filtered_issue_indices(&all_issues, query);
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::Issues,
             query,
+            "Issues",
             if diagnostics_loaded {
-                "  Scanning for issues..."
+                "Scanning for issues..."
             } else {
-                "  Scanning for issues... diagnostic backfill still running"
+                "Scanning for issues... diagnostic backfill still running"
             },
-            "  No issues detected — cluster looks healthy",
-            "  No issues match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("Issues")),
-            area,
+            "No issues detected — cluster looks healthy",
+            "No issues match the search query",
+            focused,
         );
         return;
     }

@@ -10,8 +10,8 @@ use ratatui::{
     prelude::{Frame, Style},
     text::Span,
     widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
+        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState,
     },
 };
 
@@ -21,9 +21,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
+        format_small_int, render_centered_message, table_viewport_rows, table_window,
         views::filtering::{filtered_config_map_indices, filtered_secret_indices},
     },
 };
@@ -104,18 +104,17 @@ pub fn render_config_maps(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::ConfigMaps,
             query,
-            "  Loading configmaps...",
-            "  No configmaps found",
-            "  No configmaps match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("ConfigMaps")),
-            area,
+            "ConfigMaps",
+            "Loading configmaps...",
+            "No configmaps found",
+            "No configmaps match the search query",
+            focused,
         );
         return;
     }
@@ -286,18 +285,17 @@ pub fn render_secrets(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::Secrets,
             query,
-            "  Loading secrets...",
-            "  No secrets found",
-            "  No secrets match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("Secrets")),
-            area,
+            "Secrets",
+            "Loading secrets...",
+            "No secrets found",
+            "No secrets match the search query",
+            focused,
         );
         return;
     }
