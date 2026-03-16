@@ -2584,4 +2584,50 @@ mod tests {
             format_age_from_timestamp(snapshot.pods[1].created_at, now.timestamp())
         );
     }
+
+    #[test]
+    fn utilization_bar_zero_percent() {
+        let theme = super::components::default_theme();
+        let line = utilization_bar(0, &theme);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("░░░░░░░░"));
+        assert!(text.contains("0%"));
+    }
+
+    #[test]
+    fn utilization_bar_hundred_percent() {
+        let theme = super::components::default_theme();
+        let line = utilization_bar(100, &theme);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("▓▓▓▓▓▓▓▓"));
+        assert!(text.contains("100%"));
+    }
+
+    #[test]
+    fn utilization_bar_clamps_above_100() {
+        let theme = super::components::default_theme();
+        let line = utilization_bar(200, &theme);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.contains("100%"));
+        assert!(text.contains("▓▓▓▓▓▓▓▓"));
+    }
+
+    #[test]
+    fn utilization_bar_fifty_percent_fills_half() {
+        let theme = super::components::default_theme();
+        let line = utilization_bar(50, &theme);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        // 50% of 8 = 4 filled, 4 empty
+        assert_eq!(text.matches('▓').count(), 4);
+        assert_eq!(text.matches('░').count(), 4);
+    }
+
+    #[test]
+    fn utilization_bar_labeled_includes_prefix() {
+        let theme = super::components::default_theme();
+        let line = utilization_bar_labeled("250m/4", 6, &theme);
+        let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(text.starts_with("250m/4 "));
+        assert!(text.contains("6%"));
+    }
 }

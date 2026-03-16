@@ -92,6 +92,21 @@ fn gauge_severity_style(theme: &Theme, percent: u8) -> Style {
     }
 }
 
+/// Compact 5-char bar + percentage for inline dashboard use: `▓▓░░░  45%`.
+fn mini_bar<'a>(pct: u64, theme: &Theme) -> Vec<Span<'a>> {
+    let pct = pct.min(100);
+    const W: usize = 5;
+    let filled = ((pct as usize) * W + 50) / 100;
+    let empty = W - filled;
+    let style = utilization_style(pct, theme);
+    let dim = Style::default().fg(theme.fg_dim);
+    vec![
+        Span::styled("▓".repeat(filled), style),
+        Span::styled("░".repeat(empty), dim),
+        Span::styled(format!("{pct:>4}%"), style),
+    ]
+}
+
 fn truncate_label(s: &str, max_chars: usize) -> Cow<'_, str> {
     if s.chars().count() <= max_chars {
         Cow::Borrowed(s)
@@ -925,30 +940,21 @@ fn render_namespace_utilization(
             "  {:<18} {:>5} {:>8} {:>8} ",
             ns_name, ns.pod_count, cpu_used, cpu_req
         );
-        let cpu_pct_str = ns
+        let cpu_bar = ns
             .cpu_req_utilization_pct
-            .map(|p| format!("{:>5}%", p))
-            .unwrap_or_else(|| "    -".to_string());
-        let cpu_pct_style = ns
-            .cpu_req_utilization_pct
-            .map(|p| utilization_style(u64::from(p), theme))
-            .unwrap_or(dim);
+            .map(|p| mini_bar(u64::from(p), theme))
+            .unwrap_or_else(|| vec![Span::styled("    -", dim)]);
         let mid = format!(" {:>8} {:>8} ", mem_used, mem_req);
-        let mem_pct_str = ns
+        let mem_bar = ns
             .mem_req_utilization_pct
-            .map(|p| format!("{:>5}%", p))
-            .unwrap_or_else(|| "    -".to_string());
-        let mem_pct_style = ns
-            .mem_req_utilization_pct
-            .map(|p| utilization_style(u64::from(p), theme))
-            .unwrap_or(dim);
+            .map(|p| mini_bar(u64::from(p), theme))
+            .unwrap_or_else(|| vec![Span::styled("    -", dim)]);
 
-        lines.push(Line::from(vec![
-            Span::styled(prefix, dim),
-            Span::styled(cpu_pct_str, cpu_pct_style),
-            Span::styled(mid, dim),
-            Span::styled(mem_pct_str, mem_pct_style),
-        ]));
+        let mut spans = vec![Span::styled(prefix, dim)];
+        spans.extend(cpu_bar);
+        spans.push(Span::styled(mid, dim));
+        spans.extend(mem_bar);
+        lines.push(Line::from(spans));
     }
 
     let para = Paragraph::new(lines);
