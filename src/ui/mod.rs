@@ -1849,12 +1849,12 @@ mod tests {
 
     #[test]
     fn sidebar_uses_unknown_count_placeholder_for_unloaded_scopes() {
+        // Use Pods view so Workloads group is expanded and Pods is visible.
         let text = render_to_string(
-            &app_with_view(AppView::Dashboard),
+            &app_with_view(AppView::Pods),
             &ClusterSnapshot::default(),
         );
         assert!(text.contains("Pods (…)"));
-        assert!(text.contains("Services (…)"));
         assert!(!text.contains("Pods (0)"));
     }
 

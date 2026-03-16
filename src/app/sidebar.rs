@@ -144,3 +144,16 @@ pub fn sidebar_rows(collapsed: &HashSet<NavGroup>) -> &'static [SidebarItem] {
     let mask = collapsed_mask(collapsed) as usize;
     &SIDEBAR_ROWS_CACHE[mask]
 }
+
+/// Returns the NavGroup that contains the given view, if any.
+pub fn group_for_view(view: AppView) -> Option<NavGroup> {
+    SIDEBAR_GROUPS
+        .iter()
+        .find(|(_, views)| views.contains(&view))
+        .map(|(group, _)| *group)
+}
+
+/// Returns all NavGroup variants.
+pub fn all_groups() -> impl Iterator<Item = NavGroup> {
+    SIDEBAR_GROUPS.iter().map(|(g, _)| *g)
+}
