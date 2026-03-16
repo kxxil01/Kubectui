@@ -21,7 +21,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
         sort_header_cell, table_viewport_rows, table_window,
@@ -48,6 +48,7 @@ type JobDerivedCacheValue = Arc<Vec<JobDerivedCell>>;
 static JOB_DERIVED_CACHE: LazyLock<Mutex<Option<(JobDerivedCacheKey, JobDerivedCacheValue)>>> =
     LazyLock::new(|| Mutex::new(None));
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_jobs(
     frame: &mut Frame,
     area: Rect,
@@ -56,6 +57,7 @@ pub fn render_jobs(
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = query.trim();
@@ -168,12 +170,13 @@ pub fn render_jobs(
     let sort_suffix = workload_sort_suffix(sort);
     let title = format!(" ⚙  Jobs ({total}){sort_suffix} ");
     let block = if query.is_empty() {
-        active_block(&title)
+        content_block(&title, focused)
     } else {
         let all = cluster.jobs.len();
-        active_block(&format!(
-            " ⚙  Jobs ({total} of {all}) [/{query}]{sort_suffix}"
-        ))
+        content_block(
+            &format!(" ⚙  Jobs ({total} of {all}) [/{query}]{sort_suffix}"),
+            focused,
+        )
     };
 
     let table = Table::new(

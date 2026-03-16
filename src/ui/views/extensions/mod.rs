@@ -16,6 +16,7 @@ pub fn render_extensions(
     area: Rect,
     snapshot: &ClusterSnapshot,
     app: &AppState,
+    _focused: bool,
 ) {
     let chunks = Layout::default()
         .direction(Direction::Horizontal)

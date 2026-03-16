@@ -17,7 +17,7 @@ use crate::{
         issues::{compute_issues, filtered_issue_indices},
     },
     ui::{
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         loading_or_empty_message, responsive_table_widths, table_viewport_rows, table_window,
     },
 };
@@ -30,6 +30,7 @@ pub fn render_issues(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search.trim();
@@ -140,7 +141,7 @@ pub fn render_issues(
         ),
     )
     .header(header)
-    .block(active_block(&title))
+    .block(content_block(&title, focused))
     .row_highlight_style(theme.selection_style())
     .highlight_symbol(theme.highlight_symbol())
     .highlight_spacing(HighlightSpacing::Always);

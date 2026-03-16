@@ -21,7 +21,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::{
@@ -97,6 +97,7 @@ fn cached_pvc_derived(
     built
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_pvcs(
     frame: &mut Frame,
     area: Rect,
@@ -105,6 +106,7 @@ pub fn render_pvcs(
     selected_idx: usize,
     search: &str,
     sort: Option<WorkloadSortState>,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search.trim();
@@ -229,7 +231,7 @@ pub fn render_pvcs(
         ],
     )
     .header(header)
-    .block(active_block(&title))
+    .block(content_block(&title, focused))
     .row_highlight_style(theme.selection_style())
     .highlight_symbol(theme.highlight_symbol())
     .highlight_spacing(HighlightSpacing::Always);
@@ -306,6 +308,7 @@ fn cached_pv_derived(
     built
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_pvs(
     frame: &mut Frame,
     area: Rect,
@@ -314,6 +317,7 @@ pub fn render_pvs(
     selected_idx: usize,
     search: &str,
     sort: Option<WorkloadSortState>,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search.trim();
@@ -443,7 +447,7 @@ pub fn render_pvs(
         ],
     )
     .header(header)
-    .block(active_block(&title))
+    .block(content_block(&title, focused))
     .row_highlight_style(theme.selection_style())
     .highlight_symbol(theme.highlight_symbol())
     .highlight_spacing(HighlightSpacing::Always);
@@ -521,6 +525,7 @@ fn cached_storage_class_derived(
     built
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_storage_classes(
     frame: &mut Frame,
     area: Rect,
@@ -529,6 +534,7 @@ pub fn render_storage_classes(
     selected_idx: usize,
     search: &str,
     sort: Option<WorkloadSortState>,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = search.trim();
@@ -667,7 +673,7 @@ pub fn render_storage_classes(
         ],
     )
     .header(header)
-    .block(active_block(&title))
+    .block(content_block(&title, focused))
     .row_highlight_style(theme.selection_style())
     .highlight_symbol(theme.highlight_symbol())
     .highlight_spacing(HighlightSpacing::Always);

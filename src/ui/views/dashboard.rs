@@ -106,7 +106,7 @@ fn truncate_label(s: &str, max_chars: usize) -> Cow<'_, str> {
 // ── top-level render ──────────────────────────────────────────────────────────
 
 /// Renders the dashboard view.
-pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot) {
+pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, _focused: bool) {
     let theme = default_theme();
     let d = cached_dashboard(snapshot);
 

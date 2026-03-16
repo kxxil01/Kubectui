@@ -23,7 +23,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         loading_or_empty_message, responsive_table_widths, sort_header_cell, table_viewport_rows,
@@ -292,6 +292,7 @@ pub fn render_flux_resources(
     query: &str,
     view: AppView,
     sort: Option<WorkloadSortState>,
+    focused: bool,
 ) {
     let Some(mode) = FluxMode::from_view(view) else {
         frame.render_widget(
@@ -416,12 +417,15 @@ pub fn render_flux_resources(
     let sort_suffix = workload_sort_suffix(sort);
     let title = format!(" 🌀 FluxCD · {} ({total}){sort_suffix} ", mode.title());
     let block = if query.is_empty() {
-        active_block(&title)
+        content_block(&title, focused)
     } else {
-        active_block(&format!(
-            " 🌀 FluxCD · {} ({total} of {mode_total}) [/{query}]{sort_suffix}",
-            mode.title()
-        ))
+        content_block(
+            &format!(
+                " 🌀 FluxCD · {} ({total} of {mode_total}) [/{query}]{sort_suffix}",
+                mode.title()
+            ),
+            focused,
+        )
     };
 
     let table = Table::new(

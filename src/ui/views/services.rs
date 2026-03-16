@@ -18,7 +18,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
@@ -42,6 +42,7 @@ static SERVICE_DERIVED_CACHE: LazyLock<DerivedRowsCache<ServiceDerivedCell>> =
     LazyLock::new(Default::default);
 
 /// Renders the Services table with stateful selection and scrollbar.
+#[allow(clippy::too_many_arguments)]
 pub fn render_services(
     frame: &mut Frame,
     area: Rect,
@@ -50,6 +51,7 @@ pub fn render_services(
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
+    focused: bool,
 ) {
     let theme = default_theme();
     let query = query.trim();
@@ -147,12 +149,13 @@ pub fn render_services(
     let sort_suffix = workload_sort_suffix(sort);
     let title = format!(" 🔌 Services ({total}){sort_suffix} ");
     let block = if query.is_empty() {
-        active_block(&title)
+        content_block(&title, focused)
     } else {
         let all = snapshot.services.len();
-        active_block(&format!(
-            " 🔌 Services ({total} of {all}) [/{query}]{sort_suffix}"
-        ))
+        content_block(
+            &format!(" 🔌 Services ({total} of {all}) [/{query}]{sort_suffix}"),
+            focused,
+        )
     };
 
     let table = Table::new(

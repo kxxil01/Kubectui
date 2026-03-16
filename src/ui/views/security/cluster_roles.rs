@@ -17,7 +17,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{active_block, default_block, default_theme},
+        components::{content_block, default_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, loading_or_empty_message, responsive_table_widths,
         sort_header_cell, table_viewport_rows, table_window,
@@ -105,6 +105,7 @@ static CLUSTER_ROLE_RULES_CACHE: LazyLock<
     Mutex<Option<(ClusterRoleRulesCacheKey, ClusterRoleRulesCacheValue)>>,
 > = LazyLock::new(|| Mutex::new(None));
 
+#[allow(clippy::too_many_arguments)]
 pub fn render_cluster_roles(
     frame: &mut Frame,
     area: Rect,
@@ -113,6 +114,7 @@ pub fn render_cluster_roles(
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
+    focused: bool,
 ) {
     let query = query.trim();
     let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
@@ -208,12 +210,13 @@ pub fn render_cluster_roles(
     let sort_suffix = workload_sort_suffix(sort);
     let title = format!(" 🛡️  ClusterRoles ({total}){sort_suffix} ");
     let block = if query.is_empty() {
-        active_block(&title)
+        content_block(&title, focused)
     } else {
         let all = cluster.cluster_roles.len();
-        active_block(&format!(
-            " 🛡️  ClusterRoles ({total} of {all}) [/{query}]{sort_suffix}"
-        ))
+        content_block(
+            &format!(" 🛡️  ClusterRoles ({total} of {all}) [/{query}]{sort_suffix}"),
+            focused,
+        )
     };
 
     let table = Table::new(
@@ -258,7 +261,8 @@ pub fn render_cluster_roles(
         &theme,
     );
     frame.render_widget(
-        Paragraph::new((*detail).clone()).block(active_block("Selected ClusterRole Rules")),
+        Paragraph::new((*detail).clone())
+            .block(content_block("Selected ClusterRole Rules", focused)),
         chunks[1],
     );
 }
