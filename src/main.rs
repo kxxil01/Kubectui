@@ -5,8 +5,10 @@
 
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 
+mod async_types;
 mod terminal;
 
+use async_types::*;
 use std::{
     collections::HashMap,
     io,
@@ -15,7 +17,6 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use crossterm::event::{Event, EventStream, KeyCode};
 use futures::{StreamExt, future::join_all};
 use k8s_openapi::api::core::v1::Pod;
@@ -498,231 +499,6 @@ fn open_detail_for_resource(
     });
 }
 
-#[derive(Debug)]
-enum LogsViewerAsyncResult {
-    Containers {
-        request_id: u64,
-        pod_name: String,
-        namespace: String,
-        result: Result<Vec<String>, String>,
-    },
-    Tail {
-        request_id: u64,
-        pod_name: String,
-        namespace: String,
-        container_name: String,
-        result: Result<Vec<String>, String>,
-    },
-}
-
-#[derive(Debug)]
-struct RefreshAsyncResult {
-    request_id: u64,
-    context_generation: u64,
-    requested_namespace: Option<String>,
-    result: Result<GlobalState, String>,
-}
-
-#[derive(Debug, Clone)]
-struct QueuedRefresh {
-    request_id: u64,
-    namespace: Option<String>,
-    primary_scope: RefreshScope,
-    options: RefreshOptions,
-    context_generation: u64,
-}
-
-#[derive(Debug, Default)]
-struct RefreshRuntimeState {
-    request_seq: u64,
-    in_flight_id: Option<u64>,
-    in_flight_task: Option<tokio::task::JoinHandle<()>>,
-    queued_refresh: Option<QueuedRefresh>,
-    context_generation: u64,
-}
-
-#[derive(Debug)]
-struct DeleteAsyncResult {
-    request_id: u64,
-    action_history_id: u64,
-    context_generation: u64,
-    origin_view: AppView,
-    resource: ResourceRef,
-    result: Result<(), String>,
-}
-
-#[derive(Debug)]
-struct ScaleAsyncResult {
-    action_history_id: u64,
-    context_generation: u64,
-    origin_view: AppView,
-    resource: ResourceRef,
-    target_replicas: i32,
-    resource_label: String,
-    result: Result<(), String>,
-}
-
-#[derive(Debug)]
-struct RolloutRestartAsyncResult {
-    action_history_id: u64,
-    context_generation: u64,
-    origin_view: AppView,
-    resource_label: String,
-    result: Result<(), String>,
-}
-
-#[derive(Debug)]
-struct FluxReconcileAsyncResult {
-    action_history_id: u64,
-    context_generation: u64,
-    origin_view: AppView,
-    resource: ResourceRef,
-    resource_label: String,
-    baseline: Option<FluxReconcileObservedState>,
-    result: Result<(), String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct FluxReconcileObservedState {
-    status: String,
-    message: Option<String>,
-    last_reconcile_time: Option<DateTime<Utc>>,
-    last_applied_revision: Option<String>,
-    last_attempted_revision: Option<String>,
-    observed_generation: Option<i64>,
-}
-
-#[derive(Debug, Clone)]
-struct PendingFluxReconcileVerification {
-    action_history_id: u64,
-    resource: ResourceRef,
-    resource_label: String,
-    baseline: Option<FluxReconcileObservedState>,
-    deadline: Instant,
-}
-
-#[derive(Debug)]
-struct TriggerCronJobAsyncResult {
-    action_history_id: u64,
-    context_generation: u64,
-    origin_view: AppView,
-    resource_label: String,
-    result: Result<String, String>,
-}
-
-#[derive(Debug)]
-struct SetCronJobSuspendAsyncResult {
-    action_history_id: u64,
-    context_generation: u64,
-    origin_view: AppView,
-    resource_label: String,
-    suspend: bool,
-    result: Result<(), String>,
-}
-
-#[derive(Debug)]
-struct ProbeAsyncResult {
-    resource: ResourceRef,
-    result: Result<Vec<(String, kubectui::k8s::probes::ContainerProbes)>, String>,
-}
-
-#[derive(Debug)]
-struct ExecBootstrapResult {
-    session_id: u64,
-    resource: ResourceRef,
-    result: Result<Vec<String>, String>,
-}
-
-#[derive(Debug)]
-struct WorkloadLogsBootstrapResult {
-    session_id: u64,
-    resource: ResourceRef,
-    result: Result<Vec<kubectui::k8s::workload_logs::WorkloadLogTarget>, String>,
-}
-
-#[derive(Debug)]
-struct ExtensionFetchResult {
-    crd_name: String,
-    result: Result<Vec<kubectui::k8s::dtos::CustomResourceInfo>, String>,
-}
-
-#[derive(Debug)]
-struct DetailAsyncResult {
-    request_id: u64,
-    resource: ResourceRef,
-    result: Result<DetailViewState, String>,
-}
-
-#[derive(Debug)]
-struct EventsAsyncResult {
-    request_id: u64,
-    context_generation: u64,
-    requested_namespace: Option<String>,
-    result: Result<Vec<kubectui::k8s::dtos::K8sEventInfo>, String>,
-}
-
-#[derive(Debug)]
-struct RelationsAsyncResult {
-    request_id: u64,
-    resource: ResourceRef,
-    result: Result<Vec<kubectui::k8s::relationships::RelationNode>, String>,
-}
-
-#[derive(Debug, Default)]
-struct EventsFetchRuntimeState {
-    request_seq: u64,
-    in_flight_id: Option<u64>,
-    in_flight_namespace: Option<Option<String>>,
-    in_flight_task: Option<tokio::task::JoinHandle<()>>,
-    queued_namespace: Option<Option<String>>,
-}
-
-#[derive(Debug, Clone, Copy)]
-enum NodeOpKind {
-    Cordon,
-    Uncordon,
-    Drain,
-}
-
-impl NodeOpKind {
-    fn label(self) -> &'static str {
-        match self {
-            NodeOpKind::Cordon => "Cordon",
-            NodeOpKind::Uncordon => "Uncordon",
-            NodeOpKind::Drain => "Drain",
-        }
-    }
-}
-
-#[derive(Debug)]
-struct NodeOpsAsyncResult {
-    action_history_id: u64,
-    context_generation: u64,
-    origin_view: AppView,
-    node_name: String,
-    op_kind: NodeOpKind,
-    result: Result<(), String>,
-}
-
-#[derive(Debug, Clone)]
-struct DeferredRefreshTrigger {
-    context_generation: u64,
-    view: AppView,
-    dispatch: RefreshDispatch,
-    namespace: Option<String>,
-}
-
-struct MutationRuntime<'a> {
-    global_state: &'a mut GlobalState,
-    client: &'a K8sClient,
-    refresh_tx: &'a tokio::sync::mpsc::Sender<RefreshAsyncResult>,
-    deferred_refresh_tx: &'a tokio::sync::mpsc::Sender<DeferredRefreshTrigger>,
-    refresh_state: &'a mut RefreshRuntimeState,
-    snapshot_dirty: &'a mut bool,
-    auto_refresh: &'a mut tokio::time::Interval,
-    status_message_clear_at: &'a mut Option<Instant>,
-}
-
 const STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS: u64 = 3;
 const STARTUP_NAMESPACE_FETCH_ATTEMPTS: usize = 2;
 const STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS: u64 = 150;
@@ -731,25 +507,6 @@ const STATUS_MESSAGE_TIMEOUT_SECS: u64 = 12;
 const MUTATION_REFRESH_DELAYS_SECS: &[u64] = &[2, 5];
 const FLUX_RECONCILE_REFRESH_DELAYS_SECS: &[u64] = &[2, 5, 9];
 const MAX_RECENT_EVENTS_CACHE_ITEMS: usize = 250;
-
-#[derive(Debug, Clone, Copy)]
-struct RefreshDispatch {
-    primary_scope: RefreshScope,
-    options: RefreshOptions,
-}
-
-impl RefreshDispatch {
-    const fn new(primary_scope: RefreshScope, scope: RefreshScope) -> Self {
-        Self {
-            primary_scope,
-            options: RefreshOptions {
-                scope,
-                include_cluster_info: false,
-                skip_core: false,
-            },
-        }
-    }
-}
 
 fn fast_refresh_options(include_flux: bool) -> RefreshDispatch {
     let mut scope = RefreshScope::CORE_OVERVIEW;
