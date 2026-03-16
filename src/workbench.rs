@@ -191,11 +191,8 @@ impl ResourceEventsTabState {
             self.events.drain(..drain);
         }
         self.timeline = build_timeline(&self.events, history.entries(), &self.resource);
-        // Clamp scroll so it doesn't exceed the new timeline length.
-        let max = self.timeline.len().saturating_sub(1);
-        if self.scroll > max {
-            self.scroll = max;
-        }
+        // Always clamp scroll to the new timeline length.
+        self.scroll = self.scroll.min(self.timeline.len().saturating_sub(1));
     }
 }
 
@@ -285,7 +282,10 @@ impl WorkloadLogsTabState {
             self.scroll = self.scroll.saturating_sub(excess);
         }
         if self.follow_mode {
-            self.scroll = self.lines.len().saturating_sub(1);
+            // Set scroll past the end; the renderer's scroll_window clamps it
+            // to the last visible filtered line. This avoids an O(n) filter
+            // scan on every push.
+            self.scroll = self.lines.len();
         }
     }
 
@@ -362,6 +362,8 @@ impl ExecTabState {
     pub fn set_containers(&mut self, containers: Vec<String>) {
         self.containers = containers;
         self.container_cursor = 0;
+        self.exited = false;
+        self.error = None;
         if self.containers.len() > 1 {
             self.picking_container = true;
             self.loading = false;
@@ -386,7 +388,11 @@ impl ExecTabState {
             self.lines.drain(..excess);
             self.scroll = self.scroll.saturating_sub(excess);
         }
-        self.scroll = self.lines.len().saturating_sub(1);
+        // Auto-follow: keep scroll at bottom if user was already at (or near) the end.
+        let max = self.lines.len().saturating_sub(1);
+        if self.scroll >= max.saturating_sub(1) {
+            self.scroll = max;
+        }
     }
 }
 
