@@ -260,6 +260,7 @@ pub(crate) fn render_centered_message(
     focused: bool,
 ) {
     use ratatui::layout::Alignment;
+    use ratatui::text::Line;
 
     let theme = default_theme();
     let is_loading = matches!(
@@ -267,22 +268,25 @@ pub(crate) fn render_centered_message(
         ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
     );
 
-    let msg = if is_loading {
-        loading_text
+    let line = if is_loading {
+        Line::from(vec![
+            Span::styled("⟳ ", Style::default().fg(theme.accent)),
+            Span::styled(loading_text, Style::default().fg(theme.muted)),
+        ])
     } else if query.trim().is_empty() {
-        empty_text
+        Line::from(vec![
+            Span::styled("○ ", Style::default().fg(theme.fg_dim)),
+            Span::styled(empty_text, theme.inactive_style()),
+        ])
     } else {
-        no_match_text
-    };
-
-    let style = if is_loading {
-        Style::default().fg(theme.muted)
-    } else {
-        theme.inactive_style()
+        Line::from(vec![
+            Span::styled("⊘ ", Style::default().fg(theme.warning)),
+            Span::styled(no_match_text, theme.inactive_style()),
+        ])
     };
 
     frame.render_widget(
-        Paragraph::new(Span::styled(msg, style))
+        Paragraph::new(line)
             .alignment(Alignment::Center)
             .block(components::content_block(title, focused)),
         area,
