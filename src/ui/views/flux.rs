@@ -26,6 +26,7 @@ use crate::{
         components::{active_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
+        views::filtering::age_duration_now,
         loading_or_empty_message, responsive_table_widths, sort_header_cell, table_viewport_rows,
         table_window, workload_sort_suffix,
     },
@@ -209,11 +210,7 @@ pub fn filtered_flux_indices_for_view(
                 },
                 |resource| resource.name.as_str(),
                 |resource| resource.namespace.as_deref().unwrap_or(""),
-                |resource| {
-                    resource
-                        .created_at
-                        .map(crate::ui::views::filtering::age_duration_now)
-                },
+                |resource| resource.created_at.map(age_duration_now),
             )
         },
     )
