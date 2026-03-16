@@ -452,7 +452,13 @@ pub fn render_sidebar(
         counts,
     );
 
-    frame.render_widget(Paragraph::new((*lines).clone()), inner);
+    let buf = frame.buffer_mut();
+    for (i, line) in lines.iter().enumerate() {
+        if i >= inner.height as usize {
+            break;
+        }
+        buf.set_line(inner.x, inner.y + i as u16, line, inner.width);
+    }
 }
 
 /// Renders the bottom status bar with context-aware styling.
