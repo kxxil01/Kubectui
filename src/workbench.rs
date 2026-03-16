@@ -911,6 +911,87 @@ mod tests {
     }
 
     #[test]
+    fn close_active_tab_clears_maximized() {
+        let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
+        state.maximized = true;
+        state.close_active_tab();
+        assert!(!state.maximized);
+        assert!(!state.open);
+    }
+
+    #[test]
+    fn close_resource_tabs_clears_maximized() {
+        let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState {
+            resource: pod("pod-0"),
+            yaml: None,
+            scroll: 0,
+            pending_request_id: None,
+            loading: false,
+            error: None,
+        }));
+        state.maximized = true;
+        state.close_resource_tabs();
+        assert!(!state.maximized);
+        assert!(!state.open);
+    }
+
+    #[test]
+    fn exec_set_containers_clears_exited_and_error() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.exited = true;
+        tab.error = Some("connection lost".into());
+        tab.set_containers(vec!["main".into()]);
+        assert!(!tab.exited);
+        assert!(tab.error.is_none());
+        assert_eq!(tab.container_name, "main");
+    }
+
+    #[test]
+    fn exec_append_output_follows_when_at_bottom() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.append_output("line1\nline2\n");
+        assert_eq!(tab.scroll, 1); // at bottom (2 lines, index 1)
+        tab.append_output("line3\n");
+        assert_eq!(tab.scroll, 2); // followed to new bottom
+    }
+
+    #[test]
+    fn exec_append_output_does_not_follow_when_scrolled_up() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.append_output("line1\nline2\nline3\n");
+        tab.scroll = 0; // user scrolled to top
+        tab.append_output("line4\n");
+        assert_eq!(tab.scroll, 0); // stays at top
+    }
+
+    #[test]
+    fn workload_log_follow_mode_sets_scroll_past_end() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.follow_mode = true;
+        tab.push_line(WorkloadLogLine {
+            pod_name: "pod-0".into(),
+            container_name: "main".into(),
+            content: "hello".into(),
+            is_stderr: false,
+        });
+        // follow mode sets scroll past end for renderer to clamp
+        assert!(tab.scroll >= tab.lines.len());
+    }
+
+    #[test]
+    fn events_timeline_rebuild_clamps_scroll() {
+        let mut tab = ResourceEventsTabState::new(pod("pod-0"));
+        tab.scroll = 100;
+        tab.rebuild_timeline(&crate::action_history::ActionHistoryState::default());
+        // timeline is empty, scroll should be 0
+        assert_eq!(tab.scroll, 0);
+    }
+
+    #[test]
     fn workload_log_filter_matches_case_insensitively() {
         let tab = WorkloadLogsTabState {
             text_filter: "error".to_string(),
