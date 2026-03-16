@@ -23,7 +23,7 @@ use crate::{
         bookmarked_name_cell,
         components::{content_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
-        loading_or_empty_message, table_viewport_rows, table_window,
+        render_centered_message, table_viewport_rows, table_window,
         views::filtering::{filtered_helm_release_indices, filtered_helm_repo_indices},
     },
 };
@@ -129,27 +129,17 @@ pub fn render_helm_releases(
     .style(theme.header_style());
 
     if indices.is_empty() {
-        let empty_msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::HelmReleases,
             query,
+            "Helm Releases",
             "Loading Helm releases...",
             "No Helm releases found (Helm v3 stores releases as Kubernetes Secrets)",
             "No releases match search",
-        );
-        let title = if query.is_empty() {
-            " Helm Releases (0) ".to_string()
-        } else {
-            let all = cluster.helm_releases.len();
-            format!(" Helm Releases (0 of {all}) [/{query}]")
-        };
-        frame.render_widget(
-            ratatui::widgets::Paragraph::new(Span::styled(
-                format!("  {empty_msg}"),
-                Style::default().fg(theme.fg_dim),
-            ))
-            .block(content_block(&title, focused)),
-            area,
+            focused,
         );
         return;
     }
@@ -285,27 +275,17 @@ pub fn render_helm_repos(
     .style(theme.header_style());
 
     if indices.is_empty() {
-        let empty_msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::HelmCharts,
             query,
+            "Helm Repositories",
             "Loading Helm repositories...",
             "No Helm repositories configured (helm repo add <name> <url>)",
             "No repositories match search",
-        );
-        let title = if query.is_empty() {
-            " Helm Repositories (0) ".to_string()
-        } else {
-            let all = cluster.helm_repositories.len();
-            format!(" Helm Repositories (0 of {all}) [/{query}]")
-        };
-        frame.render_widget(
-            ratatui::widgets::Paragraph::new(Span::styled(
-                format!("  {empty_msg}"),
-                Style::default().fg(theme.fg_dim),
-            ))
-            .block(content_block(&title, focused)),
-            area,
+            focused,
         );
         return;
     }

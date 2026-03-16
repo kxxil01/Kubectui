@@ -21,9 +21,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, loading_or_empty_message, responsive_table_widths, table_viewport_rows,
+        format_small_int, render_centered_message, responsive_table_widths, table_viewport_rows,
         table_window,
         views::filtering::filtered_event_indices,
     },
@@ -107,35 +107,31 @@ pub fn render_events(
     );
 
     if indices.is_empty() {
-        let msg = if cluster.events.is_empty() {
-            if let Some(error) = cluster.events_last_error.as_deref() {
-                format!("  Failed to load events: {error}")
-            } else {
-                loading_or_empty_message(
-                    cluster,
-                    AppView::Events,
-                    query,
-                    "  Loading events...",
-                    "  No events found",
-                    "  No events match the search query",
-                )
-                .to_string()
-            }
-        } else {
-            loading_or_empty_message(
-                cluster,
-                AppView::Events,
-                query,
-                "  Loading events...",
-                "  No events found",
-                "  No events match the search query",
-            )
-            .to_string()
-        };
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("Events")),
+        if cluster.events.is_empty()
+            && let Some(error) = cluster.events_last_error.as_deref()
+        {
+            frame.render_widget(
+                Paragraph::new(Span::styled(
+                    format!("Failed to load events: {error}"),
+                    theme.inactive_style(),
+                ))
+                .alignment(ratatui::layout::Alignment::Center)
+                .block(crate::ui::components::content_block("Events", focused)),
+                area,
+            );
+            return;
+        }
+        render_centered_message(
+            frame,
             area,
+            cluster,
+            AppView::Events,
+            query,
+            "Events",
+            "Loading events...",
+            "No events found",
+            "No events match the search query",
+            focused,
         );
         return;
     }

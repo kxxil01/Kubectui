@@ -7,8 +7,8 @@ use ratatui::{
     prelude::{Frame, Style},
     text::Span,
     widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
+        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState,
     },
 };
 
@@ -18,12 +18,12 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, loading_or_empty_message, responsive_table_widths, sort_header_cell,
+        format_age, render_centered_message, responsive_table_widths, sort_header_cell,
         table_viewport_rows, table_window,
         views::filtering::filtered_service_indices,
         workload_sort_suffix,
@@ -66,18 +66,17 @@ pub fn render_services(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             snapshot,
             AppView::Services,
             query,
-            "  Loading services...",
-            "  No services found",
-            "  No services match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("Services")),
-            area,
+            "Services",
+            "Loading services...",
+            "No services found",
+            "No services match the search query",
+            focused,
         );
         return;
     }

@@ -10,8 +10,8 @@ use ratatui::{
     prelude::{Frame, Style},
     text::Span,
     widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
+        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState,
     },
 };
 
@@ -21,9 +21,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        loading_or_empty_message, sort_header_cell, table_viewport_rows, table_window,
+        render_centered_message, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::{
             filtered_pv_indices, filtered_pvc_indices, filtered_storage_class_indices,
         },
@@ -121,18 +121,17 @@ pub fn render_pvcs(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::PersistentVolumeClaims,
             query,
-            "  Loading persistent volume claims...",
-            "  No persistent volume claims found",
-            "  No persistent volume claims match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("PersistentVolumeClaims")),
-            area,
+            "PersistentVolumeClaims",
+            "Loading persistent volume claims...",
+            "No persistent volume claims found",
+            "No persistent volume claims match the search query",
+            focused,
         );
         return;
     }
@@ -332,18 +331,17 @@ pub fn render_pvs(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::PersistentVolumes,
             query,
-            "  Loading persistent volumes...",
-            "  No persistent volumes found",
-            "  No persistent volumes match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("PersistentVolumes")),
-            area,
+            "PersistentVolumes",
+            "Loading persistent volumes...",
+            "No persistent volumes found",
+            "No persistent volumes match the search query",
+            focused,
         );
         return;
     }
@@ -549,18 +547,17 @@ pub fn render_storage_classes(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::StorageClasses,
             query,
-            "  Loading storage classes...",
-            "  No storage classes found",
-            "  No storage classes match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("StorageClasses")),
-            area,
+            "StorageClasses",
+            "Loading storage classes...",
+            "No storage classes found",
+            "No storage classes match the search query",
+            focused,
         );
         return;
     }

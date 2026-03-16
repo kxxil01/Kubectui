@@ -5,8 +5,8 @@ use ratatui::{
     prelude::{Frame, Style},
     text::Span,
     widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
+        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState,
     },
 };
 
@@ -16,9 +16,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
-        loading_or_empty_message, table_viewport_rows, table_window,
+        render_centered_message, table_viewport_rows, table_window,
         views::filtering::filtered_namespace_indices,
     },
 };
@@ -43,18 +43,17 @@ pub fn render_namespaces(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::Namespaces,
             query,
-            "  Loading namespaces...",
-            "  No namespaces found",
-            "  No namespaces match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("Namespaces")),
-            area,
+            "Namespaces",
+            "Loading namespaces...",
+            "No namespaces found",
+            "No namespaces match the search query",
+            focused,
         );
         return;
     }
