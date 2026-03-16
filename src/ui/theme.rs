@@ -30,15 +30,29 @@ pub fn cycle_theme() -> Theme {
     active_theme()
 }
 
-/// Returns the currently active theme.
+thread_local! {
+    static CACHED_THEME: std::cell::Cell<(u8, Theme)> =
+        const { std::cell::Cell::new((0, Theme::DARK)) };
+}
+
+/// Returns the currently active theme (thread-local cached).
 pub fn active_theme() -> Theme {
-    match active_theme_index() {
-        1 => Theme::nord(),
-        2 => Theme::dracula(),
-        3 => Theme::catppuccin_mocha(),
-        4 => Theme::light(),
-        _ => Theme::dark(),
-    }
+    let idx = active_theme_index();
+    CACHED_THEME.with(|cell| {
+        let (cached_idx, cached_theme) = cell.get();
+        if cached_idx == idx {
+            return cached_theme;
+        }
+        let theme = match idx {
+            1 => Theme::nord(),
+            2 => Theme::dracula(),
+            3 => Theme::catppuccin_mocha(),
+            4 => Theme::light(),
+            _ => Theme::dark(),
+        };
+        cell.set((idx, theme));
+        theme
+    })
 }
 
 /// Represents a color theme for the application
@@ -104,31 +118,34 @@ impl Theme {
         }
     }
 
+    /// Dark theme as a const for static initialization.
+    pub const DARK: Self = Self {
+        name: "dark",
+        bg: Color::Rgb(13, 17, 23),
+        bg_surface: Color::Rgb(22, 27, 34),
+        fg: Color::Rgb(230, 237, 243),
+        fg_dim: Color::Rgb(139, 148, 158),
+        border: Color::Rgb(48, 54, 61),
+        border_active: Color::Rgb(88, 166, 255),
+        accent: Color::Rgb(88, 166, 255),
+        accent2: Color::Rgb(188, 140, 255),
+        success: Color::Rgb(63, 185, 80),
+        warning: Color::Rgb(210, 153, 34),
+        error: Color::Rgb(248, 81, 73),
+        muted: Color::Rgb(110, 118, 129),
+        selection_bg: Color::Rgb(33, 58, 95),
+        selection_fg: Color::Rgb(88, 166, 255),
+        header_bg: Color::Rgb(22, 27, 34),
+        tab_active_bg: Color::Rgb(33, 58, 95),
+        tab_active_fg: Color::Rgb(88, 166, 255),
+        tab_inactive_fg: Color::Rgb(110, 118, 129),
+        statusbar_bg: Color::Rgb(22, 27, 34),
+        info: Color::Rgb(88, 166, 255),
+    };
+
     /// Dark theme — GitHub-inspired deep dark (default)
     pub fn dark() -> Self {
-        Self {
-            name: "dark",
-            bg: Color::Rgb(13, 17, 23),
-            bg_surface: Color::Rgb(22, 27, 34),
-            fg: Color::Rgb(230, 237, 243),
-            fg_dim: Color::Rgb(139, 148, 158),
-            border: Color::Rgb(48, 54, 61),
-            border_active: Color::Rgb(88, 166, 255),
-            accent: Color::Rgb(88, 166, 255),
-            accent2: Color::Rgb(188, 140, 255),
-            success: Color::Rgb(63, 185, 80),
-            warning: Color::Rgb(210, 153, 34),
-            error: Color::Rgb(248, 81, 73),
-            muted: Color::Rgb(110, 118, 129),
-            selection_bg: Color::Rgb(33, 58, 95),
-            selection_fg: Color::Rgb(88, 166, 255),
-            header_bg: Color::Rgb(22, 27, 34),
-            tab_active_bg: Color::Rgb(33, 58, 95),
-            tab_active_fg: Color::Rgb(88, 166, 255),
-            tab_inactive_fg: Color::Rgb(110, 118, 129),
-            statusbar_bg: Color::Rgb(22, 27, 34),
-            info: Color::Rgb(88, 166, 255),
-        }
+        Self::DARK
     }
 
     /// Nord theme — Arctic, north-bluish color palette
