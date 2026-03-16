@@ -5,6 +5,7 @@
 
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 
+mod action;
 mod async_types;
 mod flux_reconcile;
 mod mutation_helpers;
@@ -4144,135 +4145,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                 }
                 AppAction::CopyResourceName => {
-                    let name = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|d| d.resource.as_ref())
-                        .map(|r| r.name().to_string())
-                        .or_else(|| {
-                            selected_resource(&app, &cached_snapshot).map(|r| r.name().to_string())
-                        });
-                    if let Some(name) = name {
-                        if let Err(e) = kubectui::clipboard::copy_to_clipboard(&name) {
-                            app.set_error(format!("Clipboard error: {e}"));
-                        } else {
-                            app.status_message = Some(format!("Copied: {name}"));
-                        }
-                    }
+                    action::copy_export::copy_resource_name(&mut app, &cached_snapshot);
                 }
                 AppAction::CopyResourceFullName => {
-                    let full = app
-                        .detail_view
-                        .as_ref()
-                        .and_then(|d| d.resource.as_ref())
-                        .map(|r| match r.namespace() {
-                            Some(ns) => format!("{ns}/{}", r.name()),
-                            None => r.name().to_string(),
-                        })
-                        .or_else(|| {
-                            selected_resource(&app, &cached_snapshot).map(|r| match r.namespace() {
-                                Some(ns) => format!("{ns}/{}", r.name()),
-                                None => r.name().to_string(),
-                            })
-                        });
-                    if let Some(full) = full {
-                        if let Err(e) = kubectui::clipboard::copy_to_clipboard(&full) {
-                            app.set_error(format!("Clipboard error: {e}"));
-                        } else {
-                            app.status_message = Some(format!("Copied: {full}"));
-                        }
-                    }
+                    action::copy_export::copy_resource_full_name(&mut app, &cached_snapshot);
                 }
                 AppAction::CopyLogContent => {
-                    let content = app
-                        .workbench()
-                        .active_tab()
-                        .and_then(|tab| match &tab.state {
-                            WorkbenchTabState::PodLogs(logs_tab) => {
-                                if logs_tab.viewer.lines.is_empty() {
-                                    None
-                                } else {
-                                    Some(logs_tab.viewer.lines.join("\n"))
-                                }
-                            }
-                            WorkbenchTabState::WorkloadLogs(wl_tab) => {
-                                if wl_tab.lines.is_empty() {
-                                    None
-                                } else {
-                                    Some(
-                                        wl_tab
-                                            .lines
-                                            .iter()
-                                            .map(|l| {
-                                                format!(
-                                                    "{}:{} {}",
-                                                    l.pod_name, l.container_name, l.content
-                                                )
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join("\n"),
-                                    )
-                                }
-                            }
-                            _ => None,
-                        });
-                    if let Some(content) = content {
-                        let line_count = content.lines().count();
-                        if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
-                            app.set_error(format!("Clipboard error: {e}"));
-                        } else {
-                            app.status_message = Some(format!("Copied {line_count} log lines"));
-                        }
-                    }
+                    action::copy_export::copy_log_content(&mut app);
                 }
                 AppAction::ExportLogs => {
-                    let export_data =
-                        app.workbench()
-                            .active_tab()
-                            .and_then(|tab| match &tab.state {
-                                WorkbenchTabState::PodLogs(logs_tab) => {
-                                    if logs_tab.viewer.lines.is_empty() {
-                                        None
-                                    } else {
-                                        let label = format!(
-                                            "{}-{}",
-                                            logs_tab.viewer.pod_name,
-                                            logs_tab.viewer.container_name,
-                                        );
-                                        Some((label, logs_tab.viewer.lines.join("\n")))
-                                    }
-                                }
-                                WorkbenchTabState::WorkloadLogs(wl_tab) => {
-                                    if wl_tab.lines.is_empty() {
-                                        None
-                                    } else {
-                                        let label = tab.state.title().replace(' ', "-");
-                                        let content = wl_tab
-                                            .lines
-                                            .iter()
-                                            .map(|l| {
-                                                format!(
-                                                    "{}:{} {}",
-                                                    l.pod_name, l.container_name, l.content
-                                                )
-                                            })
-                                            .collect::<Vec<_>>()
-                                            .join("\n");
-                                        Some((label, content))
-                                    }
-                                }
-                                _ => None,
-                            });
-                    if let Some((label, content)) = export_data {
-                        match kubectui::export::save_logs_to_file(&label, &content) {
-                            Ok(path) => {
-                                app.status_message = Some(format!("Saved to {}", path.display()));
-                            }
-                            Err(e) => {
-                                app.set_error(format!("Export error: {e}"));
-                            }
-                        }
-                    }
+                    action::copy_export::export_logs(&mut app);
                 }
                 AppAction::EditYaml => {
                     if !app
