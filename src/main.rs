@@ -779,76 +779,6 @@ fn request_events_refresh(
     ));
 }
 
-#[allow(clippy::too_many_arguments)]
-fn spawn_delete_task(
-    delete_tx: tokio::sync::mpsc::Sender<DeleteAsyncResult>,
-    client: K8sClient,
-    resource: ResourceRef,
-    request_id: u64,
-    action_history_id: u64,
-    context_generation: u64,
-    origin_view: AppView,
-    force: bool,
-) {
-    tokio::spawn(async move {
-        let outcome = tokio::time::timeout(Duration::from_secs(20), async {
-            match &resource {
-                ResourceRef::CustomResource {
-                    name,
-                    namespace,
-                    group,
-                    version,
-                    kind,
-                    plural,
-                } => {
-                    client
-                        .delete_custom_resource(
-                            group,
-                            version,
-                            kind,
-                            plural,
-                            name,
-                            namespace.as_deref(),
-                        )
-                        .await
-                }
-                _ => {
-                    let kind = resource.kind().to_ascii_lowercase();
-                    let name = resource.name().to_string();
-                    let namespace = resource.namespace().map(str::to_owned);
-                    if force {
-                        client
-                            .force_delete_resource(&kind, &name, namespace.as_deref())
-                            .await
-                    } else {
-                        client
-                            .delete_resource(&kind, &name, namespace.as_deref())
-                            .await
-                    }
-                }
-            }
-        })
-        .await;
-
-        let result = match outcome {
-            Ok(Ok(())) => Ok(()),
-            Ok(Err(err)) => Err(err.to_string()),
-            Err(_) => Err("Delete request timed out after 20s".to_string()),
-        };
-
-        let _ = delete_tx
-            .send(DeleteAsyncResult {
-                request_id,
-                action_history_id,
-                context_generation,
-                origin_view,
-                resource,
-                result,
-            })
-            .await;
-    });
-}
-
 /// Runs KubecTUI's event loop.
 async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let mut app = load_config();
@@ -3541,87 +3471,16 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                 }
                 AppAction::ScaleDialogSubmit => {
-                    if !app
-                        .detail_view
-                        .as_ref()
-                        .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
+                    if action::scale::handle_scale_dialog_submit(
+                        &mut app,
+                        &client,
+                        &scale_tx,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
                     {
-                        app.set_error(
-                            "Scale is unavailable for the selected resource.".to_string(),
-                        );
                         continue;
-                    }
-                    let scale_info = app.detail_view.as_ref().and_then(|d| {
-                        let replicas = d.scale_dialog.as_ref()?.desired_replicas_as_int()?;
-                        match d.resource.as_ref()? {
-                            ResourceRef::Deployment(name, namespace) => Some((
-                                ResourceRef::Deployment(name.clone(), namespace.clone()),
-                                name.clone(),
-                                namespace.clone(),
-                                "Deployment",
-                                replicas,
-                            )),
-                            ResourceRef::StatefulSet(name, namespace) => Some((
-                                ResourceRef::StatefulSet(name.clone(), namespace.clone()),
-                                name.clone(),
-                                namespace.clone(),
-                                "StatefulSet",
-                                replicas,
-                            )),
-                            _ => None,
-                        }
-                    });
-                    if let Some((resource, name, namespace, kind_label, replicas)) = scale_info {
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Scale)
-                            .await
-                        {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Scale,
-                                &resource,
-                            ));
-                            continue;
-                        }
-                        let resource_label =
-                            format!("{kind_label} '{name}' in namespace '{namespace}'");
-                        let origin_view = app.view();
-                        let action_history_id = app.record_action_pending(
-                            ActionKind::Scale,
-                            origin_view,
-                            Some(resource.clone()),
-                            resource_label.clone(),
-                            format!("Scaling {resource_label} to {replicas}..."),
-                        );
-                        begin_detail_mutation(
-                            &mut app,
-                            &mut status_message_clear_at,
-                            format!("Scaling {resource_label} to {replicas}..."),
-                        );
-                        let tx = scale_tx.clone();
-                        let c = client.clone();
-                        let context_generation = refresh_state.context_generation;
-                        tokio::spawn(async move {
-                            let result = match &resource {
-                                ResourceRef::Deployment(..) => {
-                                    c.scale_deployment(&name, &namespace, replicas).await
-                                }
-                                ResourceRef::StatefulSet(..) => {
-                                    c.scale_statefulset(&name, &namespace, replicas).await
-                                }
-                                _ => unreachable!("validated scalable resource"),
-                            }
-                            .map_err(|e| format!("{e:#}"));
-                            let _ = tx
-                                .send(ScaleAsyncResult {
-                                    action_history_id,
-                                    context_generation,
-                                    origin_view,
-                                    resource,
-                                    target_replicas: replicas,
-                                    resource_label,
-                                    result,
-                                })
-                                .await;
-                        });
                     }
                 }
                 AppAction::RolloutRestart => {
@@ -3705,444 +3564,116 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                 }
                 AppAction::DeleteResource => {
-                    // Dismiss the confirmation dialog before the capability
-                    // check so that `has_blocking_detail_overlay` no longer
-                    // vetoes the action.
-                    if let Some(detail) = &mut app.detail_view {
-                        detail.confirm_delete = false;
-                    }
-                    if !app
-                        .detail_view
-                        .as_ref()
-                        .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
+                    if action::delete::handle_delete_resource(
+                        &mut app,
+                        &client,
+                        &delete_tx,
+                        &mut delete_request_seq,
+                        &mut delete_in_flight_id,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
                     {
-                        app.set_error(
-                            "Delete is unavailable for the selected resource.".to_string(),
-                        );
                         continue;
-                    }
-                    let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
-                    if let Some(resource) = delete_resource {
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Delete)
-                            .await
-                        {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Delete,
-                                &resource,
-                            ));
-                            continue;
-                        }
-                        if delete_in_flight_id.is_some() {
-                            app.set_error("Delete already in progress".to_string());
-                            continue;
-                        }
-
-                        if let Some(detail) = &mut app.detail_view {
-                            detail.loading = true;
-                        }
-
-                        delete_request_seq = delete_request_seq.wrapping_add(1);
-                        let request_id = delete_request_seq;
-                        delete_in_flight_id = Some(request_id);
-                        let resource_label = format!("{} '{}'", resource.kind(), resource.name());
-                        let origin_view = app.view();
-                        let action_history_id = app.record_action_pending(
-                            ActionKind::Delete,
-                            origin_view,
-                            Some(resource.clone()),
-                            resource_label.clone(),
-                            format!("Deleting {resource_label}..."),
-                        );
-                        begin_detail_mutation(
-                            &mut app,
-                            &mut status_message_clear_at,
-                            format!("Deleting {resource_label}..."),
-                        );
-                        spawn_delete_task(
-                            delete_tx.clone(),
-                            client.clone(),
-                            resource,
-                            request_id,
-                            action_history_id,
-                            refresh_state.context_generation,
-                            origin_view,
-                            false,
-                        );
                     }
                 }
                 AppAction::ForceDeleteResource => {
-                    // Dismiss the confirmation dialog before the capability
-                    // check so that `has_blocking_detail_overlay` no longer
-                    // vetoes the action.
-                    if let Some(detail) = &mut app.detail_view {
-                        detail.confirm_delete = false;
-                    }
-                    if !app
-                        .detail_view
-                        .as_ref()
-                        .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
+                    if action::delete::handle_force_delete_resource(
+                        &mut app,
+                        &client,
+                        &delete_tx,
+                        &mut delete_request_seq,
+                        &mut delete_in_flight_id,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
                     {
-                        app.set_error(
-                            "Delete is unavailable for the selected resource.".to_string(),
-                        );
                         continue;
-                    }
-                    let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
-                    if let Some(resource) = delete_resource {
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Delete)
-                            .await
-                        {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Delete,
-                                &resource,
-                            ));
-                            continue;
-                        }
-                        if delete_in_flight_id.is_some() {
-                            app.set_error("Delete already in progress".to_string());
-                            continue;
-                        }
-
-                        if let Some(detail) = &mut app.detail_view {
-                            detail.loading = true;
-                        }
-
-                        delete_request_seq = delete_request_seq.wrapping_add(1);
-                        let request_id = delete_request_seq;
-                        delete_in_flight_id = Some(request_id);
-                        let resource_label = format!("{} '{}'", resource.kind(), resource.name());
-                        let origin_view = app.view();
-                        let action_history_id = app.record_action_pending(
-                            ActionKind::Delete,
-                            origin_view,
-                            Some(resource.clone()),
-                            resource_label.clone(),
-                            format!("Force deleting {resource_label}..."),
-                        );
-                        begin_detail_mutation(
-                            &mut app,
-                            &mut status_message_clear_at,
-                            format!("Force deleting {resource_label}..."),
-                        );
-                        spawn_delete_task(
-                            delete_tx.clone(),
-                            client.clone(),
-                            resource,
-                            request_id,
-                            action_history_id,
-                            refresh_state.context_generation,
-                            origin_view,
-                            true,
-                        );
                     }
                 }
                 AppAction::TriggerCronJob => {
-                    let cronjob_info = app.detail_view.as_ref().and_then(|d| {
-                        if let Some(ResourceRef::CronJob(name, ns)) = &d.resource {
-                            Some((name.clone(), ns.clone()))
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some((name, namespace)) = cronjob_info {
-                        let resource = ResourceRef::CronJob(name.clone(), namespace.clone());
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Trigger)
-                            .await
-                        {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Trigger,
-                                &resource,
-                            ));
-                            continue;
-                        }
-                        let resource_label = format!("CronJob '{name}'");
-                        let origin_view = app.view();
-                        let action_history_id = app.record_action_pending(
-                            ActionKind::Trigger,
-                            origin_view,
-                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
-                            resource_label.clone(),
-                            format!("Triggering {resource_label}..."),
-                        );
-                        begin_detail_mutation(
-                            &mut app,
-                            &mut status_message_clear_at,
-                            format!("Triggering {resource_label}..."),
-                        );
-                        let tx = trigger_cronjob_tx.clone();
-                        let c = client.clone();
-                        let context_generation = refresh_state.context_generation;
-                        tokio::spawn(async move {
-                            let result = c
-                                .trigger_cronjob(&name, &namespace)
-                                .await
-                                .map_err(|e| format!("{e:#}"));
-                            let _ = tx
-                                .send(TriggerCronJobAsyncResult {
-                                    action_history_id,
-                                    context_generation,
-                                    origin_view,
-                                    resource_label,
-                                    result,
-                                })
-                                .await;
-                        });
+                    if action::cronjob::handle_trigger_cronjob(
+                        &mut app,
+                        &client,
+                        &trigger_cronjob_tx,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
+                    {
+                        continue;
                     }
                 }
                 AppAction::ConfirmCronJobSuspend(suspend) => {
-                    if let Some(detail) = &mut app.detail_view
-                        && (detail.supports_action(DetailAction::SuspendCronJob)
-                            || detail.supports_action(DetailAction::ResumeCronJob))
-                    {
-                        detail.confirm_cronjob_suspend = Some(suspend);
-                    }
+                    action::cronjob::handle_confirm_cronjob_suspend(&mut app, suspend);
                 }
                 AppAction::SetCronJobSuspend(suspend) => {
-                    let cronjob_info = app.detail_view.as_ref().and_then(|d| {
-                        if let Some(ResourceRef::CronJob(name, ns)) = &d.resource {
-                            Some((name.clone(), ns.clone()))
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some((name, namespace)) = cronjob_info {
-                        let resource = ResourceRef::CronJob(name.clone(), namespace.clone());
-                        let detail_action = if suspend {
-                            DetailAction::SuspendCronJob
-                        } else {
-                            DetailAction::ResumeCronJob
-                        };
-                        if !detail_action_allowed(&app, &client, &resource, detail_action).await {
-                            app.set_error(detail_action_denied_message(detail_action, &resource));
-                            continue;
-                        }
-                        if let Some(detail) = &mut app.detail_view {
-                            detail.confirm_cronjob_suspend = None;
-                        }
-                        let resource_label = format!("CronJob '{name}'");
-                        let origin_view = app.view();
-                        let action_history_id = app.record_action_pending(
-                            if suspend {
-                                ActionKind::Suspend
-                            } else {
-                                ActionKind::Resume
-                            },
-                            origin_view,
-                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
-                            resource_label.clone(),
-                            format!(
-                                "{}ing {resource_label}...",
-                                if suspend { "Suspend" } else { "Resum" }
-                            ),
-                        );
-                        begin_detail_mutation(
-                            &mut app,
-                            &mut status_message_clear_at,
-                            format!(
-                                "{}ing {resource_label}...",
-                                if suspend { "Suspend" } else { "Resum" }
-                            ),
-                        );
-                        let tx = cronjob_suspend_tx.clone();
-                        let c = client.clone();
-                        let context_generation = refresh_state.context_generation;
-                        tokio::spawn(async move {
-                            let result = c
-                                .set_cronjob_suspend(&name, &namespace, suspend)
-                                .await
-                                .map_err(|e| format!("{e:#}"));
-                            let _ = tx
-                                .send(SetCronJobSuspendAsyncResult {
-                                    action_history_id,
-                                    context_generation,
-                                    origin_view,
-                                    resource_label,
-                                    suspend,
-                                    result,
-                                })
-                                .await;
-                        });
+                    if action::cronjob::handle_set_cronjob_suspend(
+                        &mut app,
+                        &client,
+                        &cronjob_suspend_tx,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                        suspend,
+                    )
+                    .await
+                    {
+                        continue;
                     }
                 }
                 AppAction::ConfirmDrainNode => {
-                    if let Some(detail) = &mut app.detail_view
-                        && detail.supports_action(DetailAction::Drain)
-                    {
-                        detail.confirm_drain = true;
-                    }
+                    action::node_ops::handle_confirm_drain_node(&mut app);
                 }
                 AppAction::CordonNode if !node_op_in_flight => {
-                    let node_name = app.detail_view.as_ref().and_then(|d| {
-                        if let Some(ResourceRef::Node(name)) = &d.resource {
-                            Some(name.clone())
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(name) = node_name {
-                        let resource = ResourceRef::Node(name.clone());
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Cordon)
-                            .await
-                        {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Cordon,
-                                &resource,
-                            ));
-                            continue;
-                        }
-                        node_op_in_flight = true;
-                        let resource_label = format!("Node '{name}'");
-                        let origin_view = app.view();
-                        let action_history_id = app.record_action_pending(
-                            ActionKind::Cordon,
-                            origin_view,
-                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
-                            resource_label.clone(),
-                            format!("Cordoning {resource_label}..."),
-                        );
-                        begin_detail_mutation(
-                            &mut app,
-                            &mut status_message_clear_at,
-                            format!("Cordoning {resource_label}..."),
-                        );
-                        let tx = node_ops_tx.clone();
-                        let c = client.clone();
-                        let context_generation = refresh_state.context_generation;
-                        tokio::spawn(async move {
-                            let result = c.cordon_node(&name).await.map_err(|e| format!("{e:#}"));
-                            let _ = tx
-                                .send(NodeOpsAsyncResult {
-                                    action_history_id,
-                                    context_generation,
-                                    origin_view,
-                                    node_name: name,
-                                    op_kind: NodeOpKind::Cordon,
-                                    result,
-                                })
-                                .await;
-                        });
+                    if action::node_ops::handle_cordon_node(
+                        &mut app,
+                        &client,
+                        &node_ops_tx,
+                        &mut node_op_in_flight,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
+                    {
+                        continue;
                     }
                 }
                 AppAction::CordonNode => {} // in-flight guard
                 AppAction::UncordonNode if !node_op_in_flight => {
-                    let node_name = app.detail_view.as_ref().and_then(|d| {
-                        if let Some(ResourceRef::Node(name)) = &d.resource {
-                            Some(name.clone())
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(name) = node_name {
-                        let resource = ResourceRef::Node(name.clone());
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Uncordon)
-                            .await
-                        {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Uncordon,
-                                &resource,
-                            ));
-                            continue;
-                        }
-                        node_op_in_flight = true;
-                        let resource_label = format!("Node '{name}'");
-                        let origin_view = app.view();
-                        let action_history_id = app.record_action_pending(
-                            ActionKind::Uncordon,
-                            origin_view,
-                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
-                            resource_label.clone(),
-                            format!("Uncordoning {resource_label}..."),
-                        );
-                        begin_detail_mutation(
-                            &mut app,
-                            &mut status_message_clear_at,
-                            format!("Uncordoning {resource_label}..."),
-                        );
-                        let tx = node_ops_tx.clone();
-                        let c = client.clone();
-                        let context_generation = refresh_state.context_generation;
-                        tokio::spawn(async move {
-                            let result = c.uncordon_node(&name).await.map_err(|e| format!("{e:#}"));
-                            let _ = tx
-                                .send(NodeOpsAsyncResult {
-                                    action_history_id,
-                                    context_generation,
-                                    origin_view,
-                                    node_name: name,
-                                    op_kind: NodeOpKind::Uncordon,
-                                    result,
-                                })
-                                .await;
-                        });
+                    if action::node_ops::handle_uncordon_node(
+                        &mut app,
+                        &client,
+                        &node_ops_tx,
+                        &mut node_op_in_flight,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
+                    {
+                        continue;
                     }
                 }
                 AppAction::UncordonNode => {} // in-flight guard
                 AppAction::DrainNode | AppAction::ForceDrainNode if !node_op_in_flight => {
                     let force = matches!(action, AppAction::ForceDrainNode);
-                    // Always dismiss the confirmation dialog, even if node_name is None.
-                    if let Some(detail) = &mut app.detail_view {
-                        detail.confirm_drain = false;
-                    }
-                    let node_name = app.detail_view.as_ref().and_then(|d| {
-                        if let Some(ResourceRef::Node(name)) = &d.resource {
-                            Some(name.clone())
-                        } else {
-                            None
-                        }
-                    });
-                    if let Some(name) = node_name {
-                        let resource = ResourceRef::Node(name.clone());
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Drain)
-                            .await
-                        {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Drain,
-                                &resource,
-                            ));
-                            continue;
-                        }
-                        node_op_in_flight = true;
-                        let force_label = if force { " (force)" } else { "" };
-                        let resource_label = format!("Node '{name}'");
-                        let origin_view = app.view();
-                        let action_history_id = app.record_action_pending(
-                            ActionKind::Drain,
-                            origin_view,
-                            app.detail_view.as_ref().and_then(|d| d.resource.clone()),
-                            resource_label.clone(),
-                            format!("Draining{force_label} {resource_label}..."),
-                        );
-                        begin_detail_mutation(
-                            &mut app,
-                            &mut status_message_clear_at,
-                            format!("Draining{force_label} {resource_label}..."),
-                        );
-                        let tx = node_ops_tx.clone();
-                        let c = client.clone();
-                        let context_generation = refresh_state.context_generation;
-                        tokio::spawn(async move {
-                            let result = c
-                                .drain_node(&name, 300, 30, force)
-                                .await
-                                .map_err(|e| format!("{e:#}"));
-                            let _ = tx
-                                .send(NodeOpsAsyncResult {
-                                    action_history_id,
-                                    context_generation,
-                                    origin_view,
-                                    node_name: name,
-                                    op_kind: NodeOpKind::Drain,
-                                    result,
-                                })
-                                .await;
-                        });
+                    if action::node_ops::handle_drain_node(
+                        &mut app,
+                        &client,
+                        &node_ops_tx,
+                        &mut node_op_in_flight,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                        force,
+                    )
+                    .await
+                    {
+                        continue;
                     }
                 }
                 AppAction::DrainNode | AppAction::ForceDrainNode => {
-                    // In-flight guard — dismiss dialog even when blocked.
-                    if let Some(detail) = &mut app.detail_view {
-                        detail.confirm_drain = false;
-                    }
+                    action::node_ops::handle_drain_in_flight_guard(&mut app);
                 }
                 AppAction::CopyResourceName => {
                     action::copy_export::copy_resource_name(&mut app, &cached_snapshot);
@@ -4528,61 +4059,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     }
                 }
                 AppAction::ScaleDialogOpen => {
-                    if !app
-                        .detail_view
-                        .as_ref()
-                        .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
-                    {
-                        app.set_error(
-                            "Scale is unavailable for the selected resource.".to_string(),
-                        );
+                    if action::scale::handle_scale_dialog_open(&mut app, &cached_snapshot) {
                         continue;
-                    }
-                    // Read actual replica count from snapshot before opening dialog
-                    let scale_info = app.detail_view.as_ref().and_then(|d| {
-                        d.resource.as_ref().and_then(|r| match r {
-                            ResourceRef::Deployment(name, ns) => {
-                                let replicas = cached_snapshot
-                                    .deployments
-                                    .iter()
-                                    .find(|d| &d.name == name && &d.namespace == ns)
-                                    .map(|d| d.desired_replicas)
-                                    .unwrap_or(1);
-                                Some((name.clone(), ns.clone(), replicas))
-                            }
-                            ResourceRef::StatefulSet(name, ns) => {
-                                let replicas = cached_snapshot
-                                    .statefulsets
-                                    .iter()
-                                    .find(|ss| &ss.name == name && &ss.namespace == ns)
-                                    .map(|ss| ss.desired_replicas)
-                                    .unwrap_or(1);
-                                Some((name.clone(), ns.clone(), replicas))
-                            }
-                            _ => None,
-                        })
-                    });
-                    if let Some((name, namespace, replicas)) = scale_info
-                        && let Some(detail) = &mut app.detail_view
-                    {
-                        detail.scale_dialog = Some(
-                                    kubectui::ui::components::scale_dialog::ScaleDialogState::new(
-                                        match detail.resource.as_ref() {
-                                            Some(ResourceRef::Deployment(_, _)) => {
-                                                kubectui::ui::components::scale_dialog::ScaleTargetKind::Deployment
-                                            }
-                                            Some(ResourceRef::StatefulSet(_, _)) => {
-                                                kubectui::ui::components::scale_dialog::ScaleTargetKind::StatefulSet
-                                            }
-                                            _ => {
-                                                kubectui::ui::components::scale_dialog::ScaleTargetKind::Deployment
-                                            }
-                                        },
-                                        name,
-                                        namespace,
-                                        replicas,
-                                    ),
-                                );
                     }
                 }
                 AppAction::ProbePanelOpen => {

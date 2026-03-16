@@ -1,17 +1,18 @@
 //! Global state management for KubecTUI.
 
 pub mod alerts;
+mod fetch;
 pub mod issues;
+mod optimistic;
 pub mod port_forward;
 pub mod watch;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use std::{collections::HashSet, fmt, sync::Arc, sync::LazyLock, time::Duration};
-use tokio::sync::Semaphore;
+use std::{collections::HashSet, fmt, sync::Arc, time::Duration};
 
-use crate::app::{AppView, ResourceRef};
+use crate::app::AppView;
 use crate::k8s::{
     client::K8sClient,
     dtos::{
@@ -24,13 +25,10 @@ use crate::k8s::{
         SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
     },
 };
-
-const MAX_CONCURRENT_CORE_FETCHES: usize = 8;
-const MAX_CONCURRENT_SECONDARY_FETCHES: usize = 4;
-static CORE_FETCH_SEMAPHORE: LazyLock<Semaphore> =
-    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_CORE_FETCHES));
-static SECONDARY_FETCH_SEMAPHORE: LazyLock<Semaphore> =
-    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_SECONDARY_FETCHES));
+use fetch::{
+    CORE_FETCH_SEMAPHORE, SECONDARY_FETCH_SEMAPHORE, apply_optional_fetch_result,
+    apply_vec_fetch_result, maybe_fetch,
+};
 
 /// High-level data loading phase for cluster resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -616,9 +614,9 @@ impl ClusterDataSource for K8sClient {
 /// main event loop.
 #[derive(Debug, Clone, Default)]
 pub struct GlobalState {
-    snapshot: Arc<ClusterSnapshot>,
+    pub(super) snapshot: Arc<ClusterSnapshot>,
     pub namespaces: Vec<String>,
-    snapshot_dirty: bool,
+    pub(super) snapshot_dirty: bool,
 }
 
 /// Runtime refresh knobs for optional expensive fetch paths.
@@ -731,32 +729,6 @@ impl Default for RefreshOptions {
     }
 }
 
-fn remove_named<T, F>(items: &mut Vec<T>, key: F, expected_name: &str) -> bool
-where
-    F: Fn(&T) -> &String,
-{
-    let before = items.len();
-    items.retain(|item| key(item) != expected_name);
-    before != items.len()
-}
-
-fn remove_named_in_namespace<T, F>(
-    items: &mut Vec<T>,
-    key: F,
-    expected_name: &str,
-    expected_namespace: &str,
-) -> bool
-where
-    F: Fn(&T) -> (&String, &String),
-{
-    let before = items.len();
-    items.retain(|item| {
-        let (name, namespace) = key(item);
-        name != expected_name || namespace != expected_namespace
-    });
-    before != items.len()
-}
-
 impl GlobalState {
     /// Returns a cheap Arc-wrapped snapshot for UI rendering.
     /// No deep clone — just an Arc refcount bump.
@@ -766,7 +738,7 @@ impl GlobalState {
 
     /// Recomputes derived fields (issue count) and clears the dirty flag.
     /// Called after every successful refresh or optimistic mutation.
-    fn publish_snapshot(&mut self) {
+    pub(super) fn publish_snapshot(&mut self) {
         if !self.snapshot_dirty {
             return;
         }
@@ -778,273 +750,6 @@ impl GlobalState {
     /// Returns fetched namespaces.
     pub fn namespaces(&self) -> &[String] {
         &self.namespaces
-    }
-
-    /// Applies an optimistic node schedulable state change after cordon/uncordon.
-    pub fn apply_optimistic_node_schedulable(&mut self, node_name: &str, unschedulable: bool) {
-        let snap = Arc::make_mut(&mut self.snapshot);
-        if let Some(node) = snap.nodes.iter_mut().find(|n| n.name == node_name) {
-            node.unschedulable = unschedulable;
-            snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-            self.snapshot_dirty = true;
-            self.publish_snapshot();
-        }
-    }
-
-    /// Applies a successful delete locally so the list updates immediately
-    /// before the background refresh completes.
-    pub fn apply_optimistic_delete(&mut self, resource: &ResourceRef) {
-        let snap = Arc::make_mut(&mut self.snapshot);
-        let changed = match resource {
-            ResourceRef::Node(name) => remove_named(&mut snap.nodes, |item| &item.name, name),
-            ResourceRef::Pod(name, ns) => remove_named_in_namespace(
-                &mut snap.pods,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::Service(name, ns) => remove_named_in_namespace(
-                &mut snap.services,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::Deployment(name, ns) => remove_named_in_namespace(
-                &mut snap.deployments,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::StatefulSet(name, ns) => remove_named_in_namespace(
-                &mut snap.statefulsets,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::DaemonSet(name, ns) => remove_named_in_namespace(
-                &mut snap.daemonsets,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::ReplicaSet(name, ns) => remove_named_in_namespace(
-                &mut snap.replicasets,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::ReplicationController(name, ns) => remove_named_in_namespace(
-                &mut snap.replication_controllers,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::Job(name, ns) => remove_named_in_namespace(
-                &mut snap.jobs,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::CronJob(name, ns) => remove_named_in_namespace(
-                &mut snap.cronjobs,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::ResourceQuota(name, ns) => remove_named_in_namespace(
-                &mut snap.resource_quotas,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::LimitRange(name, ns) => remove_named_in_namespace(
-                &mut snap.limit_ranges,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::PodDisruptionBudget(name, ns) => remove_named_in_namespace(
-                &mut snap.pod_disruption_budgets,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::Endpoint(name, ns) => remove_named_in_namespace(
-                &mut snap.endpoints,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::Ingress(name, ns) => remove_named_in_namespace(
-                &mut snap.ingresses,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::IngressClass(name) => {
-                remove_named(&mut snap.ingress_classes, |item| &item.name, name)
-            }
-            ResourceRef::NetworkPolicy(name, ns) => remove_named_in_namespace(
-                &mut snap.network_policies,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::ConfigMap(name, ns) => remove_named_in_namespace(
-                &mut snap.config_maps,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::Secret(name, ns) => remove_named_in_namespace(
-                &mut snap.secrets,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::Hpa(name, ns) => remove_named_in_namespace(
-                &mut snap.hpas,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::PriorityClass(name) => {
-                remove_named(&mut snap.priority_classes, |item| &item.name, name)
-            }
-            ResourceRef::Pvc(name, ns) => remove_named_in_namespace(
-                &mut snap.pvcs,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::Pv(name) => remove_named(&mut snap.pvs, |item| &item.name, name),
-            ResourceRef::StorageClass(name) => {
-                remove_named(&mut snap.storage_classes, |item| &item.name, name)
-            }
-            ResourceRef::Namespace(name) => {
-                remove_named(&mut snap.namespace_list, |item| &item.name, name)
-            }
-            ResourceRef::Event(name, ns) => remove_named_in_namespace(
-                &mut snap.events,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::ServiceAccount(name, ns) => remove_named_in_namespace(
-                &mut snap.service_accounts,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::Role(name, ns) => remove_named_in_namespace(
-                &mut snap.roles,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::RoleBinding(name, ns) => remove_named_in_namespace(
-                &mut snap.role_bindings,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::ClusterRole(name) => {
-                remove_named(&mut snap.cluster_roles, |item| &item.name, name)
-            }
-            ResourceRef::ClusterRoleBinding(name) => {
-                remove_named(&mut snap.cluster_role_bindings, |item| &item.name, name)
-            }
-            ResourceRef::HelmRelease(name, ns) => remove_named_in_namespace(
-                &mut snap.helm_releases,
-                |item| (&item.name, &item.namespace),
-                name,
-                ns,
-            ),
-            ResourceRef::CustomResource {
-                name,
-                namespace,
-                group,
-                version,
-                kind,
-                plural,
-            } => {
-                let before = snap.flux_resources.len();
-                snap.flux_resources.retain(|item| {
-                    item.name != *name
-                        || item.namespace != *namespace
-                        || item.group != *group
-                        || item.version != *version
-                        || item.kind != *kind
-                        || item.plural != *plural
-                });
-                before != snap.flux_resources.len()
-            }
-        };
-
-        if !changed {
-            return;
-        }
-
-        snap.namespaces_count = snap
-            .pods
-            .iter()
-            .map(|pod| pod.namespace.as_str())
-            .chain(
-                snap.services
-                    .iter()
-                    .map(|service| service.namespace.as_str()),
-            )
-            .chain(
-                snap.deployments
-                    .iter()
-                    .map(|deployment| deployment.namespace.as_str()),
-            )
-            .collect::<HashSet<_>>()
-            .len();
-        snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
-        snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-        self.snapshot_dirty = true;
-        self.publish_snapshot();
-    }
-
-    /// Applies a successful scale locally so list views reflect the requested
-    /// replica target immediately before the background refresh completes.
-    pub fn apply_optimistic_scale(&mut self, resource: &ResourceRef, replicas: i32) {
-        let snap = Arc::make_mut(&mut self.snapshot);
-        let changed = match resource {
-            ResourceRef::Deployment(name, ns) => snap
-                .deployments
-                .iter_mut()
-                .find(|item| item.name == *name && item.namespace == *ns)
-                .is_some_and(|deployment| {
-                    if deployment.desired_replicas == replicas {
-                        return false;
-                    }
-                    deployment.desired_replicas = replicas;
-                    deployment.ready = format!("{}/{}", deployment.ready_replicas, replicas);
-                    true
-                }),
-            ResourceRef::StatefulSet(name, ns) => snap
-                .statefulsets
-                .iter_mut()
-                .find(|item| item.name == *name && item.namespace == *ns)
-                .is_some_and(|statefulset| {
-                    if statefulset.desired_replicas == replicas {
-                        return false;
-                    }
-                    statefulset.desired_replicas = replicas;
-                    true
-                }),
-            _ => false,
-        };
-
-        if !changed {
-            return;
-        }
-
-        snap.snapshot_version = snap.snapshot_version.saturating_add(1);
-        self.snapshot_dirty = true;
-        self.publish_snapshot();
     }
 
     const fn view_ready_scope(view: AppView) -> RefreshScope {
@@ -1371,133 +1076,6 @@ impl GlobalState {
         self.publish_snapshot();
     }
 
-    /// Per-resource fetch timeout in seconds.
-    const FETCH_TIMEOUT_SECS: u64 = 10;
-    /// Retry transient transport failures before surfacing errors.
-    const TRANSIENT_RETRY_ATTEMPTS: usize = 3;
-    const TRANSIENT_RETRY_DELAY_MS: u64 = 150;
-
-    async fn fetch_with_timeout<T, F, Fut>(
-        label: &'static str,
-        semaphore: &Semaphore,
-        make_fut: F,
-    ) -> Result<T>
-    where
-        F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        for attempt in 0..=Self::TRANSIENT_RETRY_ATTEMPTS {
-            let _permit = semaphore
-                .acquire()
-                .await
-                .map_err(|_| anyhow!("resource fetch coordinator shut down"))?;
-            match tokio::time::timeout(Duration::from_secs(Self::FETCH_TIMEOUT_SECS), make_fut())
-                .await
-            {
-                Ok(Ok(value)) => return Ok(value),
-                Ok(Err(err)) => {
-                    if attempt < Self::TRANSIENT_RETRY_ATTEMPTS
-                        && Self::is_transient_send_request_error(&err)
-                    {
-                        drop(_permit);
-                        tokio::time::sleep(Duration::from_millis(Self::TRANSIENT_RETRY_DELAY_MS))
-                            .await;
-                        continue;
-                    }
-                    return Err(err);
-                }
-                Err(_) => {
-                    if attempt < Self::TRANSIENT_RETRY_ATTEMPTS {
-                        drop(_permit);
-                        tokio::time::sleep(Duration::from_millis(Self::TRANSIENT_RETRY_DELAY_MS))
-                            .await;
-                        continue;
-                    }
-                    return Err(anyhow!(
-                        "timed out fetching {label} ({}s)",
-                        Self::FETCH_TIMEOUT_SECS
-                    ));
-                }
-            }
-        }
-        unreachable!()
-    }
-
-    fn is_transient_send_request_error(err: &anyhow::Error) -> bool {
-        err.chain().any(|cause| {
-            if let Some(io_err) = cause.downcast_ref::<std::io::Error>() {
-                return matches!(
-                    io_err.kind(),
-                    std::io::ErrorKind::ConnectionRefused
-                        | std::io::ErrorKind::ConnectionReset
-                        | std::io::ErrorKind::ConnectionAborted
-                        | std::io::ErrorKind::BrokenPipe
-                        | std::io::ErrorKind::TimedOut
-                );
-            }
-            let text = cause.to_string();
-            text.contains("SendRequest")
-                || text.contains("Connection refused")
-                || text.contains("connection reset")
-                || text.contains("connection closed")
-                || text.contains("broken pipe")
-                || text.contains("timed out sending request")
-        })
-    }
-
-    async fn maybe_fetch<T, F, Fut>(
-        enabled: bool,
-        label: &'static str,
-        semaphore: &Semaphore,
-        make_fut: F,
-    ) -> Option<Result<T>>
-    where
-        F: Fn() -> Fut,
-        Fut: std::future::Future<Output = Result<T>>,
-    {
-        if enabled {
-            Some(Self::fetch_with_timeout(label, semaphore, make_fut).await)
-        } else {
-            None
-        }
-    }
-
-    fn apply_vec_fetch_result<T>(
-        slot: &mut Vec<T>,
-        result: Option<Result<Vec<T>>>,
-        label: &str,
-        errors: &mut Vec<String>,
-        total_fetches: &mut usize,
-    ) {
-        let Some(result) = result else {
-            return;
-        };
-        *total_fetches += 1;
-        match result {
-            Ok(items) => *slot = items,
-            Err(err) => {
-                errors.push(format!("{label}: {err}"));
-            }
-        }
-    }
-
-    fn apply_optional_fetch_result<T>(
-        result: Option<Result<T>>,
-        label: &str,
-        errors: &mut Vec<String>,
-        total_fetches: &mut usize,
-    ) -> Option<T> {
-        let result = result?;
-        *total_fetches += 1;
-        match result {
-            Ok(value) => Some(value),
-            Err(err) => {
-                errors.push(format!("{label}: {err}"));
-                None
-            }
-        }
-    }
-
     fn build_cluster_info(
         client: &impl ClusterDataSource,
         nodes: &[NodeInfo],
@@ -1629,79 +1207,79 @@ impl GlobalState {
         let fetch_cluster_info = options.include_cluster_info;
         let skip_core = options.skip_core;
         let wave1 = tokio::join!(
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_nodes && !skip_core,
                 "nodes",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_nodes()
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_pods && !skip_core,
                 "pods",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_pods(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_services && !skip_core,
                 "services",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_services(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_deployments && !skip_core,
                 "deployments",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_deployments(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_statefulsets && !skip_core,
                 "statefulsets",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_statefulsets(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_daemonsets && !skip_core,
                 "daemonsets",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_daemonsets(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_replicasets && !skip_core,
                 "replicasets",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_replicasets(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_replication_controllers && !skip_core,
                 "replicationcontrollers",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_replication_controllers(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_jobs && !skip_core,
                 "jobs",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_jobs(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_cronjobs && !skip_core,
                 "cronjobs",
                 &CORE_FETCH_SEMAPHORE,
                 || client.fetch_cronjobs(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_namespaces && !skip_core,
                 "namespacelist",
                 &CORE_FETCH_SEMAPHORE,
                 || { client.fetch_namespace_list() }
             ),
-            Self::maybe_fetch(fetch_flux, "fluxresources", &CORE_FETCH_SEMAPHORE, || {
+            maybe_fetch(fetch_flux, "fluxresources", &CORE_FETCH_SEMAPHORE, || {
                 client.fetch_flux_resources(namespace)
             }),
-            Self::maybe_fetch(fetch_metrics, "cluster info", &CORE_FETCH_SEMAPHORE, || {
+            maybe_fetch(fetch_metrics, "cluster info", &CORE_FETCH_SEMAPHORE, || {
                 client.fetch_cluster_version()
             }),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_cluster_info && namespace.is_some(),
                 "cluster pod count",
                 &CORE_FETCH_SEMAPHORE,
@@ -1710,118 +1288,118 @@ impl GlobalState {
         );
 
         let wave2 = tokio::join!(
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_config,
                 "resourcequotas",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_resource_quotas(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_config,
                 "limitranges",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_limit_ranges(namespace)
             ),
-            Self::maybe_fetch(fetch_config, "pdbs", &SECONDARY_FETCH_SEMAPHORE, || {
+            maybe_fetch(fetch_config, "pdbs", &SECONDARY_FETCH_SEMAPHORE, || {
                 client.fetch_pod_disruption_budgets(namespace)
             }),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_security,
                 "serviceaccounts",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_service_accounts(namespace)
             ),
-            Self::maybe_fetch(fetch_security, "roles", &SECONDARY_FETCH_SEMAPHORE, || {
+            maybe_fetch(fetch_security, "roles", &SECONDARY_FETCH_SEMAPHORE, || {
                 client.fetch_roles(namespace)
             }),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_security,
                 "rolebindings",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_role_bindings(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_security,
                 "clusterroles",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_cluster_roles()
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_security,
                 "clusterrolebindings",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_cluster_role_bindings()
             ),
-            Self::maybe_fetch(fetch_extensions, "crds", &SECONDARY_FETCH_SEMAPHORE, || {
+            maybe_fetch(fetch_extensions, "crds", &SECONDARY_FETCH_SEMAPHORE, || {
                 client.fetch_custom_resource_definitions()
             }),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_network,
                 "endpoints",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || { client.fetch_endpoints(namespace) }
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_network,
                 "ingresses",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || { client.fetch_ingresses(namespace) }
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_network,
                 "ingressclasses",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_ingress_classes()
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_network,
                 "networkpolicies",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_network_policies(namespace)
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_config,
                 "configmaps",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || { client.fetch_config_maps(namespace) }
             ),
-            Self::maybe_fetch(fetch_config, "secrets", &SECONDARY_FETCH_SEMAPHORE, || {
+            maybe_fetch(fetch_config, "secrets", &SECONDARY_FETCH_SEMAPHORE, || {
                 client.fetch_secrets(namespace)
             }),
-            Self::maybe_fetch(fetch_config, "hpas", &SECONDARY_FETCH_SEMAPHORE, || {
+            maybe_fetch(fetch_config, "hpas", &SECONDARY_FETCH_SEMAPHORE, || {
                 client.fetch_hpas(namespace)
             }),
-            Self::maybe_fetch(fetch_storage, "pvcs", &SECONDARY_FETCH_SEMAPHORE, || {
+            maybe_fetch(fetch_storage, "pvcs", &SECONDARY_FETCH_SEMAPHORE, || {
                 client.fetch_pvcs(namespace)
             }),
-            Self::maybe_fetch(fetch_storage, "pvs", &SECONDARY_FETCH_SEMAPHORE, || {
+            maybe_fetch(fetch_storage, "pvs", &SECONDARY_FETCH_SEMAPHORE, || {
                 client.fetch_pvs()
             }),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_storage,
                 "storageclasses",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_storage_classes()
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_config,
                 "priorityclasses",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_priority_classes()
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_helm,
                 "helmreleases",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || { client.fetch_helm_releases(namespace) }
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_metrics,
                 "nodemetrics",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || { client.fetch_all_node_metrics() }
             ),
-            Self::maybe_fetch(
+            maybe_fetch(
                 fetch_metrics,
                 "podmetrics",
                 &SECONDARY_FETCH_SEMAPHORE,
@@ -1888,224 +1466,224 @@ impl GlobalState {
 
         {
             let snap = Arc::make_mut(&mut self.snapshot);
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.nodes,
                 nodes_res,
                 "nodes",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.pods,
                 pods_res,
                 "pods",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.services,
                 services_res,
                 "services",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.deployments,
                 deployments_res,
                 "deployments",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.statefulsets,
                 statefulsets_res,
                 "statefulsets",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.daemonsets,
                 daemonsets_res,
                 "daemonsets",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.replicasets,
                 replicasets_res,
                 "replicasets",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.replication_controllers,
                 replication_controllers_res,
                 "replicationcontrollers",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.jobs,
                 jobs_res,
                 "jobs",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.cronjobs,
                 cronjobs_res,
                 "cronjobs",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.namespace_list,
                 namespace_list_res,
                 "namespacelist",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.resource_quotas,
                 resource_quotas_res,
                 "resourcequotas",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.limit_ranges,
                 limit_ranges_res,
                 "limitranges",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.pod_disruption_budgets,
                 pod_disruption_budgets_res,
                 "pdbs",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.service_accounts,
                 service_accounts_res,
                 "serviceaccounts",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.roles,
                 roles_res,
                 "roles",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.role_bindings,
                 role_bindings_res,
                 "rolebindings",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.cluster_roles,
                 cluster_roles_res,
                 "clusterroles",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.cluster_role_bindings,
                 cluster_role_bindings_res,
                 "clusterrolebindings",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.custom_resource_definitions,
                 custom_resource_definitions_res,
                 "crds",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.endpoints,
                 endpoints_res,
                 "endpoints",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.ingresses,
                 ingresses_res,
                 "ingresses",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.ingress_classes,
                 ingress_classes_res,
                 "ingressclasses",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.network_policies,
                 network_policies_res,
                 "networkpolicies",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.config_maps,
                 config_maps_res,
                 "configmaps",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.secrets,
                 secrets_res,
                 "secrets",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.hpas,
                 hpas_res,
                 "hpas",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.pvcs,
                 pvcs_res,
                 "pvcs",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.pvs,
                 pvs_res,
                 "pvs",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.storage_classes,
                 storage_classes_res,
                 "storageclasses",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.priority_classes,
                 priority_classes_res,
                 "priorityclasses",
                 &mut errors,
                 &mut total_fetches,
             );
-            if let Some(helm_releases) = Self::apply_optional_fetch_result(
+            if let Some(helm_releases) = apply_optional_fetch_result(
                 helm_releases_res,
                 "helmreleases",
                 &mut errors,
@@ -2115,28 +1693,28 @@ impl GlobalState {
                     release.namespace.as_str()
                 });
             }
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.flux_resources,
                 flux_resources_res,
                 "fluxresources",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.node_metrics,
                 node_metrics_res,
                 "nodemetrics",
                 &mut errors,
                 &mut total_fetches,
             );
-            Self::apply_vec_fetch_result(
+            apply_vec_fetch_result(
                 &mut snap.pod_metrics,
                 pod_metrics_res,
                 "podmetrics",
                 &mut errors,
                 &mut total_fetches,
             );
-            if let Some(cluster_version) = Self::apply_optional_fetch_result(
+            if let Some(cluster_version) = apply_optional_fetch_result(
                 cluster_info_res,
                 "cluster info",
                 &mut errors,
@@ -2144,7 +1722,7 @@ impl GlobalState {
             ) && !snap.nodes.is_empty()
             {
                 let cluster_pod_count = if namespace.is_some() {
-                    Self::apply_optional_fetch_result(
+                    apply_optional_fetch_result(
                         cluster_pod_count_res,
                         "cluster pod count",
                         &mut errors,
@@ -2260,6 +1838,7 @@ impl GlobalState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::ResourceRef;
     use std::sync::{
         Arc,
         atomic::{AtomicUsize, Ordering},
@@ -4217,7 +3796,7 @@ mod tests {
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_for_fetch = Arc::clone(&calls);
         let result: Result<i32> =
-            GlobalState::fetch_with_timeout("pods", &CORE_FETCH_SEMAPHORE, move || {
+            fetch::fetch_with_timeout("pods", &CORE_FETCH_SEMAPHORE, move || {
                 let calls = Arc::clone(&calls_for_fetch);
                 async move {
                     let attempt = calls.fetch_add(1, Ordering::SeqCst);
@@ -4239,7 +3818,7 @@ mod tests {
         let err = anyhow::anyhow!(
             "failed with error client error (SendRequest): connection closed before message completed",
         );
-        assert!(GlobalState::is_transient_send_request_error(&err));
+        assert!(fetch::is_transient_send_request_error(&err));
     }
 
     #[tokio::test]
