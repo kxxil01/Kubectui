@@ -2675,6 +2675,9 @@ impl AppState {
         if key.code == KeyCode::Char('z') {
             return AppAction::WorkbenchToggleMaximize;
         }
+        if key.code == KeyCode::Char('b') {
+            return AppAction::ToggleWorkbench;
+        }
 
         let action_history_len = self.action_history.entries().len();
         let Some(tab) = self.workbench.active_tab_mut() else {
@@ -4311,6 +4314,17 @@ mod tests {
         assert_eq!(
             app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)),
             AppAction::WorkbenchDecreaseHeight
+        );
+    }
+
+    #[test]
+    fn workbench_b_key_toggles_from_workbench_focus() {
+        let mut app = AppState::default();
+        app.toggle_workbench();
+        app.focus = Focus::Workbench;
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
+            AppAction::ToggleWorkbench
         );
     }
 

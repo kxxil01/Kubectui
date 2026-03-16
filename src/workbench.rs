@@ -586,6 +586,9 @@ impl WorkbenchState {
 
     pub fn toggle_open(&mut self) {
         self.open = !self.open;
+        if !self.open {
+            self.maximized = false;
+        }
     }
 
     pub fn close(&mut self) {
@@ -850,6 +853,16 @@ mod tests {
         let mut state = WorkbenchState::default();
         state.maximized = true;
         state.close();
+        assert!(!state.maximized);
+    }
+
+    #[test]
+    fn toggle_open_clears_maximized_on_close() {
+        let mut state = WorkbenchState::default();
+        state.open = true;
+        state.maximized = true;
+        state.toggle_open();
+        assert!(!state.open);
         assert!(!state.maximized);
     }
 
