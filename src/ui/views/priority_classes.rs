@@ -10,8 +10,8 @@ use ratatui::{
     prelude::{Frame, Style},
     text::Span,
     widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
+        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
+        TableState,
     },
 };
 
@@ -21,9 +21,9 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         bookmarked_name_cell,
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, loading_or_empty_message, table_viewport_rows, table_window,
+        format_small_int, render_centered_message, table_viewport_rows, table_window,
         views::filtering::filtered_priority_class_indices,
     },
 };
@@ -106,18 +106,17 @@ pub fn render_priority_classes(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::PriorityClasses,
             query,
-            "  Loading priority classes...",
-            "  No priority classes found",
-            "  No priority classes match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block("PriorityClasses")),
-            area,
+            "PriorityClasses",
+            "Loading priority classes...",
+            "No priority classes found",
+            "No priority classes match the search query",
+            focused,
         );
         return;
     }

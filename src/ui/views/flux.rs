@@ -26,7 +26,7 @@ use crate::{
         components::{content_block, default_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        loading_or_empty_message, responsive_table_widths, sort_header_cell, table_viewport_rows,
+        render_centered_message, responsive_table_widths, sort_header_cell, table_viewport_rows,
         table_window,
         views::filtering::age_duration_now,
         workload_sort_suffix,
@@ -83,31 +83,31 @@ impl FluxMode {
 
     const fn loading_text(self) -> &'static str {
         match self {
-            Self::AlertProviders => "  Loading FluxCD alert providers...",
-            Self::Alerts => "  Loading FluxCD alerts...",
-            Self::All => "  Loading FluxCD resources...",
-            Self::Artifacts => "  Loading FluxCD artifacts...",
-            Self::HelmReleases => "  Loading FluxCD helmreleases...",
-            Self::HelmRepositories => "  Loading FluxCD helmrepositories...",
-            Self::Images => "  Loading FluxCD image resources...",
-            Self::Kustomizations => "  Loading FluxCD kustomizations...",
-            Self::Receivers => "  Loading FluxCD receivers...",
-            Self::Sources => "  Loading FluxCD sources...",
+            Self::AlertProviders => "Loading FluxCD alert providers...",
+            Self::Alerts => "Loading FluxCD alerts...",
+            Self::All => "Loading FluxCD resources...",
+            Self::Artifacts => "Loading FluxCD artifacts...",
+            Self::HelmReleases => "Loading FluxCD helmreleases...",
+            Self::HelmRepositories => "Loading FluxCD helmrepositories...",
+            Self::Images => "Loading FluxCD image resources...",
+            Self::Kustomizations => "Loading FluxCD kustomizations...",
+            Self::Receivers => "Loading FluxCD receivers...",
+            Self::Sources => "Loading FluxCD sources...",
         }
     }
 
     const fn empty_text(self) -> &'static str {
         match self {
-            Self::AlertProviders => "  No FluxCD alert providers found",
-            Self::Alerts => "  No FluxCD alerts found",
-            Self::All => "  No FluxCD resources found",
-            Self::Artifacts => "  No FluxCD artifacts found",
-            Self::HelmReleases => "  No FluxCD helmreleases found",
-            Self::HelmRepositories => "  No FluxCD helmrepositories found",
-            Self::Images => "  No FluxCD image resources found",
-            Self::Kustomizations => "  No FluxCD kustomizations found",
-            Self::Receivers => "  No FluxCD receivers found",
-            Self::Sources => "  No FluxCD sources found",
+            Self::AlertProviders => "No FluxCD alert providers found",
+            Self::Alerts => "No FluxCD alerts found",
+            Self::All => "No FluxCD resources found",
+            Self::Artifacts => "No FluxCD artifacts found",
+            Self::HelmReleases => "No FluxCD helmreleases found",
+            Self::HelmRepositories => "No FluxCD helmrepositories found",
+            Self::Images => "No FluxCD image resources found",
+            Self::Kustomizations => "No FluxCD kustomizations found",
+            Self::Receivers => "No FluxCD receivers found",
+            Self::Sources => "No FluxCD sources found",
         }
     }
 }
@@ -311,18 +311,17 @@ pub fn render_flux_resources(
 
     let theme = default_theme();
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             view,
             query,
+            &format!("FluxCD · {}", mode.title()),
             mode.loading_text(),
             mode.empty_text(),
-            "  No FluxCD resources match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style()))
-                .block(default_block(&format!("FluxCD · {}", mode.title()))),
-            area,
+            "No FluxCD resources match the search query",
+            focused,
         );
         return;
     }

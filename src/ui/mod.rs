@@ -30,7 +30,7 @@ use crate::{
         alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
     },
     ui::{
-        components::{content_block, default_block, default_theme},
+        components::{content_block, default_theme},
         theme::Theme,
     },
 };
@@ -244,41 +244,49 @@ fn constraint_ideal_width(constraint: Constraint) -> u16 {
     }
 }
 
-pub(crate) fn loading_or_empty_message(
+/// Renders a centered loading/empty message inside a bordered block.
+/// Used by all view renderers when there is no data to show.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_centered_message(
+    frame: &mut Frame,
+    area: Rect,
     snapshot: &ClusterSnapshot,
     view: AppView,
     query: &str,
-    loading: &'static str,
-    empty: &'static str,
-    no_match: &'static str,
-) -> &'static str {
-    if matches!(
-        snapshot.view_load_state(view),
-        ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
-    ) {
-        return loading;
-    }
-    if query.trim().is_empty() {
-        empty
-    } else {
-        no_match
-    }
-}
+    title: &str,
+    loading_text: &str,
+    empty_text: &str,
+    no_match_text: &str,
+    focused: bool,
+) {
+    use ratatui::layout::Alignment;
 
-pub(crate) fn loading_or_empty_message_no_search(
-    snapshot: &ClusterSnapshot,
-    view: AppView,
-    loading: &'static str,
-    empty: &'static str,
-) -> &'static str {
-    if matches!(
+    let theme = default_theme();
+    let is_loading = matches!(
         snapshot.view_load_state(view),
         ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
-    ) {
-        loading
+    );
+
+    let msg = if is_loading {
+        loading_text
+    } else if query.trim().is_empty() {
+        empty_text
     } else {
-        empty
-    }
+        no_match_text
+    };
+
+    let style = if is_loading {
+        Style::default().fg(theme.muted)
+    } else {
+        theme.inactive_style()
+    };
+
+    frame.render_widget(
+        Paragraph::new(Span::styled(msg, style))
+            .alignment(Alignment::Center)
+            .block(components::content_block(title, focused)),
+        area,
+    );
 }
 
 fn effective_workbench_height(
@@ -1152,17 +1160,17 @@ fn render_pods_widget(
     );
 
     if indices.is_empty() {
-        let msg = loading_or_empty_message(
+        render_centered_message(
+            frame,
+            area,
             cluster,
             AppView::Pods,
             query,
-            "  Loading pods...",
-            "  No pods available  (try pressing ~ to switch namespace, or select 'all')",
-            "  No pods match the search query",
-        );
-        frame.render_widget(
-            Paragraph::new(Span::styled(msg, theme.inactive_style())).block(default_block("Pods")),
-            area,
+            "Pods",
+            "Loading pods...",
+            "No pods available (try pressing ~ to switch namespace, or select 'all')",
+            "No pods match the search query",
+            focused,
         );
         return;
     }
@@ -1733,79 +1741,6 @@ mod tests {
             })
             .sum();
         assert_eq!(total, 100);
-    }
-
-    #[test]
-    fn loading_or_empty_message_respects_view_load_state_and_query() {
-        let loading_snapshot = ClusterSnapshot::default();
-        assert_eq!(
-            loading_or_empty_message(
-                &loading_snapshot,
-                AppView::Pods,
-                "",
-                "loading",
-                "empty",
-                "no-match",
-            ),
-            "loading"
-        );
-
-        let mut loaded_snapshot = ClusterSnapshot {
-            phase: DataPhase::Ready,
-            ..ClusterSnapshot::default()
-        };
-        loaded_snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Ready;
-        assert_eq!(
-            loading_or_empty_message(
-                &loaded_snapshot,
-                AppView::Pods,
-                "",
-                "loading",
-                "empty",
-                "no-match",
-            ),
-            "empty"
-        );
-        assert_eq!(
-            loading_or_empty_message(
-                &loaded_snapshot,
-                AppView::Pods,
-                "prod",
-                "loading",
-                "empty",
-                "no-match",
-            ),
-            "no-match"
-        );
-    }
-
-    #[test]
-    fn loading_or_empty_message_no_search_respects_view_load_state() {
-        let loading_snapshot = ClusterSnapshot::default();
-        assert_eq!(
-            loading_or_empty_message_no_search(
-                &loading_snapshot,
-                AppView::Nodes,
-                "loading",
-                "empty",
-            ),
-            "loading"
-        );
-
-        let mut loaded_snapshot = ClusterSnapshot {
-            phase: DataPhase::Ready,
-            ..ClusterSnapshot::default()
-        };
-        loaded_snapshot.view_load_states[AppView::Nodes.index()] = ViewLoadState::Ready;
-        assert_eq!(
-            loading_or_empty_message_no_search(
-                &loaded_snapshot,
-                AppView::Nodes,
-                "loading",
-                "empty",
-            ),
-            "empty"
-        );
     }
 
     /// Verifies dashboard renders without panic for empty snapshot.
