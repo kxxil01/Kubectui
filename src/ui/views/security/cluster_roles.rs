@@ -296,7 +296,7 @@ fn cached_rule_lines(
 fn render_rule_tree(rules: &[RbacRule], theme: &crate::ui::theme::Theme) -> Vec<Line<'static>> {
     if rules.is_empty() {
         return vec![Line::from(Span::styled(
-            "  No rules defined",
+            "No rules defined",
             theme.inactive_style(),
         ))];
     }
