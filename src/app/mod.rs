@@ -669,9 +669,10 @@ impl AppState {
 
     /// Advances to the next view in [`AppView::ORDER`], wrapping around.
     /// Resets `selected_idx` and syncs `sidebar_cursor` to the new view.
-    /// Triggered by `Tab`. Focus is not changed (Tab always targets content).
-    fn next_view(&mut self) {
-        self.view = self.view.next();
+    /// Shared state reset when switching to a different view.
+    /// Clears search, resets selection, syncs sidebar, and loads sort preferences.
+    pub fn navigate_to_view(&mut self, view: AppView) {
+        self.view = view;
         self.selected_idx = 0;
         self.search_query.clear();
         self.is_search_mode = false;
@@ -679,16 +680,16 @@ impl AppState {
         self.apply_sort_from_preferences(crate::columns::view_key(self.view));
     }
 
+    /// Advances to the next view in [`AppView::ORDER`], wrapping around.
+    /// Triggered by `Tab`. Focus is not changed (Tab always targets content).
+    fn next_view(&mut self) {
+        self.navigate_to_view(self.view.next());
+    }
+
     /// Retreats to the previous view in [`AppView::ORDER`], wrapping around.
-    /// Resets `selected_idx` and syncs `sidebar_cursor` to the new view.
     /// Triggered by `Shift+Tab`.
     fn previous_view(&mut self) {
-        self.view = self.view.previous();
-        self.selected_idx = 0;
-        self.search_query.clear();
-        self.is_search_mode = false;
-        self.sync_collapsed_to_active_view();
-        self.apply_sort_from_preferences(crate::columns::view_key(self.view));
+        self.navigate_to_view(self.view.previous());
     }
 
     /// Moves the content list selection down one row (saturates at `usize::MAX`).

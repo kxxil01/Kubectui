@@ -2432,11 +2432,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                 }
                 AppAction::NavigateTo(view) => {
                     app.command_palette.close();
-                    app.view = view;
-                    app.selected_idx = 0;
-                    app.search_query.clear();
-                    app.is_search_mode = false;
-                    app.sync_collapsed_to_active_view();
+                    app.navigate_to_view(view);
                     app.focus = kubectui::app::Focus::Content;
                     app.extension_in_instances = false;
                     if !matches!(
