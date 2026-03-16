@@ -729,7 +729,8 @@ fn render_overcommit_governance(
             " ⚖ Commitment & Governance ",
             theme.title_style(),
         ))
-        .border_style(Style::default().fg(theme.border));
+        .border_style(Style::default().fg(theme.border))
+        .style(Style::default().bg(theme.bg));
 
     if res.total_running_pods == 0 && res.total_cpu_allocatable_m == 0 {
         let msg = Paragraph::new(Span::styled("  No data available", theme.inactive_style()))
@@ -837,7 +838,8 @@ fn render_consumer_panel(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(Span::styled(title, theme.title_style()))
-        .border_style(Style::default().fg(theme.border));
+        .border_style(Style::default().fg(theme.border))
+        .style(Style::default().bg(theme.bg));
 
     if consumers.is_empty() {
         let msg = Paragraph::new(Span::styled(
@@ -890,7 +892,8 @@ fn render_namespace_utilization(
             " Namespace Utilization (Top 5) ",
             theme.title_style(),
         ))
-        .border_style(Style::default().fg(theme.border));
+        .border_style(Style::default().fg(theme.border))
+        .style(Style::default().bg(theme.bg));
 
     if ns_util.is_empty()
         || ns_util
