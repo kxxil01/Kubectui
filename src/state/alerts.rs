@@ -443,8 +443,13 @@ pub(crate) fn format_millicores(m: u64) -> String {
 }
 
 pub(crate) fn format_mib(mib: u64) -> String {
-    if mib >= 1024 && mib.is_multiple_of(1024) {
-        format!("{}Gi", mib / 1024)
+    if mib >= 1024 {
+        let gi = mib as f64 / 1024.0;
+        if gi.fract() < 0.05 {
+            format!("{}Gi", gi as u64)
+        } else {
+            format!("{gi:.1}Gi")
+        }
     } else {
         format!("{mib}Mi")
     }
@@ -1078,6 +1083,13 @@ mod tests {
     fn format_mib_gibibytes() {
         assert_eq!(format_mib(1024), "1Gi");
         assert_eq!(format_mib(2048), "2Gi");
+    }
+
+    #[test]
+    fn format_mib_fractional_gibibytes() {
+        assert_eq!(format_mib(4331), "4.2Gi");
+        assert_eq!(format_mib(1536), "1.5Gi");
+        assert_eq!(format_mib(13276), "13.0Gi");
     }
 
     #[test]
