@@ -2436,6 +2436,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     app.selected_idx = 0;
                     app.search_query.clear();
                     app.is_search_mode = false;
+                    app.sync_collapsed_to_active_view();
                     app.focus = kubectui::app::Focus::Content;
                     app.extension_in_instances = false;
                     if !matches!(
