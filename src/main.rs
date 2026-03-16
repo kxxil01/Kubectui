@@ -7,10 +7,14 @@
 
 mod async_types;
 mod flux_reconcile;
+mod mutation_helpers;
+mod selection_helpers;
 mod terminal;
 
 use async_types::*;
 use flux_reconcile::*;
+use mutation_helpers::*;
+use selection_helpers::*;
 use std::{
     collections::HashMap,
     io,
@@ -33,8 +37,6 @@ use kubectui::{
         AppAction, AppState, AppView, DetailViewState, LogsViewerState, ResourceRef, load_config,
         save_config,
     },
-    authorization::DetailActionAuthorization,
-    bookmarks::{bookmark_selected_index, resource_exists, selected_bookmark_resource},
     coordinator::{LogStreamStatus, UpdateCoordinator, UpdateMessage},
     cronjob::{cronjob_history_entries, preferred_history_index},
     events::apply_action,
@@ -46,7 +48,7 @@ use kubectui::{
         probes::extract_probes_from_pod,
         workload_logs::{MAX_WORKLOAD_LOG_STREAMS, resolve_workload_log_targets},
     },
-    policy::{DetailAction, ResourceActionContext},
+    policy::DetailAction,
     secret::{decode_secret_yaml, encode_secret_yaml},
     state::{
         ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope,
@@ -470,103 +472,15 @@ fn next_request_id(sequence: &mut u64) -> u64 {
     *sequence
 }
 
-fn open_detail_for_resource(
-    app: &mut AppState,
-    snapshot: &ClusterSnapshot,
-    client: &K8sClient,
-    detail_tx: &tokio::sync::mpsc::Sender<DetailAsyncResult>,
-    resource: ResourceRef,
-    detail_request_seq: &mut u64,
-) {
-    let request_id = next_request_id(detail_request_seq);
-    let mut state = initial_loading_state(resource.clone(), snapshot);
-    state.pending_request_id = Some(request_id);
-    app.detail_view = Some(state);
-    let client_clone = client.clone();
-    let snapshot_clone = snapshot.clone();
-    let tx = detail_tx.clone();
-    let requested_resource = resource.clone();
-    tokio::spawn(async move {
-        let result = fetch_detail_view(&client_clone, &snapshot_clone, requested_resource.clone())
-            .await
-            .map_err(|err| err.to_string());
-        let _ = tx
-            .send(DetailAsyncResult {
-                request_id,
-                resource: requested_resource,
-                result,
-            })
-            .await;
-    });
-}
-
 const STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS: u64 = 3;
 const STARTUP_NAMESPACE_FETCH_ATTEMPTS: usize = 2;
 const STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS: u64 = 150;
 const FLUX_AUTO_REFRESH_EVERY: u64 = 3;
-const STATUS_MESSAGE_TIMEOUT_SECS: u64 = 12;
 const MUTATION_REFRESH_DELAYS_SECS: &[u64] = &[2, 5];
 const FLUX_RECONCILE_REFRESH_DELAYS_SECS: &[u64] = &[2, 5, 9];
 const MAX_RECENT_EVENTS_CACHE_ITEMS: usize = 250;
 
-fn fast_refresh_options(include_flux: bool) -> RefreshDispatch {
-    let mut scope = RefreshScope::CORE_OVERVIEW;
-    if include_flux {
-        scope = scope.union(RefreshScope::FLUX);
-    }
-    RefreshDispatch::new(scope, scope)
-}
-
-fn queue_deferred_refreshes(
-    tx: &tokio::sync::mpsc::Sender<DeferredRefreshTrigger>,
-    context_generation: u64,
-    view: AppView,
-    namespace: Option<String>,
-    dispatch: RefreshDispatch,
-    delays_secs: &[u64],
-) {
-    for &delay_secs in delays_secs {
-        let tx = tx.clone();
-        let trigger = DeferredRefreshTrigger {
-            context_generation,
-            view,
-            dispatch,
-            namespace: namespace.clone(),
-        };
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_secs(delay_secs)).await;
-            let _ = tx.send(trigger).await;
-        });
-    }
-}
-
-fn active_namespace_scope(app: &AppState) -> Option<String> {
-    namespace_scope(app.get_namespace()).map(str::to_string)
-}
-
-fn set_transient_status(
-    app: &mut AppState,
-    status_message_clear_at: &mut Option<Instant>,
-    message: impl Into<String>,
-) {
-    let msg = message.into();
-    app.push_toast(msg.clone(), false);
-    app.set_status(msg);
-    *status_message_clear_at =
-        Some(Instant::now() + Duration::from_secs(STATUS_MESSAGE_TIMEOUT_SECS));
-}
-
-fn begin_detail_mutation(
-    app: &mut AppState,
-    status_message_clear_at: &mut Option<Instant>,
-    message: impl Into<String>,
-) {
-    app.detail_view = None;
-    app.focus = kubectui::app::Focus::Content;
-    set_transient_status(app, status_message_clear_at, message);
-}
-
-fn finish_mutation_success(
+fn apply_mutation_success(
     app: &mut AppState,
     runtime: &mut MutationRuntime<'_>,
     origin_view: AppView,
@@ -574,247 +488,31 @@ fn finish_mutation_success(
     force_include_flux: bool,
     delays_secs: &[u64],
 ) {
-    let active_namespace_scope = active_namespace_scope(app);
-    let include_flux = force_include_flux || origin_view.is_fluxcd();
-    let mutation_dispatch = mutation_refresh_options(origin_view, include_flux);
-    set_transient_status(app, runtime.status_message_clear_at, message);
+    let plan = finish_mutation_success(
+        app,
+        runtime.status_message_clear_at,
+        origin_view,
+        message,
+        force_include_flux,
+    );
     request_refresh(
         runtime.refresh_tx,
         runtime.global_state,
         runtime.client,
-        active_namespace_scope.clone(),
-        mutation_dispatch,
+        plan.namespace.clone(),
+        plan.dispatch,
         runtime.refresh_state,
         runtime.snapshot_dirty,
     );
     queue_deferred_refreshes(
         runtime.deferred_refresh_tx,
         runtime.refresh_state.context_generation,
-        origin_view,
-        active_namespace_scope,
-        mutation_dispatch,
+        plan.origin_view,
+        plan.namespace,
+        plan.dispatch,
         delays_secs,
     );
     runtime.auto_refresh.reset();
-}
-
-fn full_refresh_options(include_flux: bool, include_cluster_info: bool) -> RefreshDispatch {
-    let mut scope = RefreshScope::CORE_OVERVIEW
-        .union(RefreshScope::LEGACY_SECONDARY)
-        .union(RefreshScope::LOCAL_HELM_REPOSITORIES);
-    if include_flux {
-        scope = scope.union(RefreshScope::FLUX);
-    }
-    if include_cluster_info {
-        scope = scope.union(RefreshScope::METRICS);
-    }
-    let mut dispatch = RefreshDispatch::new(scope.without(RefreshScope::LEGACY_SECONDARY), scope);
-    dispatch.options.include_cluster_info = include_cluster_info;
-    dispatch
-}
-
-fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
-    matches!(
-        action,
-        DetailAction::Scale
-            | DetailAction::Restart
-            | DetailAction::Probes
-            | DetailAction::Delete
-            | DetailAction::EditYaml
-            | DetailAction::Trigger
-            | DetailAction::SuspendCronJob
-            | DetailAction::ResumeCronJob
-            | DetailAction::Cordon
-            | DetailAction::Uncordon
-            | DetailAction::Drain
-    )
-}
-
-fn map_palette_detail_action(action: DetailAction) -> AppAction {
-    match action {
-        DetailAction::ViewYaml => AppAction::OpenResourceYaml,
-        DetailAction::ViewDecodedSecret => AppAction::OpenDecodedSecret,
-        DetailAction::ToggleBookmark => AppAction::ToggleBookmark,
-        DetailAction::ViewEvents => AppAction::OpenResourceEvents,
-        DetailAction::Logs => AppAction::LogsViewerOpen,
-        DetailAction::Exec => AppAction::OpenExec,
-        DetailAction::PortForward => AppAction::PortForwardOpen,
-        DetailAction::Probes => AppAction::ProbePanelOpen,
-        DetailAction::Scale => AppAction::ScaleDialogOpen,
-        DetailAction::Restart => AppAction::RolloutRestart,
-        DetailAction::FluxReconcile => AppAction::FluxReconcile,
-        DetailAction::EditYaml => AppAction::EditYaml,
-        DetailAction::Delete => AppAction::DeleteResource,
-        DetailAction::Trigger => AppAction::TriggerCronJob,
-        DetailAction::SuspendCronJob => AppAction::ConfirmCronJobSuspend(true),
-        DetailAction::ResumeCronJob => AppAction::ConfirmCronJobSuspend(false),
-        DetailAction::ViewRelationships => AppAction::OpenRelationships,
-        DetailAction::Cordon => AppAction::CordonNode,
-        DetailAction::Uncordon => AppAction::UncordonNode,
-        DetailAction::Drain => AppAction::ConfirmDrainNode,
-    }
-}
-
-fn palette_action_requires_loaded_detail(action: &AppAction) -> bool {
-    matches!(
-        action,
-        AppAction::ScaleDialogOpen
-            | AppAction::RolloutRestart
-            | AppAction::ProbePanelOpen
-            | AppAction::DeleteResource
-            | AppAction::EditYaml
-            | AppAction::TriggerCronJob
-            | AppAction::ConfirmCronJobSuspend(_)
-            | AppAction::CordonNode
-            | AppAction::UncordonNode
-            | AppAction::ConfirmDrainNode
-    )
-}
-
-fn view_prefers_secondary_refresh(view: AppView) -> bool {
-    !matches!(
-        view,
-        AppView::Dashboard
-            | AppView::Nodes
-            | AppView::Namespaces
-            | AppView::Pods
-            | AppView::Deployments
-            | AppView::StatefulSets
-            | AppView::DaemonSets
-            | AppView::ReplicaSets
-            | AppView::ReplicationControllers
-            | AppView::Jobs
-            | AppView::CronJobs
-            | AppView::Services
-            | AppView::Events
-            | AppView::PortForwarding
-            | AppView::HelmCharts
-            | AppView::FluxCDAlertProviders
-            | AppView::FluxCDAlerts
-            | AppView::FluxCDAll
-            | AppView::FluxCDArtifacts
-            | AppView::FluxCDHelmReleases
-            | AppView::FluxCDHelmRepositories
-            | AppView::FluxCDImages
-            | AppView::FluxCDKustomizations
-            | AppView::FluxCDReceivers
-            | AppView::FluxCDSources
-    )
-}
-
-fn view_wants_cluster_info(view: AppView) -> bool {
-    matches!(view, AppView::Dashboard)
-}
-
-fn refresh_options_for_view(
-    view: AppView,
-    include_flux: bool,
-    force_cluster_info: bool,
-) -> RefreshDispatch {
-    let include_cluster_info = force_cluster_info || view_wants_cluster_info(view);
-    match view {
-        AppView::Dashboard => {
-            let mut dispatch = RefreshDispatch::new(
-                RefreshScope::CORE_OVERVIEW,
-                RefreshScope::CORE_OVERVIEW.union(RefreshScope::METRICS),
-            );
-            dispatch.options.include_cluster_info = include_cluster_info;
-            dispatch
-        }
-        AppView::Pods => RefreshDispatch::new(
-            RefreshScope::PODS,
-            RefreshScope::PODS.union(RefreshScope::METRICS),
-        ),
-        AppView::Services => RefreshDispatch::new(
-            RefreshScope::SERVICES,
-            RefreshScope::SERVICES.union(RefreshScope::NETWORK),
-        ),
-        AppView::Nodes => RefreshDispatch::new(
-            RefreshScope::NODES,
-            RefreshScope::NODES.union(RefreshScope::METRICS),
-        ),
-        AppView::Deployments => {
-            RefreshDispatch::new(RefreshScope::DEPLOYMENTS, RefreshScope::DEPLOYMENTS)
-        }
-        AppView::StatefulSets => {
-            RefreshDispatch::new(RefreshScope::STATEFULSETS, RefreshScope::STATEFULSETS)
-        }
-        AppView::DaemonSets => {
-            RefreshDispatch::new(RefreshScope::DAEMONSETS, RefreshScope::DAEMONSETS)
-        }
-        AppView::ReplicaSets => {
-            RefreshDispatch::new(RefreshScope::REPLICASETS, RefreshScope::REPLICASETS)
-        }
-        AppView::ReplicationControllers => RefreshDispatch::new(
-            RefreshScope::REPLICATION_CONTROLLERS,
-            RefreshScope::REPLICATION_CONTROLLERS,
-        ),
-        AppView::Jobs => RefreshDispatch::new(RefreshScope::JOBS, RefreshScope::JOBS),
-        AppView::CronJobs => RefreshDispatch::new(RefreshScope::CRONJOBS, RefreshScope::CRONJOBS),
-        AppView::Namespaces => {
-            RefreshDispatch::new(RefreshScope::NAMESPACES, RefreshScope::NAMESPACES)
-        }
-        AppView::Bookmarks => full_refresh_options(include_flux, include_cluster_info),
-        AppView::HelmCharts => RefreshDispatch::new(
-            RefreshScope::LOCAL_HELM_REPOSITORIES,
-            RefreshScope::LOCAL_HELM_REPOSITORIES,
-        ),
-        AppView::PortForwarding => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
-        AppView::Issues => RefreshDispatch::new(
-            RefreshScope::CORE_OVERVIEW,
-            RefreshScope::CORE_OVERVIEW
-                .union(RefreshScope::LEGACY_SECONDARY)
-                .union(RefreshScope::FLUX),
-        ),
-        AppView::Events => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
-        AppView::Endpoints
-        | AppView::Ingresses
-        | AppView::IngressClasses
-        | AppView::NetworkPolicies => {
-            RefreshDispatch::new(RefreshScope::NETWORK, RefreshScope::NETWORK)
-        }
-        AppView::ConfigMaps
-        | AppView::Secrets
-        | AppView::ResourceQuotas
-        | AppView::LimitRanges
-        | AppView::HPAs
-        | AppView::PodDisruptionBudgets
-        | AppView::PriorityClasses => {
-            RefreshDispatch::new(RefreshScope::CONFIG, RefreshScope::CONFIG)
-        }
-        AppView::PersistentVolumeClaims | AppView::PersistentVolumes | AppView::StorageClasses => {
-            RefreshDispatch::new(RefreshScope::STORAGE, RefreshScope::STORAGE)
-        }
-        AppView::HelmReleases => RefreshDispatch::new(RefreshScope::HELM, RefreshScope::HELM),
-        AppView::FluxCDAlertProviders
-        | AppView::FluxCDAlerts
-        | AppView::FluxCDAll
-        | AppView::FluxCDArtifacts
-        | AppView::FluxCDHelmReleases
-        | AppView::FluxCDHelmRepositories
-        | AppView::FluxCDImages
-        | AppView::FluxCDKustomizations
-        | AppView::FluxCDReceivers
-        | AppView::FluxCDSources => RefreshDispatch::new(RefreshScope::FLUX, RefreshScope::FLUX),
-        AppView::ServiceAccounts
-        | AppView::ClusterRoles
-        | AppView::Roles
-        | AppView::ClusterRoleBindings
-        | AppView::RoleBindings => {
-            RefreshDispatch::new(RefreshScope::SECURITY, RefreshScope::SECURITY)
-        }
-        AppView::Extensions => {
-            RefreshDispatch::new(RefreshScope::EXTENSIONS, RefreshScope::EXTENSIONS)
-        }
-    }
-}
-
-fn mutation_refresh_options(view: AppView, include_flux: bool) -> RefreshDispatch {
-    if view_prefers_secondary_refresh(view) {
-        refresh_options_for_view(view, include_flux, false)
-    } else {
-        fast_refresh_options(include_flux)
-    }
 }
 
 fn is_transient_transport_error(err: &anyhow::Error) -> bool {
@@ -1755,7 +1453,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 ),
                                 false,
                             );
-                            finish_mutation_success(
+                            apply_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
                                     global_state: &mut global_state,
@@ -1814,7 +1512,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 format!("Scaled {}.", result.resource_label),
                                 true,
                             );
-                            finish_mutation_success(
+                            apply_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
                                     global_state: &mut global_state,
@@ -1866,7 +1564,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 format!("Restart requested for {}.", result.resource_label),
                                 true,
                             );
-                            finish_mutation_success(
+                            apply_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
                                     global_state: &mut global_state,
@@ -1933,7 +1631,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                                 + 3,
                                         ),
                                 });
-                            finish_mutation_success(
+                            apply_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
                                     global_state: &mut global_state,
@@ -1989,7 +1687,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 format!("Created Job '{job_name}' from {}.", result.resource_label),
                                 true,
                             );
-                            finish_mutation_success(
+                            apply_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
                                     global_state: &mut global_state,
@@ -2049,7 +1747,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 ),
                                 true,
                             );
-                            finish_mutation_success(
+                            apply_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
                                     global_state: &mut global_state,
@@ -2118,7 +1816,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 format!("{} succeeded for Node '{}'.", result.op_kind.label(), result.node_name),
                                 true,
                             );
-                            finish_mutation_success(
+                            apply_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
                                     global_state: &mut global_state,
@@ -4706,7 +4404,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                                             );
                                                         app.detail_view = None;
                                                         app.focus = kubectui::app::Focus::Content;
-                                                        finish_mutation_success(
+                                                        apply_mutation_success(
                                                             &mut app,
                                                             &mut MutationRuntime {
                                                                 global_state: &mut global_state,
@@ -4848,7 +4546,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     }
                                 }
                             }
-                            finish_mutation_success(
+                            apply_mutation_success(
                                 &mut app,
                                 &mut MutationRuntime {
                                     global_state: &mut global_state,
@@ -5089,547 +4787,6 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
     port_forwarder.stop_all().await;
 
     Ok(())
-}
-
-fn spawn_extensions_fetch(
-    client: &K8sClient,
-    app: &mut AppState,
-    snapshot: &ClusterSnapshot,
-    tx: &tokio::sync::mpsc::Sender<ExtensionFetchResult>,
-) {
-    if app.view() != AppView::Extensions {
-        return;
-    }
-
-    let Some(crd) = selected_extension_crd(app, snapshot).cloned() else {
-        app.extension_instances.clear();
-        app.extension_error = None;
-        app.extension_selected_crd = None;
-        return;
-    };
-
-    if app.extension_selected_crd.as_deref() == Some(crd.name.as_str()) {
-        return;
-    }
-
-    app.begin_extension_instances_load(crd.name.clone());
-
-    let namespace_owned = if crd.scope.eq_ignore_ascii_case("Namespaced") {
-        namespace_scope(app.get_namespace()).map(ToString::to_string)
-    } else {
-        None
-    };
-
-    let client = client.clone();
-    let crd = crd.clone();
-    let tx = tx.clone();
-    tokio::spawn(async move {
-        let result = client
-            .fetch_custom_resources(&crd, namespace_owned.as_deref())
-            .await
-            .map_err(|e| e.to_string());
-        let _ = tx
-            .send(ExtensionFetchResult {
-                crd_name: crd.name.clone(),
-                result,
-            })
-            .await;
-    });
-}
-
-fn apply_extension_fetch_result(app: &mut AppState, result: ExtensionFetchResult) {
-    if app.extension_selected_crd.as_deref() != Some(result.crd_name.as_str()) {
-        return;
-    }
-
-    match result.result {
-        Ok(items) => app.set_extension_instances(result.crd_name, items, None),
-        Err(err) => app.set_extension_instances(result.crd_name, Vec::new(), Some(err)),
-    }
-}
-
-fn selected_extension_crd<'a>(
-    app: &AppState,
-    snapshot: &'a ClusterSnapshot,
-) -> Option<&'a kubectui::k8s::dtos::CustomResourceDefinitionInfo> {
-    kubectui::ui::views::extensions::crds::selected_crd(
-        &snapshot.custom_resource_definitions,
-        app.search_query(),
-        app.selected_idx(),
-    )
-}
-
-fn namespace_scope(namespace: &str) -> Option<&str> {
-    if namespace == "all" {
-        None
-    } else {
-        Some(namespace)
-    }
-}
-
-fn filtered_index(indices: &[usize], idx: usize) -> Option<usize> {
-    indices
-        .get(idx.min(indices.len().saturating_sub(1)))
-        .copied()
-}
-
-fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<ResourceRef> {
-    let idx = app.selected_idx();
-    match app.view() {
-        AppView::Dashboard => None,
-        AppView::Bookmarks => selected_bookmark_resource(app.bookmarks(), idx, app.search_query()),
-        AppView::Issues => {
-            let issues = kubectui::state::issues::compute_issues(snapshot);
-            let query = app.search_query().trim();
-            let indices = kubectui::state::issues::filtered_issue_indices(&issues, query);
-            filtered_index(&indices, idx).map(|i| issues[i].resource_ref.clone())
-        }
-        AppView::HelmCharts => None, // Helm repos are local config, no detail view
-        AppView::PortForwarding => None, // Port forwards are managed via the dialog
-        AppView::Extensions => {
-            // The Extensions view has a split pane: CRDs (left) and instances (right).
-            // When extension_in_instances is true, Enter opens the selected instance's detail.
-            if !app.extension_in_instances {
-                return None;
-            }
-            let crd = app.extension_selected_crd.as_ref().and_then(|crd_name| {
-                snapshot
-                    .custom_resource_definitions
-                    .iter()
-                    .find(|c| &c.name == crd_name)
-            })?;
-            let inst = app.extension_instances.get(
-                app.extension_instance_cursor
-                    .min(app.extension_instances.len().saturating_sub(1)),
-            )?;
-            Some(ResourceRef::CustomResource {
-                name: inst.name.clone(),
-                namespace: inst.namespace.clone(),
-                group: crd.group.clone(),
-                version: crd.version.clone(),
-                kind: crd.kind.clone(),
-                plural: crd.plural.clone(),
-            })
-        }
-        AppView::FluxCDAlertProviders
-        | AppView::FluxCDAlerts
-        | AppView::FluxCDAll
-        | AppView::FluxCDArtifacts
-        | AppView::FluxCDHelmReleases
-        | AppView::FluxCDHelmRepositories
-        | AppView::FluxCDImages
-        | AppView::FluxCDKustomizations
-        | AppView::FluxCDReceivers
-        | AppView::FluxCDSources
-        | AppView::Nodes
-        | AppView::Pods
-        | AppView::Services
-        | AppView::ResourceQuotas
-        | AppView::LimitRanges
-        | AppView::PodDisruptionBudgets
-        | AppView::Deployments
-        | AppView::StatefulSets
-        | AppView::DaemonSets
-        | AppView::ReplicaSets
-        | AppView::ReplicationControllers
-        | AppView::Jobs
-        | AppView::CronJobs
-        | AppView::Endpoints
-        | AppView::Ingresses
-        | AppView::IngressClasses
-        | AppView::NetworkPolicies
-        | AppView::ConfigMaps
-        | AppView::Secrets
-        | AppView::HPAs
-        | AppView::PriorityClasses
-        | AppView::PersistentVolumeClaims
-        | AppView::PersistentVolumes
-        | AppView::StorageClasses
-        | AppView::Namespaces
-        | AppView::Events
-        | AppView::ServiceAccounts
-        | AppView::Roles
-        | AppView::RoleBindings
-        | AppView::ClusterRoles
-        | AppView::ClusterRoleBindings
-        | AppView::HelmReleases => {
-            let filtered = kubectui::ui::views::filtering::filtered_indices_for_view(
-                app.view(),
-                snapshot,
-                app.search_query(),
-                app.workload_sort(),
-                app.pod_sort(),
-            );
-            let resource_idx = filtered_index(&filtered, idx)?;
-            match app.view() {
-                AppView::Nodes => {
-                    Some(ResourceRef::Node(snapshot.nodes[resource_idx].name.clone()))
-                }
-                AppView::Pods => {
-                    let pod = &snapshot.pods[resource_idx];
-                    Some(ResourceRef::Pod(pod.name.clone(), pod.namespace.clone()))
-                }
-                AppView::Services => {
-                    let service = &snapshot.services[resource_idx];
-                    Some(ResourceRef::Service(
-                        service.name.clone(),
-                        service.namespace.clone(),
-                    ))
-                }
-                AppView::ResourceQuotas => {
-                    let quota = &snapshot.resource_quotas[resource_idx];
-                    Some(ResourceRef::ResourceQuota(
-                        quota.name.clone(),
-                        quota.namespace.clone(),
-                    ))
-                }
-                AppView::LimitRanges => {
-                    let limit_range = &snapshot.limit_ranges[resource_idx];
-                    Some(ResourceRef::LimitRange(
-                        limit_range.name.clone(),
-                        limit_range.namespace.clone(),
-                    ))
-                }
-                AppView::PodDisruptionBudgets => {
-                    let pdb = &snapshot.pod_disruption_budgets[resource_idx];
-                    Some(ResourceRef::PodDisruptionBudget(
-                        pdb.name.clone(),
-                        pdb.namespace.clone(),
-                    ))
-                }
-                AppView::Deployments => {
-                    let deployment = &snapshot.deployments[resource_idx];
-                    Some(ResourceRef::Deployment(
-                        deployment.name.clone(),
-                        deployment.namespace.clone(),
-                    ))
-                }
-                AppView::StatefulSets => {
-                    let statefulset = &snapshot.statefulsets[resource_idx];
-                    Some(ResourceRef::StatefulSet(
-                        statefulset.name.clone(),
-                        statefulset.namespace.clone(),
-                    ))
-                }
-                AppView::DaemonSets => {
-                    let daemonset = &snapshot.daemonsets[resource_idx];
-                    Some(ResourceRef::DaemonSet(
-                        daemonset.name.clone(),
-                        daemonset.namespace.clone(),
-                    ))
-                }
-                AppView::ReplicaSets => {
-                    let replicaset = &snapshot.replicasets[resource_idx];
-                    Some(ResourceRef::ReplicaSet(
-                        replicaset.name.clone(),
-                        replicaset.namespace.clone(),
-                    ))
-                }
-                AppView::ReplicationControllers => {
-                    let controller = &snapshot.replication_controllers[resource_idx];
-                    Some(ResourceRef::ReplicationController(
-                        controller.name.clone(),
-                        controller.namespace.clone(),
-                    ))
-                }
-                AppView::Jobs => {
-                    let job = &snapshot.jobs[resource_idx];
-                    Some(ResourceRef::Job(job.name.clone(), job.namespace.clone()))
-                }
-                AppView::CronJobs => {
-                    let cronjob = &snapshot.cronjobs[resource_idx];
-                    Some(ResourceRef::CronJob(
-                        cronjob.name.clone(),
-                        cronjob.namespace.clone(),
-                    ))
-                }
-                AppView::Endpoints => {
-                    let endpoint = &snapshot.endpoints[resource_idx];
-                    Some(ResourceRef::Endpoint(
-                        endpoint.name.clone(),
-                        endpoint.namespace.clone(),
-                    ))
-                }
-                AppView::Ingresses => {
-                    let ingress = &snapshot.ingresses[resource_idx];
-                    Some(ResourceRef::Ingress(
-                        ingress.name.clone(),
-                        ingress.namespace.clone(),
-                    ))
-                }
-                AppView::IngressClasses => Some(ResourceRef::IngressClass(
-                    snapshot.ingress_classes[resource_idx].name.clone(),
-                )),
-                AppView::NetworkPolicies => {
-                    let policy = &snapshot.network_policies[resource_idx];
-                    Some(ResourceRef::NetworkPolicy(
-                        policy.name.clone(),
-                        policy.namespace.clone(),
-                    ))
-                }
-                AppView::ConfigMaps => {
-                    let config_map = &snapshot.config_maps[resource_idx];
-                    Some(ResourceRef::ConfigMap(
-                        config_map.name.clone(),
-                        config_map.namespace.clone(),
-                    ))
-                }
-                AppView::Secrets => {
-                    let secret = &snapshot.secrets[resource_idx];
-                    Some(ResourceRef::Secret(
-                        secret.name.clone(),
-                        secret.namespace.clone(),
-                    ))
-                }
-                AppView::HPAs => {
-                    let hpa = &snapshot.hpas[resource_idx];
-                    Some(ResourceRef::Hpa(hpa.name.clone(), hpa.namespace.clone()))
-                }
-                AppView::PriorityClasses => Some(ResourceRef::PriorityClass(
-                    snapshot.priority_classes[resource_idx].name.clone(),
-                )),
-                AppView::PersistentVolumeClaims => {
-                    let pvc = &snapshot.pvcs[resource_idx];
-                    Some(ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone()))
-                }
-                AppView::PersistentVolumes => {
-                    Some(ResourceRef::Pv(snapshot.pvs[resource_idx].name.clone()))
-                }
-                AppView::StorageClasses => Some(ResourceRef::StorageClass(
-                    snapshot.storage_classes[resource_idx].name.clone(),
-                )),
-                AppView::Namespaces => Some(ResourceRef::Namespace(
-                    snapshot.namespace_list[resource_idx].name.clone(),
-                )),
-                AppView::Events => {
-                    let event = &snapshot.events[resource_idx];
-                    Some(ResourceRef::Event(
-                        event.name.clone(),
-                        event.namespace.clone(),
-                    ))
-                }
-                AppView::ServiceAccounts => {
-                    let service_account = &snapshot.service_accounts[resource_idx];
-                    Some(ResourceRef::ServiceAccount(
-                        service_account.name.clone(),
-                        service_account.namespace.clone(),
-                    ))
-                }
-                AppView::Roles => {
-                    let role = &snapshot.roles[resource_idx];
-                    Some(ResourceRef::Role(role.name.clone(), role.namespace.clone()))
-                }
-                AppView::RoleBindings => {
-                    let role_binding = &snapshot.role_bindings[resource_idx];
-                    Some(ResourceRef::RoleBinding(
-                        role_binding.name.clone(),
-                        role_binding.namespace.clone(),
-                    ))
-                }
-                AppView::ClusterRoles => Some(ResourceRef::ClusterRole(
-                    snapshot.cluster_roles[resource_idx].name.clone(),
-                )),
-                AppView::ClusterRoleBindings => Some(ResourceRef::ClusterRoleBinding(
-                    snapshot.cluster_role_bindings[resource_idx].name.clone(),
-                )),
-                AppView::HelmReleases => {
-                    let release = &snapshot.helm_releases[resource_idx];
-                    Some(ResourceRef::HelmRelease(
-                        release.name.clone(),
-                        release.namespace.clone(),
-                    ))
-                }
-                AppView::FluxCDAlertProviders
-                | AppView::FluxCDAlerts
-                | AppView::FluxCDAll
-                | AppView::FluxCDArtifacts
-                | AppView::FluxCDHelmReleases
-                | AppView::FluxCDHelmRepositories
-                | AppView::FluxCDImages
-                | AppView::FluxCDKustomizations
-                | AppView::FluxCDReceivers
-                | AppView::FluxCDSources => {
-                    snapshot
-                        .flux_resources
-                        .get(resource_idx)
-                        .map(|r| ResourceRef::CustomResource {
-                            name: r.name.clone(),
-                            namespace: r.namespace.clone(),
-                            group: r.group.clone(),
-                            version: r.version.clone(),
-                            kind: r.kind.clone(),
-                            plural: r.plural.clone(),
-                        })
-                }
-                _ => None,
-            }
-        }
-    }
-}
-
-fn selected_resource_context(
-    app: &AppState,
-    snapshot: &ClusterSnapshot,
-) -> Option<ResourceActionContext> {
-    let resource = selected_resource(app, snapshot)?;
-    let node_unschedulable = match &resource {
-        ResourceRef::Node(name) => snapshot
-            .nodes
-            .iter()
-            .find(|node| &node.name == name)
-            .map(|node| node.unschedulable),
-        _ => None,
-    };
-    let cronjob_suspended = match &resource {
-        ResourceRef::CronJob(name, ns) => snapshot
-            .cronjobs
-            .iter()
-            .find(|cronjob| &cronjob.name == name && &cronjob.namespace == ns)
-            .map(|cronjob| cronjob.suspend),
-        _ => None,
-    };
-    Some(ResourceActionContext {
-        resource,
-        node_unschedulable,
-        cronjob_suspended,
-        cronjob_history_logs_available: false,
-        action_authorizations: Default::default(),
-    })
-}
-
-fn cached_detail_action_authorization(
-    app: &AppState,
-    resource: &ResourceRef,
-    action: DetailAction,
-) -> Option<bool> {
-    app.detail_view
-        .as_ref()
-        .filter(|detail| detail.resource.as_ref() == Some(resource))
-        .and_then(|detail| detail.metadata.action_authorizations.get(&action).copied())
-        .map(|status| status == DetailActionAuthorization::Allowed)
-}
-
-async fn detail_action_allowed(
-    app: &AppState,
-    client: &K8sClient,
-    resource: &ResourceRef,
-    action: DetailAction,
-) -> bool {
-    if let Some(allowed) = cached_detail_action_authorization(app, resource, action) {
-        return allowed;
-    }
-
-    client
-        .is_detail_action_authorized(resource, action)
-        .await
-        .unwrap_or(true)
-}
-
-fn detail_action_denied_message(action: DetailAction, resource: &ResourceRef) -> String {
-    format!(
-        "{} is not allowed for {} '{}'.",
-        action.label(),
-        resource.kind(),
-        resource.name()
-    )
-}
-
-fn prepare_bookmark_target(
-    app: &mut AppState,
-    snapshot: &ClusterSnapshot,
-) -> Result<ResourceRef, String> {
-    let resource = app
-        .selected_bookmark_resource()
-        .ok_or_else(|| "No bookmarked resource is selected.".to_string())?;
-
-    if !resource_exists(snapshot, &resource) {
-        return Err(format!(
-            "Bookmarked {} '{}' is no longer present in the current snapshot.",
-            resource.kind(),
-            resource.name()
-        ));
-    }
-
-    app.search_query.clear();
-    app.is_search_mode = false;
-
-    if let Some(view) = resource.primary_view() {
-        app.view = view;
-        app.focus = kubectui::app::Focus::Content;
-        app.selected_idx = 0;
-        app.apply_sort_from_preferences(kubectui::columns::view_key(view));
-        if let Some(selected_idx) = bookmark_selected_index(
-            view,
-            snapshot,
-            &resource,
-            app.workload_sort(),
-            app.pod_sort(),
-        ) {
-            app.selected_idx = selected_idx;
-        }
-    }
-
-    Ok(resource)
-}
-
-fn selected_flux_reconcile_resource(
-    app: &AppState,
-    snapshot: &ClusterSnapshot,
-) -> Result<ResourceRef, String> {
-    let resource = app
-        .detail_view
-        .as_ref()
-        .and_then(|detail| detail.resource.clone())
-        .or_else(|| selected_resource(app, snapshot))
-        .ok_or_else(|| "No Flux resource is selected.".to_string())?;
-
-    if let Some(reason) = resource.flux_reconcile_disabled_reason() {
-        return Err(reason.to_string());
-    }
-
-    let ResourceRef::CustomResource {
-        name,
-        namespace,
-        group,
-        version,
-        kind,
-        plural,
-    } = &resource
-    else {
-        return Err("Flux reconcile is only available for Flux toolkit resources.".to_string());
-    };
-
-    let is_suspended = snapshot.flux_resources.iter().any(|candidate| {
-        candidate.name == *name
-            && candidate.namespace == *namespace
-            && candidate.group == *group
-            && candidate.version == *version
-            && candidate.kind == *kind
-            && candidate.plural == *plural
-            && candidate.suspended
-    });
-
-    if is_suspended {
-        return Err(format!(
-            "Flux reconcile is unavailable because {kind} '{name}' is suspended."
-        ));
-    }
-
-    Ok(resource)
-}
-
-fn initial_loading_state(resource: ResourceRef, snapshot: &ClusterSnapshot) -> DetailViewState {
-    let metadata = metadata_for_resource(snapshot, &resource);
-    DetailViewState {
-        resource: Some(resource),
-        pending_request_id: None,
-        metadata,
-        loading: true,
-        cronjob_history: Vec::new(),
-        cronjob_history_selected: 0,
-        confirm_cronjob_suspend: None,
-        ..DetailViewState::default()
-    }
 }
 
 async fn fetch_detail_view(
