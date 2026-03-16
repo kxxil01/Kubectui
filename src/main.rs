@@ -6,9 +6,11 @@
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 
 mod async_types;
+mod flux_reconcile;
 mod terminal;
 
 use async_types::*;
+use flux_reconcile::*;
 use std::{
     collections::HashMap,
     io,
@@ -38,7 +40,6 @@ use kubectui::{
     events::apply_action,
     k8s::{
         client::K8sClient,
-        dtos::FluxResourceInfo,
         exec::{ExecEvent, ExecSessionHandle, fetch_pod_containers, spawn_exec_session},
         logs::{LogsClient, PodRef},
         portforward::PortForwarderService,
@@ -541,134 +542,6 @@ fn queue_deferred_refreshes(
 
 fn active_namespace_scope(app: &AppState) -> Option<String> {
     namespace_scope(app.get_namespace()).map(str::to_string)
-}
-
-fn flux_resource_matches(resource: &ResourceRef, candidate: &FluxResourceInfo) -> bool {
-    let ResourceRef::CustomResource {
-        name,
-        namespace,
-        group,
-        version,
-        kind,
-        plural,
-    } = resource
-    else {
-        return false;
-    };
-
-    candidate.name == *name
-        && candidate.namespace == *namespace
-        && candidate.group == *group
-        && candidate.version == *version
-        && candidate.kind == *kind
-        && candidate.plural == *plural
-}
-
-fn flux_resource_for_ref<'a>(
-    snapshot: &'a ClusterSnapshot,
-    resource: &ResourceRef,
-) -> Option<&'a FluxResourceInfo> {
-    snapshot
-        .flux_resources
-        .iter()
-        .find(|candidate| flux_resource_matches(resource, candidate))
-}
-
-fn flux_observed_state(resource: &FluxResourceInfo) -> FluxReconcileObservedState {
-    FluxReconcileObservedState {
-        status: resource.status.clone(),
-        message: resource.message.clone(),
-        last_reconcile_time: resource.last_reconcile_time,
-        last_applied_revision: resource.last_applied_revision.clone(),
-        last_attempted_revision: resource.last_attempted_revision.clone(),
-        observed_generation: resource.observed_generation,
-    }
-}
-
-fn flux_observed_state_for_resource(
-    snapshot: &ClusterSnapshot,
-    resource: &ResourceRef,
-) -> Option<FluxReconcileObservedState> {
-    flux_resource_for_ref(snapshot, resource).map(flux_observed_state)
-}
-
-fn flux_reconcile_progress_observed(
-    baseline: Option<&FluxReconcileObservedState>,
-    current: &FluxResourceInfo,
-) -> bool {
-    let Some(baseline) = baseline else {
-        return true;
-    };
-
-    let current_state = flux_observed_state(current);
-    current_state != *baseline
-}
-
-fn flux_reconcile_status_summary(resource: &FluxResourceInfo) -> String {
-    let mut parts = vec![format!("status {}", resource.status)];
-
-    if let Some(revision) = resource
-        .last_applied_revision
-        .as_ref()
-        .or(resource.last_attempted_revision.as_ref())
-    {
-        parts.push(format!("revision {revision}"));
-    }
-
-    parts.join(", ")
-}
-
-fn process_flux_reconcile_verifications(
-    app: &mut AppState,
-    snapshot: &ClusterSnapshot,
-    pending: &mut Vec<PendingFluxReconcileVerification>,
-    status_message_clear_at: &mut Option<Instant>,
-) -> bool {
-    let mut changed = false;
-    let now = Instant::now();
-    let mut remaining = Vec::with_capacity(pending.len());
-
-    for verification in pending.drain(..) {
-        if let Some(current) = flux_resource_for_ref(snapshot, &verification.resource)
-            && flux_reconcile_progress_observed(verification.baseline.as_ref(), current)
-        {
-            let message = format!(
-                "Flux reconcile observed for {} ({})",
-                verification.resource_label,
-                flux_reconcile_status_summary(current)
-            );
-            app.complete_action_history(
-                verification.action_history_id,
-                ActionStatus::Succeeded,
-                message.clone(),
-                true,
-            );
-            set_transient_status(app, status_message_clear_at, message);
-            changed = true;
-            continue;
-        }
-
-        if now >= verification.deadline {
-            let message = format!(
-                "Reconcile requested for {}. Waiting for controller status update.",
-                verification.resource_label
-            );
-            app.complete_action_history(
-                verification.action_history_id,
-                ActionStatus::Succeeded,
-                message.clone(),
-                true,
-            );
-            set_transient_status(app, status_message_clear_at, message);
-            changed = true;
-            continue;
-        }
-
-        remaining.push(verification);
-    }
-
-    *pending = remaining;
-    changed
 }
 
 fn set_transient_status(
@@ -1741,7 +1614,7 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                     &mut app,
                                     &global_state.snapshot(),
                                     &mut pending_flux_reconcile_verifications,
-                                    &mut status_message_clear_at,
+                                    &mut |a, msg| set_transient_status(a, &mut status_message_clear_at, msg),
                                 ) {
                                     needs_redraw = true;
                                 }
@@ -5946,14 +5819,15 @@ async fn fetch_detail_metrics(
 
 #[cfg(test)]
 mod tests {
+    use super::flux_reconcile::{
+        flux_observed_state, flux_reconcile_progress_observed, process_flux_reconcile_verifications,
+    };
     use super::{
         ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
-        apply_extension_fetch_result, flux_observed_state, flux_reconcile_progress_observed,
-        map_palette_detail_action, mutation_refresh_options, normalize_recent_events,
-        palette_action_requires_loaded_detail, prepare_bookmark_target,
-        process_flux_reconcile_verifications, queued_refresh_requires_two_phase,
-        refresh_options_for_view, selected_extension_crd, selected_flux_reconcile_resource,
-        selected_resource, workbench_follow_streams_to_stop,
+        apply_extension_fetch_result, map_palette_detail_action, mutation_refresh_options,
+        normalize_recent_events, palette_action_requires_loaded_detail, prepare_bookmark_target,
+        queued_refresh_requires_two_phase, refresh_options_for_view, selected_extension_crd,
+        selected_flux_reconcile_resource, selected_resource, workbench_follow_streams_to_stop,
     };
     use chrono::{DateTime, Utc};
     use kubectui::{
@@ -6465,13 +6339,11 @@ mod tests {
             baseline: Some(baseline),
             deadline: Instant::now() + Duration::from_secs(5),
         }];
-        let mut clear_at = None;
-
         assert!(process_flux_reconcile_verifications(
             &mut app,
             &snapshot,
             &mut pending,
-            &mut clear_at,
+            &mut |a, msg| a.set_status(msg),
         ));
         assert!(pending.is_empty());
         assert!(
@@ -6510,13 +6382,11 @@ mod tests {
             baseline: Some(flux_observed_state(&test_flux_resource("Ready", None))),
             deadline: Instant::now() - Duration::from_secs(1),
         }];
-        let mut clear_at = None;
-
         assert!(process_flux_reconcile_verifications(
             &mut app,
             &snapshot,
             &mut pending,
-            &mut clear_at,
+            &mut |a, msg| a.set_status(msg),
         ));
         assert!(pending.is_empty());
         assert!(
