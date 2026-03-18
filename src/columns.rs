@@ -53,58 +53,65 @@ const fn col_hidden(id: &'static str, label: &'static str, width: Constraint) ->
     }
 }
 
+/// Returns the preference key and optional column registry for a given [`AppView`].
+///
+/// Single source of truth — [`view_key`] and [`columns_for_view`] delegate here.
+fn view_info(view: AppView) -> (&'static str, Option<&'static [ColumnDef]>) {
+    match view {
+        AppView::Dashboard => ("dashboard", None),
+        AppView::Bookmarks => ("bookmarks", None),
+        AppView::Issues => ("issues", Some(ISSUE_COLUMNS)),
+        AppView::Nodes => ("nodes", Some(NODE_COLUMNS)),
+        AppView::Namespaces => ("namespaces", Some(NAMESPACE_COLUMNS)),
+        AppView::Events => ("events", Some(EVENT_COLUMNS)),
+        AppView::Pods => ("pods", Some(POD_COLUMNS)),
+        AppView::Deployments => ("deployments", Some(DEPLOYMENT_COLUMNS)),
+        AppView::StatefulSets => ("statefulsets", Some(STATEFULSET_COLUMNS)),
+        AppView::DaemonSets => ("daemonsets", Some(DAEMONSET_COLUMNS)),
+        AppView::ReplicaSets => ("replicasets", Some(REPLICASET_COLUMNS)),
+        AppView::ReplicationControllers => ("replicationcontrollers", Some(REPLICASET_COLUMNS)),
+        AppView::Jobs => ("jobs", Some(JOB_COLUMNS)),
+        AppView::CronJobs => ("cronjobs", Some(CRONJOB_COLUMNS)),
+        AppView::Services => ("services", Some(SERVICE_COLUMNS)),
+        AppView::Endpoints => ("endpoints", Some(ENDPOINT_COLUMNS)),
+        AppView::Ingresses => ("ingresses", Some(INGRESS_COLUMNS)),
+        AppView::IngressClasses => ("ingressclasses", None),
+        AppView::NetworkPolicies => ("networkpolicies", Some(NETWORK_POLICY_COLUMNS)),
+        AppView::PortForwarding => ("portforwarding", None),
+        AppView::ConfigMaps => ("configmaps", Some(CONFIGMAP_COLUMNS)),
+        AppView::Secrets => ("secrets", Some(SECRET_COLUMNS)),
+        AppView::ResourceQuotas => ("resourcequotas", None),
+        AppView::LimitRanges => ("limitranges", None),
+        AppView::HPAs => ("hpas", Some(HPA_COLUMNS)),
+        AppView::PodDisruptionBudgets => ("poddisruptionbudgets", None),
+        AppView::PriorityClasses => ("priorityclasses", Some(PRIORITY_CLASS_COLUMNS)),
+        AppView::PersistentVolumeClaims => ("pvcs", Some(PVC_COLUMNS)),
+        AppView::PersistentVolumes => ("pvs", Some(PV_COLUMNS)),
+        AppView::StorageClasses => ("storageclasses", Some(STORAGECLASS_COLUMNS)),
+        AppView::HelmCharts => ("helmcharts", None),
+        AppView::HelmReleases => ("helmreleases", Some(HELM_RELEASE_COLUMNS)),
+        AppView::FluxCDAll => ("flux_all", None),
+        AppView::FluxCDAlertProviders => ("flux_alertproviders", None),
+        AppView::FluxCDAlerts => ("flux_alerts", None),
+        AppView::FluxCDArtifacts => ("flux_artifacts", None),
+        AppView::FluxCDHelmReleases => ("flux_helmreleases", None),
+        AppView::FluxCDHelmRepositories => ("flux_helmrepositories", None),
+        AppView::FluxCDImages => ("flux_images", None),
+        AppView::FluxCDKustomizations => ("flux_kustomizations", None),
+        AppView::FluxCDReceivers => ("flux_receivers", None),
+        AppView::FluxCDSources => ("flux_sources", None),
+        AppView::ServiceAccounts => ("serviceaccounts", None),
+        AppView::ClusterRoles => ("clusterroles", None),
+        AppView::Roles => ("roles", None),
+        AppView::ClusterRoleBindings => ("clusterrolebindings", None),
+        AppView::RoleBindings => ("rolebindings", None),
+        AppView::Extensions => ("extensions", None),
+    }
+}
+
 /// Returns the preference key for a given [`AppView`].
 pub fn view_key(view: AppView) -> &'static str {
-    match view {
-        AppView::Dashboard => "dashboard",
-        AppView::Bookmarks => "bookmarks",
-        AppView::Issues => "issues",
-        AppView::Nodes => "nodes",
-        AppView::Namespaces => "namespaces",
-        AppView::Events => "events",
-        AppView::Pods => "pods",
-        AppView::Deployments => "deployments",
-        AppView::StatefulSets => "statefulsets",
-        AppView::DaemonSets => "daemonsets",
-        AppView::ReplicaSets => "replicasets",
-        AppView::ReplicationControllers => "replicationcontrollers",
-        AppView::Jobs => "jobs",
-        AppView::CronJobs => "cronjobs",
-        AppView::Services => "services",
-        AppView::Endpoints => "endpoints",
-        AppView::Ingresses => "ingresses",
-        AppView::IngressClasses => "ingressclasses",
-        AppView::NetworkPolicies => "networkpolicies",
-        AppView::PortForwarding => "portforwarding",
-        AppView::ConfigMaps => "configmaps",
-        AppView::Secrets => "secrets",
-        AppView::ResourceQuotas => "resourcequotas",
-        AppView::LimitRanges => "limitranges",
-        AppView::HPAs => "hpas",
-        AppView::PodDisruptionBudgets => "poddisruptionbudgets",
-        AppView::PriorityClasses => "priorityclasses",
-        AppView::PersistentVolumeClaims => "pvcs",
-        AppView::PersistentVolumes => "pvs",
-        AppView::StorageClasses => "storageclasses",
-        AppView::HelmCharts => "helmcharts",
-        AppView::HelmReleases => "helmreleases",
-        AppView::FluxCDAll => "flux_all",
-        AppView::FluxCDAlertProviders => "flux_alertproviders",
-        AppView::FluxCDAlerts => "flux_alerts",
-        AppView::FluxCDArtifacts => "flux_artifacts",
-        AppView::FluxCDHelmReleases => "flux_helmreleases",
-        AppView::FluxCDHelmRepositories => "flux_helmrepositories",
-        AppView::FluxCDImages => "flux_images",
-        AppView::FluxCDKustomizations => "flux_kustomizations",
-        AppView::FluxCDReceivers => "flux_receivers",
-        AppView::FluxCDSources => "flux_sources",
-        AppView::ServiceAccounts => "serviceaccounts",
-        AppView::ClusterRoles => "clusterroles",
-        AppView::Roles => "roles",
-        AppView::ClusterRoleBindings => "clusterrolebindings",
-        AppView::RoleBindings => "rolebindings",
-        AppView::Extensions => "extensions",
-    }
+    view_info(view).0
 }
 
 // ── Per-view column registries ──────────────────────────────────────
@@ -327,32 +334,7 @@ pub const ISSUE_COLUMNS: &[ColumnDef] = &[
 /// Returns the column registry for a view, or `None` for views without table
 /// columns (Dashboard, PortForwarding, Extensions, HelmCharts, Flux views).
 pub fn columns_for_view(view: AppView) -> Option<&'static [ColumnDef]> {
-    match view {
-        AppView::Pods => Some(POD_COLUMNS),
-        AppView::Deployments => Some(DEPLOYMENT_COLUMNS),
-        AppView::Nodes => Some(NODE_COLUMNS),
-        AppView::Services => Some(SERVICE_COLUMNS),
-        AppView::StatefulSets => Some(STATEFULSET_COLUMNS),
-        AppView::DaemonSets => Some(DAEMONSET_COLUMNS),
-        AppView::ReplicaSets | AppView::ReplicationControllers => Some(REPLICASET_COLUMNS),
-        AppView::Jobs => Some(JOB_COLUMNS),
-        AppView::CronJobs => Some(CRONJOB_COLUMNS),
-        AppView::Events => Some(EVENT_COLUMNS),
-        AppView::Namespaces => Some(NAMESPACE_COLUMNS),
-        AppView::ConfigMaps => Some(CONFIGMAP_COLUMNS),
-        AppView::Secrets => Some(SECRET_COLUMNS),
-        AppView::PersistentVolumeClaims => Some(PVC_COLUMNS),
-        AppView::PersistentVolumes => Some(PV_COLUMNS),
-        AppView::StorageClasses => Some(STORAGECLASS_COLUMNS),
-        AppView::HPAs => Some(HPA_COLUMNS),
-        AppView::PriorityClasses => Some(PRIORITY_CLASS_COLUMNS),
-        AppView::NetworkPolicies => Some(NETWORK_POLICY_COLUMNS),
-        AppView::Endpoints => Some(ENDPOINT_COLUMNS),
-        AppView::Ingresses => Some(INGRESS_COLUMNS),
-        AppView::HelmReleases => Some(HELM_RELEASE_COLUMNS),
-        AppView::Issues => Some(ISSUE_COLUMNS),
-        _ => None,
-    }
+    view_info(view).1
 }
 
 /// Resolves the visible columns for a view given user preferences.
