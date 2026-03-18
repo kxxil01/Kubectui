@@ -14,6 +14,7 @@ use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
     columns::ColumnDef,
+    icons::view_icon,
     k8s::dtos::NodeMetricsInfo,
     state::{
         ClusterSnapshot,
@@ -226,7 +227,7 @@ pub fn render_nodes(
 
     let sort_suffix = workload_sort_suffix(sort);
     let title = resource_table_title(
-        "🖥 ",
+        view_icon(AppView::Nodes).active(),
         "Nodes",
         total,
         snapshot.nodes.len(),

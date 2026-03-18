@@ -12,6 +12,7 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
@@ -21,7 +22,7 @@ use crate::{
             cached_filter_indices_with_variant, data_fingerprint,
         },
         format_age, format_image, format_small_int, render_centered_message, render_table_frame,
-        sort_header_cell, table_viewport_rows, table_window,
+        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_replicaset_indices,
         workload_sort_suffix,
     },
@@ -147,12 +148,14 @@ pub fn render_replicasets(
     }
 
     let sort_suffix = workload_sort_suffix(sort);
-    let title = if query.is_empty() {
-        format!(" Replica Sets ({total}){sort_suffix} ")
-    } else {
-        let all = cluster.replicasets.len();
-        format!(" Replica Sets ({total} of {all}) [/{query}]{sort_suffix}")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::ReplicaSets).active(),
+        "Replica Sets",
+        total,
+        cluster.replicasets.len(),
+        query,
+        &sort_suffix,
+    );
     let widths = [
         Constraint::Length(28),
         Constraint::Length(16),

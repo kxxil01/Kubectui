@@ -122,6 +122,7 @@ pub enum AppAction {
     ConfirmCronJobSuspend(bool),
     SetCronJobSuspend(bool),
     CycleTheme,
+    CycleIconMode,
     OpenHelp,
     CloseHelp,
     CopyResourceName,

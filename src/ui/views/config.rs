@@ -15,13 +15,14 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, render_centered_message, render_table_frame, table_viewport_rows,
-        table_window,
+        format_small_int, render_centered_message, render_table_frame, resource_table_title,
+        table_viewport_rows, table_window,
         views::filtering::{filtered_config_map_indices, filtered_secret_indices},
     },
 };
@@ -165,12 +166,14 @@ pub fn render_config_maps(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" 📄 ConfigMaps ({total}) ")
-    } else {
-        let all = cluster.config_maps.len();
-        format!(" 📄 ConfigMaps ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::ConfigMaps).active(),
+        "ConfigMaps",
+        total,
+        cluster.config_maps.len(),
+        query,
+        "",
+    );
     let widths = [
         Constraint::Percentage(52),
         Constraint::Percentage(33),
@@ -338,12 +341,14 @@ pub fn render_secrets(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" 🔐 Secrets ({total}) ")
-    } else {
-        let all = cluster.secrets.len();
-        format!(" 🔐 Secrets ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::Secrets).active(),
+        "Secrets",
+        total,
+        cluster.secrets.len(),
+        query,
+        "",
+    );
     let widths = [
         Constraint::Percentage(38),
         Constraint::Percentage(24),

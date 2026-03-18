@@ -15,12 +15,14 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        render_centered_message, render_table_frame, table_viewport_rows, table_window,
+        render_centered_message, render_table_frame, resource_table_title, table_viewport_rows,
+        table_window,
         views::filtering::{filtered_ingress_class_indices, filtered_ingress_indices},
     },
 };
@@ -194,12 +196,14 @@ pub fn render_ingresses(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" Ingresses ({total}) ")
-    } else {
-        let all = cluster.ingresses.len();
-        format!(" Ingresses ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::Ingresses).active(),
+        "Ingresses",
+        total,
+        cluster.ingresses.len(),
+        query,
+        "",
+    );
     let widths = [
         Constraint::Percentage(26),
         Constraint::Percentage(16),
@@ -309,12 +313,14 @@ pub fn render_ingress_classes(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" IngressClasses ({total}) ")
-    } else {
-        let all = cluster.ingress_classes.len();
-        format!(" IngressClasses ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::IngressClasses).active(),
+        "IngressClasses",
+        total,
+        cluster.ingress_classes.len(),
+        query,
+        "",
+    );
     let widths = [
         Constraint::Percentage(34),
         Constraint::Percentage(54),

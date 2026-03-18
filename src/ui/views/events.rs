@@ -15,6 +15,7 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
@@ -195,25 +196,17 @@ pub fn render_events(
         })
         .collect();
 
+    let load_suffix = match cluster.view_load_state(AppView::Events) {
+        crate::state::ViewLoadState::Refreshing => " [refreshing]",
+        crate::state::ViewLoadState::Loading => " [loading]",
+        _ => "",
+    };
+    let icon = view_icon(AppView::Events).active();
     let title = if query.is_empty() {
-        format!(
-            " Events ({total}){} ",
-            match cluster.view_load_state(AppView::Events) {
-                crate::state::ViewLoadState::Refreshing => " [refreshing]",
-                crate::state::ViewLoadState::Loading => " [loading]",
-                _ => "",
-            }
-        )
+        format!(" {icon}Events ({total}){load_suffix} ")
     } else {
         let all = cluster.events.len();
-        format!(
-            " Events ({total} of {all}) [/{query}]{}",
-            match cluster.view_load_state(AppView::Events) {
-                crate::state::ViewLoadState::Refreshing => " [refreshing]",
-                crate::state::ViewLoadState::Loading => " [loading]",
-                _ => "",
-            }
-        )
+        format!(" {icon}Events ({total} of {all}) [/{query}]{load_suffix}")
     };
     let widths = responsive_table_widths(
         area.width,
