@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use chrono::{DateTime, Utc};
+use crate::time::{AppTimestamp, now};
 
 use crate::app::{AppView, ResourceRef};
 
@@ -72,8 +72,8 @@ pub struct ActionHistoryEntry {
     pub resource_label: String,
     pub message: String,
     pub target: Option<ActionHistoryTarget>,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
+    pub started_at: AppTimestamp,
+    pub finished_at: Option<AppTimestamp>,
 }
 
 #[derive(Debug, Clone)]
@@ -108,7 +108,7 @@ impl ActionHistoryState {
             resource_label: resource_label.into(),
             message: message.into(),
             target,
-            started_at: Utc::now(),
+            started_at: now(),
             finished_at: None,
         });
         self.trim_to_limit();
@@ -125,7 +125,7 @@ impl ActionHistoryState {
         if let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) {
             entry.status = status;
             entry.message = message.into();
-            entry.finished_at = Some(Utc::now());
+            entry.finished_at = Some(now());
             if !keep_target {
                 entry.target = None;
             }

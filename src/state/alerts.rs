@@ -2,11 +2,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use chrono::{Duration, Utc};
-
 use crate::{
     k8s::dtos::{AlertItem, AlertSeverity},
     state::ClusterSnapshot,
+    time::{age_seconds_since, now_unix_seconds},
 };
 
 /// Aggregated values displayed in the dashboard metrics panel.
@@ -320,7 +319,7 @@ pub fn compute_alerts(snapshot: &ClusterSnapshot) -> Vec<AlertItem> {
         .filter(|pod| pod.status.eq_ignore_ascii_case("pending"))
         .filter(|pod| {
             pod.created_at
-                .map(|created_at| Utc::now() - created_at > Duration::minutes(5))
+                .map(|created_at| age_seconds_since(created_at, now_unix_seconds()) > 300)
                 .unwrap_or(false)
         })
         .count();
@@ -710,11 +709,12 @@ fn severity_rank(severity: AlertSeverity) -> u8 {
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, Utc};
+    use jiff::ToSpan;
 
     use crate::{
         k8s::dtos::{NodeInfo, PodInfo},
         state::ClusterSnapshot,
+        time::now,
     };
 
     use super::*;
@@ -826,11 +826,21 @@ mod tests {
     fn compute_alerts_pending_timestamp_boundary() {
         let mut snapshot = ClusterSnapshot::default();
 
+        let baseline = now();
         let mut fresh = pod("fresh", "Pending");
-        fresh.created_at = Some(Utc::now() - Duration::minutes(4) - Duration::seconds(59));
+        fresh.created_at = Some(
+            baseline
+                .checked_sub(4.minutes())
+                .and_then(|ts| ts.checked_sub(59.seconds()))
+                .expect("timestamp in range"),
+        );
 
         let mut old = pod("old", "Pending");
-        old.created_at = Some(Utc::now() - Duration::minutes(6));
+        old.created_at = Some(
+            baseline
+                .checked_sub(6.minutes())
+                .expect("timestamp in range"),
+        );
 
         snapshot.pods.push(fresh);
         snapshot.pods.push(old);

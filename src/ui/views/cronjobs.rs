@@ -5,7 +5,6 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-use chrono::{DateTime, Local, Utc};
 use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
@@ -18,6 +17,7 @@ use crate::{
     bookmarks::BookmarkEntry,
     icons::view_icon,
     state::ClusterSnapshot,
+    time::{AppTimestamp, format_local},
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
@@ -246,12 +246,9 @@ fn suspend_label(suspend: bool) -> &'static str {
     if suspend { "● Paused" } else { "● Active" }
 }
 
-fn format_time(ts: Option<DateTime<Utc>>) -> String {
+fn format_time(ts: Option<AppTimestamp>) -> String {
     if let Some(value) = ts {
-        value
-            .with_timezone(&Local)
-            .format("%m-%d %H:%M")
-            .to_string()
+        format_local(value, "%m-%d %H:%M")
     } else {
         "-".to_string()
     }

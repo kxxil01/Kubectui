@@ -150,7 +150,7 @@ impl K8sClient {
     /// `kubectl.kubernetes.io/restartedAt` with the current UTC timestamp.
     /// Works for Deployments, StatefulSets, and DaemonSets.
     pub async fn rollout_restart(&self, kind: &str, name: &str, namespace: &str) -> Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = crate::time::format_rfc3339(crate::time::now());
         let patch = Patch::Merge(json!({
             "spec": {
                 "template": {

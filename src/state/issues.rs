@@ -9,6 +9,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use crate::app::ResourceRef;
 use crate::k8s::dtos::AlertSeverity;
 use crate::state::{ClusterSnapshot, RefreshScope};
+use crate::time::{age_seconds_since, now_unix_seconds};
 use crate::ui::contains_ci;
 
 const MAX_ISSUES: usize = 500;
@@ -180,7 +181,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         if pod.status.eq_ignore_ascii_case("pending") {
             let age_secs = pod
                 .created_at
-                .map(|t| (chrono::Utc::now().timestamp() - t.timestamp()).max(0) as u64)
+                .map(|t| age_seconds_since(t, now_unix_seconds()) as u64)
                 .unwrap_or(0);
             let severity = if age_secs > 300 {
                 AlertSeverity::Warning
@@ -454,9 +455,12 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
 
 #[cfg(test)]
 mod tests {
+    use jiff::ToSpan;
+
     use super::*;
     use crate::k8s::dtos::*;
     use crate::state::ClusterSnapshot;
+    use crate::time::now;
 
     fn empty_snapshot() -> ClusterSnapshot {
         ClusterSnapshot::default()
@@ -510,12 +514,13 @@ mod tests {
     #[test]
     fn pending_pod_severity_by_age() {
         let mut snap = empty_snapshot();
+        let baseline = now();
         // Recent pending pod → Info
         snap.pods.push(PodInfo {
             name: "new-pod".into(),
             namespace: "default".into(),
             status: "Pending".into(),
-            created_at: Some(chrono::Utc::now()),
+            created_at: Some(baseline),
             ..Default::default()
         });
         // Old pending pod → Warning
@@ -523,7 +528,11 @@ mod tests {
             name: "old-pod".into(),
             namespace: "default".into(),
             status: "Pending".into(),
-            created_at: Some(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            created_at: Some(
+                baseline
+                    .checked_sub(10.minutes())
+                    .expect("timestamp in range"),
+            ),
             ..Default::default()
         });
         let issues = detect_issues(&snap);
@@ -759,12 +768,17 @@ mod tests {
     #[test]
     fn sort_order_severity_then_category() {
         let mut snap = empty_snapshot();
+        let baseline = now();
         // Warning: pending pod
         snap.pods.push(PodInfo {
             name: "pending-1".into(),
             namespace: "default".into(),
             status: "Pending".into(),
-            created_at: Some(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            created_at: Some(
+                baseline
+                    .checked_sub(10.minutes())
+                    .expect("timestamp in range"),
+            ),
             ..Default::default()
         });
         // Error: failed pod
@@ -925,7 +939,7 @@ mod tests {
             namespace: "default".into(),
             status: "Pending".into(),
             waiting_reasons: vec!["CrashLoopBackOff".into()],
-            created_at: Some(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            created_at: Some(now().checked_sub(10.minutes()).expect("timestamp in range")),
             ..Default::default()
         });
         let issues = detect_issues(&snap);
@@ -956,7 +970,7 @@ mod tests {
             namespace: "default".into(),
             status: "Pending".into(),
             waiting_reasons: vec!["ImagePullBackOff".into()],
-            created_at: Some(chrono::Utc::now() - chrono::Duration::minutes(10)),
+            created_at: Some(now().checked_sub(10.minutes()).expect("timestamp in range")),
             ..Default::default()
         });
         let issues = detect_issues(&snap);

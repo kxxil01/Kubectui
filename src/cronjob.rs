@@ -5,9 +5,8 @@ use std::{
     time::Duration,
 };
 
-use chrono::{DateTime, Utc};
-
 use crate::k8s::dtos::{CronJobInfo, JobInfo, PodInfo};
+use crate::time::{AppTimestamp, format_rfc3339, parse_timestamp};
 
 pub const CRONJOB_HISTORY_LIMIT: usize = 20;
 pub const CRONJOB_NEXT_RUN_TIMEZONE_FALLBACK: &str = "UTC";
@@ -25,7 +24,7 @@ pub struct CronJobHistoryEntry {
     pub active_pods: i32,
     pub failed_pods: i32,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
     pub logs_authorized: Option<bool>,
 }
 
@@ -38,8 +37,8 @@ impl CronJobHistoryEntry {
 pub fn compute_next_schedule_time(
     schedule: &str,
     timezone: Option<&str>,
-    now: DateTime<Utc>,
-) -> Option<DateTime<Utc>> {
+    now: AppTimestamp,
+) -> Option<AppTimestamp> {
     if schedule.split_whitespace().count() != 5 {
         return None;
     }
@@ -48,7 +47,7 @@ pub fn compute_next_schedule_time(
         .filter(|value| !value.trim().is_empty())
         .unwrap_or(CRONJOB_NEXT_RUN_TIMEZONE_FALLBACK);
     let crontab = cronexpr::parse_crontab(&format!("{schedule} {timezone}")).ok()?;
-    let now_rfc3339 = now.to_rfc3339();
+    let now_rfc3339 = format_rfc3339(now);
     let next = crontab.find_next(now_rfc3339.as_str()).ok()?;
 
     parse_zoned_timestamp(&next.to_string())
@@ -58,8 +57,8 @@ pub fn cronjob_next_schedule_time(
     schedule: &str,
     timezone: Option<&str>,
     suspend: bool,
-    now: DateTime<Utc>,
-) -> Option<DateTime<Utc>> {
+    now: AppTimestamp,
+) -> Option<AppTimestamp> {
     if suspend {
         None
     } else {
@@ -146,11 +145,9 @@ fn job_completion_percentage(job: &JobInfo) -> Option<u8> {
     Some(pct as u8)
 }
 
-fn parse_zoned_timestamp(value: &str) -> Option<DateTime<Utc>> {
+fn parse_zoned_timestamp(value: &str) -> Option<AppTimestamp> {
     let timestamp = value.split_once('[').map_or(value, |(ts, _)| ts);
-    chrono::DateTime::parse_from_rfc3339(timestamp)
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
+    parse_timestamp(timestamp)
 }
 
 #[cfg(test)]
@@ -168,32 +165,26 @@ mod tests {
 
     #[test]
     fn computes_next_schedule_time_with_explicit_timezone() {
-        let now = DateTime::parse_from_rfc3339("2026-03-12T10:30:00+00:00")
-            .expect("timestamp")
-            .with_timezone(&Utc);
+        let now = parse_timestamp("2026-03-12T10:30:00+00:00").expect("timestamp");
 
         let next = compute_next_schedule_time("0 9 * * *", Some("Asia/Jakarta"), now)
             .expect("next schedule");
 
-        assert_eq!(next.to_rfc3339(), "2026-03-13T02:00:00+00:00");
+        assert_eq!(format_rfc3339(next), "2026-03-13T02:00:00Z");
     }
 
     #[test]
     fn computes_next_schedule_time_with_utc_fallback() {
-        let now = DateTime::parse_from_rfc3339("2026-03-12T10:30:00+00:00")
-            .expect("timestamp")
-            .with_timezone(&Utc);
+        let now = parse_timestamp("2026-03-12T10:30:00+00:00").expect("timestamp");
 
         let next = compute_next_schedule_time("*/15 * * * *", None, now).expect("next schedule");
 
-        assert_eq!(next.to_rfc3339(), "2026-03-12T10:45:00+00:00");
+        assert_eq!(format_rfc3339(next), "2026-03-12T10:45:00Z");
     }
 
     #[test]
     fn suspended_cronjobs_do_not_expose_next_schedule_time() {
-        let now = DateTime::parse_from_rfc3339("2026-03-12T10:30:00+00:00")
-            .expect("timestamp")
-            .with_timezone(&Utc);
+        let now = parse_timestamp("2026-03-12T10:30:00+00:00").expect("timestamp");
 
         assert_eq!(
             cronjob_next_schedule_time("*/15 * * * *", Some("UTC"), true, now),
@@ -203,7 +194,7 @@ mod tests {
 
     #[test]
     fn rejects_non_standard_field_counts() {
-        let now = Utc::now();
+        let now = crate::time::now();
         assert!(compute_next_schedule_time("0 9 * * * *", Some("UTC"), now).is_none());
     }
 
@@ -214,12 +205,8 @@ mod tests {
             namespace: "ops".to_string(),
             ..CronJobInfo::default()
         };
-        let older = DateTime::parse_from_rfc3339("2026-03-11T10:00:00+00:00")
-            .expect("older")
-            .with_timezone(&Utc);
-        let newer = DateTime::parse_from_rfc3339("2026-03-12T10:00:00+00:00")
-            .expect("newer")
-            .with_timezone(&Utc);
+        let older = parse_timestamp("2026-03-11T10:00:00+00:00").expect("older");
+        let newer = parse_timestamp("2026-03-12T10:00:00+00:00").expect("newer");
 
         let entries = cronjob_history_entries(
             &cronjob,

@@ -1,8 +1,9 @@
-use chrono::Utc;
+use jiff::ToSpan;
 use kubectui::k8s::dtos::{
     ContainerMetrics, DeploymentInfo, NodeInfo, NodeMetricsInfo, PodInfo, PodMetricsInfo,
 };
 use kubectui::state::ClusterSnapshot;
+use kubectui::time::now;
 
 pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
     let namespaces = [
@@ -15,7 +16,7 @@ pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
     let statuses = [
         "Running", "Running", "Running", "Running", "Pending", "Failed",
     ];
-    let now = Utc::now();
+    let now = now();
 
     let pods: Vec<PodInfo> = (0..pod_count)
         .map(|i| {
@@ -25,7 +26,10 @@ pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
                 namespace: namespaces[i % namespaces.len()].to_string(),
                 status: statuses[i % statuses.len()].to_string(),
                 restarts: (i % 5) as i32,
-                created_at: Some(now - chrono::Duration::seconds((i * 60) as i64)),
+                created_at: Some(
+                    now.checked_sub(((i * 60) as i64).seconds())
+                        .expect("timestamp in range"),
+                ),
                 cpu_request: if has_requests {
                     Some(format!("{}m", 100 + (i % 10) * 50))
                 } else {
@@ -61,7 +65,10 @@ pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
             role: "worker".to_string(),
             cpu_allocatable: Some("4000m".to_string()),
             memory_allocatable: Some("8192Mi".to_string()),
-            created_at: Some(now - chrono::Duration::hours(i as i64)),
+            created_at: Some(
+                now.checked_sub((i as i64).hours())
+                    .expect("timestamp in range"),
+            ),
             ..Default::default()
         })
         .collect();
@@ -95,7 +102,10 @@ pub fn make_test_snapshot(pod_count: usize) -> ClusterSnapshot {
             namespace: namespaces[i % namespaces.len()].to_string(),
             ready_replicas: ((i % 3) + 1) as i32,
             desired_replicas: ((i % 3) + 1) as i32,
-            created_at: Some(now - chrono::Duration::hours(i as i64)),
+            created_at: Some(
+                now.checked_sub((i as i64).hours())
+                    .expect("timestamp in range"),
+            ),
             ..Default::default()
         })
         .collect();

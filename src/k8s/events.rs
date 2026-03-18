@@ -1,13 +1,14 @@
 //! Pod events data transfer object and fetching helpers.
 
+use crate::time::{AppTimestamp, now};
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use k8s_openapi::api::core::v1::Event;
 use kube::{
     Api, Client,
     api::{ListParams, ObjectList},
-    error::ErrorResponse,
 };
+
+use crate::k8s::conversions::app_timestamp_from_k8s_timestamp;
 
 /// A simplified Kubernetes Event record used by the detail modal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -15,8 +16,8 @@ pub struct EventInfo {
     pub event_type: String,
     pub reason: String,
     pub message: String,
-    pub first_timestamp: DateTime<Utc>,
-    pub last_timestamp: DateTime<Utc>,
+    pub first_timestamp: AppTimestamp,
+    pub last_timestamp: AppTimestamp,
     pub count: i32,
 }
 
@@ -40,8 +41,8 @@ pub async fn fetch_resource_events(
                 event_type: "Info".to_string(),
                 reason: "RBAC".to_string(),
                 message: "Events unavailable (RBAC)".to_string(),
-                first_timestamp: Utc::now(),
-                last_timestamp: Utc::now(),
+                first_timestamp: now(),
+                last_timestamp: now(),
                 count: 1,
             }]);
         }
@@ -75,8 +76,8 @@ pub async fn fetch_pod_events(
                 event_type: "Info".to_string(),
                 reason: "RBAC".to_string(),
                 message: "Events unavailable (RBAC)".to_string(),
-                first_timestamp: Utc::now(),
-                last_timestamp: Utc::now(),
+                first_timestamp: now(),
+                last_timestamp: now(),
                 count: 1,
             }]);
         }
@@ -98,20 +99,25 @@ fn map_events(list: ObjectList<Event>) -> Vec<EventInfo> {
                 .metadata
                 .creation_timestamp
                 .as_ref()
-                .map(|ts| ts.0)
-                .unwrap_or_else(Utc::now);
+                .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0))
+                .unwrap_or_else(now);
 
             let first_timestamp = event
                 .first_timestamp
                 .as_ref()
-                .map(|ts| ts.0)
+                .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0))
                 .unwrap_or(fallback_ts);
 
             let last_timestamp = event
                 .last_timestamp
                 .as_ref()
-                .map(|ts| ts.0)
-                .or_else(|| event.event_time.as_ref().map(|mt| mt.0))
+                .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0))
+                .or_else(|| {
+                    event
+                        .event_time
+                        .as_ref()
+                        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0))
+                })
                 .unwrap_or(first_timestamp);
 
             EventInfo {
@@ -149,32 +155,34 @@ fn map_events(list: ObjectList<Event>) -> Vec<EventInfo> {
 }
 
 fn is_forbidden_error(err: &kube::Error) -> bool {
-    match err {
-        kube::Error::Api(ErrorResponse { code, .. }) => *code == 403,
-        _ => false,
-    }
+    matches!(err, kube::Error::Api(status) if status.is_forbidden())
 }
 
 #[cfg(test)]
 mod tests {
-    use chrono::{Duration, Utc};
+    use jiff::ToSpan;
     use k8s_openapi::{
         api::core::v1::{Event, ObjectReference},
         apimachinery::pkg::apis::meta::v1::{ListMeta, MicroTime, Time},
     };
-    use kube::{api::ObjectList, error::ErrorResponse};
+    use kube::{api::ObjectList, core::Status};
 
     use super::*;
 
     fn event(reason: &str, msg: &str, last_offset_sec: i64) -> Event {
-        let now = Utc::now();
+        let now = now();
         let mut e = Event::default();
         e.reason = Some(reason.to_string());
         e.message = Some(msg.to_string());
         e.type_ = Some("Warning".to_string());
-        e.event_time = Some(MicroTime(now + Duration::seconds(last_offset_sec)));
-        e.first_timestamp = Some(Time(now - Duration::minutes(1)));
-        e.last_timestamp = Some(Time(now + Duration::seconds(last_offset_sec)));
+        let last_timestamp = now
+            .checked_add(last_offset_sec.seconds())
+            .expect("timestamp in range");
+        e.event_time = Some(MicroTime(to_k8s_timestamp(last_timestamp)));
+        e.first_timestamp = Some(Time(to_k8s_timestamp(
+            now.checked_sub(1.minute()).expect("timestamp in range"),
+        )));
+        e.last_timestamp = Some(Time(to_k8s_timestamp(last_timestamp)));
         e.involved_object = ObjectReference {
             kind: Some("Pod".to_string()),
             name: Some("pod-a".to_string()),
@@ -183,6 +191,14 @@ mod tests {
         };
         e.count = Some(2);
         e
+    }
+
+    fn api_error(code: u16, reason: &str, message: &str) -> kube::Error {
+        kube::Error::Api(Status::failure(message, reason).with_code(code).boxed())
+    }
+
+    fn to_k8s_timestamp(value: AppTimestamp) -> k8s_openapi::jiff::Timestamp {
+        value
     }
 
     /// Verifies empty event list maps to empty view model list.
@@ -220,18 +236,8 @@ mod tests {
     /// Verifies forbidden error detection returns true only for 403 API responses.
     #[test]
     fn is_forbidden_error_only_403() {
-        let forbidden = kube::Error::Api(ErrorResponse {
-            status: "Failure".to_string(),
-            message: "forbidden".to_string(),
-            reason: "Forbidden".to_string(),
-            code: 403,
-        });
-        let timeout = kube::Error::Api(ErrorResponse {
-            status: "Failure".to_string(),
-            message: "timeout".to_string(),
-            reason: "Timeout".to_string(),
-            code: 504,
-        });
+        let forbidden = api_error(403, "Forbidden", "forbidden");
+        let timeout = api_error(504, "Timeout", "timeout");
 
         assert!(is_forbidden_error(&forbidden));
         assert!(!is_forbidden_error(&timeout));
