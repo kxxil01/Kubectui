@@ -166,7 +166,10 @@ impl NamespacePicker {
             .split(inner);
 
         let title_line = Line::from(vec![
-            Span::styled(" ⎈ ", theme.title_style()),
+            Span::styled(
+                format!(" {}", crate::icons::chrome_icon("cluster").active()),
+                theme.title_style(),
+            ),
             Span::styled("Switch Namespace", theme.title_style()),
         ]);
         let title_block = Block::default()
