@@ -33,6 +33,31 @@ use crate::k8s::dtos::{
 };
 use crate::state::alerts::{format_mib, format_millicores, parse_mib, parse_millicores};
 
+/// Common metadata fields extracted from any Kubernetes resource.
+pub(crate) struct CommonMetadata {
+    pub name: String,
+    pub namespace: String,
+    pub created_at: Option<chrono::DateTime<Utc>>,
+    pub age: Option<std::time::Duration>,
+}
+
+/// Extracts standard metadata fields shared by all Kubernetes resources.
+pub(crate) fn extract_common_metadata(
+    meta: &k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta,
+) -> CommonMetadata {
+    let now = Utc::now();
+    let created_at = meta.creation_timestamp.as_ref().map(|ts| ts.0);
+    CommonMetadata {
+        name: meta.name.clone().unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: meta
+            .namespace
+            .clone()
+            .unwrap_or_else(|| "default".to_string()),
+        created_at,
+        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+    }
+}
+
 /// Extracts the first container image from a pod spec.
 pub fn extract_image_from_pod_spec(pod_spec: Option<&PodSpec>) -> Option<String> {
     pod_spec
@@ -578,56 +603,41 @@ pub(crate) fn format_job_duration(
 
 /// Converts a raw `ServiceAccount` into a [`ServiceAccountInfo`] DTO.
 pub fn service_account_to_info(sa: ServiceAccount) -> ServiceAccountInfo {
-    let now = Utc::now();
-    let created_at = sa.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&sa.metadata);
     ServiceAccountInfo {
-        name: sa.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-        namespace: sa
-            .metadata
-            .namespace
-            .unwrap_or_else(|| "default".to_string()),
+        name: m.name,
+        namespace: m.namespace,
         secrets_count: sa.secrets.as_ref().map_or(0, |v| v.len()),
         image_pull_secrets_count: sa.image_pull_secrets.as_ref().map_or(0, |v| v.len()),
         automount_service_account_token: sa.automount_service_account_token,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `Role` into a [`RoleInfo`] DTO.
 pub fn role_to_info(role: Role) -> RoleInfo {
-    let now = Utc::now();
-    let created_at = role.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&role.metadata);
     RoleInfo {
-        name: role
-            .metadata
-            .name
-            .unwrap_or_else(|| "<unknown>".to_string()),
-        namespace: role
-            .metadata
-            .namespace
-            .unwrap_or_else(|| "default".to_string()),
+        name: m.name,
+        namespace: m.namespace,
         rules: role
             .rules
             .as_ref()
             .map(|rules| rules.iter().map(rule_from_policy_rule).collect())
             .unwrap_or_default(),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `RoleBinding` into a [`RoleBindingInfo`] DTO.
 pub fn role_binding_to_info(rb: RoleBinding) -> RoleBindingInfo {
-    let now = Utc::now();
-    let created_at = rb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&rb.metadata);
     let role_ref = rb.role_ref;
     RoleBindingInfo {
-        name: rb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-        namespace: rb
-            .metadata
-            .namespace
-            .unwrap_or_else(|| "default".to_string()),
+        name: m.name,
+        namespace: m.namespace,
         role_ref_kind: role_ref.kind,
         role_ref_name: role_ref.name,
         subjects: rb
@@ -635,34 +645,32 @@ pub fn role_binding_to_info(rb: RoleBinding) -> RoleBindingInfo {
             .as_ref()
             .map(|subjects| subjects.iter().map(subject_from_k8s).collect())
             .unwrap_or_default(),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `ClusterRole` into a [`ClusterRoleInfo`] DTO.
 pub fn cluster_role_to_info(cr: ClusterRole) -> ClusterRoleInfo {
-    let now = Utc::now();
-    let created_at = cr.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&cr.metadata);
     ClusterRoleInfo {
-        name: cr.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        name: m.name,
         rules: cr
             .rules
             .as_ref()
             .map(|rules| rules.iter().map(rule_from_policy_rule).collect())
             .unwrap_or_default(),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `ClusterRoleBinding` into a [`ClusterRoleBindingInfo`] DTO.
 pub fn cluster_role_binding_to_info(crb: ClusterRoleBinding) -> ClusterRoleBindingInfo {
-    let now = Utc::now();
-    let created_at = crb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&crb.metadata);
     let role_ref = crb.role_ref;
     ClusterRoleBindingInfo {
-        name: crb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
+        name: m.name,
         role_ref_kind: role_ref.kind,
         role_ref_name: role_ref.name,
         subjects: crb
@@ -670,8 +678,8 @@ pub fn cluster_role_binding_to_info(crb: ClusterRoleBinding) -> ClusterRoleBindi
             .as_ref()
             .map(|subjects| subjects.iter().map(subject_from_k8s).collect())
             .unwrap_or_default(),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
@@ -679,7 +687,7 @@ pub fn cluster_role_binding_to_info(crb: ClusterRoleBinding) -> ClusterRoleBindi
 pub fn resource_quota_to_info(
     quota: k8s_openapi::api::core::v1::ResourceQuota,
 ) -> ResourceQuotaInfo {
-    let now = Utc::now();
+    let m = extract_common_metadata(&quota.metadata);
     let hard = quota
         .status
         .as_ref()
@@ -701,28 +709,21 @@ pub fn resource_quota_to_info(
         .collect::<BTreeMap<_, _>>();
 
     let percent_used = quota_percent_used(&hard, &used);
-    let created_at = quota.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
 
     ResourceQuotaInfo {
-        name: quota
-            .metadata
-            .name
-            .unwrap_or_else(|| "<unknown>".to_string()),
-        namespace: quota
-            .metadata
-            .namespace
-            .unwrap_or_else(|| "default".to_string()),
+        name: m.name,
+        namespace: m.namespace,
         hard,
         used,
         percent_used,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `LimitRange` into a [`LimitRangeInfo`] DTO.
 pub fn limit_range_to_info(range: k8s_openapi::api::core::v1::LimitRange) -> LimitRangeInfo {
-    let now = Utc::now();
+    let m = extract_common_metadata(&range.metadata);
     let limits = range
         .spec
         .as_ref()
@@ -743,36 +744,24 @@ pub fn limit_range_to_info(range: k8s_openapi::api::core::v1::LimitRange) -> Lim
         })
         .unwrap_or_default();
 
-    let created_at = range.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-
     LimitRangeInfo {
-        name: range
-            .metadata
-            .name
-            .unwrap_or_else(|| "<unknown>".to_string()),
-        namespace: range
-            .metadata
-            .namespace
-            .unwrap_or_else(|| "default".to_string()),
+        name: m.name,
+        namespace: m.namespace,
         limits,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `PodDisruptionBudget` into a [`PodDisruptionBudgetInfo`] DTO.
 pub fn pdb_to_info(pdb: PodDisruptionBudget) -> PodDisruptionBudgetInfo {
-    let now = Utc::now();
+    let m = extract_common_metadata(&pdb.metadata);
     let spec = pdb.spec.as_ref();
     let status = pdb.status.as_ref();
-    let created_at = pdb.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
 
     PodDisruptionBudgetInfo {
-        name: pdb.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
-        namespace: pdb
-            .metadata
-            .namespace
-            .unwrap_or_else(|| "default".to_string()),
+        name: m.name,
+        namespace: m.namespace,
         min_available: spec
             .and_then(|s| s.min_available.as_ref())
             .map(int_or_string_to_string),
@@ -783,8 +772,8 @@ pub fn pdb_to_info(pdb: PodDisruptionBudget) -> PodDisruptionBudgetInfo {
         desired_healthy: status.map(|s| s.desired_healthy).unwrap_or(0),
         disruptions_allowed: status.map(|s| s.disruptions_allowed).unwrap_or(0),
         expected_pods: status.map(|s| s.expected_pods).unwrap_or(0),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
@@ -964,53 +953,50 @@ pub fn network_policy_to_info(np: NetworkPolicy) -> NetworkPolicyInfo {
 
 /// Converts a raw `ConfigMap` into a [`ConfigMapInfo`] DTO.
 pub fn config_map_to_info(cm: k8s_openapi::api::core::v1::ConfigMap) -> ConfigMapInfo {
-    let now = Utc::now();
-    let created_at = cm.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&cm.metadata);
     let data_count = cm.data.as_ref().map(|d| d.len()).unwrap_or(0)
         + cm.binary_data.as_ref().map(|d| d.len()).unwrap_or(0);
     ConfigMapInfo {
-        name: cm.metadata.name.unwrap_or_default(),
-        namespace: cm.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         data_count,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `Secret` into a [`SecretInfo`] DTO.
 pub fn secret_to_info(s: k8s_openapi::api::core::v1::Secret) -> SecretInfo {
-    let now = Utc::now();
-    let created_at = s.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&s.metadata);
     let data_count = s.data.as_ref().map(|d| d.len()).unwrap_or(0);
     SecretInfo {
-        name: s.metadata.name.unwrap_or_default(),
-        namespace: s.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         type_: s.type_.unwrap_or_else(|| "Opaque".to_string()),
         data_count,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `HorizontalPodAutoscaler` into an [`HpaInfo`] DTO.
 pub fn hpa_to_info(hpa: HorizontalPodAutoscaler) -> HpaInfo {
-    let now = Utc::now();
-    let created_at = hpa.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&hpa.metadata);
     let spec = hpa.spec.as_ref();
     let status = hpa.status.as_ref();
     let reference = spec
         .map(|s| format!("{}/{}", s.scale_target_ref.kind, s.scale_target_ref.name))
         .unwrap_or_default();
     HpaInfo {
-        name: hpa.metadata.name.unwrap_or_default(),
-        namespace: hpa.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         reference,
         min_replicas: spec.and_then(|s| s.min_replicas),
         max_replicas: spec.map(|s| s.max_replicas).unwrap_or(0),
         current_replicas: status.and_then(|s| s.current_replicas).unwrap_or(0),
         desired_replicas: status.map(|s| s.desired_replicas).unwrap_or(0),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
@@ -1107,17 +1093,16 @@ pub fn storage_class_to_info(sc: StorageClass) -> StorageClassInfo {
 
 /// Converts a raw `Namespace` into a [`NamespaceInfo`] DTO.
 pub fn namespace_to_info(ns: Namespace) -> NamespaceInfo {
-    let now = Utc::now();
-    let created_at = ns.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&ns.metadata);
     NamespaceInfo {
-        name: ns.metadata.name.unwrap_or_default(),
+        name: m.name,
         status: ns
             .status
             .as_ref()
             .and_then(|s| s.phase.clone())
             .unwrap_or_else(|| "Active".to_string()),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
@@ -1146,15 +1131,14 @@ pub fn event_to_info(ev: k8s_openapi::api::core::v1::Event) -> K8sEventInfo {
 
 /// Converts a raw `PriorityClass` into a [`PriorityClassInfo`] DTO.
 pub fn priority_class_to_info(pc: PriorityClass) -> PriorityClassInfo {
-    let now = Utc::now();
-    let created_at = pc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&pc.metadata);
     PriorityClassInfo {
-        name: pc.metadata.name.unwrap_or_default(),
+        name: m.name,
         value: pc.value,
         global_default: pc.global_default.unwrap_or(false),
         description: pc.description.unwrap_or_default(),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
