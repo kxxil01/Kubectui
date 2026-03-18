@@ -1,5 +1,7 @@
 //! NavGroup and AppView enum definitions for sidebar navigation.
 
+use crate::icons::{group_icon, view_icon};
+
 /// Sidebar navigation groups.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum NavGroup {
@@ -29,42 +31,15 @@ impl NavGroup {
         }
     }
 
-    pub const fn icon(self) -> &'static str {
-        match self {
-            NavGroup::Overview => "󰋗",
-            NavGroup::Workloads => "󰆧",
-            NavGroup::Network => "󰛳",
-            NavGroup::Config => "󰒓",
-            NavGroup::Storage => "󰋊",
-            NavGroup::Helm => "󰱥",
-            NavGroup::FluxCD => "󰠳",
-            NavGroup::AccessControl => "󰒃",
-            NavGroup::CustomResources => "󰏗",
-        }
+    pub fn icon(self) -> &'static str {
+        group_icon(self.label()).active()
     }
 
     /// Returns a preformatted sidebar label including collapse state marker.
-    pub const fn sidebar_text(self, collapsed: bool) -> &'static str {
-        match (self, collapsed) {
-            (NavGroup::Overview, false) => " ▼ 󰋗 Overview",
-            (NavGroup::Overview, true) => " ▶ 󰋗 Overview",
-            (NavGroup::Workloads, false) => " ▼ 󰆧 Workloads",
-            (NavGroup::Workloads, true) => " ▶ 󰆧 Workloads",
-            (NavGroup::Network, false) => " ▼ 󰛳 Network",
-            (NavGroup::Network, true) => " ▶ 󰛳 Network",
-            (NavGroup::Config, false) => " ▼ 󰒓 Config",
-            (NavGroup::Config, true) => " ▶ 󰒓 Config",
-            (NavGroup::Storage, false) => " ▼ 󰋊 Storage",
-            (NavGroup::Storage, true) => " ▶ 󰋊 Storage",
-            (NavGroup::Helm, false) => " ▼ 󰱥 Helm",
-            (NavGroup::Helm, true) => " ▶ 󰱥 Helm",
-            (NavGroup::FluxCD, false) => " ▼ 󰠳 FluxCD",
-            (NavGroup::FluxCD, true) => " ▶ 󰠳 FluxCD",
-            (NavGroup::AccessControl, false) => " ▼ 󰒃 Access Control",
-            (NavGroup::AccessControl, true) => " ▶ 󰒃 Access Control",
-            (NavGroup::CustomResources, false) => " ▼ 󰏗 Custom Resources",
-            (NavGroup::CustomResources, true) => " ▶ 󰏗 Custom Resources",
-        }
+    pub fn sidebar_text(self, collapsed: bool) -> String {
+        let arrow = if collapsed { "▶" } else { "▼" };
+        let icon = group_icon(self.label()).active();
+        format!(" {arrow} {icon}{}", self.label())
     }
 }
 
@@ -250,111 +225,14 @@ impl AppView {
     }
 
     /// Returns the sidebar icon for this view.
-    pub const fn icon(self) -> &'static str {
-        match self {
-            AppView::Dashboard => "󰋗",
-            AppView::Bookmarks => "",
-            AppView::Nodes => "󰒋",
-            AppView::Pods => "󰠳",
-            AppView::Deployments => "󰆧",
-            AppView::StatefulSets => "󰆼",
-            AppView::DaemonSets => "󰒓",
-            AppView::ReplicaSets => "󰆧",
-            AppView::ReplicationControllers => "󰆧",
-            AppView::Jobs => "󰃰",
-            AppView::CronJobs => "󰔠",
-            AppView::Services => "󰛳",
-            AppView::Endpoints => "󰛳",
-            AppView::Ingresses => "󰱓",
-            AppView::IngressClasses => "󰱓",
-            AppView::NetworkPolicies => "󰒃",
-            AppView::PortForwarding => "󰛳",
-            AppView::ConfigMaps => "󰒓",
-            AppView::Secrets => "󰌋",
-            AppView::ResourceQuotas => "󰏗",
-            AppView::LimitRanges => "󰳗",
-            AppView::HPAs => "󰦕",
-            AppView::PodDisruptionBudgets => "󰦕",
-            AppView::PriorityClasses => "󰔠",
-            AppView::PersistentVolumeClaims => "󰋊",
-            AppView::PersistentVolumes => "󰋊",
-            AppView::StorageClasses => "󰋊",
-            AppView::Namespaces => "󰏗",
-            AppView::Events => "󰃰",
-            AppView::HelmCharts => "󰱥",
-            AppView::HelmReleases => "󰱥",
-            AppView::FluxCDAlertProviders => "󰖂",
-            AppView::FluxCDAlerts => "󰀬",
-            AppView::FluxCDAll => "󰠳",
-            AppView::FluxCDArtifacts => "󰏗",
-            AppView::FluxCDHelmReleases => "󰱥",
-            AppView::FluxCDHelmRepositories => "󰱥",
-            AppView::FluxCDImages => "󰄾",
-            AppView::FluxCDKustomizations => "󰆧",
-            AppView::FluxCDReceivers => "󰜗",
-            AppView::FluxCDSources => "󰑐",
-            AppView::ServiceAccounts => "󰀄",
-            AppView::ClusterRoles => "󰒃",
-            AppView::Roles => "󰒃",
-            AppView::ClusterRoleBindings => "󰌋",
-            AppView::RoleBindings => "󰌋",
-            AppView::Extensions => "󰏗",
-            AppView::Issues => "󰀬",
-        }
+    pub fn icon(self) -> &'static str {
+        view_icon(self).active()
     }
 
     /// Returns the preformatted sidebar row text for this view.
-    pub const fn sidebar_text(self) -> &'static str {
-        match self {
-            AppView::Dashboard => "  󰋗 Dashboard",
-            AppView::Bookmarks => "   Bookmarks",
-            AppView::Nodes => "  󰒋 Nodes",
-            AppView::Pods => "  󰠳 Pods",
-            AppView::Deployments => "  󰆧 Deployments",
-            AppView::StatefulSets => "  󰆼 Stateful Sets",
-            AppView::DaemonSets => "  󰒓 Daemon Sets",
-            AppView::ReplicaSets => "  󰆧 Replica Sets",
-            AppView::ReplicationControllers => "  󰆧 Replication Controllers",
-            AppView::Jobs => "  󰃰 Jobs",
-            AppView::CronJobs => "  󰔠 Cron Jobs",
-            AppView::Services => "  󰛳 Services",
-            AppView::Endpoints => "  󰛳 Endpoints",
-            AppView::Ingresses => "  󰱓 Ingresses",
-            AppView::IngressClasses => "  󰱓 Ingress Classes",
-            AppView::NetworkPolicies => "  󰒃 Network Policies",
-            AppView::PortForwarding => "  󰛳 Port Forwarding",
-            AppView::ConfigMaps => "  󰒓 Config Maps",
-            AppView::Secrets => "  󰌋 Secrets",
-            AppView::ResourceQuotas => "  󰏗 Resource Quotas",
-            AppView::LimitRanges => "  󰳗 Limit Ranges",
-            AppView::HPAs => "  󰦕 Horiz. Pod Autoscalers",
-            AppView::PodDisruptionBudgets => "  󰦕 Pod Disruption Budgets",
-            AppView::PriorityClasses => "  󰔠 Priority Classes",
-            AppView::PersistentVolumeClaims => "  󰋊 Persistent Vol. Claims",
-            AppView::PersistentVolumes => "  󰋊 Persistent Volumes",
-            AppView::StorageClasses => "  󰋊 Storage Classes",
-            AppView::Namespaces => "  󰏗 Namespaces",
-            AppView::Events => "  󰃰 Events",
-            AppView::HelmCharts => "  󰱥 Repositories",
-            AppView::HelmReleases => "  󰱥 Releases",
-            AppView::FluxCDAlertProviders => "  󰖂 Alert Providers",
-            AppView::FluxCDAlerts => "  󰀬 Alerts",
-            AppView::FluxCDAll => "  󰠳 All",
-            AppView::FluxCDArtifacts => "  󰏗 Artifacts",
-            AppView::FluxCDHelmReleases => "  󰱥 HelmReleases",
-            AppView::FluxCDHelmRepositories => "  󰱥 HelmRepositories",
-            AppView::FluxCDImages => "  󰄾 Images",
-            AppView::FluxCDKustomizations => "  󰆧 Kustomizations",
-            AppView::FluxCDReceivers => "  󰜗 Receivers",
-            AppView::FluxCDSources => "  󰑐 Sources",
-            AppView::ServiceAccounts => "  󰀄 Service Accounts",
-            AppView::ClusterRoles => "  󰒃 Cluster Roles",
-            AppView::Roles => "  󰒃 Roles",
-            AppView::ClusterRoleBindings => "  󰌋 Cluster Role Bindings",
-            AppView::RoleBindings => "  󰌋 Role Bindings",
-            AppView::Extensions => "  󰏗 Definitions",
-            AppView::Issues => "  󰀬 Issues",
-        }
+    pub fn sidebar_text(self) -> String {
+        let icon = view_icon(self).active();
+        format!("  {icon}{}", self.label())
     }
 
     /// Returns a stable key for render profiling spans.

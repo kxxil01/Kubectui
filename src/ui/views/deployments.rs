@@ -13,6 +13,7 @@ use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
     columns::ColumnDef,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
@@ -154,7 +155,7 @@ pub fn render_deployments(
 
     let sort_suffix = workload_sort_suffix(sort);
     let title = resource_table_title(
-        "🚀",
+        view_icon(AppView::Deployments).active(),
         "Deployments",
         total,
         snapshot.deployments.len(),

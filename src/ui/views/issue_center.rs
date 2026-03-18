@@ -8,6 +8,8 @@ use ratatui::{
 };
 
 use crate::{
+    app::AppView,
+    icons::{StatusIcons, view_icon},
     k8s::dtos::AlertSeverity,
     state::{
         ClusterSnapshot, RefreshScope,
@@ -18,8 +20,6 @@ use crate::{
         table_viewport_rows, table_window,
     },
 };
-
-use crate::app::AppView;
 
 pub fn render_issues(
     frame: &mut Frame,
@@ -88,9 +88,11 @@ pub fn render_issues(
             };
 
             let (sev_icon, sev_style) = match issue.severity {
-                AlertSeverity::Error => ("✗", theme.badge_error_style()),
-                AlertSeverity::Warning => ("⚠", theme.badge_warning_style()),
-                AlertSeverity::Info => ("ℹ", theme.inactive_style()),
+                AlertSeverity::Error => (StatusIcons::error().active(), theme.badge_error_style()),
+                AlertSeverity::Warning => {
+                    (StatusIcons::warning().active(), theme.badge_warning_style())
+                }
+                AlertSeverity::Info => (StatusIcons::info().active(), theme.inactive_style()),
             };
 
             Row::new(vec![
@@ -105,19 +107,17 @@ pub fn render_issues(
         })
         .collect();
 
+    let icon = view_icon(AppView::Issues).active();
+    let coverage_suffix = if diagnostics_loaded {
+        ""
+    } else {
+        " [partial coverage]"
+    };
     let title = if query.is_empty() {
-        if diagnostics_loaded {
-            format!(" Issues ({total}) ")
-        } else {
-            format!(" Issues ({total}) [partial coverage] ")
-        }
+        format!(" {icon}Issues ({total}){coverage_suffix} ")
     } else {
         let all = all_issues.len();
-        if diagnostics_loaded {
-            format!(" Issues ({total} of {all}) [/{query}]")
-        } else {
-            format!(" Issues ({total} of {all}) [/{query}] [partial coverage]")
-        }
+        format!(" {icon}Issues ({total} of {all}) [/{query}]{coverage_suffix}")
     };
     let widths = [
         Constraint::Length(3),

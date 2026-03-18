@@ -12,6 +12,7 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
@@ -20,8 +21,8 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices, data_fingerprint,
         },
-        format_small_int, render_centered_message, render_table_frame, table_viewport_rows,
-        table_window,
+        format_small_int, render_centered_message, render_table_frame, resource_table_title,
+        table_viewport_rows, table_window,
         views::filtering::filtered_hpa_indices,
     },
 };
@@ -168,12 +169,14 @@ pub fn render_hpas(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" HorizontalPodAutoscalers ({total}) ")
-    } else {
-        let all = cluster.hpas.len();
-        format!(" HorizontalPodAutoscalers ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::HPAs).active(),
+        "HorizontalPodAutoscalers",
+        total,
+        cluster.hpas.len(),
+        query,
+        "",
+    );
     let widths = [
         Constraint::Percentage(23),
         Constraint::Percentage(18),

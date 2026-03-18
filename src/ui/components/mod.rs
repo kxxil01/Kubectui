@@ -319,7 +319,7 @@ fn cached_sidebar_lines(
                             .iter()
                             .find(|(candidate, _)| candidate == view)
                             .map_or_else(
-                                || base.to_string(),
+                                || base.clone(),
                                 |(_, count)| match count {
                                     Some(count) => format!("{base} ({count})"),
                                     None => format!("{base} (…)"),

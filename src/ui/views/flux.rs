@@ -16,6 +16,7 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState, filtered_workload_indices},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     k8s::dtos::FluxResourceInfo,
     state::ClusterSnapshot,
     ui::{
@@ -414,11 +415,12 @@ pub fn render_flux_resources(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
+    let icon = view_icon(AppView::FluxCDAll).active();
     let title = if query.is_empty() {
-        format!(" 🌀 FluxCD · {} ({total}){sort_suffix} ", mode.title())
+        format!(" {icon}FluxCD · {} ({total}){sort_suffix} ", mode.title())
     } else {
         format!(
-            " 🌀 FluxCD · {} ({total} of {mode_total}) [/{query}]{sort_suffix}",
+            " {icon}FluxCD · {} ({total} of {mode_total}) [/{query}]{sort_suffix}",
             mode.title()
         )
     };

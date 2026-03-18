@@ -24,6 +24,7 @@ use crate::{
         WorkloadSortState, filtered_pod_indices,
     },
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     policy::ViewAction,
     state::{
         ClusterSnapshot, ViewLoadState,
@@ -1489,13 +1490,14 @@ fn render_pods_widget(
     let sort_suffix = pod_sort
         .map(|state| format!(" • sort: {}", state.short_label()))
         .unwrap_or_default();
-    let title = format!(" 🐳 Pods ({total}){sort_suffix} ");
+    let icon = view_icon(AppView::Pods).active();
+    let title = format!(" {icon}Pods ({total}){sort_suffix} ");
     let block = if query.is_empty() {
         content_block(&title, focused)
     } else {
         let all = cluster.pods.len();
         content_block(
-            &format!(" 🐳 Pods ({total} of {all}) [/{query}]{sort_suffix}"),
+            &format!(" {icon}Pods ({total} of {all}) [/{query}]{sort_suffix}"),
             focused,
         )
     };

@@ -15,12 +15,14 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        render_centered_message, render_table_frame, table_viewport_rows, table_window,
+        render_centered_message, render_table_frame, resource_table_title, table_viewport_rows,
+        table_window,
         views::filtering::filtered_endpoint_indices,
     },
 };
@@ -141,12 +143,14 @@ pub fn render_endpoints(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" Endpoints ({total}) ")
-    } else {
-        let all = cluster.endpoints.len();
-        format!(" Endpoints ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::Endpoints).active(),
+        "Endpoints",
+        total,
+        cluster.endpoints.len(),
+        query,
+        "",
+    );
     let widths = [
         Constraint::Percentage(28),
         Constraint::Percentage(20),

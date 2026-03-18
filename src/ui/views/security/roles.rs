@@ -10,6 +10,7 @@ use super::join_or_all;
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     k8s::dtos::RbacRule,
     state::ClusterSnapshot,
     ui::{
@@ -190,7 +191,7 @@ pub fn render_roles(
 
     let sort_suffix = workload_sort_suffix(sort);
     let title = resource_table_title(
-        "🛡️ ",
+        view_icon(AppView::Roles).active(),
         "Roles",
         total,
         cluster.roles.len(),

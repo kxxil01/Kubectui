@@ -15,12 +15,14 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        render_centered_message, render_table_frame, table_viewport_rows, table_window,
+        render_centered_message, render_table_frame, resource_table_title, table_viewport_rows,
+        table_window,
         views::filtering::{filtered_helm_release_indices, filtered_helm_repo_indices},
     },
 };
@@ -213,12 +215,14 @@ pub fn render_helm_releases(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" Helm Releases ({total}) ")
-    } else {
-        let all = cluster.helm_releases.len();
-        format!(" Helm Releases ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::HelmReleases).active(),
+        "Helm Releases",
+        total,
+        cluster.helm_releases.len(),
+        query,
+        "",
+    );
     let widths = [
         Constraint::Percentage(18),
         Constraint::Percentage(14),
@@ -318,12 +322,14 @@ pub fn render_helm_repos(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" Helm Repositories ({total}) ")
-    } else {
-        let all = cluster.helm_repositories.len();
-        format!(" Helm Repositories ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::HelmCharts).active(),
+        "Helm Repositories",
+        total,
+        cluster.helm_repositories.len(),
+        query,
+        "",
+    );
     let widths = [Constraint::Percentage(30), Constraint::Percentage(70)];
 
     render_table_frame(
