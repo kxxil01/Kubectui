@@ -8,9 +8,9 @@ pub mod port_forward;
 mod refresh;
 pub mod watch;
 
+use crate::time::AppTimestamp;
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use std::{fmt, sync::Arc};
 
 use crate::app::AppView;
@@ -177,7 +177,7 @@ pub struct ClusterSnapshot {
     pub issue_count: usize,
     pub namespaces_count: usize,
     pub phase: DataPhase,
-    pub last_updated: Option<DateTime<Utc>>,
+    pub last_updated: Option<AppTimestamp>,
     pub last_error: Option<String>,
     pub cluster_url: Option<String>,
     pub connection_health: ConnectionHealth,
@@ -653,7 +653,8 @@ impl RefreshScope {
             | Self::REPLICASETS.0
             | Self::REPLICATION_CONTROLLERS.0
             | Self::JOBS.0
-            | Self::CRONJOBS.0,
+            | Self::CRONJOBS.0
+            | Self::NAMESPACES.0,
     );
     pub const CORE_OVERVIEW: Self = Self(Self::WATCHED_SCOPES.0 | Self::NAMESPACES.0);
     pub const LEGACY_SECONDARY: Self = Self(
@@ -972,6 +973,9 @@ impl GlobalState {
                 watch::WatchPayload::CronJobs(items) => {
                     apply_watched!(snap, changed, cronjobs, items);
                 }
+                watch::WatchPayload::Namespaces(items) => {
+                    apply_watched!(snap, changed, namespace_list, items);
+                }
                 watch::WatchPayload::Error { .. } => {
                     // Watcher errors are informational — do not clear existing
                     // snapshot data. The watch stream's built-in backoff will
@@ -980,6 +984,7 @@ impl GlobalState {
             }
         }
         if changed {
+            self.namespaces = Self::namespace_names_from_list(&self.snapshot.namespace_list);
             self.snapshot_dirty = true;
             self.publish_snapshot();
         }
@@ -3152,6 +3157,14 @@ mod tests {
         }
     }
 
+    fn make_namespace_info(name: &str, status: &str) -> NamespaceInfo {
+        NamespaceInfo {
+            name: name.to_string(),
+            status: status.to_string(),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn apply_watch_update_updates_pods() {
         let mut state = GlobalState::default();
@@ -3213,6 +3226,30 @@ mod tests {
         assert_eq!(
             state.snapshot.view_load_states[AppView::Pods.index()],
             ViewLoadState::Idle
+        );
+    }
+
+    #[test]
+    fn apply_watch_update_updates_namespaces_and_picker_cache() {
+        let mut state = GlobalState::default();
+
+        let update = watch::WatchUpdate {
+            resource: watch::WatchedResource::Namespaces,
+            context_generation: 0,
+            data: watch::WatchPayload::Namespaces(vec![
+                make_namespace_info("prod", "Active"),
+                make_namespace_info("default", "Active"),
+                make_namespace_info("prod", "Active"),
+                make_namespace_info("", "Active"),
+            ]),
+        };
+
+        state.apply_watch_update(update);
+
+        assert_eq!(state.snapshot.namespace_list.len(), 4);
+        assert_eq!(
+            state.namespaces,
+            vec!["default".to_string(), "prod".to_string()]
         );
     }
 }

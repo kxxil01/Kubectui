@@ -2,7 +2,9 @@
 
 use std::collections::VecDeque;
 
-use chrono::{DateTime, TimeDelta, Utc};
+use jiff::ToSpan;
+
+use crate::time::AppTimestamp;
 
 use crate::action_history::{ActionHistoryEntry, ActionKind, ActionStatus};
 use crate::app::ResourceRef;
@@ -25,14 +27,14 @@ pub enum TimelineEntry {
         kind: ActionKind,
         status: ActionStatus,
         message: String,
-        started_at: DateTime<Utc>,
-        finished_at: Option<DateTime<Utc>>,
+        started_at: AppTimestamp,
+        finished_at: Option<AppTimestamp>,
     },
 }
 
 impl TimelineEntry {
     /// The primary timestamp used for sorting.
-    pub fn sort_timestamp(&self) -> DateTime<Utc> {
+    pub fn sort_timestamp(&self) -> AppTimestamp {
         match self {
             TimelineEntry::Event { event, .. } => event.last_timestamp,
             TimelineEntry::Action { started_at, .. } => *started_at,
@@ -90,9 +92,9 @@ pub fn build_timeline(
 
     // 4. Correlation pass: for each Action, mark subsequent Events within the
     //    correlation window as related.
-    let window = TimeDelta::seconds(CORRELATION_WINDOW_SECS);
+    let window = CORRELATION_WINDOW_SECS.seconds();
 
-    let action_indices: Vec<(usize, DateTime<Utc>)> = timeline
+    let action_indices: Vec<(usize, AppTimestamp)> = timeline
         .iter()
         .enumerate()
         .filter_map(|(idx, entry)| {
@@ -105,7 +107,9 @@ pub fn build_timeline(
         .collect();
 
     for &(action_idx, action_ts) in &action_indices {
-        let window_end = action_ts + window;
+        let window_end = action_ts
+            .checked_add(window)
+            .expect("correlation window should stay in range");
         for entry in timeline.iter_mut().skip(action_idx + 1) {
             if entry.sort_timestamp() > window_end {
                 break;
@@ -129,13 +133,18 @@ mod tests {
     use super::*;
     use crate::action_history::ActionHistoryTarget;
     use crate::app::AppView;
-    use chrono::TimeZone;
 
-    fn ts(minutes: i64) -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 1, 1, 12, 0, 0)
-            .unwrap()
-            .checked_add_signed(TimeDelta::minutes(minutes))
-            .unwrap()
+    fn ts(minutes: i64) -> AppTimestamp {
+        let base = "2026-01-01T12:00:00Z"
+            .parse::<AppTimestamp>()
+            .expect("valid timestamp");
+        if minutes >= 0 {
+            base.checked_add(minutes.minutes())
+                .expect("timestamp in range")
+        } else {
+            base.checked_sub((-minutes).minutes())
+                .expect("timestamp in range")
+        }
     }
 
     fn make_event(reason: &str, last_ts_minutes: i64) -> EventInfo {
@@ -573,7 +582,7 @@ mod tests {
         // Event at action_ts + 301 seconds (one second past the 5-minute window)
         let events = vec![{
             let mut e = make_event("Late", 0);
-            e.last_timestamp = ts(10).checked_add_signed(TimeDelta::seconds(301)).unwrap();
+            e.last_timestamp = ts(10).checked_add(301.seconds()).unwrap();
             e.first_timestamp = e.last_timestamp;
             e
         }];

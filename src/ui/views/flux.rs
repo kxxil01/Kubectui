@@ -5,7 +5,6 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-use chrono::Utc;
 use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
@@ -19,6 +18,7 @@ use crate::{
     icons::view_icon,
     k8s::dtos::FluxResourceInfo,
     state::ClusterSnapshot,
+    time::now_unix_seconds,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::{content_block, default_theme},
@@ -336,7 +336,7 @@ pub fn render_flux_resources(
     };
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
-    let formatted_rows = cached_formatted_rows(view, cluster, Utc::now().timestamp());
+    let formatted_rows = cached_formatted_rows(view, cluster, now_unix_seconds());
     let detail_col_name = match mode {
         FluxMode::Artifacts => "Artifact",
         FluxMode::HelmRepositories => "URL",

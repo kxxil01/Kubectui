@@ -1,7 +1,6 @@
 //! Refresh pipeline: parallel resource fetching and snapshot assembly.
 
 use anyhow::{Result, anyhow};
-use chrono::Utc;
 use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use super::fetch::{
@@ -14,6 +13,7 @@ use super::{
 };
 use crate::app::AppView;
 use crate::k8s::dtos::{ClusterInfo, ClusterVersionInfo, NamespaceInfo, NodeInfo};
+use crate::time::now;
 
 impl GlobalState {
     fn mark_refresh_completed(&mut self, options: RefreshOptions) {
@@ -63,7 +63,7 @@ impl GlobalState {
         }
     }
 
-    fn namespace_names_from_list(namespace_list: &[NamespaceInfo]) -> Vec<String> {
+    pub(super) fn namespace_names_from_list(namespace_list: &[NamespaceInfo]) -> Vec<String> {
         let mut names: Vec<String> = namespace_list
             .iter()
             .map(|ns| ns.name.clone())
@@ -762,7 +762,7 @@ impl GlobalState {
         let snap = Arc::make_mut(&mut self.snapshot);
         snap.snapshot_version = snap.snapshot_version.saturating_add(1);
         snap.phase = DataPhase::Ready;
-        snap.last_updated = Some(Utc::now());
+        snap.last_updated = Some(now());
         snap.failed_resource_count = errors.len();
         snap.connection_health = if total_fetches == 0 {
             prev_connection_health

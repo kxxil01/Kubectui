@@ -5,8 +5,8 @@ use std::{
     sync::Arc,
 };
 
+use crate::time::{now, parse_timestamp};
 use anyhow::{Context, Result};
-use chrono::Utc;
 use futures::{StreamExt, stream};
 use k8s_openapi::api::{
     apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet},
@@ -27,10 +27,13 @@ use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomRe
 use kube::{
     Api, Client, Config,
     api::{
-        ApiResource, DynamicObject, GroupVersionKind, ListParams, Patch, PatchParams, PostParams,
+        ApiResource, DynamicObject, GroupVersionKind, ListParams, PartialObjectMeta, Patch,
+        PatchParams, PostParams,
     },
+    client::{ClientBuilder, retry::RetryPolicy},
     config::KubeConfigOptions,
 };
+use tower::{buffer::BufferLayer, retry::RetryLayer};
 
 use crate::k8s::{events, yaml};
 use crate::{
@@ -38,6 +41,9 @@ use crate::{
     authorization::{
         ActionAuthorizationMap, DetailActionAuthorization, ResourceAccessCheck,
         detail_action_requires_authorization,
+    },
+    k8s::conversions::{
+        age_from_created_at, app_timestamp_from_k8s_timestamp, namespace_metadata_to_info,
     },
     policy::DetailAction,
 };
@@ -58,6 +64,7 @@ pub use crate::k8s::{
 
 const MAX_EVENTS_LIST_LIMIT: u32 = 1000;
 const MAX_RECENT_EVENTS_ITEMS: usize = 250;
+const CLIENT_RETRY_BUFFER_SIZE: usize = 1024;
 
 /// Configured Kubernetes client wrapper.
 #[derive(Clone)]
@@ -129,7 +136,7 @@ impl K8sClient {
         };
 
         let cluster_url = config.cluster_url.to_string();
-        let client = Client::try_from(config).context("failed to build kube client")?;
+        let client = build_kube_client(config)?;
 
         Ok(Self {
             client,
@@ -152,7 +159,7 @@ impl K8sClient {
             .with_context(|| format!("failed loading kubeconfig for context '{context}'"))?;
 
         let cluster_url = config.cluster_url.to_string();
-        let client = Client::try_from(config).context("failed to build kube client")?;
+        let client = build_kube_client(config)?;
 
         Ok(Self {
             client,
@@ -367,7 +374,7 @@ impl K8sClient {
     /// Fetches available namespaces sorted alphabetically.
     pub async fn fetch_namespaces(&self) -> Result<Vec<String>> {
         let ns_api: Api<Namespace> = Api::all(self.client.clone());
-        let list = list_items_or_empty(&ns_api, &ListParams::default(), || {
+        let list = list_metadata_items_or_empty(&ns_api, &ListParams::default(), || {
             "failed fetching namespaces".to_string()
         })
         .await?;
@@ -378,6 +385,21 @@ impl K8sClient {
             .collect();
 
         Ok(sort_namespaces(names))
+    }
+
+    /// Fetches Namespaces as NamespaceInfo using metadata-only list payloads.
+    pub async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
+        let api: Api<Namespace> = Api::all(self.client.clone());
+        let mut items: Vec<NamespaceInfo> =
+            list_metadata_items_or_empty(&api, &ListParams::default(), || {
+                "failed fetching namespaces".to_string()
+            })
+            .await?
+            .into_iter()
+            .map(namespace_metadata_to_info)
+            .collect();
+        items.sort_unstable_by(|left, right| left.name.cmp(&right.name));
+        Ok(items)
     }
 
     // ── Namespace-scoped resources ──────────────────────────────────
@@ -524,11 +546,6 @@ impl K8sClient {
         crate::k8s::conversions::storage_class_to_info, "storage classes"
     );
     fetch_cluster!(
-        /// Fetches Namespaces as NamespaceInfo.
-        fetch_namespace_list, Namespace, NamespaceInfo,
-        crate::k8s::conversions::namespace_to_info, "namespaces"
-    );
-    fetch_cluster!(
         /// Fetches PriorityClasses.
         fetch_priority_classes, PriorityClass, PriorityClassInfo,
         crate::k8s::conversions::priority_class_to_info, "priority classes"
@@ -623,11 +640,15 @@ impl K8sClient {
         })
         .await?;
 
-        let now = Utc::now();
+        let now = now();
         let mut resources = list
             .into_iter()
             .map(|item| {
-                let created_at = item.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+                let created_at = item
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
                 CustomResourceInfo {
                     name: item
                         .metadata
@@ -635,7 +656,7 @@ impl K8sClient {
                         .unwrap_or_else(|| "<unknown>".to_string()),
                     namespace: item.metadata.namespace,
                     created_at,
-                    age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                    age: age_from_created_at(created_at, now),
                 }
             })
             .collect::<Vec<_>>();
@@ -946,7 +967,7 @@ impl K8sClient {
             .map(|s| &s.job_template)
             .context("CronJob has no spec")?;
 
-        let timestamp = chrono::Utc::now().format("%Y%m%d%H%M%S");
+        let timestamp = now().strftime("%Y%m%d%H%M%S").to_string();
         let job_name = format!("{name}-manual-{timestamp}");
 
         let job = Job {
@@ -1275,7 +1296,9 @@ impl K8sClient {
         let review = SelfSubjectAccessReview {
             spec: SelfSubjectAccessReviewSpec {
                 resource_attributes: Some(ResourceAttributes {
+                    field_selector: None,
                     group: check.group.clone(),
+                    label_selector: None,
                     name: check.name.clone(),
                     namespace: check.namespace.clone(),
                     resource: Some(check.resource.clone()),
@@ -1300,6 +1323,18 @@ impl K8sClient {
             .insert(check.clone(), allowed);
         Some(allowed)
     }
+}
+
+fn build_kube_client(config: Config) -> Result<Client> {
+    Ok(ClientBuilder::try_from(config)
+        .context("failed to build kube client")?
+        .with_layer(&BufferLayer::new(CLIENT_RETRY_BUFFER_SIZE))
+        .with_layer(&RetryLayer::new(default_retry_policy()))
+        .build())
+}
+
+fn default_retry_policy() -> RetryPolicy {
+    RetryPolicy::default()
 }
 
 fn sort_namespaces(names: Vec<String>) -> Vec<String> {
@@ -1328,14 +1363,30 @@ where
     }
 }
 
+async fn list_metadata_items_or_empty<K, C>(
+    api: &Api<K>,
+    params: &ListParams,
+    context: C,
+) -> Result<Vec<PartialObjectMeta<K>>>
+where
+    K: Clone + std::fmt::Debug + serde::de::DeserializeOwned + kube::Resource,
+    C: FnOnce() -> String,
+{
+    match api.list_metadata(params).await {
+        Ok(list) => Ok(list.items),
+        Err(err) if is_forbidden_error(&err) => Ok(Vec::new()),
+        Err(err) => Err(err).with_context(context),
+    }
+}
+
 fn is_forbidden_error(err: &kube::Error) -> bool {
-    matches!(err, kube::Error::Api(response) if response.code == 403)
+    matches!(err, kube::Error::Api(response) if response.is_forbidden())
 }
 
 fn is_metrics_api_unavailable(err: &kube::Error) -> bool {
     match err {
         kube::Error::Api(response) => {
-            response.code == 404
+            response.is_not_found()
                 || response.code == 503
                 || response.message.contains("metrics.k8s.io")
                 || response.reason.eq_ignore_ascii_case("NotFound")
@@ -1455,7 +1506,7 @@ const FLUX_RESOURCE_KIND_SPECS: &[FluxResourceKindSpec] = &[
 
 fn is_missing_api_error(err: &kube::Error) -> bool {
     if let kube::Error::Api(response) = err
-        && response.code == 404
+        && response.is_not_found()
     {
         return true;
     }
@@ -1559,8 +1610,7 @@ fn flux_parse_conditions(data: &serde_json::Value) -> Vec<crate::k8s::dtos::Flux
                     timestamp: item
                         .get("lastTransitionTime")
                         .and_then(|v| v.as_str())
-                        .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                        .map(|dt| dt.with_timezone(&chrono::Utc)),
+                        .and_then(parse_timestamp),
                 })
                 .collect()
         })
@@ -1601,7 +1651,7 @@ impl K8sClient {
         })
         .await?;
 
-        let now = chrono::Utc::now();
+        let now = now();
         let mut releases: Vec<crate::k8s::dtos::HelmReleaseInfo> = list
             .into_iter()
             .filter_map(|secret| {
@@ -1621,8 +1671,12 @@ impl K8sClient {
                     .unwrap_or(0);
 
                 let ns = secret.metadata.namespace.clone().unwrap_or_default();
-                let created_at = secret.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
-                let age = created_at.and_then(|ts| (now - ts).to_std().ok());
+                let created_at = secret
+                    .metadata
+                    .creation_timestamp
+                    .as_ref()
+                    .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+                let age = age_from_created_at(created_at, now);
 
                 // Try to get chart info from the "helmrelease" label pattern
                 let chart_label = labels.get("chart").cloned().unwrap_or_default();
@@ -1789,10 +1843,14 @@ impl K8sClient {
             Err(err) if is_forbidden_error(&err) => Vec::new(),
             Err(err) => return Err(err),
         };
-        let now = chrono::Utc::now();
+        let now = now();
         let mut resources = Vec::with_capacity(list.len());
         for item in list {
-            let created_at = item.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+            let created_at = item
+                .metadata
+                .creation_timestamp
+                .as_ref()
+                .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
             let suspended = item
                 .data
                 .pointer("/spec/suspend")
@@ -1821,8 +1879,7 @@ impl K8sClient {
                 .data
                 .pointer("/status/lastHandledReconcileAt")
                 .and_then(|v| v.as_str())
-                .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
-                .map(|dt| dt.with_timezone(&chrono::Utc));
+                .and_then(parse_timestamp);
             let last_applied_revision = item
                 .data
                 .pointer("/status/lastAppliedRevision")
@@ -1864,7 +1921,7 @@ impl K8sClient {
                 artifact,
                 suspended,
                 created_at,
-                age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+                age: age_from_created_at(created_at, now),
                 conditions,
                 last_reconcile_time,
                 last_applied_revision,
@@ -1885,12 +1942,14 @@ impl K8sClient {
 mod tests {
     use std::collections::BTreeMap;
 
+    use jiff::ToSpan;
     use k8s_openapi::api::{
         core::v1::{NodeCondition, NodeStatus},
         rbac::v1::{PolicyRule, Subject},
     };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+    use kube::core::Status;
 
     use super::*;
     use crate::k8s::conversions::{
@@ -1912,6 +1971,10 @@ mod tests {
             }),
             ..Node::default()
         }
+    }
+
+    fn api_error(code: u16, reason: &str, message: &str) -> kube::Error {
+        kube::Error::Api(Status::failure(message, reason).with_code(code).boxed())
     }
 
     /// Verifies node readiness helper returns true only for matching True condition.
@@ -1943,6 +2006,12 @@ mod tests {
         ]);
 
         assert_eq!(sorted, vec!["alpha", "default", "zeta"]);
+    }
+
+    #[tokio::test]
+    async fn build_kube_client_supports_retry_layer_stack() {
+        let config = Config::new("http://127.0.0.1:6443".parse().expect("valid uri"));
+        build_kube_client(config).expect("client should build with retry layer");
     }
 
     /// Verifies control-plane labels map to master role.
@@ -2060,8 +2129,13 @@ mod tests {
 
     #[test]
     fn job_duration_is_human_readable() {
-        let start = Utc::now() - chrono::Duration::seconds(125);
-        let out = format_job_duration(Some(start), Some(start + chrono::Duration::seconds(125)));
+        let start = now()
+            .checked_sub(125.seconds())
+            .expect("timestamp in range");
+        let end = start
+            .checked_add(125.seconds())
+            .expect("timestamp in range");
+        let out = format_job_duration(Some(start), Some(end));
 
         assert_eq!(out.as_deref(), Some("2m5s"));
     }
@@ -2137,42 +2211,26 @@ mod tests {
 
     #[test]
     fn metrics_api_unavailable_detects_not_found_errors() {
-        let err = kube::Error::Api(kube::error::ErrorResponse {
-            status: "Failure".to_string(),
-            message: "the server could not find the requested resource".to_string(),
-            reason: "NotFound".to_string(),
-            code: 404,
-        });
+        let err = api_error(
+            404,
+            "NotFound",
+            "the server could not find the requested resource",
+        );
 
         assert!(is_metrics_api_unavailable(&err));
     }
 
     #[test]
     fn metrics_api_unavailable_ignores_unrelated_api_errors() {
-        let err = kube::Error::Api(kube::error::ErrorResponse {
-            status: "Failure".to_string(),
-            message: "forbidden".to_string(),
-            reason: "Forbidden".to_string(),
-            code: 403,
-        });
+        let err = api_error(403, "Forbidden", "forbidden");
 
         assert!(!is_metrics_api_unavailable(&err));
     }
 
     #[test]
     fn forbidden_error_detection_only_matches_403() {
-        let forbidden = kube::Error::Api(kube::error::ErrorResponse {
-            status: "Failure".to_string(),
-            message: "forbidden".to_string(),
-            reason: "Forbidden".to_string(),
-            code: 403,
-        });
-        let timeout = kube::Error::Api(kube::error::ErrorResponse {
-            status: "Failure".to_string(),
-            message: "timeout".to_string(),
-            reason: "Timeout".to_string(),
-            code: 504,
-        });
+        let forbidden = api_error(403, "Forbidden", "forbidden");
+        let timeout = api_error(504, "Timeout", "timeout");
 
         assert!(is_forbidden_error(&forbidden));
         assert!(!is_forbidden_error(&timeout));

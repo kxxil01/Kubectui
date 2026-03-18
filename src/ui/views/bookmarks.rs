@@ -1,6 +1,5 @@
 //! Bookmarks view for persisted per-cluster resource shortcuts.
 
-use chrono::Utc;
 use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Modifier, Style},
@@ -13,6 +12,7 @@ use crate::{
     bookmarks::{BookmarkEntry, filtered_bookmark_indices, resource_exists},
     icons::{StatusIcons, view_icon},
     state::ClusterSnapshot,
+    time::now_unix_seconds,
     ui::{
         TableFrame,
         components::{content_block, default_theme},
@@ -54,7 +54,7 @@ pub fn render_bookmarks(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
-    let now = Utc::now().timestamp();
+    let now = now_unix_seconds();
 
     let header = Row::new([
         Cell::from(Span::styled("STATE", theme.header_style())),
@@ -187,7 +187,7 @@ mod tests {
         });
         let bookmarks = vec![BookmarkEntry {
             resource: ResourceRef::Secret("app-secret".to_string(), "default".to_string()),
-            bookmarked_at_unix: Utc::now().timestamp(),
+            bookmarked_at_unix: now_unix_seconds(),
         }];
         terminal
             .draw(|frame| {

@@ -2,8 +2,6 @@
 
 use std::time::Instant;
 
-use chrono::{DateTime, Utc};
-
 use kubectui::{
     app::{AppView, DetailViewState, ResourceRef},
     k8s::{
@@ -11,6 +9,7 @@ use kubectui::{
         relationships::RelationNode, workload_logs::WorkloadLogTarget,
     },
     state::{GlobalState, RefreshOptions, RefreshScope},
+    time::AppTimestamp,
 };
 
 #[derive(Debug)]
@@ -101,7 +100,7 @@ pub struct FluxReconcileAsyncResult {
 pub struct FluxReconcileObservedState {
     pub status: String,
     pub message: Option<String>,
-    pub last_reconcile_time: Option<DateTime<Utc>>,
+    pub last_reconcile_time: Option<AppTimestamp>,
     pub last_applied_revision: Option<String>,
     pub last_attempted_revision: Option<String>,
     pub observed_generation: Option<i64>,

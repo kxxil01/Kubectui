@@ -14,6 +14,7 @@ use crate::{
     app::{AppState, Focus},
     secret::DecodedSecretValue,
     state::ClusterSnapshot,
+    time::format_local,
     ui::components::default_theme,
     workbench::{WorkbenchTab, WorkbenchTabState},
 };
@@ -227,12 +228,8 @@ fn render_action_history_line(
         ActionStatus::Succeeded => Span::styled(" OK ", theme.badge_success_style()),
         ActionStatus::Failed => Span::styled(" ERROR ", theme.badge_error_style()),
     };
-    let timestamp = entry
-        .finished_at
-        .unwrap_or(entry.started_at)
-        .with_timezone(&chrono::Local)
-        .format("%H:%M:%S")
-        .to_string();
+    let timestamp = entry.finished_at.unwrap_or(entry.started_at);
+    let timestamp = format_local(timestamp, "%H:%M:%S");
     let row_style = if selected {
         theme.hover_style()
     } else {
@@ -636,11 +633,8 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
                 } else {
                     Span::styled(" OK ", theme.badge_success_style())
                 };
-                let ts = event
-                    .last_timestamp
-                    .with_timezone(&chrono::Local)
-                    .format("%H:%M:%S")
-                    .to_string();
+                let ts = event.last_timestamp;
+                let ts = format_local(ts, "%H:%M:%S");
                 Line::from(vec![
                     prefix,
                     badge,
@@ -668,10 +662,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
                     ActionStatus::Succeeded => Span::styled(" OK ", theme.badge_success_style()),
                     ActionStatus::Failed => Span::styled(" ERROR ", theme.badge_error_style()),
                 };
-                let ts = started_at
-                    .with_timezone(&chrono::Local)
-                    .format("%H:%M:%S")
-                    .to_string();
+                let ts = format_local(*started_at, "%H:%M:%S");
                 Line::from(vec![
                     Span::styled(
                         ">>> ",

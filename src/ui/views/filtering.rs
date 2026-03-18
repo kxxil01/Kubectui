@@ -16,6 +16,7 @@ use crate::{
         ClusterSnapshot,
         issues::{compute_issues, filtered_issue_indices},
     },
+    time::{AppTimestamp, age_seconds_since, now_unix_seconds},
     ui::contains_ci,
 };
 
@@ -607,7 +608,7 @@ pub fn filtered_indices_for_view(
 }
 
 /// Computes a fresh age duration from a creation timestamp, used for sorting.
-pub(crate) fn age_duration_now(created_at: chrono::DateTime<chrono::Utc>) -> std::time::Duration {
-    let age_secs = (chrono::Utc::now().timestamp() - created_at.timestamp()).max(0) as u64;
+pub(crate) fn age_duration_now(created_at: AppTimestamp) -> std::time::Duration {
+    let age_secs = age_seconds_since(created_at, now_unix_seconds()) as u64;
     std::time::Duration::from_secs(age_secs)
 }

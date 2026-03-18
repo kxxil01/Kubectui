@@ -1,17 +1,16 @@
 //! Helpers for fetching Kubernetes resources and serializing them to YAML.
 
 use anyhow::{Context, Result, anyhow};
-use chrono::{SecondsFormat, Utc};
 use kube::{
     Api, Client,
     api::{ApiResource, DynamicObject, GroupVersionKind, Patch, PatchParams},
-    error::ErrorResponse,
 };
 use serde_json::json;
 
 use crate::k8s::flux::{
     FluxReconcileSupport, RECONCILE_REQUEST_ANNOTATION, flux_reconcile_support,
 };
+use crate::time::format_rfc3339;
 
 /// Maximum rendered YAML length in bytes (10 KiB).
 pub const MAX_YAML_BYTES: usize = 10 * 1024;
@@ -348,10 +347,7 @@ pub async fn get_custom_resource_yaml(
 }
 
 fn is_forbidden_error(err: &kube::Error) -> bool {
-    match err {
-        kube::Error::Api(ErrorResponse { code, .. }) => *code == 403,
-        _ => false,
-    }
+    matches!(err, kube::Error::Api(status) if status.is_forbidden())
 }
 
 /// Deletes a Kubernetes resource by kind, name, and optional namespace.
@@ -479,7 +475,7 @@ pub async fn request_flux_reconcile(
         None => Api::all_with(client.clone(), &ar),
     };
 
-    let timestamp = Utc::now().to_rfc3339_opts(SecondsFormat::Nanos, true);
+    let timestamp = format_rfc3339(crate::time::now());
     let patch = Patch::Merge(json!({
         "metadata": {
             "annotations": {
@@ -502,7 +498,7 @@ pub async fn request_flux_reconcile(
 
 #[cfg(test)]
 mod tests {
-    use kube::error::ErrorResponse;
+    use kube::core::Status;
 
     use super::*;
     use crate::k8s::flux::RECONCILE_REQUEST_ANNOTATION;
@@ -542,18 +538,16 @@ mod tests {
     /// Verifies forbidden error classifier returns true only for 403 API errors.
     #[test]
     fn forbidden_error_detection() {
-        let forbidden = kube::Error::Api(ErrorResponse {
-            status: "Failure".to_string(),
-            message: "forbidden".to_string(),
-            reason: "Forbidden".to_string(),
-            code: 403,
-        });
-        let not_found = kube::Error::Api(ErrorResponse {
-            status: "Failure".to_string(),
-            message: "not found".to_string(),
-            reason: "NotFound".to_string(),
-            code: 404,
-        });
+        let forbidden = kube::Error::Api(
+            Status::failure("forbidden", "Forbidden")
+                .with_code(403)
+                .boxed(),
+        );
+        let not_found = kube::Error::Api(
+            Status::failure("not found", "NotFound")
+                .with_code(404)
+                .boxed(),
+        );
 
         assert!(is_forbidden_error(&forbidden));
         assert!(!is_forbidden_error(&not_found));
