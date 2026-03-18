@@ -327,6 +327,11 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             crate::ui::theme::cycle_theme();
             true
         }
+        AppAction::CycleIconMode => {
+            let mode = crate::icons::cycle_icon_mode();
+            app_state.set_status(format!("Icon mode: {}", crate::icons::icon_mode_name(mode)));
+            true
+        }
         AppAction::ProbePanelOpen => {
             app_state.open_probe_panel();
             true

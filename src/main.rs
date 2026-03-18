@@ -3243,6 +3243,10 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                     apply_action(AppAction::CycleTheme, &mut app);
                     app.needs_config_save = true;
                 }
+                AppAction::CycleIconMode => {
+                    apply_action(AppAction::CycleIconMode, &mut app);
+                    app.needs_config_save = true;
+                }
                 other => {
                     apply_action(other, &mut app);
                 }
