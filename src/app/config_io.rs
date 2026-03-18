@@ -23,6 +23,8 @@ pub(super) struct AppConfig {
     #[serde(default = "default_workbench_height")]
     workbench_height: u16,
     #[serde(default)]
+    icon_mode: Option<String>,
+    #[serde(default)]
     collapsed_nav_groups: Vec<String>,
     #[serde(default)]
     preferences: Option<UserPreferences>,
@@ -47,6 +49,9 @@ pub fn load_config_from_path(path: &Path) -> AppState {
     {
         if !cfg.namespace.trim().is_empty() {
             app.set_namespace(cfg.namespace);
+        }
+        if let Some(icon_mode) = &cfg.icon_mode {
+            crate::icons::set_icon_mode(crate::icons::parse_icon_mode(icon_mode));
         }
         if let Some(theme_name) = &cfg.theme {
             let idx = match theme_name.to_lowercase().as_str() {
@@ -81,6 +86,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
     let cfg = AppConfig {
         namespace: app.current_namespace.clone(),
         theme: Some(theme_name.to_string()),
+        icon_mode: Some(crate::icons::icon_mode_name(crate::icons::active_icon_mode()).to_string()),
         refresh_interval_secs: app.refresh_interval_secs,
         workbench_open: app.workbench.open,
         workbench_height: app.workbench.height,
