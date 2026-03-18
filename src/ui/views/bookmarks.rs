@@ -9,7 +9,9 @@ use ratatui::{
 };
 
 use crate::{
+    app::AppView,
     bookmarks::{BookmarkEntry, filtered_bookmark_indices, resource_exists},
+    icons::{StatusIcons, view_icon},
     state::ClusterSnapshot,
     ui::{
         TableFrame,
@@ -91,7 +93,11 @@ pub fn render_bookmarks(
                     .add_modifier(Modifier::CROSSED_OUT);
             }
 
-            let status = if exists { "★" } else { "✗" };
+            let status = if exists {
+                StatusIcons::bookmark().active()
+            } else {
+                StatusIcons::bookmark_missing().active()
+            };
             let status_style = if exists {
                 theme.badge_warning_style()
             } else {
@@ -110,10 +116,14 @@ pub fn render_bookmarks(
         })
         .collect();
 
+    let icon = view_icon(AppView::Bookmarks).active();
     let title = if query.is_empty() {
-        format!(" Bookmarks ({total}) ")
+        format!(" {icon}Bookmarks ({total}) ")
     } else {
-        format!(" Bookmarks ({total} of {}) [/{query}]", bookmarks.len())
+        format!(
+            " {icon}Bookmarks ({total} of {}) [/{query}]",
+            bookmarks.len()
+        )
     };
     let widths = [
         Constraint::Length(5),

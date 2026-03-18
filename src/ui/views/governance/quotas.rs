@@ -15,6 +15,7 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
@@ -198,7 +199,7 @@ pub fn render_resource_quotas(
 
     let sort_suffix = workload_sort_suffix(sort);
     let title = resource_table_title(
-        "📊",
+        view_icon(AppView::ResourceQuotas).active(),
         "ResourceQuotas",
         total,
         cluster.resource_quotas.len(),

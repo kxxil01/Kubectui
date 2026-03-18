@@ -15,13 +15,14 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, render_centered_message, render_table_frame, table_viewport_rows,
-        table_window,
+        format_small_int, render_centered_message, render_table_frame, resource_table_title,
+        table_viewport_rows, table_window,
         views::filtering::filtered_priority_class_indices,
     },
 };
@@ -184,12 +185,14 @@ pub fn render_priority_classes(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" PriorityClasses ({total}) ")
-    } else {
-        let all = cluster.priority_classes.len();
-        format!(" PriorityClasses ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::PriorityClasses).active(),
+        "PriorityClasses",
+        total,
+        cluster.priority_classes.len(),
+        query,
+        "",
+    );
     let widths = [
         Constraint::Percentage(30),
         Constraint::Percentage(10),

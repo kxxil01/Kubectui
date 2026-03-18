@@ -10,12 +10,14 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        render_centered_message, render_table_frame, table_viewport_rows, table_window,
+        render_centered_message, render_table_frame, resource_table_title, table_viewport_rows,
+        table_window,
         views::filtering::filtered_namespace_indices,
     },
 };
@@ -96,12 +98,14 @@ pub fn render_namespaces(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" Namespaces ({total}) ")
-    } else {
-        let all = cluster.namespace_list.len();
-        format!(" Namespaces ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::Namespaces).active(),
+        "Namespaces",
+        total,
+        cluster.namespace_list.len(),
+        query,
+        "",
+    );
     let widths = [Constraint::Percentage(75), Constraint::Percentage(25)];
 
     render_table_frame(

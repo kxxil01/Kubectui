@@ -8,6 +8,7 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     k8s::dtos::RoleBindingSubject,
     state::ClusterSnapshot,
     ui::{
@@ -209,7 +210,7 @@ pub fn render_role_bindings(
 
     let sort_suffix = workload_sort_suffix(sort);
     let title = resource_table_title(
-        "🔗",
+        view_icon(AppView::RoleBindings).active(),
         "RoleBindings",
         total,
         cluster.role_bindings.len(),

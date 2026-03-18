@@ -15,13 +15,14 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, render_centered_message, render_table_frame, table_viewport_rows,
-        table_window,
+        format_small_int, render_centered_message, render_table_frame, resource_table_title,
+        table_viewport_rows, table_window,
         views::filtering::filtered_network_policy_indices,
     },
 };
@@ -142,12 +143,14 @@ pub fn render_network_policies(
         })
         .collect();
 
-    let title = if query.is_empty() {
-        format!(" NetworkPolicies ({total}) ")
-    } else {
-        let all = cluster.network_policies.len();
-        format!(" NetworkPolicies ({total} of {all}) [/{query}]")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::NetworkPolicies).active(),
+        "NetworkPolicies",
+        total,
+        cluster.network_policies.len(),
+        query,
+        "",
+    );
     let widths = [
         Constraint::Percentage(26),
         Constraint::Percentage(20),

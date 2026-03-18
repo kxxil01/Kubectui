@@ -1223,6 +1223,7 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('T') if self.detail_view.is_none() => AppAction::CycleTheme,
+            KeyCode::Char('I') if self.detail_view.is_none() => AppAction::CycleIconMode,
             KeyCode::Char('?')
                 if !self
                     .detail_view

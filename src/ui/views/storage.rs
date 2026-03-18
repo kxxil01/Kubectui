@@ -12,6 +12,7 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
@@ -20,8 +21,8 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        render_centered_message, render_table_frame, sort_header_cell, table_viewport_rows,
-        table_window,
+        render_centered_message, render_table_frame, resource_table_title, sort_header_cell,
+        table_viewport_rows, table_window,
         views::filtering::{
             filtered_pv_indices, filtered_pvc_indices, filtered_storage_class_indices,
         },
@@ -187,12 +188,14 @@ pub fn render_pvcs(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
-    let title = if query.is_empty() {
-        format!(" PersistentVolumeClaims ({total}){sort_suffix} ")
-    } else {
-        let all = cluster.pvcs.len();
-        format!(" PersistentVolumeClaims ({total} of {all}) [/{query}]{sort_suffix}")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::PersistentVolumeClaims).active(),
+        "PersistentVolumeClaims",
+        total,
+        cluster.pvcs.len(),
+        query,
+        &sort_suffix,
+    );
     let widths = [
         Constraint::Percentage(25),
         Constraint::Percentage(15),
@@ -383,12 +386,14 @@ pub fn render_pvs(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
-    let title = if query.is_empty() {
-        format!(" PersistentVolumes ({total}){sort_suffix} ")
-    } else {
-        let all = cluster.pvs.len();
-        format!(" PersistentVolumes ({total} of {all}) [/{query}]{sort_suffix}")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::PersistentVolumes).active(),
+        "PersistentVolumes",
+        total,
+        cluster.pvs.len(),
+        query,
+        &sort_suffix,
+    );
     let widths = [
         Constraint::Percentage(20),
         Constraint::Percentage(10),
@@ -591,12 +596,14 @@ pub fn render_storage_classes(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
-    let title = if query.is_empty() {
-        format!(" StorageClasses ({total}){sort_suffix} ")
-    } else {
-        let all = cluster.storage_classes.len();
-        format!(" StorageClasses ({total} of {all}) [/{query}]{sort_suffix}")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::StorageClasses).active(),
+        "StorageClasses",
+        total,
+        cluster.storage_classes.len(),
+        query,
+        &sort_suffix,
+    );
     let widths = [
         Constraint::Percentage(25),
         Constraint::Percentage(35),

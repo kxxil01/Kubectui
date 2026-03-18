@@ -12,6 +12,7 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
+    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
@@ -21,7 +22,7 @@ use crate::{
             cached_filter_indices_with_variant, data_fingerprint,
         },
         format_age, format_image, format_small_int, render_centered_message, render_table_frame,
-        sort_header_cell, table_viewport_rows, table_window,
+        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_replication_controller_indices,
         workload_sort_suffix,
     },
@@ -150,12 +151,14 @@ pub fn render_replication_controllers(
     }
 
     let sort_suffix = workload_sort_suffix(sort);
-    let title = if query.is_empty() {
-        format!(" Replication Controllers ({total}){sort_suffix} ")
-    } else {
-        let all = cluster.replication_controllers.len();
-        format!(" Replication Controllers ({total} of {all}) [/{query}]{sort_suffix}")
-    };
+    let title = resource_table_title(
+        view_icon(AppView::ReplicationControllers).active(),
+        "Replication Controllers",
+        total,
+        cluster.replication_controllers.len(),
+        query,
+        &sort_suffix,
+    );
     let widths = [
         Constraint::Length(28),
         Constraint::Length(16),

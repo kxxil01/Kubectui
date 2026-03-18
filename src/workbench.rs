@@ -3,6 +3,7 @@
 use crate::{
     action_history::ActionHistoryState,
     app::{LogsViewerState, ResourceRef},
+    icons::tab_icon,
     k8s::client::EventInfo,
     secret::DecodedSecretEntry,
     timeline::{TimelineEntry, build_timeline},
@@ -510,19 +511,33 @@ impl WorkbenchTabState {
     }
 
     pub fn title(&self) -> String {
+        let kind_label = self.kind().title();
+        let icon = tab_icon(kind_label).active();
         match self {
-            Self::ActionHistory(_) => "History".to_string(),
-            Self::ResourceYaml(tab) => format!("YAML {}", resource_title(&tab.resource)),
-            Self::DecodedSecret(tab) => format!("Decoded {}", resource_title(&tab.resource)),
-            Self::ResourceEvents(tab) => format!("Events {}", resource_title(&tab.resource)),
-            Self::PodLogs(tab) => format!("Logs {}", resource_title(&tab.resource)),
-            Self::WorkloadLogs(tab) => format!("Logs {}", resource_title(&tab.resource)),
-            Self::Exec(tab) => format!("Exec {}", resource_title(&tab.resource)),
+            Self::ActionHistory(_) => format!("{icon}{kind_label}"),
+            Self::ResourceYaml(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
+            Self::DecodedSecret(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
+            Self::ResourceEvents(tab) => {
+                format!("{icon}Events {}", resource_title(&tab.resource))
+            }
+            Self::PodLogs(tab) => format!("{icon}Logs {}", resource_title(&tab.resource)),
+            Self::WorkloadLogs(tab) => format!("{icon}Logs {}", resource_title(&tab.resource)),
+            Self::Exec(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
             Self::PortForward(tab) => match &tab.target {
-                Some(resource) => format!("Port-Forward {}", resource_title(resource)),
-                None => "Port-Forward Sessions".to_string(),
+                Some(resource) => {
+                    format!("{icon}{kind_label} {}", resource_title(resource))
+                }
+                None => format!("{icon}{kind_label} Sessions"),
             },
-            Self::Relations(tab) => format!("Relations {}", resource_title(&tab.resource)),
+            Self::Relations(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
         }
     }
 }
