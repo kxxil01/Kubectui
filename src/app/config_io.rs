@@ -25,7 +25,7 @@ pub(super) struct AppConfig {
     #[serde(default)]
     icon_mode: Option<String>,
     #[serde(default)]
-    collapsed_nav_groups: Vec<String>,
+    collapsed_nav_groups: Option<Vec<String>>,
     #[serde(default)]
     preferences: Option<UserPreferences>,
     #[serde(default)]
@@ -38,6 +38,21 @@ fn default_refresh_interval() -> u64 {
 
 fn default_workbench_height() -> u16 {
     DEFAULT_WORKBENCH_HEIGHT
+}
+
+fn nav_group_from_config(name: &str) -> Option<NavGroup> {
+    match name {
+        "Overview" => Some(NavGroup::Overview),
+        "Workloads" => Some(NavGroup::Workloads),
+        "Network" => Some(NavGroup::Network),
+        "Config" => Some(NavGroup::Config),
+        "Storage" => Some(NavGroup::Storage),
+        "Helm" => Some(NavGroup::Helm),
+        "FluxCD" => Some(NavGroup::FluxCD),
+        "Access Control" => Some(NavGroup::AccessControl),
+        "Custom Resources" => Some(NavGroup::CustomResources),
+        _ => None,
+    }
 }
 
 /// Loads app state config from a given path.
@@ -66,9 +81,13 @@ pub fn load_config_from_path(path: &Path) -> AppState {
         app.refresh_interval_secs = cfg.refresh_interval_secs;
         app.workbench
             .set_open_and_height(cfg.workbench_open, cfg.workbench_height);
-        // collapsed_nav_groups is auto-managed by sync_collapsed_to_active_view();
-        // ignore any saved values.
-        let _ = &cfg.collapsed_nav_groups;
+        if let Some(groups) = cfg.collapsed_nav_groups {
+            app.collapsed_groups = groups
+                .iter()
+                .filter_map(|group| nav_group_from_config(group))
+                .collect();
+            app.sync_collapsed_to_active_view();
+        }
         app.preferences = cfg.preferences;
         app.cluster_preferences = cfg.clusters;
     }
@@ -83,6 +102,10 @@ pub fn load_config_from_path(path: &Path) -> AppState {
 /// Saves app namespace config to a given path.
 pub fn save_config_to_path(app: &AppState, path: &Path) {
     let theme_name = crate::ui::theme::active_theme().name;
+    let collapsed_nav_groups = crate::app::sidebar::all_groups()
+        .filter(|group| app.collapsed_groups.contains(group))
+        .map(|group| group.label().to_string())
+        .collect();
     let cfg = AppConfig {
         namespace: app.current_namespace.clone(),
         theme: Some(theme_name.to_string()),
@@ -90,7 +113,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
         refresh_interval_secs: app.refresh_interval_secs,
         workbench_open: app.workbench.open,
         workbench_height: app.workbench.height,
-        collapsed_nav_groups: Vec::new(),
+        collapsed_nav_groups: Some(collapsed_nav_groups),
         preferences: app.preferences.clone(),
         clusters: app.cluster_preferences.clone(),
     };
