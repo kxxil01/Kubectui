@@ -1,0 +1,652 @@
+//! Pre-run_app helper functions extracted from `main.rs`.
+//!
+//! These cover coordinator message application, workbench session cleanup,
+//! refresh orchestration, and events fetching.
+
+use std::time::{Duration, Instant};
+
+use anyhow::Result;
+
+use kubectui::{
+    app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
+    coordinator::{LogStreamStatus, UpdateMessage},
+    k8s::{client::K8sClient, portforward::PortForwarderService},
+    secret::decode_secret_yaml,
+    state::{GlobalState, RefreshOptions, RefreshScope},
+    workbench::{WorkbenchTabKey, WorkbenchTabState},
+};
+
+use crate::async_types::{
+    EventsAsyncResult, EventsFetchRuntimeState, MutationRuntime, QueuedRefresh, RefreshAsyncResult,
+    RefreshDispatch, RefreshRuntimeState,
+};
+use crate::mutation_helpers::{
+    finish_mutation_success, queue_deferred_refreshes, set_transient_status,
+};
+
+pub(crate) const STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS: u64 = 3;
+pub(crate) const STARTUP_NAMESPACE_FETCH_ATTEMPTS: usize = 2;
+pub(crate) const STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS: u64 = 150;
+pub(crate) const FLUX_AUTO_REFRESH_EVERY: u64 = 3;
+pub(crate) const MUTATION_REFRESH_DELAYS_SECS: &[u64] = &[2, 5];
+pub(crate) const FLUX_RECONCILE_REFRESH_DELAYS_SECS: &[u64] = &[2, 5, 9];
+pub(crate) const MAX_RECENT_EVENTS_CACHE_ITEMS: usize = 250;
+
+/// Applies coordinator update messages to app state.
+pub(crate) fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
+    match msg {
+        UpdateMessage::LogUpdate {
+            pod_name,
+            namespace,
+            container_name,
+            line,
+        } => {
+            for tab in &mut app.workbench.tabs {
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        let viewer = &mut logs_tab.viewer;
+                        if viewer.pod_name == pod_name
+                            && viewer.pod_namespace == namespace
+                            && viewer.container_name == container_name
+                        {
+                            viewer.push_line(line.clone());
+                            if viewer.follow_mode {
+                                viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
+                            }
+                        }
+                    }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        if logs_tab.sources.iter().any(|(pod, ns, container)| {
+                            pod == &pod_name && ns == &namespace && container == &container_name
+                        }) {
+                            logs_tab.push_line(kubectui::workbench::WorkloadLogLine {
+                                pod_name: pod_name.clone(),
+                                container_name: container_name.clone(),
+                                content: line.clone(),
+                                is_stderr: false,
+                            });
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        UpdateMessage::ProbeUpdate {
+            pod_name,
+            namespace,
+            probes,
+        } => {
+            if let Some(detail) = &mut app.detail_view
+                && let Some(panel) = &mut detail.probe_panel
+                && panel.pod_name == pod_name
+                && panel.namespace == namespace
+            {
+                panel.update_probes(probes);
+            }
+        }
+        UpdateMessage::LogStreamStatus {
+            pod_name,
+            namespace,
+            container_name,
+            status,
+        } => {
+            for tab in &mut app.workbench.tabs {
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        let viewer = &mut logs_tab.viewer;
+                        if viewer.pod_name == pod_name
+                            && viewer.pod_namespace == namespace
+                            && viewer.container_name == container_name
+                        {
+                            match &status {
+                                LogStreamStatus::Error(err) => {
+                                    viewer.error = Some(err.clone());
+                                    viewer.loading = false;
+                                }
+                                LogStreamStatus::Ended | LogStreamStatus::Cancelled => {
+                                    viewer.follow_mode = false;
+                                }
+                                LogStreamStatus::Started => {}
+                            }
+                        }
+                    }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        if logs_tab.sources.iter().any(|(pod, ns, container)| {
+                            pod == &pod_name && ns == &namespace && container == &container_name
+                        }) {
+                            logs_tab.loading = false;
+                            if let LogStreamStatus::Error(err) = &status {
+                                logs_tab.notice =
+                                    Some(format!("{pod_name}/{container_name}: {err}"));
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        UpdateMessage::ProbeError {
+            pod_name,
+            namespace,
+            error,
+        } => {
+            if let Some(detail) = &mut app.detail_view
+                && let Some(panel) = &mut detail.probe_panel
+                && panel.pod_name == pod_name
+                && panel.namespace == namespace
+            {
+                panel.error = Some(error);
+            }
+        }
+    }
+}
+
+pub(crate) fn apply_detail_state_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    state: &DetailViewState,
+) {
+    let Some(resource) = state.resource.as_ref() else {
+        return;
+    };
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceYaml(resource.clone()))
+        && let WorkbenchTabState::ResourceYaml(yaml_tab) = &mut tab.state
+        && yaml_tab.pending_request_id == Some(request_id)
+    {
+        yaml_tab.yaml = state.yaml.clone();
+        yaml_tab.loading = false;
+        yaml_tab.error = state.error.clone();
+        yaml_tab.pending_request_id = None;
+    }
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceEvents(resource.clone()))
+        && let WorkbenchTabState::ResourceEvents(events_tab) = &mut tab.state
+        && events_tab.pending_request_id == Some(request_id)
+    {
+        events_tab.events = state.events.clone();
+        events_tab.loading = false;
+        events_tab.error = state.error.clone();
+        events_tab.pending_request_id = None;
+        events_tab.rebuild_timeline(&app.action_history);
+    }
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::DecodedSecret(resource.clone()))
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
+        && secret_tab.pending_request_id == Some(request_id)
+    {
+        secret_tab.source_yaml = state.yaml.clone();
+        secret_tab.loading = false;
+        secret_tab.pending_request_id = None;
+        secret_tab.error = state.yaml_error.clone().or_else(|| {
+            state
+                .yaml
+                .as_deref()
+                .map(decode_secret_yaml)
+                .transpose()
+                .map(|entries| {
+                    if let Some(entries) = entries {
+                        secret_tab.entries = entries;
+                        secret_tab.clamp_selected();
+                    } else {
+                        secret_tab.entries.clear();
+                        secret_tab.clamp_selected();
+                    }
+                })
+                .err()
+                .map(|err| err.to_string())
+        });
+    }
+}
+
+pub(crate) fn apply_detail_error_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    error: &str,
+) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceYaml(resource.clone()))
+        && let WorkbenchTabState::ResourceYaml(yaml_tab) = &mut tab.state
+        && yaml_tab.pending_request_id == Some(request_id)
+    {
+        yaml_tab.loading = false;
+        yaml_tab.error = Some(error.to_string());
+        yaml_tab.pending_request_id = None;
+    }
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceEvents(resource.clone()))
+        && let WorkbenchTabState::ResourceEvents(events_tab) = &mut tab.state
+        && events_tab.pending_request_id == Some(request_id)
+    {
+        events_tab.loading = false;
+        events_tab.error = Some(error.to_string());
+        events_tab.pending_request_id = None;
+    }
+
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::DecodedSecret(resource.clone()))
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
+        && secret_tab.pending_request_id == Some(request_id)
+    {
+        secret_tab.loading = false;
+        secret_tab.error = Some(error.to_string());
+        secret_tab.pending_request_id = None;
+    }
+}
+
+pub(crate) fn workbench_follow_streams_to_stop(
+    app: &AppState,
+    action: AppAction,
+) -> Vec<(String, String, String)> {
+    let tabs: Vec<&WorkbenchTabState> = match action {
+        AppAction::ToggleWorkbench if app.workbench().open => {
+            app.workbench().tabs.iter().map(|tab| &tab.state).collect()
+        }
+        AppAction::WorkbenchCloseActiveTab => app
+            .workbench()
+            .active_tab()
+            .map(|tab| vec![&tab.state])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    tabs.into_iter()
+        .filter_map(|state| match state {
+            WorkbenchTabState::PodLogs(logs_tab) => {
+                let viewer = &logs_tab.viewer;
+                (viewer.follow_mode
+                    && !viewer.pod_name.is_empty()
+                    && !viewer.pod_namespace.is_empty()
+                    && !viewer.container_name.is_empty())
+                .then(|| {
+                    (
+                        viewer.pod_name.clone(),
+                        viewer.pod_namespace.clone(),
+                        viewer.container_name.clone(),
+                    )
+                })
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn workbench_workload_log_sessions_to_stop(
+    app: &AppState,
+    action: AppAction,
+) -> Vec<u64> {
+    let tabs: Vec<&WorkbenchTabState> = match action {
+        AppAction::ToggleWorkbench if app.workbench().open => {
+            app.workbench().tabs.iter().map(|tab| &tab.state).collect()
+        }
+        AppAction::WorkbenchCloseActiveTab => app
+            .workbench()
+            .active_tab()
+            .map(|tab| vec![&tab.state])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    tabs.into_iter()
+        .filter_map(|state| match state {
+            WorkbenchTabState::WorkloadLogs(tab) => Some(tab.session_id),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn workbench_exec_sessions_to_stop(app: &AppState, action: AppAction) -> Vec<u64> {
+    let tabs: Vec<&WorkbenchTabState> = match action {
+        AppAction::ToggleWorkbench if app.workbench().open => {
+            app.workbench().tabs.iter().map(|tab| &tab.state).collect()
+        }
+        AppAction::WorkbenchCloseActiveTab => app
+            .workbench()
+            .active_tab()
+            .map(|tab| vec![&tab.state])
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    };
+
+    tabs.into_iter()
+        .filter_map(|state| match state {
+            WorkbenchTabState::Exec(tab) => Some(tab.session_id),
+            _ => None,
+        })
+        .collect()
+}
+
+pub(crate) fn refresh_port_forward_workbench(
+    app: &mut AppState,
+    port_forwarder: &PortForwarderService,
+    status_message_clear_at: &mut Option<Instant>,
+) {
+    let tunnels = port_forwarder.list_tunnels();
+    app.tunnel_registry.update_tunnels(tunnels.clone());
+    if let Some(tab) = app
+        .workbench_mut()
+        .find_tab_mut(&WorkbenchTabKey::PortForward)
+        && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
+    {
+        let mut registry = kubectui::state::port_forward::TunnelRegistry::new();
+        registry.update_tunnels(tunnels);
+        port_tab.dialog.update_registry(registry);
+    }
+    set_transient_status(
+        app,
+        status_message_clear_at,
+        "Refreshed port-forward sessions.",
+    );
+}
+
+pub(crate) fn apply_mutation_success(
+    app: &mut AppState,
+    runtime: &mut MutationRuntime<'_>,
+    origin_view: AppView,
+    message: impl Into<String>,
+    force_include_flux: bool,
+    delays_secs: &[u64],
+) {
+    let plan = finish_mutation_success(
+        app,
+        runtime.status_message_clear_at,
+        origin_view,
+        message,
+        force_include_flux,
+    );
+    request_refresh(
+        runtime.refresh_tx,
+        runtime.global_state,
+        runtime.client,
+        plan.namespace.clone(),
+        plan.dispatch,
+        runtime.refresh_state,
+        runtime.snapshot_dirty,
+    );
+    queue_deferred_refreshes(
+        runtime.deferred_refresh_tx,
+        runtime.refresh_state.context_generation,
+        plan.origin_view,
+        plan.namespace,
+        plan.dispatch,
+        delays_secs,
+    );
+    runtime.auto_refresh.reset();
+}
+
+pub(crate) fn is_transient_transport_error(err: &anyhow::Error) -> bool {
+    err.chain().any(|cause| {
+        let text = cause.to_string();
+        text.contains("SendRequest")
+            || text.contains("Connection refused")
+            || text.contains("connection reset")
+            || text.contains("connection closed")
+            || text.contains("broken pipe")
+            || text.contains("timed out sending request")
+    })
+}
+
+pub(crate) async fn fetch_namespaces_with_startup_retry(client: &K8sClient) -> Result<Vec<String>> {
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match tokio::time::timeout(
+            Duration::from_secs(STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS),
+            client.fetch_namespaces(),
+        )
+        .await
+        {
+            Ok(Ok(namespaces)) => return Ok(namespaces),
+            Ok(Err(err))
+                if attempt < STARTUP_NAMESPACE_FETCH_ATTEMPTS
+                    && is_transient_transport_error(&err) =>
+            {
+                tokio::time::sleep(Duration::from_millis(
+                    STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS,
+                ))
+                .await;
+            }
+            Ok(Err(err)) => return Err(err),
+            Err(_) if attempt < STARTUP_NAMESPACE_FETCH_ATTEMPTS => {
+                tokio::time::sleep(Duration::from_millis(
+                    STARTUP_NAMESPACE_FETCH_RETRY_DELAY_MS,
+                ))
+                .await;
+            }
+            Err(_) => {
+                return Err(anyhow::anyhow!(
+                    "timed out fetching namespaces ({}s)",
+                    STARTUP_NAMESPACE_FETCH_TIMEOUT_SECS
+                ));
+            }
+        }
+    }
+}
+
+pub(crate) fn spawn_refresh_task(
+    refresh_tx: tokio::sync::mpsc::Sender<RefreshAsyncResult>,
+    mut global_state: GlobalState,
+    client: K8sClient,
+    namespace: Option<String>,
+    options: RefreshOptions,
+    request_id: u64,
+    context_generation: u64,
+) -> tokio::task::JoinHandle<()> {
+    let requested_namespace = namespace.clone();
+    tokio::spawn(async move {
+        let result = global_state
+            .refresh_with_options(&client, namespace.as_deref(), options)
+            .await
+            .map(|_| global_state)
+            .map_err(|err| err.to_string());
+        let _ = refresh_tx
+            .send(RefreshAsyncResult {
+                request_id,
+                context_generation,
+                requested_namespace,
+                result,
+            })
+            .await;
+    })
+}
+
+pub(crate) fn abort_in_flight_refresh(refresh_state: &mut RefreshRuntimeState) {
+    if let Some(task) = refresh_state.in_flight_task.take() {
+        task.abort();
+    }
+    refresh_state.in_flight_id = None;
+}
+
+pub(crate) fn request_refresh(
+    refresh_tx: &tokio::sync::mpsc::Sender<RefreshAsyncResult>,
+    global_state: &mut GlobalState,
+    client: &K8sClient,
+    namespace: Option<String>,
+    dispatch: RefreshDispatch,
+    refresh_state: &mut RefreshRuntimeState,
+    snapshot_dirty: &mut bool,
+) {
+    if dispatch.options.scope.is_empty() {
+        return;
+    }
+
+    let options = dispatch.options;
+    let immediate_scope = dispatch.primary_scope.intersection(options.scope);
+    let background_scope = options.scope.without(immediate_scope);
+
+    let core_options = RefreshOptions {
+        scope: immediate_scope,
+        include_cluster_info: options.include_cluster_info
+            && immediate_scope.contains(RefreshScope::METRICS),
+        skip_core: false,
+    };
+
+    let visible_options = RefreshOptions {
+        scope: immediate_scope.union(background_scope),
+        include_cluster_info: false,
+        skip_core: false,
+    };
+    global_state.mark_refresh_requested(visible_options);
+    *snapshot_dirty = true;
+
+    refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
+    let request_id = refresh_state.request_seq;
+
+    if refresh_state.in_flight_id.is_none() {
+        let queued_namespace = namespace.clone();
+        refresh_state.in_flight_id = Some(request_id);
+        refresh_state.in_flight_task = Some(spawn_refresh_task(
+            refresh_tx.clone(),
+            global_state.clone(),
+            client.clone(),
+            namespace,
+            core_options,
+            request_id,
+            refresh_state.context_generation,
+        ));
+        if !background_scope.is_empty() {
+            refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
+            refresh_state.queued_refresh = Some(QueuedRefresh {
+                request_id: refresh_state.request_seq,
+                namespace: queued_namespace,
+                primary_scope: RefreshScope::NONE,
+                options: RefreshOptions {
+                    scope: background_scope,
+                    include_cluster_info: options.include_cluster_info,
+                    skip_core: true,
+                },
+                context_generation: refresh_state.context_generation,
+            });
+        }
+    } else {
+        // Merge into the already-queued request.
+        let merged_scope = refresh_state
+            .queued_refresh
+            .as_ref()
+            .map_or(RefreshScope::NONE, |queued| queued.options.scope)
+            .union(options.scope)
+            .union(background_scope);
+        let merged_primary_scope = refresh_state
+            .queued_refresh
+            .as_ref()
+            .map_or(RefreshScope::NONE, |queued| queued.primary_scope)
+            .union(dispatch.primary_scope);
+        let merged_skip_core = refresh_state
+            .queued_refresh
+            .as_ref()
+            .is_some_and(|queued| queued.options.skip_core)
+            && merged_primary_scope.is_empty();
+        refresh_state.queued_refresh = Some(QueuedRefresh {
+            request_id,
+            namespace,
+            primary_scope: merged_primary_scope,
+            options: RefreshOptions {
+                scope: merged_scope,
+                include_cluster_info: refresh_state
+                    .queued_refresh
+                    .as_ref()
+                    .is_some_and(|queued| queued.options.include_cluster_info)
+                    || options.include_cluster_info,
+                skip_core: merged_skip_core,
+            },
+            context_generation: refresh_state.context_generation,
+        });
+    }
+}
+
+pub(crate) fn queued_refresh_requires_two_phase(
+    primary_scope: RefreshScope,
+    options: RefreshOptions,
+) -> bool {
+    !primary_scope.is_empty()
+        && !options.skip_core
+        && !options.scope.without(primary_scope).is_empty()
+}
+
+pub(crate) fn normalize_recent_events(
+    mut events: Vec<kubectui::k8s::dtos::K8sEventInfo>,
+) -> Vec<kubectui::k8s::dtos::K8sEventInfo> {
+    events.sort_unstable_by(|left, right| right.last_seen.cmp(&left.last_seen));
+    events.truncate(MAX_RECENT_EVENTS_CACHE_ITEMS);
+    events
+}
+
+pub(crate) fn abort_in_flight_events_fetch(events_state: &mut EventsFetchRuntimeState) {
+    if let Some(task) = events_state.in_flight_task.take() {
+        task.abort();
+    }
+    events_state.in_flight_id = None;
+    events_state.in_flight_namespace = None;
+}
+
+pub(crate) fn spawn_events_fetch_task(
+    events_tx: tokio::sync::mpsc::Sender<EventsAsyncResult>,
+    client: K8sClient,
+    namespace: Option<String>,
+    request_id: u64,
+    context_generation: u64,
+) -> tokio::task::JoinHandle<()> {
+    let requested_namespace = namespace.clone();
+    tokio::spawn(async move {
+        let result = client
+            .fetch_events(namespace.as_deref())
+            .await
+            .map(normalize_recent_events)
+            .map_err(|err| err.to_string());
+        let _ = events_tx
+            .send(EventsAsyncResult {
+                request_id,
+                context_generation,
+                requested_namespace,
+                result,
+            })
+            .await;
+    })
+}
+
+pub(crate) fn request_events_refresh(
+    events_tx: &tokio::sync::mpsc::Sender<EventsAsyncResult>,
+    global_state: &mut GlobalState,
+    client: &K8sClient,
+    namespace: Option<String>,
+    context_generation: u64,
+    events_state: &mut EventsFetchRuntimeState,
+    snapshot_dirty: &mut bool,
+) {
+    if events_state.in_flight_id.is_some() {
+        if events_state.in_flight_namespace == Some(namespace.clone())
+            || events_state.queued_namespace == Some(namespace.clone())
+        {
+            return;
+        }
+        events_state.queued_namespace = Some(namespace);
+        return;
+    }
+
+    if global_state.mark_events_refresh_requested() {
+        *snapshot_dirty = true;
+    }
+
+    events_state.request_seq = events_state.request_seq.wrapping_add(1);
+    let request_id = events_state.request_seq;
+    events_state.in_flight_id = Some(request_id);
+    events_state.in_flight_namespace = Some(namespace.clone());
+    events_state.in_flight_task = Some(spawn_events_fetch_task(
+        events_tx.clone(),
+        client.clone(),
+        namespace,
+        request_id,
+        context_generation,
+    ));
+}
