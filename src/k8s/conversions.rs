@@ -779,8 +779,7 @@ pub fn pdb_to_info(pdb: PodDisruptionBudget) -> PodDisruptionBudgetInfo {
 
 /// Converts a raw `Endpoints` into an [`EndpointInfo`] DTO.
 pub fn endpoint_to_info(ep: Endpoints) -> EndpointInfo {
-    let now = Utc::now();
-    let created_at = ep.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&ep.metadata);
     let mut addresses = Vec::new();
     let mut ports = Vec::new();
     if let Some(subsets) = ep.subsets {
@@ -802,19 +801,18 @@ pub fn endpoint_to_info(ep: Endpoints) -> EndpointInfo {
         }
     }
     EndpointInfo {
-        name: ep.metadata.name.unwrap_or_default(),
-        namespace: ep.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         addresses,
         ports,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `Ingress` into an [`IngressInfo`] DTO.
 pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
-    let now = Utc::now();
-    let created_at = ing.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&ing.metadata);
     let class = ing.spec.as_ref().and_then(|s| s.ingress_class_name.clone());
     let hosts: Vec<String> = ing
         .spec
@@ -872,22 +870,20 @@ pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
         })
         .unwrap_or_default();
     IngressInfo {
-        name: ing.metadata.name.unwrap_or_default(),
-        namespace: ing.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         class,
         hosts,
         address,
         ports: vec!["80".to_string(), "443".to_string()],
         backend_services,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `IngressClass` into an [`IngressClassInfo`] DTO.
 pub fn ingress_class_to_info(ic: IngressClass) -> IngressClassInfo {
-    let now = Utc::now();
-    let created_at = ic.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
     let is_default = ic
         .metadata
         .annotations
@@ -895,23 +891,23 @@ pub fn ingress_class_to_info(ic: IngressClass) -> IngressClassInfo {
         .and_then(|a| a.get("ingressclass.kubernetes.io/is-default-class"))
         .map(|v| v == "true")
         .unwrap_or(false);
+    let m = extract_common_metadata(&ic.metadata);
     IngressClassInfo {
-        name: ic.metadata.name.unwrap_or_default(),
+        name: m.name,
         controller: ic
             .spec
             .as_ref()
             .map(|s| s.controller.clone().unwrap_or_default())
             .unwrap_or_default(),
         is_default,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `NetworkPolicy` into a [`NetworkPolicyInfo`] DTO.
 pub fn network_policy_to_info(np: NetworkPolicy) -> NetworkPolicyInfo {
-    let now = Utc::now();
-    let created_at = np.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&np.metadata);
     let pod_selector = np
         .spec
         .as_ref()
@@ -941,72 +937,68 @@ pub fn network_policy_to_info(np: NetworkPolicy) -> NetworkPolicyInfo {
         .map(|r| r.len())
         .unwrap_or(0);
     NetworkPolicyInfo {
-        name: np.metadata.name.unwrap_or_default(),
-        namespace: np.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         pod_selector,
         ingress_rules,
         egress_rules,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `ConfigMap` into a [`ConfigMapInfo`] DTO.
 pub fn config_map_to_info(cm: k8s_openapi::api::core::v1::ConfigMap) -> ConfigMapInfo {
-    let now = Utc::now();
-    let created_at = cm.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&cm.metadata);
     let data_count = cm.data.as_ref().map(|d| d.len()).unwrap_or(0)
         + cm.binary_data.as_ref().map(|d| d.len()).unwrap_or(0);
     ConfigMapInfo {
-        name: cm.metadata.name.unwrap_or_default(),
-        namespace: cm.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         data_count,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `Secret` into a [`SecretInfo`] DTO.
 pub fn secret_to_info(s: k8s_openapi::api::core::v1::Secret) -> SecretInfo {
-    let now = Utc::now();
-    let created_at = s.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&s.metadata);
     let data_count = s.data.as_ref().map(|d| d.len()).unwrap_or(0);
     SecretInfo {
-        name: s.metadata.name.unwrap_or_default(),
-        namespace: s.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         type_: s.type_.unwrap_or_else(|| "Opaque".to_string()),
         data_count,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `HorizontalPodAutoscaler` into an [`HpaInfo`] DTO.
 pub fn hpa_to_info(hpa: HorizontalPodAutoscaler) -> HpaInfo {
-    let now = Utc::now();
-    let created_at = hpa.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&hpa.metadata);
     let spec = hpa.spec.as_ref();
     let status = hpa.status.as_ref();
     let reference = spec
         .map(|s| format!("{}/{}", s.scale_target_ref.kind, s.scale_target_ref.name))
         .unwrap_or_default();
     HpaInfo {
-        name: hpa.metadata.name.unwrap_or_default(),
-        namespace: hpa.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         reference,
         min_replicas: spec.and_then(|s| s.min_replicas),
         max_replicas: spec.map(|s| s.max_replicas).unwrap_or(0),
         current_replicas: status.and_then(|s| s.current_replicas).unwrap_or(0),
         desired_replicas: status.map(|s| s.desired_replicas).unwrap_or(0),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `PersistentVolumeClaim` into a [`PvcInfo`] DTO.
 pub fn pvc_to_info(pvc: PersistentVolumeClaim) -> PvcInfo {
-    let now = Utc::now();
-    let created_at = pvc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&pvc.metadata);
     let spec = pvc.spec.as_ref();
     let status = pvc.status.as_ref();
     let access_modes = spec
@@ -1018,8 +1010,8 @@ pub fn pvc_to_info(pvc: PersistentVolumeClaim) -> PvcInfo {
         .and_then(|c| c.get("storage"))
         .map(|q| q.0.clone());
     PvcInfo {
-        name: pvc.metadata.name.unwrap_or_default(),
-        namespace: pvc.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         status: status
             .and_then(|s| s.phase.clone())
             .unwrap_or_else(|| "Unknown".to_string()),
@@ -1027,15 +1019,14 @@ pub fn pvc_to_info(pvc: PersistentVolumeClaim) -> PvcInfo {
         capacity,
         access_modes,
         storage_class: spec.and_then(|s| s.storage_class_name.clone()),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `PersistentVolume` into a [`PvInfo`] DTO.
 pub fn pv_to_info(pv: PersistentVolume) -> PvInfo {
-    let now = Utc::now();
-    let created_at = pv.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&pv.metadata);
     let spec = pv.spec.as_ref();
     let access_modes = spec
         .and_then(|s| s.access_modes.as_ref())
@@ -1053,7 +1044,7 @@ pub fn pv_to_info(pv: PersistentVolume) -> PvInfo {
         )
     });
     PvInfo {
-        name: pv.metadata.name.unwrap_or_default(),
+        name: m.name,
         capacity,
         access_modes,
         reclaim_policy: spec
@@ -1066,15 +1057,13 @@ pub fn pv_to_info(pv: PersistentVolume) -> PvInfo {
             .unwrap_or_else(|| "Unknown".to_string()),
         claim,
         storage_class: spec.and_then(|s| s.storage_class_name.clone()),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `StorageClass` into a [`StorageClassInfo`] DTO.
 pub fn storage_class_to_info(sc: StorageClass) -> StorageClassInfo {
-    let now = Utc::now();
-    let created_at = sc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
     let is_default = sc
         .metadata
         .annotations
@@ -1082,38 +1071,37 @@ pub fn storage_class_to_info(sc: StorageClass) -> StorageClassInfo {
         .and_then(|a| a.get("storageclass.kubernetes.io/is-default-class"))
         .map(|v| v == "true")
         .unwrap_or(false);
+    let m = extract_common_metadata(&sc.metadata);
     StorageClassInfo {
-        name: sc.metadata.name.unwrap_or_default(),
+        name: m.name,
         provisioner: sc.provisioner,
         reclaim_policy: sc.reclaim_policy,
         volume_binding_mode: sc.volume_binding_mode,
         allow_volume_expansion: sc.allow_volume_expansion.unwrap_or(false),
         is_default,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `Namespace` into a [`NamespaceInfo`] DTO.
 pub fn namespace_to_info(ns: Namespace) -> NamespaceInfo {
-    let now = Utc::now();
-    let created_at = ns.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&ns.metadata);
     NamespaceInfo {
-        name: ns.metadata.name.unwrap_or_default(),
+        name: m.name,
         status: ns
             .status
             .as_ref()
             .and_then(|s| s.phase.clone())
             .unwrap_or_else(|| "Active".to_string()),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
 /// Converts a raw `Event` into a [`K8sEventInfo`] DTO.
 pub fn event_to_info(ev: k8s_openapi::api::core::v1::Event) -> K8sEventInfo {
-    let now = Utc::now();
-    let created_at = ev.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&ev.metadata);
     let last_seen = ev.last_timestamp.as_ref().map(|ts| ts.0);
     let involved = format!(
         "{}/{}",
@@ -1121,29 +1109,28 @@ pub fn event_to_info(ev: k8s_openapi::api::core::v1::Event) -> K8sEventInfo {
         ev.involved_object.name.as_deref().unwrap_or("")
     );
     K8sEventInfo {
-        name: ev.metadata.name.unwrap_or_default(),
-        namespace: ev.metadata.namespace.unwrap_or_default(),
+        name: m.name,
+        namespace: m.namespace,
         reason: ev.reason.unwrap_or_default(),
         message: ev.message.unwrap_or_default(),
         type_: ev.type_.unwrap_or_else(|| "Normal".to_string()),
         count: ev.count.unwrap_or(1),
         involved_object: involved,
         last_seen,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: m.age,
     }
 }
 
 /// Converts a raw `PriorityClass` into a [`PriorityClassInfo`] DTO.
 pub fn priority_class_to_info(pc: PriorityClass) -> PriorityClassInfo {
-    let now = Utc::now();
-    let created_at = pc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let m = extract_common_metadata(&pc.metadata);
     PriorityClassInfo {
-        name: pc.metadata.name.unwrap_or_default(),
+        name: m.name,
         value: pc.value,
         global_default: pc.global_default.unwrap_or(false),
         description: pc.description.unwrap_or_default(),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
-        created_at,
+        age: m.age,
+        created_at: m.created_at,
     }
 }
 
