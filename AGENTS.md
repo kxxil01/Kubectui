@@ -39,65 +39,28 @@ This file governs `/Users/ilham/Developer/Kubectui` and all subdirectories.
 - 5-run median comparison (patch off vs on for second pass):
   - `render`: `3348.976ms -> 3282.163ms` (`-66.813ms`, `-2.00%`).
 
-## Tomorrow Plan (Performance Phase)
+## Performance Status
 
-### Phase 1: Row Virtualization / Windowing
-Build and render only visible rows instead of full filtered datasets.
+### Completed
+- **Row Virtualization**: `table_window()` + `table_viewport_rows()` in all 31 view files.
+  Only visible `window.start..window.end` rows are built. Tests cover top/middle/bottom/empty.
+- **Per-View Cached Formatted Cells**: `DerivedRowsCache<T>` in 26 view files.
+  Keyed by `(query, snapshot_version, data_fingerprint, variant, freshness_bucket)`.
+  Filter indices cached via `cached_filter_indices_with_variant` with MRU fast path.
+- **Filtering**: `contains_ci` uses SIMD-friendly `eq_ignore_ascii_case` — benchmarked at
+  12µs for 2000 pods (0.09% of 16ms frame budget). First-byte rejection tested slower.
 
-Implementation plan:
-1. Add a shared visible-window helper for table views:
-   - Inputs: `total_items`, `selected_idx`, `content_height`.
-   - Outputs: `start..end` visible range and padding metadata if needed.
-2. Apply to high-cardinality views first:
-   - `Pods`, `ReplicaSets`, `ReplicationControllers`, `Deployments`, `Services`, `Nodes`.
-3. Preserve behavior:
-   - Selected row always visible.
-   - Scrollbar position uses full dataset length.
-   - Search/filter semantics unchanged.
-4. Add tests:
-   - Top/middle/bottom selection windowing.
-   - Very small terminal heights.
-   - Empty and single-item views.
+### Refactoring Completed (2026-03-18)
+- PR #39: Unified 11 derived-cell caches, 30 fetch methods → 2 macros, metadata helper (-659 lines)
+- PR #40: Column registry const fn helpers (-845 lines)
+- PR #41: Unified view_key/columns_for_view into single view_info() (-18 lines)
+- Total: -1,522 lines removed, zero behavior changes
 
-Acceptance criteria:
-- No UI behavior regressions.
-- Median `render` improves versus pre-virtualization state.
-
-### Phase 2: Per-View Cached Formatted Cells
-Cache expensive derived strings/cells keyed by `(view, query, snapshot_version)`.
-
-Implementation plan:
-1. Introduce per-view formatted-row caches:
-   - Key: `(view, query, snapshot_version, data_fingerprint)`.
-   - Value: preformatted/derived cell payloads.
-2. Handle time-sensitive fields (`Age`) explicitly:
-   - Use a minute-bucket invalidation or render-time lightweight update path.
-3. Bound memory:
-   - Limit entries per view or use simple LRU/eviction policy.
-4. Keep logic centralized to avoid duplicated per-view cache behavior.
-
-Acceptance criteria:
-- Correct invalidation on snapshot/query changes.
-- No stale data rendering.
-- Net positive median improvement.
-
-### Phase 3: Regression Cleanup (Targeted)
-Address known lagging areas from profiling.
-
-Targets:
-1. `Service Accounts`
-2. `Pods`
-3. `Deployments`
-4. Shared `header` path
-
-Method:
-- Profile each target path before/after micro-patches.
-- Keep only patches with positive median delta.
-- Revert changes that regress total or hotspot metrics.
-
-Acceptance criteria:
-- Targeted paths no longer regress in median comparison.
-- Shared path (`header`) is neutral or improved.
+### Remaining Opportunities
+1. **Generic view render template** (~500-800 lines): 15+ workload views share ~80% render
+   boilerplate (table window, scrollbar, header, row styling). Shared `render_resource_table()`.
+2. **Split app/mod.rs** (3877 lines): Group 101 AppAction variants into sub-enums, extract key routing.
+3. **Split main.rs** (4667 lines): Extract async task spawning, event routing, workbench lifecycle.
 
 ## Performance Validation Protocol (Required)
 Use median-based checks (not single-run decisions).
