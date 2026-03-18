@@ -3,13 +3,10 @@
 use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
-    layout::{Constraint, Margin, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::Span,
-    widgets::{
-        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
-        TableState,
-    },
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -17,14 +14,14 @@ use crate::{
     bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
-        bookmarked_name_cell,
-        components::{content_block, default_theme},
+        TableFrame, bookmarked_name_cell,
+        components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, render_centered_message, responsive_table_widths, sort_header_cell,
-        table_viewport_rows, table_window,
+        format_age, render_centered_message, render_table_frame, resource_table_title,
+        sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_service_indices,
         workload_sort_suffix,
     },
@@ -143,56 +140,38 @@ pub fn render_services(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(window.selected));
-
     let sort_suffix = workload_sort_suffix(sort);
-    let title = format!(" 🔌 Services ({total}){sort_suffix} ");
-    let block = if query.is_empty() {
-        content_block(&title, focused)
-    } else {
-        let all = snapshot.services.len();
-        content_block(
-            &format!(" 🔌 Services ({total} of {all}) [/{query}]{sort_suffix}"),
+    let title = resource_table_title(
+        "🔌",
+        "Services",
+        total,
+        snapshot.services.len(),
+        query,
+        &sort_suffix,
+    );
+    let widths = [
+        Constraint::Length(24),
+        Constraint::Length(16),
+        Constraint::Length(14),
+        Constraint::Length(16),
+        Constraint::Min(18),
+        Constraint::Length(9),
+    ];
+
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
             focused,
-        )
-    };
-
-    let table = Table::new(
-        rows,
-        responsive_table_widths(
-            area.width,
-            [
-                Constraint::Length(24),
-                Constraint::Length(16),
-                Constraint::Length(14),
-                Constraint::Length(16),
-                Constraint::Min(18),
-                Constraint::Length(9),
-            ],
-        ),
-    )
-    .header(header)
-    .block(block)
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-
-    frame.render_stateful_widget(table, area, &mut table_state);
-
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲"))
-        .end_symbol(Some("▼"))
-        .track_symbol(Some("│"))
-        .thumb_symbol("█");
-
-    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(
-        scrollbar,
-        area.inner(Margin {
-            vertical: 1,
-            horizontal: 0,
-        }),
-        &mut scrollbar_state,
+            window,
+            total,
+            selected,
+        },
+        &theme,
     );
 }
 

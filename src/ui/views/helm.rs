@@ -6,13 +6,10 @@ use std::{
 };
 
 use ratatui::{
-    layout::{Margin, Rect},
+    layout::{Constraint, Rect},
     prelude::{Color, Frame, Style},
     text::Span,
-    widgets::{
-        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
-        TableState,
-    },
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -20,10 +17,10 @@ use crate::{
     bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
-        bookmarked_name_cell,
-        components::{content_block, default_theme},
+        TableFrame, bookmarked_name_cell,
+        components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        render_centered_message, table_viewport_rows, table_window,
+        render_centered_message, render_table_frame, table_viewport_rows, table_window,
         views::filtering::{filtered_helm_release_indices, filtered_helm_repo_indices},
     },
 };
@@ -222,29 +219,31 @@ pub fn render_helm_releases(
         let all = cluster.helm_releases.len();
         format!(" Helm Releases ({total} of {all}) [/{query}]")
     };
-    let block = content_block(&title, focused);
+    let widths = [
+        Constraint::Percentage(18),
+        Constraint::Percentage(14),
+        Constraint::Percentage(20),
+        Constraint::Percentage(10),
+        Constraint::Percentage(14),
+        Constraint::Percentage(8),
+        Constraint::Percentage(16),
+    ];
 
-    let table = Table::new(
-        rows,
-        [
-            ratatui::layout::Constraint::Percentage(18),
-            ratatui::layout::Constraint::Percentage(14),
-            ratatui::layout::Constraint::Percentage(20),
-            ratatui::layout::Constraint::Percentage(10),
-            ratatui::layout::Constraint::Percentage(14),
-            ratatui::layout::Constraint::Percentage(8),
-            ratatui::layout::Constraint::Percentage(16),
-        ],
-    )
-    .header(header)
-    .block(block)
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-
-    let mut state = TableState::default().with_selected(Some(window.selected));
-    frame.render_stateful_widget(table, area, &mut state);
-    render_table_scrollbar(frame, area, total, selected);
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused,
+            window,
+            total,
+            selected,
+        },
+        &theme,
+    );
 }
 
 /// Renders the Helm repositories table (local config from ~/.config/helm/repositories.yaml).
@@ -325,39 +324,21 @@ pub fn render_helm_repos(
         let all = cluster.helm_repositories.len();
         format!(" Helm Repositories ({total} of {all}) [/{query}]")
     };
-    let block = content_block(&title, focused);
+    let widths = [Constraint::Percentage(30), Constraint::Percentage(70)];
 
-    let table = Table::new(
-        rows,
-        [
-            ratatui::layout::Constraint::Percentage(30),
-            ratatui::layout::Constraint::Percentage(70),
-        ],
-    )
-    .header(header)
-    .block(block)
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-
-    let mut state = TableState::default().with_selected(Some(window.selected));
-    frame.render_stateful_widget(table, area, &mut state);
-    render_table_scrollbar(frame, area, total, selected);
-}
-
-fn render_table_scrollbar(frame: &mut Frame, area: Rect, total: usize, selected: usize) {
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲"))
-        .end_symbol(Some("▼"))
-        .track_symbol(Some("│"))
-        .thumb_symbol("█");
-    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(
-        scrollbar,
-        area.inner(Margin {
-            vertical: 1,
-            horizontal: 0,
-        }),
-        &mut scrollbar_state,
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused,
+            window,
+            total,
+            selected,
+        },
+        &theme,
     );
 }
