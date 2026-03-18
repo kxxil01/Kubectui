@@ -1,11 +1,8 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Margin, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
-    },
+    widgets::{Cell, Paragraph, Row},
 };
 
 use super::join_or_all;
@@ -16,11 +13,11 @@ use crate::{
     k8s::dtos::RbacRule,
     state::ClusterSnapshot,
     ui::{
-        bookmarked_name_cell,
+        TableFrame, bookmarked_name_cell,
         components::{content_block, default_theme},
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        format_age, format_small_int, render_centered_message, responsive_table_widths,
-        sort_header_cell, table_viewport_rows, table_window,
+        format_age, format_small_int, render_centered_message, render_table_frame,
+        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_role_indices,
         workload_sort_suffix,
     },
@@ -191,51 +188,35 @@ pub fn render_roles(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(window.selected));
     let sort_suffix = workload_sort_suffix(sort);
-    let title = format!(" 🛡️  Roles ({total}){sort_suffix} ");
-    let block = if query.is_empty() {
-        content_block(&title, focused)
-    } else {
-        let all = cluster.roles.len();
-        content_block(
-            &format!(" 🛡️  Roles ({total} of {all}) [/{query}]{sort_suffix}"),
+    let title = resource_table_title(
+        "🛡️ ",
+        "Roles",
+        total,
+        cluster.roles.len(),
+        query,
+        &sort_suffix,
+    );
+    let widths = [
+        Constraint::Min(28),
+        Constraint::Length(18),
+        Constraint::Length(8),
+        Constraint::Length(9),
+    ];
+    render_table_frame(
+        frame,
+        chunks[0],
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
             focused,
-        )
-    };
-
-    let table = Table::new(
-        rows,
-        responsive_table_widths(
-            area.width,
-            [
-                Constraint::Min(28),
-                Constraint::Length(18),
-                Constraint::Length(8),
-                Constraint::Length(9),
-            ],
-        ),
-    )
-    .header(header)
-    .block(block)
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-    frame.render_stateful_widget(table, chunks[0], &mut table_state);
-
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲"))
-        .end_symbol(Some("▼"))
-        .track_symbol(Some("│"))
-        .thumb_symbol("█");
-    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(
-        scrollbar,
-        chunks[0].inner(Margin {
-            vertical: 1,
-            horizontal: 0,
-        }),
-        &mut scrollbar_state,
+            window,
+            total,
+            selected,
+        },
+        &theme,
     );
 
     let sel_item = &cluster.roles[indices[selected]];
