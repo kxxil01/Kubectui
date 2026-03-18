@@ -174,6 +174,69 @@ pub(crate) fn table_window(total: usize, selected: usize, viewport_rows: usize) 
     }
 }
 
+/// Shared parameters for [`render_table_frame`].
+pub(crate) struct TableFrame<'a> {
+    pub rows: Vec<Row<'a>>,
+    pub header: Row<'a>,
+    pub widths: &'a [Constraint],
+    pub title: &'a str,
+    pub focused: bool,
+    pub window: TableWindow,
+    pub total: usize,
+    pub selected: usize,
+}
+
+/// Renders the shared table frame: selection state, title block, table widget, and scrollbar.
+///
+/// Views build their own `rows`, `header`, and `widths`, then delegate the identical
+/// table/scrollbar/block assembly to this helper.
+pub(crate) fn render_table_frame(frame: &mut Frame, area: Rect, tf: TableFrame<'_>, theme: &Theme) {
+    let mut table_state = TableState::default().with_selected(Some(tf.window.selected));
+
+    let block = content_block(tf.title, tf.focused);
+
+    let table = Table::new(tf.rows, responsive_table_widths_vec(area.width, tf.widths))
+        .header(tf.header)
+        .block(block)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
+
+    frame.render_stateful_widget(table, area, &mut table_state);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+
+    let mut scrollbar_state = ScrollbarState::new(tf.total).position(tf.selected);
+    frame.render_stateful_widget(
+        scrollbar,
+        area.inner(Margin {
+            vertical: 1,
+            horizontal: 0,
+        }),
+        &mut scrollbar_state,
+    );
+}
+
+/// Builds the standard title string for a resource table view.
+pub(crate) fn resource_table_title(
+    emoji: &str,
+    label: &str,
+    total: usize,
+    all: usize,
+    query: &str,
+    sort_suffix: &str,
+) -> String {
+    if query.is_empty() {
+        format!(" {emoji} {label} ({total}){sort_suffix} ")
+    } else {
+        format!(" {emoji} {label} ({total} of {all}) [/{query}]{sort_suffix}")
+    }
+}
+
 /// Delegates to [`responsive_table_widths_vec`] and converts back to a fixed-size array.
 pub(crate) fn responsive_table_widths<const N: usize>(
     area_width: u16,
