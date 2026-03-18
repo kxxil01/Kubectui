@@ -3,13 +3,10 @@
 use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
-    layout::{Constraint, Margin, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::Span,
-    widgets::{
-        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
-        TableState,
-    },
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -17,13 +14,14 @@ use crate::{
     bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
-        bookmarked_name_cell,
-        components::{content_block, default_theme},
+        TableFrame, bookmarked_name_cell,
+        components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        render_centered_message, sort_header_cell, table_viewport_rows, table_window,
+        render_centered_message, render_table_frame, sort_header_cell, table_viewport_rows,
+        table_window,
         views::filtering::{
             filtered_pv_indices, filtered_pvc_indices, filtered_storage_class_indices,
         },
@@ -188,8 +186,6 @@ pub fn render_pvcs(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(window.selected));
-
     let sort_suffix = workload_sort_suffix(sort);
     let title = if query.is_empty() {
         format!(" PersistentVolumeClaims ({total}){sort_suffix} ")
@@ -197,26 +193,30 @@ pub fn render_pvcs(
         let all = cluster.pvcs.len();
         format!(" PersistentVolumeClaims ({total} of {all}) [/{query}]{sort_suffix}")
     };
+    let widths = [
+        Constraint::Percentage(25),
+        Constraint::Percentage(15),
+        Constraint::Percentage(10),
+        Constraint::Percentage(12),
+        Constraint::Percentage(18),
+        Constraint::Percentage(20),
+    ];
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(25),
-            Constraint::Percentage(15),
-            Constraint::Percentage(10),
-            Constraint::Percentage(12),
-            Constraint::Percentage(18),
-            Constraint::Percentage(20),
-        ],
-    )
-    .header(header)
-    .block(content_block(&title, focused))
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-
-    frame.render_stateful_widget(table, area, &mut table_state);
-    render_table_scrollbar(frame, area, total, selected);
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused,
+            window,
+            total,
+            selected,
+        },
+        &theme,
+    );
 }
 
 // ── PV derived cell cache ───────────────────────────────────────────
@@ -382,8 +382,6 @@ pub fn render_pvs(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(window.selected));
-
     let sort_suffix = workload_sort_suffix(sort);
     let title = if query.is_empty() {
         format!(" PersistentVolumes ({total}){sort_suffix} ")
@@ -391,27 +389,31 @@ pub fn render_pvs(
         let all = cluster.pvs.len();
         format!(" PersistentVolumes ({total} of {all}) [/{query}]{sort_suffix}")
     };
+    let widths = [
+        Constraint::Percentage(20),
+        Constraint::Percentage(10),
+        Constraint::Percentage(15),
+        Constraint::Percentage(10),
+        Constraint::Percentage(10),
+        Constraint::Percentage(20),
+        Constraint::Percentage(15),
+    ];
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(20),
-            Constraint::Percentage(10),
-            Constraint::Percentage(15),
-            Constraint::Percentage(10),
-            Constraint::Percentage(10),
-            Constraint::Percentage(20),
-            Constraint::Percentage(15),
-        ],
-    )
-    .header(header)
-    .block(content_block(&title, focused))
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-
-    frame.render_stateful_widget(table, area, &mut table_state);
-    render_table_scrollbar(frame, area, total, selected);
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused,
+            window,
+            total,
+            selected,
+        },
+        &theme,
+    );
 }
 
 // ── StorageClass derived cell cache ─────────────────────────────────
@@ -588,8 +590,6 @@ pub fn render_storage_classes(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(window.selected));
-
     let sort_suffix = workload_sort_suffix(sort);
     let title = if query.is_empty() {
         format!(" StorageClasses ({total}){sort_suffix} ")
@@ -597,40 +597,27 @@ pub fn render_storage_classes(
         let all = cluster.storage_classes.len();
         format!(" StorageClasses ({total} of {all}) [/{query}]{sort_suffix}")
     };
+    let widths = [
+        Constraint::Percentage(25),
+        Constraint::Percentage(35),
+        Constraint::Percentage(15),
+        Constraint::Percentage(18),
+        Constraint::Percentage(7),
+    ];
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(25),
-            Constraint::Percentage(35),
-            Constraint::Percentage(15),
-            Constraint::Percentage(18),
-            Constraint::Percentage(7),
-        ],
-    )
-    .header(header)
-    .block(content_block(&title, focused))
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-
-    frame.render_stateful_widget(table, area, &mut table_state);
-    render_table_scrollbar(frame, area, total, selected);
-}
-
-fn render_table_scrollbar(frame: &mut Frame, area: Rect, total: usize, selected: usize) {
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲"))
-        .end_symbol(Some("▼"))
-        .track_symbol(Some("│"))
-        .thumb_symbol("█");
-    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(
-        scrollbar,
-        area.inner(Margin {
-            vertical: 1,
-            horizontal: 0,
-        }),
-        &mut scrollbar_state,
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused,
+            window,
+            total,
+            selected,
+        },
+        &theme,
     );
 }

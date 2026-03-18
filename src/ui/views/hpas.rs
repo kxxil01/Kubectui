@@ -3,13 +3,10 @@
 use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
-    layout::{Constraint, Margin, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::Span,
-    widgets::{
-        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
-        TableState,
-    },
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -17,13 +14,14 @@ use crate::{
     bookmarks::BookmarkEntry,
     state::ClusterSnapshot,
     ui::{
-        bookmarked_name_cell,
-        components::{content_block, default_theme},
+        TableFrame, bookmarked_name_cell,
+        components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices, data_fingerprint,
         },
-        format_small_int, render_centered_message, table_viewport_rows, table_window,
+        format_small_int, render_centered_message, render_table_frame, table_viewport_rows,
+        table_window,
         views::filtering::filtered_hpa_indices,
     },
 };
@@ -170,47 +168,34 @@ pub fn render_hpas(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(window.selected));
-
     let title = if query.is_empty() {
         format!(" HorizontalPodAutoscalers ({total}) ")
     } else {
         let all = cluster.hpas.len();
         format!(" HorizontalPodAutoscalers ({total} of {all}) [/{query}]")
     };
+    let widths = [
+        Constraint::Percentage(23),
+        Constraint::Percentage(18),
+        Constraint::Percentage(29),
+        Constraint::Percentage(8),
+        Constraint::Percentage(8),
+        Constraint::Percentage(14),
+    ];
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(23),
-            Constraint::Percentage(18),
-            Constraint::Percentage(29),
-            Constraint::Percentage(8),
-            Constraint::Percentage(8),
-            Constraint::Percentage(14),
-        ],
-    )
-    .header(header)
-    .block(content_block(&title, focused))
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-
-    frame.render_stateful_widget(table, area, &mut table_state);
-
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲"))
-        .end_symbol(Some("▼"))
-        .track_symbol(Some("│"))
-        .thumb_symbol("█");
-
-    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(
-        scrollbar,
-        area.inner(Margin {
-            vertical: 1,
-            horizontal: 0,
-        }),
-        &mut scrollbar_state,
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused,
+            window,
+            total,
+            selected,
+        },
+        &theme,
     );
 }

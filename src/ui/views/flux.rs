@@ -7,13 +7,10 @@ use std::{
 
 use chrono::Utc;
 use ratatui::{
-    layout::{Constraint, Margin, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::Span,
-    widgets::{
-        Cell, HighlightSpacing, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
-        Table, TableState,
-    },
+    widgets::{Cell, Paragraph, Row},
 };
 
 use crate::{
@@ -22,11 +19,11 @@ use crate::{
     k8s::dtos::FluxResourceInfo,
     state::ClusterSnapshot,
     ui::{
-        bookmarked_name_cell,
+        TableFrame, bookmarked_name_cell,
         components::{content_block, default_theme},
         contains_ci,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        render_centered_message, responsive_table_widths, sort_header_cell, table_viewport_rows,
+        render_centered_message, render_table_frame, sort_header_cell, table_viewport_rows,
         table_window,
         views::filtering::age_duration_now,
         workload_sort_suffix,
@@ -416,56 +413,39 @@ pub fn render_flux_resources(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(window.selected));
     let sort_suffix = workload_sort_suffix(sort);
-    let title = format!(" 🌀 FluxCD · {} ({total}){sort_suffix} ", mode.title());
-    let block = if query.is_empty() {
-        content_block(&title, focused)
+    let title = if query.is_empty() {
+        format!(" 🌀 FluxCD · {} ({total}){sort_suffix} ", mode.title())
     } else {
-        content_block(
-            &format!(
-                " 🌀 FluxCD · {} ({total} of {mode_total}) [/{query}]{sort_suffix}",
-                mode.title()
-            ),
-            focused,
+        format!(
+            " 🌀 FluxCD · {} ({total} of {mode_total}) [/{query}]{sort_suffix}",
+            mode.title()
         )
     };
+    let widths = [
+        Constraint::Min(22),
+        Constraint::Length(18),
+        Constraint::Length(18),
+        Constraint::Length(13),
+        Constraint::Length(9),
+        Constraint::Length(9),
+        Constraint::Min(24),
+    ];
 
-    let table = Table::new(
-        rows,
-        responsive_table_widths(
-            area.width,
-            [
-                Constraint::Min(22),
-                Constraint::Length(18),
-                Constraint::Length(18),
-                Constraint::Length(13),
-                Constraint::Length(9),
-                Constraint::Length(9),
-                Constraint::Min(24),
-            ],
-        ),
-    )
-    .header(header)
-    .block(block)
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-    frame.render_stateful_widget(table, area, &mut table_state);
-
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲"))
-        .end_symbol(Some("▼"))
-        .track_symbol(Some("│"))
-        .thumb_symbol("█");
-    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(
-        scrollbar,
-        area.inner(Margin {
-            vertical: 1,
-            horizontal: 0,
-        }),
-        &mut scrollbar_state,
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused,
+            window,
+            total,
+            selected,
+        },
+        &theme,
     );
 }
 
