@@ -47,3 +47,15 @@
 - Extract async task spawning patterns
 - Separate event routing from state mutation
 - Risk: high (event loop is the orchestration heart)
+
+---
+
+## Future Features
+
+### Nerd Font Icon System
+Rich resource icons for all 46 views using Nerd Font glyphs (e.g. `󰠰` kubernetes, `󱃲` pod, `󰒍` node).
+- Default: plain text/ASCII (safe for all terminals)
+- Optional: Nerd Font mode toggled via settings (`icon_mode: "nerd"` / `"emoji"` / `"plain"`)
+- Graceful degradation: detect terminal capability or let user choose
+- Reference: k9s, lazydocker, starship patterns
+- Scope: new milestone after refactoring is complete
