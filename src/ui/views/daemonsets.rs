@@ -150,7 +150,7 @@ pub fn render_daemonsets(
 
     let sort_suffix = workload_sort_suffix(sort);
     let title = resource_table_title(
-        "🐉",
+        "👾",
         "DaemonSets",
         total,
         cluster.daemonsets.len(),

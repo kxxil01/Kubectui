@@ -155,7 +155,7 @@ pub fn render_jobs(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
-    let title = resource_table_title("⚡", "Jobs", total, cluster.jobs.len(), query, &sort_suffix);
+    let title = resource_table_title("⚙ ", "Jobs", total, cluster.jobs.len(), query, &sort_suffix);
     let widths = [
         Constraint::Length(22),
         Constraint::Length(16),

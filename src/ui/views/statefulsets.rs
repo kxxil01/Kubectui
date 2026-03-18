@@ -144,7 +144,7 @@ pub fn render_statefulsets(
 
     let sort_suffix = workload_sort_suffix(sort);
     let title = resource_table_title(
-        "📦",
+        "🗄 ",
         "StatefulSets",
         total,
         cluster.statefulsets.len(),
