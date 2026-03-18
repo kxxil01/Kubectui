@@ -2,7 +2,7 @@
 
 ## Completed (2026-03-18)
 
-### Refactoring — Total: -2,039 lines, zero regressions
+### Refactoring — Total: -2,039 dedup lines + 2 major file splits, zero regressions
 
 | PR | What | Lines |
 |----|------|-------|
@@ -10,6 +10,8 @@
 | #40 | Column registry `col()`/`col_fixed()`/`col_hidden()` const fn helpers (23 arrays) | -845 |
 | #41 | Unified `view_info()` — single source of truth for view key + columns | -18 |
 | #42 | `render_table_frame()` shared helper — migrated all 29 views (35 render functions) | -517 |
+| #43 | Extract key handling → `app/input.rs` (1262 lines). `app/mod.rs`: 3877→2630 (-32%) | split |
+| #44 | Extract helpers → `event_handlers.rs` (652) + `detail_fetch.rs` (201). `main.rs`: 4667→3866 (-17%) | split |
 
 ### Performance Investigation
 - Row virtualization: already implemented (`table_window()` in 31 views)
@@ -22,15 +24,15 @@
 
 ## Remaining Refactoring
 
-### Priority 1: Split `app/mod.rs` (3877 lines)
+### `app/mod.rs` (now 2630 lines) — further opportunities
 - Group 101 `AppAction` variants into sub-enums (WorkbenchAction, NavigationAction, etc.)
-- Extract `handle_key_event` to `app/key_routing.rs`
-- Risk: medium (central state machine, many callers)
+- Extract bookmarks methods (~180 lines) to `app/bookmarks.rs`
+- Extract workbench tab-opening methods (~168 lines) to `app/workbench_tabs.rs`
 
-### Priority 2: Split `main.rs` (4667 lines)
-- Extract async task spawning patterns
-- Separate event routing from state mutation
-- Risk: high (event loop is the orchestration heart)
+### `main.rs` (now 3866 lines) — `run_app()` is still 3118 lines
+- Extract action dispatch match arms (~1600 lines) to action submodules
+- Extract event loop branches (~1200 lines) to event handler functions
+- Risk: high (must preserve biased select! semantics)
 
 ---
 
