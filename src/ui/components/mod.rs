@@ -43,6 +43,7 @@ const MAX_SIDEBAR_CACHE_ENTRIES: usize = 512;
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct HeaderCacheKey {
     theme_index: u8,
+    icon_mode: u8,
     title: String,
     cluster_meta: String,
     health: ConnectionHealth,
@@ -153,6 +154,7 @@ fn collapsed_mask(collapsed: &HashSet<NavGroup>) -> u16 {
 
 fn cached_header_line(
     theme_index: u8,
+    icon_mode: u8,
     title: &str,
     cluster_meta: &str,
     health: ConnectionHealth,
@@ -161,6 +163,7 @@ fn cached_header_line(
     if let Ok(cache) = HEADER_LINE_CACHE.lock()
         && let Some((cached_key, value)) = cache.as_ref()
         && cached_key.theme_index == theme_index
+        && cached_key.icon_mode == icon_mode
         && cached_key.title == title
         && cached_key.cluster_meta == cluster_meta
         && cached_key.health == health
@@ -170,6 +173,7 @@ fn cached_header_line(
 
     let key = HeaderCacheKey {
         theme_index,
+        icon_mode,
         title: title.to_string(),
         cluster_meta: cluster_meta.to_string(),
         health,
@@ -361,7 +365,14 @@ pub fn render_header(
 ) {
     let theme = default_theme();
     let theme_index = crate::ui::theme::active_theme_index();
-    let text = cached_header_line(theme_index, title, cluster_meta, health, &theme);
+    let text = cached_header_line(
+        theme_index,
+        crate::icons::active_icon_mode() as u8,
+        title,
+        cluster_meta,
+        health,
+        &theme,
+    );
 
     frame.render_widget(
         Paragraph::new((*text).clone())
@@ -513,5 +524,46 @@ pub fn content_block(title: &str, focused: bool) -> Block<'static> {
         active_block(title)
     } else {
         default_block(title)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::icons::IconMode;
+
+    fn line_text(line: &Line<'static>) -> String {
+        line.spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>()
+    }
+
+    #[test]
+    fn header_cache_respects_icon_mode() {
+        crate::icons::set_icon_mode(IconMode::Nerd);
+        let theme = default_theme();
+        let nerd = cached_header_line(
+            0,
+            crate::icons::active_icon_mode() as u8,
+            "KubecTUI",
+            "cluster-a",
+            ConnectionHealth::Connected,
+            &theme,
+        );
+
+        crate::icons::set_icon_mode(IconMode::Plain);
+        let plain = cached_header_line(
+            0,
+            crate::icons::active_icon_mode() as u8,
+            "KubecTUI",
+            "cluster-a",
+            ConnectionHealth::Connected,
+            &theme,
+        );
+
+        assert_ne!(line_text(&nerd), line_text(&plain));
+
+        crate::icons::set_icon_mode(IconMode::Nerd);
     }
 }

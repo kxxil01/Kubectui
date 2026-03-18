@@ -65,6 +65,7 @@ pub struct ClusterPreferences {
 /// - `sort_column`: overridden if `Some`
 /// - `sort_ascending`: overridden if not the default (`true`)
 /// - `hidden_columns`: union of all layers
+/// - `shown_columns`: union of all layers, with explicit un-hide semantics
 /// - `column_order`: overridden if `Some`
 pub fn resolve_view_preferences(
     view_key: &str,
@@ -96,7 +97,9 @@ pub fn resolve_view_preferences(
 /// Merges `overlay` fields into `base`, overriding only non-default values.
 ///
 /// - `shown_columns` in the overlay removes entries from `base.hidden_columns`
+///   and records the opt-in visibility in `base.shown_columns`
 /// - `hidden_columns` in the overlay are unioned into `base.hidden_columns`
+///   and removed from `base.shown_columns`
 fn merge_view_preferences(base: &mut ViewPreferences, overlay: &ViewPreferences) {
     if overlay.sort_column.is_some() {
         base.sort_column = overlay.sort_column.clone();
@@ -106,9 +109,15 @@ fn merge_view_preferences(base: &mut ViewPreferences, overlay: &ViewPreferences)
     if !overlay.shown_columns.is_empty() {
         base.hidden_columns
             .retain(|c| !overlay.shown_columns.contains(c));
+        for col in &overlay.shown_columns {
+            if !base.shown_columns.contains(col) {
+                base.shown_columns.push(col.clone());
+            }
+        }
     }
     // Then union hidden_columns
     for col in &overlay.hidden_columns {
+        base.shown_columns.retain(|shown| shown != col);
         if !base.hidden_columns.contains(col) {
             base.hidden_columns.push(col.clone());
         }
@@ -229,6 +238,51 @@ mod tests {
         // "age" remains hidden
         assert!(result.hidden_columns.contains(&"age".to_string()));
         assert_eq!(result.hidden_columns.len(), 1);
+        assert_eq!(result.shown_columns, vec!["namespace"]);
+    }
+
+    #[test]
+    fn resolve_shown_columns_preserves_opt_in_for_default_hidden_columns() {
+        let mut cluster = ClusterPreferences::default();
+        cluster.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                shown_columns: vec!["cpu_usage".into(), "mem_usage".into()],
+                ..Default::default()
+            },
+        );
+        let mut clusters = HashMap::new();
+        clusters.insert("prod".into(), cluster);
+
+        let result = resolve_view_preferences("pods", &None, &Some(clusters), Some("prod"));
+        assert_eq!(result.shown_columns, vec!["cpu_usage", "mem_usage"]);
+        assert!(result.hidden_columns.is_empty());
+    }
+
+    #[test]
+    fn hidden_columns_override_prior_shown_columns() {
+        let mut global = UserPreferences::default();
+        global.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                shown_columns: vec!["cpu_usage".into()],
+                ..Default::default()
+            },
+        );
+        let mut cluster = ClusterPreferences::default();
+        cluster.views.insert(
+            "pods".into(),
+            ViewPreferences {
+                hidden_columns: vec!["cpu_usage".into()],
+                ..Default::default()
+            },
+        );
+        let mut clusters = HashMap::new();
+        clusters.insert("prod".into(), cluster);
+
+        let result = resolve_view_preferences("pods", &Some(global), &Some(clusters), Some("prod"));
+        assert!(!result.shown_columns.contains(&"cpu_usage".to_string()));
+        assert!(result.hidden_columns.contains(&"cpu_usage".to_string()));
     }
 
     #[test]
