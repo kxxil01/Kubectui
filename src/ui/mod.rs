@@ -1634,6 +1634,7 @@ pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {
 }
 #[cfg(test)]
 mod tests {
+    use super::resource_table_title;
     use ratatui::{Terminal, backend::TestBackend};
 
     use crate::{
@@ -2628,5 +2629,29 @@ mod tests {
         let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
         assert!(text.starts_with("250m/4 "));
         assert!(text.contains("6%"));
+    }
+
+    #[test]
+    fn resource_table_title_without_query() {
+        assert_eq!(
+            resource_table_title("🔌", "Services", 5, 10, "", " [Name ↑]"),
+            " 🔌 Services (5) [Name ↑] "
+        );
+    }
+
+    #[test]
+    fn resource_table_title_with_query() {
+        assert_eq!(
+            resource_table_title("🔌", "Services", 3, 10, "nginx", " [Name ↑]"),
+            " 🔌 Services (3 of 10) [/nginx] [Name ↑]"
+        );
+    }
+
+    #[test]
+    fn resource_table_title_no_sort_no_query() {
+        assert_eq!(
+            resource_table_title("🚀", "Deployments", 42, 42, "", ""),
+            " 🚀 Deployments (42) "
+        );
     }
 }
