@@ -1,5 +1,6 @@
 //! Application state machine and keyboard input handling.
 
+mod config_io;
 pub mod detail_state;
 mod input;
 pub mod resource_ref;
@@ -7,6 +8,7 @@ pub mod sidebar;
 pub mod sort;
 pub mod views;
 
+pub use config_io::{load_config, load_config_from_path, save_config, save_config_to_path};
 pub use detail_state::*;
 pub use resource_ref::ResourceRef;
 pub use sidebar::{SidebarItem, sidebar_rows};
@@ -16,9 +18,7 @@ pub use sort::{
 };
 pub use views::{AppView, NavGroup};
 
-use std::{collections::HashMap, collections::HashSet, fs, path::Path, time::Instant};
-
-use serde::{Deserialize, Serialize};
+use std::{collections::HashMap, collections::HashSet, time::Instant};
 
 use crate::{
     action_history::{ActionHistoryState, ActionHistoryTarget, ActionKind, ActionStatus},
@@ -33,9 +33,9 @@ use crate::{
         scale_dialog::{ScaleDialogState, ScaleTargetKind},
     },
     workbench::{
-        ActionHistoryTabState, DEFAULT_WORKBENCH_HEIGHT, DecodedSecretTabState, ExecTabState,
-        PodLogsTabState, PortForwardTabState, ResourceEventsTabState, ResourceYamlTabState,
-        WorkbenchState, WorkbenchTabState, WorkloadLogsTabState,
+        ActionHistoryTabState, DecodedSecretTabState, ExecTabState, PodLogsTabState,
+        PortForwardTabState, ResourceEventsTabState, ResourceYamlTabState, WorkbenchState,
+        WorkbenchTabState, WorkloadLogsTabState,
     },
 };
 
@@ -308,34 +308,6 @@ impl Default for AppState {
             toasts: Vec::new(),
         }
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct AppConfig {
-    namespace: String,
-    #[serde(default)]
-    theme: Option<String>,
-    /// Auto-refresh interval in seconds (0 = disabled, default = 30).
-    #[serde(default = "default_refresh_interval")]
-    refresh_interval_secs: u64,
-    #[serde(default)]
-    workbench_open: bool,
-    #[serde(default = "default_workbench_height")]
-    workbench_height: u16,
-    #[serde(default)]
-    collapsed_nav_groups: Vec<String>,
-    #[serde(default)]
-    preferences: Option<UserPreferences>,
-    #[serde(default)]
-    clusters: Option<HashMap<String, ClusterPreferences>>,
-}
-
-fn default_refresh_interval() -> u64 {
-    30
-}
-
-fn default_workbench_height() -> u16 {
-    DEFAULT_WORKBENCH_HEIGHT
 }
 
 impl AppState {
@@ -740,14 +712,17 @@ impl AppState {
         self.save_sort_to_preferences(view_key);
     }
 
-    /// Returns a mutable reference to the `ViewPreferences` for the given view key,
-    /// writing to cluster-specific prefs when a context is active and cluster prefs
-    /// already exist for that context, otherwise writing to global prefs.
+    /// Returns a mutable reference to the `ViewPreferences` for the given view key.
+    ///
+    /// When a kube context is active, preference writes are routed to that
+    /// cluster-specific preference bucket, creating it on first write. This keeps
+    /// per-cluster overrides from leaking into the global defaults.
     fn view_prefs_mut(&mut self, view_key: &str) -> &mut crate::preferences::ViewPreferences {
-        if let Some(ctx) = &self.current_context_name
-            && let Some(clusters) = &mut self.cluster_preferences
-            && let Some(cluster) = clusters.get_mut(ctx)
-        {
+        if let Some(context) = self.current_context_name.clone() {
+            let clusters = self
+                .cluster_preferences
+                .get_or_insert_with(Default::default);
+            let cluster = clusters.entry(context).or_default();
             return cluster.views.entry(view_key.to_string()).or_default();
         }
         let global = self.preferences.get_or_insert_with(Default::default);
@@ -806,23 +781,31 @@ impl AppState {
     /// Toggles a column's visibility in user preferences for the current view.
     fn toggle_column_visibility(&mut self, column_id: &str) {
         let view_key = crate::columns::view_key(self.view);
-        // Verify the column exists and is hideable
-        if let Some(registry) = crate::columns::columns_for_view(self.view) {
-            let Some(col) = registry.iter().find(|c| c.id == column_id) else {
-                return;
-            };
-            if !col.hideable {
-                return;
-            }
-        } else {
+        let Some(registry) = crate::columns::columns_for_view(self.view) else {
+            return;
+        };
+        let Some(col) = registry.iter().find(|c| c.id == column_id) else {
+            return;
+        };
+        if !col.hideable {
             return;
         }
 
         let vp = self.view_prefs_mut(view_key);
-        if let Some(pos) = vp.hidden_columns.iter().position(|c| c == column_id) {
-            vp.hidden_columns.remove(pos);
+        if col.default_visible {
+            vp.shown_columns.retain(|c| c != column_id);
+            if let Some(pos) = vp.hidden_columns.iter().position(|c| c == column_id) {
+                vp.hidden_columns.remove(pos);
+            } else {
+                vp.hidden_columns.push(column_id.to_string());
+            }
         } else {
-            vp.hidden_columns.push(column_id.to_string());
+            vp.hidden_columns.retain(|c| c != column_id);
+            if let Some(pos) = vp.shown_columns.iter().position(|c| c == column_id) {
+                vp.shown_columns.remove(pos);
+            } else {
+                vp.shown_columns.push(column_id.to_string());
+            }
         }
         self.needs_config_save = true;
 
@@ -843,8 +826,11 @@ impl AppState {
                 .iter()
                 .filter(|c| c.hideable)
                 .map(|c| {
-                    let visible =
-                        c.default_visible && !prefs.hidden_columns.iter().any(|h| h == c.id);
+                    let visible = if c.default_visible {
+                        !prefs.hidden_columns.iter().any(|hidden| hidden == c.id)
+                    } else {
+                        prefs.shown_columns.iter().any(|shown| shown == c.id)
+                    };
                     (c.id.to_string(), c.label.to_string(), visible)
                 })
                 .collect();
@@ -997,15 +983,14 @@ impl AppState {
         }
     }
 
-    /// Collapses all sidebar groups except the one containing the active view.
-    /// This keeps the sidebar compact so all groups remain visible.
+    /// Ensures the active view remains visible in the sidebar.
+    ///
+    /// User-driven collapsed state is preserved across navigation and sessions;
+    /// only the group containing the active view is force-expanded so the current
+    /// view row remains addressable.
     pub fn sync_collapsed_to_active_view(&mut self) {
-        let active_group = sidebar::group_for_view(self.view);
-        self.collapsed_groups.clear();
-        for group in sidebar::all_groups() {
-            if Some(group) != active_group {
-                self.collapsed_groups.insert(group);
-            }
+        if let Some(active_group) = sidebar::group_for_view(self.view) {
+            self.collapsed_groups.remove(&active_group);
         }
         self.sync_sidebar_cursor_to_view();
     }
@@ -1264,87 +1249,6 @@ impl AppState {
             detail.probe_panel = None;
         }
     }
-}
-
-/// Loads app state config from a given path.
-pub fn load_config_from_path(path: &Path) -> AppState {
-    let mut app = AppState::default();
-
-    if let Ok(content) = fs::read_to_string(path)
-        && let Ok(cfg) = serde_json::from_str::<AppConfig>(&content)
-    {
-        if !cfg.namespace.trim().is_empty() {
-            app.set_namespace(cfg.namespace);
-        }
-        if let Some(theme_name) = &cfg.theme {
-            let idx = match theme_name.to_lowercase().as_str() {
-                "nord" => 1,
-                "dracula" => 2,
-                "catppuccin" | "mocha" => 3,
-                "light" => 4,
-                _ => 0,
-            };
-            crate::ui::theme::set_active_theme(idx);
-        }
-        app.refresh_interval_secs = cfg.refresh_interval_secs;
-        app.workbench
-            .set_open_and_height(cfg.workbench_open, cfg.workbench_height);
-        // Collapsed groups are now auto-managed by sync_collapsed_to_active_view(),
-        // so we ignore the saved config and rely on the default (all collapsed
-        // except the active view's group).
-        let _ = &cfg.collapsed_nav_groups;
-        app.preferences = cfg.preferences;
-        app.cluster_preferences = cfg.clusters;
-    }
-
-    app.current_context_name = kube::config::Kubeconfig::read()
-        .ok()
-        .and_then(|cfg| cfg.current_context);
-
-    app
-}
-
-/// Saves app namespace config to a given path.
-pub fn save_config_to_path(app: &AppState, path: &Path) {
-    let theme_name = crate::ui::theme::active_theme().name;
-    let cfg = AppConfig {
-        namespace: app.current_namespace.clone(),
-        theme: Some(theme_name.to_string()),
-        refresh_interval_secs: app.refresh_interval_secs,
-        workbench_open: app.workbench.open,
-        workbench_height: app.workbench.height,
-        collapsed_nav_groups: Vec::new(),
-        preferences: app.preferences.clone(),
-        clusters: app.cluster_preferences.clone(),
-    };
-
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-
-    let serialized = serde_json::to_string(&cfg).unwrap_or_else(|_| "{}".to_string());
-    let tmp = path.with_extension("tmp");
-    if fs::write(&tmp, &serialized).is_ok() {
-        let _ = fs::rename(&tmp, path);
-    }
-}
-
-/// Loads app config from ~/.kube/kubectui-config.json.
-pub fn load_config() -> AppState {
-    let path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".kube")
-        .join("kubectui-config.json");
-    load_config_from_path(&path)
-}
-
-/// Saves app config to ~/.kube/kubectui-config.json.
-pub fn save_config(app: &AppState) {
-    let path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".kube")
-        .join("kubectui-config.json");
-    save_config_to_path(app, &path);
 }
 
 #[cfg(test)]
@@ -2546,8 +2450,43 @@ mod tests {
     }
 
     #[test]
+    fn save_sort_creates_cluster_preferences_for_active_context() {
+        let mut app = AppState::default();
+        app.current_context_name = Some("prod".to_string());
+        app.preferences = Some(UserPreferences::default());
+        app.pod_sort = Some(PodSortState::new(PodSortColumn::Status, false));
+
+        app.save_sort_to_preferences("pods");
+
+        let global = app.preferences.as_ref().unwrap();
+        assert!(!global.views.contains_key("pods"));
+
+        let clusters = app.cluster_preferences.as_ref().unwrap();
+        let prod = clusters.get("prod").unwrap();
+        let pod_prefs = prod.views.get("pods").unwrap();
+        assert_eq!(pod_prefs.sort_column.as_deref(), Some("status"));
+        assert!(pod_prefs.sort_ascending);
+    }
+
+    #[test]
+    fn toggle_default_hidden_column_uses_shown_columns() {
+        let mut app = AppState::default();
+        app.navigate_to_view(AppView::Pods);
+
+        app.toggle_column_visibility("cpu_usage");
+
+        let prefs = app.preferences.as_ref().unwrap();
+        let pod_prefs = prefs.views.get("pods").unwrap();
+        assert_eq!(pod_prefs.shown_columns, vec!["cpu_usage"]);
+        assert!(pod_prefs.hidden_columns.is_empty());
+    }
+
+    #[test]
     fn config_round_trip_with_preferences() {
-        use crate::preferences::{ClusterPreferences, UserPreferences, ViewPreferences};
+        use crate::{
+            icons::IconMode,
+            preferences::{ClusterPreferences, UserPreferences, ViewPreferences},
+        };
         let path = std::env::temp_dir().join("kubectui_test_config_prefs.json");
 
         let mut app = AppState::default();
@@ -2579,10 +2518,13 @@ mod tests {
         clusters.insert("prod".into(), cluster_prefs);
         app.cluster_preferences = Some(clusters);
 
+        app.collapsed_groups.remove(&NavGroup::Workloads);
         app.collapsed_groups.insert(NavGroup::FluxCD);
         app.collapsed_groups.insert(NavGroup::AccessControl);
+        crate::icons::set_icon_mode(IconMode::Plain);
 
         save_config_to_path(&app, &path);
+        crate::icons::set_icon_mode(IconMode::Nerd);
         let loaded = load_config_from_path(&path);
 
         let prefs = loaded.preferences.as_ref().unwrap();
@@ -2598,11 +2540,13 @@ mod tests {
         assert_eq!(prod.bookmarks.len(), 1);
         assert_eq!(prod.bookmarks[0].bookmarked_at_unix, 42);
 
-        // Collapsed groups are now auto-managed — saved config is ignored.
-        // Default state: all groups collapsed except the active view's group (Overview).
+        assert_eq!(crate::icons::active_icon_mode(), IconMode::Plain);
         assert!(!loaded.collapsed_groups.contains(&NavGroup::Overview));
+        assert!(!loaded.collapsed_groups.contains(&NavGroup::Workloads));
         assert!(loaded.collapsed_groups.contains(&NavGroup::FluxCD));
         assert!(loaded.collapsed_groups.contains(&NavGroup::AccessControl));
+
+        crate::icons::set_icon_mode(IconMode::Nerd);
     }
 
     #[test]

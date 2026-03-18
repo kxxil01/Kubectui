@@ -34,6 +34,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Y", "Copy namespace/name"),
             ("B", "Toggle bookmark for selected resource"),
             ("T", "Cycle theme"),
+            ("I", "Cycle icon mode"),
             ("b", "Toggle workbench"),
             ("[ / ]", "Previous / next workbench tab"),
             ("Ctrl+W", "Close workbench tab"),

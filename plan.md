@@ -77,10 +77,12 @@ Post-milestone fixes and improvements (shipped after M5):
 - Delete confirmation UX: accepts D/y/Enter (not just Shift+D), widened dialog, updated footer hints
 - Workbench maximize: `z` toggles fullscreen mode, Esc restores, MAX_WORKBENCH_HEIGHT bumped from 20 to 40
 - All Containers: pod logs picker shows "All Containers" when 2+ containers, opens WorkloadLogs tab
+- 2026-03-18 preference/persistence hardening: canonical config I/O now persists icon mode and nav collapse state, default-hidden columns can be explicitly enabled via `shown_columns`, first-write per-context preference edits create cluster-local buckets instead of mutating globals, and header cache invalidates on icon-mode changes
 
 Verification status for completed milestones:
 
-- 721 tests passing on `main`, zero clippy warnings, fmt clean, render profiling check passing
+- Latest local verification on 2026-03-18: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass
+- Render profiling check passes on 2026-03-18: 5-run median vs pre-patch `HEAD` improved slightly (`render` `242.530ms -> 242.121ms`, `-0.409ms`, `-0.17%`; `sidebar` `18.366ms -> 18.342ms`; `header` `13.920ms -> 13.810ms`)
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -205,10 +207,11 @@ KubecTUI already has:
 - CronJob management panel with next-run state, execution history, selected-run log access, and suspend/resume
 - node cordon / uncordon / drain operations
 - 5 themes (Dark, Nord, Dracula, Catppuccin, Light)
+- 3 icon modes (Nerd, Emoji, Plain) with runtime `Shift+I` toggle and persisted preference
 - probe panel (liveness, readiness, startup probe inspection)
 - dashboard with cluster health gauges, alerts, and workload summaries
 - graceful handling of forbidden list/discovery/metrics reads so restricted RBAC does not break the main UI flow
-- configuration persistence (namespace, theme, workbench state, refresh interval)
+- configuration persistence (namespace, theme, icon mode, workbench state, nav collapse state, refresh interval, per-view sort/column preferences)
 
 This means the next phase should focus less on baseline operator parity and more on advanced workflows, richer cluster diagnostics, and post-browse operational tooling.
 
@@ -1034,19 +1037,19 @@ Completed
 ### What shipped
 
 - ViewPreferences model with sort_column, sort_ascending, hidden_columns, shown_columns, column_order
-- Field-level preference merge (defaults ← global ← cluster) with shown_columns un-hide mechanism
-- Cluster-aware preference routing: writes go to cluster-specific prefs when active, else global
+- Field-level preference merge (defaults ← global ← cluster) with shown_columns opt-in visibility and un-hide mechanism
+- Cluster-aware preference routing: writes create cluster-specific prefs on first edit when a context is active, else global
 - Column registry (ColumnDef) for 23 views with hideable/non-hideable flags, title-case labels
-- Column toggle via action palette (`:` then search "columns", checkbox-style `[x]`/`[ ]` toggle)
+- Column toggle via action palette (`:` then search "columns", checkbox-style `[x]`/`[ ]` toggle), including explicit opt-in of default-hidden metrics columns
 - Sort persistence: sort preferences saved per-view and restored on view switch
 - Sort clear targets most-specific level only (cluster if present, else global)
 - Dynamic column rendering for Pods, Deployments, Nodes (column-driven headers, rows, constraints)
-- Nav group collapse persistence across sessions
+- Nav group collapse persistence across sessions with active-view group kept visible on navigation
 - Config dirty flag with batched saves in event loop
 - Context name tracking on context switch for per-cluster preference resolution
-- Backward-compatible JSON config expansion (all new fields use `#[serde(default)]`)
+- Backward-compatible JSON config expansion (all new fields use `#[serde(default)]`) and canonical config persistence for icon mode + collapsed groups
 - Help overlay updated with sort keybindings for non-pod views
-- 24 new tests across preferences, columns, sort persistence, config round-trip
+- Expanded regression coverage across preferences, columns, sort persistence, config round-trip, icon-mode persistence, and header cache invalidation
 
 ### Goal
 

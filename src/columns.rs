@@ -339,20 +339,24 @@ pub fn columns_for_view(view: AppView) -> Option<&'static [ColumnDef]> {
 
 /// Resolves the visible columns for a view given user preferences.
 ///
-/// 1. Start with all columns where `default_visible` is true
-/// 2. Remove columns listed in `hidden_columns` (skip non-hideable)
+/// 1. Include non-hideable columns and default-visible columns unless hidden
+/// 2. Include default-hidden columns only when explicitly listed in `shown_columns`
 /// 3. Apply `column_order` if set (unknown IDs skipped, remaining appended)
 pub fn resolve_columns(registry: &[ColumnDef], prefs: &ViewPreferences) -> Vec<ColumnDef> {
     let mut visible: Vec<ColumnDef> = registry
         .iter()
-        .filter(|c| c.default_visible)
+        .filter(|c| {
+            if !c.hideable {
+                return true;
+            }
+            if c.default_visible {
+                !prefs.hidden_columns.iter().any(|hidden| hidden == c.id)
+            } else {
+                prefs.shown_columns.iter().any(|shown| shown == c.id)
+            }
+        })
         .copied()
         .collect();
-
-    // Remove hidden columns (respect hideable flag)
-    if !prefs.hidden_columns.is_empty() {
-        visible.retain(|c| !c.hideable || !prefs.hidden_columns.iter().any(|h| h == c.id));
-    }
 
     // Apply custom ordering if set
     if let Some(order) = &prefs.column_order {
@@ -448,6 +452,29 @@ mod tests {
         let prefs = ViewPreferences::default();
         let visible = resolve_columns(TEST_COLS, &prefs);
         assert!(!visible.iter().any(|c| c.id == "image"));
+    }
+
+    #[test]
+    fn shown_columns_add_default_hidden_column() {
+        let prefs = ViewPreferences {
+            shown_columns: vec!["image".into()],
+            ..Default::default()
+        };
+        let visible = resolve_columns(TEST_COLS, &prefs);
+        let ids: Vec<&str> = visible.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec!["name", "namespace", "status", "age", "image"]);
+    }
+
+    #[test]
+    fn hidden_columns_remove_default_shown_column_even_when_shown_is_set() {
+        let prefs = ViewPreferences {
+            hidden_columns: vec!["namespace".into()],
+            shown_columns: vec!["image".into()],
+            ..Default::default()
+        };
+        let visible = resolve_columns(TEST_COLS, &prefs);
+        let ids: Vec<&str> = visible.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec!["name", "status", "age", "image"]);
     }
 
     #[test]
