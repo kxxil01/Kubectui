@@ -1,9 +1,6 @@
 //! ReplicaSets list rendering.
 
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
     layout::{Constraint, Margin, Rect},
@@ -22,7 +19,10 @@ use crate::{
     ui::{
         bookmarked_name_cell,
         components::{content_block, default_theme},
-        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
+        filter_cache::{
+            DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+            cached_filter_indices_with_variant, data_fingerprint,
+        },
         format_age, format_image, format_small_int, render_centered_message,
         responsive_table_widths, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_replicaset_indices,
@@ -30,24 +30,15 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ReplicaSetDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct ReplicaSetDerivedCell {
     image: String,
     age: String,
 }
 
-type ReplicaSetDerivedCacheValue = Arc<Vec<ReplicaSetDerivedCell>>;
-static REPLICASET_DERIVED_CACHE: LazyLock<
-    Mutex<Option<(ReplicaSetDerivedCacheKey, ReplicaSetDerivedCacheValue)>>,
-> = LazyLock::new(|| Mutex::new(None));
+type ReplicaSetDerivedCacheValue = DerivedRowsCacheValue<ReplicaSetDerivedCell>;
+static REPLICASET_DERIVED_CACHE: LazyLock<DerivedRowsCache<ReplicaSetDerivedCell>> =
+    LazyLock::new(Default::default);
 
 #[allow(clippy::too_many_arguments)]
 pub fn render_replicasets(
@@ -218,21 +209,15 @@ fn cached_replicaset_derived(
     indices: &[usize],
     variant: u64,
 ) -> ReplicaSetDerivedCacheValue {
-    let key = ReplicaSetDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.replicasets, cluster.snapshot_version),
         variant,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = REPLICASET_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&REPLICASET_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&rs_idx| {
@@ -242,14 +227,8 @@ fn cached_replicaset_derived(
                     age: format_age(rs.age),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = REPLICASET_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 use crate::ui::readiness_style;

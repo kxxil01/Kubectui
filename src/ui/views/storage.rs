@@ -1,9 +1,6 @@
 //! Storage views: PVCs, PVs, StorageClasses.
 
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
     layout::{Constraint, Margin, Rect},
@@ -22,7 +19,10 @@ use crate::{
     ui::{
         bookmarked_name_cell,
         components::{content_block, default_theme},
-        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
+        filter_cache::{
+            DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+            cached_filter_indices_with_variant, data_fingerprint,
+        },
         render_centered_message, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::{
             filtered_pv_indices, filtered_pvc_indices, filtered_storage_class_indices,
@@ -33,14 +33,6 @@ use crate::{
 
 // ── PVC derived cell cache ──────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PvcDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct PvcDerivedCell {
     capacity: String,
@@ -48,9 +40,9 @@ struct PvcDerivedCell {
     storage_class: String,
 }
 
-type PvcDerivedCacheValue = Arc<Vec<PvcDerivedCell>>;
-static PVC_DERIVED_CACHE: LazyLock<Mutex<Option<(PvcDerivedCacheKey, PvcDerivedCacheValue)>>> =
-    LazyLock::new(|| Mutex::new(None));
+type PvcDerivedCacheValue = DerivedRowsCacheValue<PvcDerivedCell>;
+static PVC_DERIVED_CACHE: LazyLock<DerivedRowsCache<PvcDerivedCell>> =
+    LazyLock::new(Default::default);
 
 fn cached_pvc_derived(
     snapshot: &ClusterSnapshot,
@@ -58,21 +50,15 @@ fn cached_pvc_derived(
     indices: &[usize],
     variant: u64,
 ) -> PvcDerivedCacheValue {
-    let key = PvcDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.pvcs, snapshot.snapshot_version),
         variant,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = PVC_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&PVC_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&pvc_idx| {
@@ -87,14 +73,8 @@ fn cached_pvc_derived(
                     storage_class: pvc.storage_class.as_deref().unwrap_or("-").to_string(),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = PVC_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -241,14 +221,6 @@ pub fn render_pvcs(
 
 // ── PV derived cell cache ───────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PvDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct PvDerivedCell {
     capacity: String,
@@ -257,9 +229,9 @@ struct PvDerivedCell {
     storage_class: String,
 }
 
-type PvDerivedCacheValue = Arc<Vec<PvDerivedCell>>;
-static PV_DERIVED_CACHE: LazyLock<Mutex<Option<(PvDerivedCacheKey, PvDerivedCacheValue)>>> =
-    LazyLock::new(|| Mutex::new(None));
+type PvDerivedCacheValue = DerivedRowsCacheValue<PvDerivedCell>;
+static PV_DERIVED_CACHE: LazyLock<DerivedRowsCache<PvDerivedCell>> =
+    LazyLock::new(Default::default);
 
 fn cached_pv_derived(
     snapshot: &ClusterSnapshot,
@@ -267,21 +239,15 @@ fn cached_pv_derived(
     indices: &[usize],
     variant: u64,
 ) -> PvDerivedCacheValue {
-    let key = PvDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.pvs, snapshot.snapshot_version),
         variant,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = PV_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&PV_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&pv_idx| {
@@ -297,14 +263,8 @@ fn cached_pv_derived(
                     storage_class: pv.storage_class.as_deref().unwrap_or("-").to_string(),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = PV_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -456,14 +416,6 @@ pub fn render_pvs(
 
 // ── StorageClass derived cell cache ─────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct StorageClassDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct StorageClassDerivedCell {
     default_label: &'static str,
@@ -472,10 +424,9 @@ struct StorageClassDerivedCell {
     expand: &'static str,
 }
 
-type StorageClassDerivedCacheValue = Arc<Vec<StorageClassDerivedCell>>;
-static STORAGE_CLASS_DERIVED_CACHE: LazyLock<
-    Mutex<Option<(StorageClassDerivedCacheKey, StorageClassDerivedCacheValue)>>,
-> = LazyLock::new(|| Mutex::new(None));
+type StorageClassDerivedCacheValue = DerivedRowsCacheValue<StorageClassDerivedCell>;
+static STORAGE_CLASS_DERIVED_CACHE: LazyLock<DerivedRowsCache<StorageClassDerivedCell>> =
+    LazyLock::new(Default::default);
 
 fn cached_storage_class_derived(
     snapshot: &ClusterSnapshot,
@@ -483,21 +434,15 @@ fn cached_storage_class_derived(
     indices: &[usize],
     variant: u64,
 ) -> StorageClassDerivedCacheValue {
-    let key = StorageClassDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.storage_classes, snapshot.snapshot_version),
         variant,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = STORAGE_CLASS_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&STORAGE_CLASS_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&sc_idx| {
@@ -513,14 +458,8 @@ fn cached_storage_class_derived(
                     expand: if sc.allow_volume_expansion { "✓" } else { "" },
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = STORAGE_CLASS_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 #[allow(clippy::too_many_arguments)]

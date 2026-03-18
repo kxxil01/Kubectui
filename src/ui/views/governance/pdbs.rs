@@ -1,9 +1,6 @@
 //! PodDisruptionBudgets list rendering.
 
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
     layout::{Constraint, Margin, Rect},
@@ -22,7 +19,10 @@ use crate::{
     ui::{
         bookmarked_name_cell,
         components::{content_block, default_theme},
-        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
+        filter_cache::{
+            DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+            cached_filter_indices_with_variant, data_fingerprint,
+        },
         format_age, format_small_int, render_centered_message, responsive_table_widths,
         sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_pdb_indices,
@@ -32,14 +32,6 @@ use crate::{
 
 // ── PDB derived cell cache ──────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct PdbDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct PdbDerivedCell {
     policy: String,
@@ -48,9 +40,9 @@ struct PdbDerivedCell {
     age: String,
 }
 
-type PdbDerivedCacheValue = Arc<Vec<PdbDerivedCell>>;
-static PDB_DERIVED_CACHE: LazyLock<Mutex<Option<(PdbDerivedCacheKey, PdbDerivedCacheValue)>>> =
-    LazyLock::new(|| Mutex::new(None));
+type PdbDerivedCacheValue = DerivedRowsCacheValue<PdbDerivedCell>;
+static PDB_DERIVED_CACHE: LazyLock<DerivedRowsCache<PdbDerivedCell>> =
+    LazyLock::new(Default::default);
 
 fn cached_pdb_derived(
     snapshot: &ClusterSnapshot,
@@ -58,7 +50,7 @@ fn cached_pdb_derived(
     indices: &[usize],
     variant: u64,
 ) -> PdbDerivedCacheValue {
-    let key = PdbDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(
@@ -66,16 +58,10 @@ fn cached_pdb_derived(
             snapshot.snapshot_version,
         ),
         variant,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = PDB_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&PDB_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&pdb_idx| {
@@ -91,14 +77,8 @@ fn cached_pdb_derived(
                     age: format_age(pdb.age),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = PDB_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
