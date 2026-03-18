@@ -1,9 +1,6 @@
 //! HorizontalPodAutoscaler list view.
 
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
     layout::{Constraint, Margin, Rect},
@@ -22,20 +19,16 @@ use crate::{
     ui::{
         bookmarked_name_cell,
         components::{content_block, default_theme},
-        filter_cache::{cached_filter_indices, data_fingerprint},
+        filter_cache::{
+            DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+            cached_filter_indices, data_fingerprint,
+        },
         format_small_int, render_centered_message, table_viewport_rows, table_window,
         views::filtering::filtered_hpa_indices,
     },
 };
 
 // ── HPA derived cell cache ──────────────────────────────────────────
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct HpaDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-}
 
 #[derive(Debug, Clone)]
 struct HpaDerivedCell {
@@ -44,29 +37,24 @@ struct HpaDerivedCell {
     replicas: String,
 }
 
-type HpaDerivedCacheValue = Arc<Vec<HpaDerivedCell>>;
-static HPA_DERIVED_CACHE: LazyLock<Mutex<Option<(HpaDerivedCacheKey, HpaDerivedCacheValue)>>> =
-    LazyLock::new(|| Mutex::new(None));
+type HpaDerivedCacheValue = DerivedRowsCacheValue<HpaDerivedCell>;
+static HPA_DERIVED_CACHE: LazyLock<DerivedRowsCache<HpaDerivedCell>> =
+    LazyLock::new(Default::default);
 
 fn cached_hpa_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
     indices: &[usize],
 ) -> HpaDerivedCacheValue {
-    let key = HpaDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.hpas, snapshot.snapshot_version),
+        variant: 0,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = HPA_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&HPA_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&hpa_idx| {
@@ -77,14 +65,8 @@ fn cached_hpa_derived(
                     replicas: format!("{}/{}", hpa.current_replicas, hpa.desired_replicas),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = HPA_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 pub fn render_hpas(

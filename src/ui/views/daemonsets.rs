@@ -1,9 +1,6 @@
 //! DaemonSets list rendering.
 
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
     layout::{Constraint, Margin, Rect},
@@ -22,7 +19,10 @@ use crate::{
     ui::{
         bookmarked_name_cell,
         components::{content_block, default_theme},
-        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
+        filter_cache::{
+            DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+            cached_filter_indices_with_variant, data_fingerprint,
+        },
         format_age, format_image, format_small_int, render_centered_message,
         responsive_table_widths, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_daemonset_indices,
@@ -30,24 +30,15 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct DaemonSetDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct DaemonSetDerivedCell {
     image: String,
     age: String,
 }
 
-type DaemonSetDerivedCacheValue = Arc<Vec<DaemonSetDerivedCell>>;
-static DAEMONSET_DERIVED_CACHE: LazyLock<
-    Mutex<Option<(DaemonSetDerivedCacheKey, DaemonSetDerivedCacheValue)>>,
-> = LazyLock::new(|| Mutex::new(None));
+type DaemonSetDerivedCacheValue = DerivedRowsCacheValue<DaemonSetDerivedCell>;
+static DAEMONSET_DERIVED_CACHE: LazyLock<DerivedRowsCache<DaemonSetDerivedCell>> =
+    LazyLock::new(Default::default);
 
 /// Renders the DaemonSets table with stateful selection and scrollbar.
 #[allow(clippy::too_many_arguments)]
@@ -220,21 +211,15 @@ fn cached_daemonset_derived(
     indices: &[usize],
     variant: u64,
 ) -> DaemonSetDerivedCacheValue {
-    let key = DaemonSetDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.daemonsets, cluster.snapshot_version),
         variant,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = DAEMONSET_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&DAEMONSET_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&ds_idx| {
@@ -244,14 +229,8 @@ fn cached_daemonset_derived(
                     age: format_age(ds.age),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = DAEMONSET_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 use crate::ui::readiness_style;
