@@ -2,12 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use chrono::{DateTime, Local, Utc};
-
 use crate::app::{DetailMetadata, ResourceRef};
 use crate::cronjob::CRONJOB_NEXT_RUN_TIMEZONE_FALLBACK;
 use crate::k8s::dtos::FluxResourceInfo;
 use crate::state::ClusterSnapshot;
+use crate::time::{AppTimestamp, format_local, format_rfc3339, format_utc};
 
 fn find_flux_resource<'a>(
     snapshot: &'a ClusterSnapshot,
@@ -22,14 +21,9 @@ fn find_flux_resource<'a>(
         .find(|f| f.name == name && f.namespace == *namespace && f.group == group && f.kind == kind)
 }
 
-fn format_detail_time(ts: Option<DateTime<Utc>>) -> String {
-    ts.map(|value| {
-        value
-            .with_timezone(&Local)
-            .format("%Y-%m-%d %H:%M:%S")
-            .to_string()
-    })
-    .unwrap_or_else(|| "N/A".to_string())
+fn format_detail_time(ts: Option<AppTimestamp>) -> String {
+    ts.map(|value| format_local(value, "%Y-%m-%d %H:%M:%S"))
+        .unwrap_or_else(|| "N/A".to_string())
 }
 
 fn cronjob_timezone_label(timezone: Option<&str>) -> String {
@@ -75,9 +69,7 @@ pub fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef)
                     status: Some(pod.status.clone()),
                     node: pod.node.clone(),
                     ip: pod.pod_ip.clone(),
-                    created: pod
-                        .created_at
-                        .map(|ts: chrono::DateTime<chrono::Utc>| ts.to_rfc3339()),
+                    created: pod.created_at.map(format_rfc3339),
                     labels: pod.labels.clone(),
                     annotations: pod.annotations.clone(),
                     owner_references: pod.owner_references.clone(),
@@ -475,9 +467,7 @@ pub fn metadata_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef)
                     name: name.clone(),
                     namespace: namespace.clone(),
                     status: Some(flux.status.clone()),
-                    created: flux
-                        .created_at
-                        .map(|ts: chrono::DateTime<chrono::Utc>| ts.to_rfc3339()),
+                    created: flux.created_at.map(format_rfc3339),
                     flux_reconcile_enabled: !flux.suspended,
                     ..DetailMetadata::default()
                 }
@@ -976,7 +966,7 @@ pub fn sections_for_resource(snapshot: &ClusterSnapshot, resource: &ResourceRef)
             .map(|r| {
                 let updated = r
                     .updated
-                    .map(|ts| ts.format("%Y-%m-%d %H:%M:%S").to_string())
+                    .map(|ts| format_utc(ts, "%Y-%m-%d %H:%M:%S"))
                     .unwrap_or_else(|| "-".to_string());
                 vec![
                     "HELM RELEASE".to_string(),
@@ -1026,7 +1016,7 @@ fn flux_detail_sections(flux: &FluxResourceInfo) -> Vec<String> {
     if let Some(ts) = flux.last_reconcile_time {
         lines.push(format!(
             "last reconcile: {}",
-            ts.format("%Y-%m-%d %H:%M:%S UTC")
+            format_utc(ts, "%Y-%m-%d %H:%M:%S UTC")
         ));
     }
     if flux.suspended {
@@ -1085,7 +1075,7 @@ fn flux_detail_sections(flux: &FluxResourceInfo) -> Vec<String> {
         for cond in &flux.conditions {
             let ts = cond
                 .timestamp
-                .map(|t| t.format("%H:%M:%S").to_string())
+                .map(|t| format_utc(t, "%H:%M:%S"))
                 .unwrap_or_else(|| "-".to_string());
             let reason = cond.reason.as_deref().unwrap_or("-");
             let msg = cond.message.as_deref().unwrap_or("");

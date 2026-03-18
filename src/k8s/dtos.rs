@@ -2,7 +2,7 @@
 
 use std::{collections::BTreeMap, time::Duration};
 
-use chrono::{DateTime, Utc};
+use crate::time::AppTimestamp;
 use serde::{Deserialize, Serialize};
 
 /// Lightweight node view used by state management and rendering.
@@ -15,7 +15,7 @@ pub struct NodeInfo {
     pub role: String,
     pub cpu_allocatable: Option<String>,
     pub memory_allocatable: Option<String>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
     pub memory_pressure: bool,
     pub disk_pressure: bool,
     pub pid_pressure: bool,
@@ -40,7 +40,7 @@ pub struct PodInfo {
     pub node: Option<String>,
     pub pod_ip: Option<String>,
     pub restarts: i32,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
     pub labels: Vec<(String, String)>,
     pub annotations: Vec<(String, String)>,
     pub owner_references: Vec<OwnerRefInfo>,
@@ -60,7 +60,7 @@ pub struct ServiceInfo {
     pub cluster_ip: Option<String>,
     pub ports: Vec<String>,
     pub selector: std::collections::BTreeMap<String, String>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
     pub age: Option<Duration>,
 }
 
@@ -73,7 +73,7 @@ pub struct DeploymentInfo {
     pub ready_replicas: i32,
     pub available_replicas: i32,
     pub updated_replicas: i32,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
     pub ready: String,
     pub age: Option<Duration>,
     pub image: Option<String>,
@@ -90,7 +90,7 @@ pub struct StatefulSetInfo {
     pub pod_management_policy: String,
     pub image: Option<String>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight DaemonSet view used by list and detail pages.
@@ -107,7 +107,7 @@ pub struct DaemonSetInfo {
     pub status_message: String,
     pub image: Option<String>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Shared RBAC policy rule payload used by Role and ClusterRole DTOs.
@@ -129,7 +129,7 @@ pub struct ServiceAccountInfo {
     pub image_pull_secrets_count: usize,
     pub automount_service_account_token: Option<bool>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight Role view used by list and detail pages.
@@ -139,7 +139,7 @@ pub struct RoleInfo {
     pub namespace: String,
     pub rules: Vec<RbacRule>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Subject entry used by RoleBinding and ClusterRoleBinding DTOs.
@@ -160,7 +160,7 @@ pub struct RoleBindingInfo {
     pub role_ref_name: String,
     pub subjects: Vec<RoleBindingSubject>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight ClusterRole view used by list and detail pages.
@@ -169,7 +169,7 @@ pub struct ClusterRoleInfo {
     pub name: String,
     pub rules: Vec<RbacRule>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight ClusterRoleBinding view used by list and detail pages.
@@ -180,7 +180,7 @@ pub struct ClusterRoleBindingInfo {
     pub role_ref_name: String,
     pub subjects: Vec<RoleBindingSubject>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight ReplicaSet view used by list and detail pages.
@@ -193,7 +193,7 @@ pub struct ReplicaSetInfo {
     pub available: i32,
     pub image: Option<String>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
     pub owner_references: Vec<OwnerRefInfo>,
 }
 
@@ -207,7 +207,7 @@ pub struct ReplicationControllerInfo {
     pub available: i32,
     pub image: Option<String>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight Job view used by list and detail pages.
@@ -224,7 +224,7 @@ pub struct JobInfo {
     pub active_pods: i32,
     pub failed_pods: i32,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
     pub owner_references: Vec<OwnerRefInfo>,
 }
 
@@ -235,13 +235,13 @@ pub struct CronJobInfo {
     pub namespace: String,
     pub schedule: String,
     pub timezone: Option<String>,
-    pub last_schedule_time: Option<DateTime<Utc>>,
-    pub next_schedule_time: Option<DateTime<Utc>>,
-    pub last_successful_time: Option<DateTime<Utc>>,
+    pub last_schedule_time: Option<AppTimestamp>,
+    pub next_schedule_time: Option<AppTimestamp>,
+    pub last_successful_time: Option<AppTimestamp>,
     pub suspend: bool,
     pub active_jobs: i32,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight ResourceQuota view used by governance lists and detail sections.
@@ -253,7 +253,7 @@ pub struct ResourceQuotaInfo {
     pub used: BTreeMap<String, String>,
     pub percent_used: BTreeMap<String, f64>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight LimitRange view used by governance lists and detail sections.
@@ -263,7 +263,7 @@ pub struct LimitRangeInfo {
     pub namespace: String,
     pub limits: Vec<LimitSpec>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Flattened limit item from LimitRange spec.
@@ -289,7 +289,7 @@ pub struct PodDisruptionBudgetInfo {
     pub disruptions_allowed: i32,
     pub expected_pods: i32,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// CustomResourceDefinition metadata for extension browsing.
@@ -309,7 +309,7 @@ pub struct CustomResourceDefinitionInfo {
 pub struct CustomResourceInfo {
     pub name: String,
     pub namespace: Option<String>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
     pub age: Option<Duration>,
 }
 
@@ -512,7 +512,7 @@ pub struct EndpointInfo {
     pub addresses: Vec<String>,
     pub ports: Vec<String>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight Ingress view.
@@ -526,7 +526,7 @@ pub struct IngressInfo {
     pub ports: Vec<String>,
     pub backend_services: Vec<(String, String)>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight ConfigMap view.
@@ -536,7 +536,7 @@ pub struct ConfigMapInfo {
     pub namespace: String,
     pub data_count: usize,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight Secret view.
@@ -547,7 +547,7 @@ pub struct SecretInfo {
     pub type_: String,
     pub data_count: usize,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight HorizontalPodAutoscaler view.
@@ -561,7 +561,7 @@ pub struct HpaInfo {
     pub current_replicas: i32,
     pub desired_replicas: i32,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight PersistentVolumeClaim view.
@@ -575,7 +575,7 @@ pub struct PvcInfo {
     pub access_modes: Vec<String>,
     pub storage_class: Option<String>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight PersistentVolume view.
@@ -589,7 +589,7 @@ pub struct PvInfo {
     pub claim: Option<String>,
     pub storage_class: Option<String>,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight StorageClass view.
@@ -602,16 +602,16 @@ pub struct StorageClassInfo {
     pub allow_volume_expansion: bool,
     pub is_default: bool,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight Namespace view.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct NamespaceInfo {
     pub name: String,
     pub status: String,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight Event view.
@@ -624,7 +624,7 @@ pub struct K8sEventInfo {
     pub type_: String,
     pub count: i32,
     pub involved_object: String,
-    pub last_seen: Option<DateTime<Utc>>,
+    pub last_seen: Option<AppTimestamp>,
     pub age: Option<Duration>,
 }
 
@@ -637,7 +637,7 @@ pub struct NetworkPolicyInfo {
     pub ingress_rules: usize,
     pub egress_rules: usize,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight IngressClass view.
@@ -647,7 +647,7 @@ pub struct IngressClassInfo {
     pub controller: String,
     pub is_default: bool,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Lightweight PriorityClass view.
@@ -658,7 +658,7 @@ pub struct PriorityClassInfo {
     pub global_default: bool,
     pub description: String,
     pub age: Option<Duration>,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
 }
 
 /// Helm release info decoded from Kubernetes Secrets (owner=helm).
@@ -671,7 +671,7 @@ pub struct HelmReleaseInfo {
     pub app_version: String,
     pub status: String,
     pub revision: i32,
-    pub updated: Option<DateTime<Utc>>,
+    pub updated: Option<AppTimestamp>,
     pub age: Option<Duration>,
 }
 
@@ -682,7 +682,7 @@ pub struct FluxCondition {
     pub status: String,
     pub reason: Option<String>,
     pub message: Option<String>,
-    pub timestamp: Option<DateTime<Utc>>,
+    pub timestamp: Option<AppTimestamp>,
 }
 
 /// Flux custom resource info for dedicated GitOps views.
@@ -699,10 +699,10 @@ pub struct FluxResourceInfo {
     pub message: Option<String>,
     pub artifact: Option<String>,
     pub suspended: bool,
-    pub created_at: Option<DateTime<Utc>>,
+    pub created_at: Option<AppTimestamp>,
     pub age: Option<Duration>,
     pub conditions: Vec<FluxCondition>,
-    pub last_reconcile_time: Option<DateTime<Utc>>,
+    pub last_reconcile_time: Option<AppTimestamp>,
     pub last_applied_revision: Option<String>,
     pub last_attempted_revision: Option<String>,
     pub observed_generation: Option<i64>,

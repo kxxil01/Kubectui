@@ -2,7 +2,6 @@
 
 use std::{borrow::Cow, collections::HashMap, sync::LazyLock};
 
-use chrono::Utc;
 use ratatui::{
     layout::Rect,
     prelude::{Frame, Line, Style},
@@ -20,6 +19,7 @@ use crate::{
         ClusterSnapshot,
         alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
     },
+    time::now_unix_seconds,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
@@ -119,7 +119,7 @@ pub fn render_nodes(
     let accent_style = Style::default().fg(theme.accent2);
     let dim_style = Style::default().fg(theme.fg_dim);
     let warn_style = theme.badge_warning_style();
-    let now_unix = Utc::now().timestamp();
+    let now_unix = now_unix_seconds();
     let derived = cached_node_derived(snapshot, query, indices.as_ref(), now_unix, cache_variant);
 
     // Build node metrics lookup only when metric columns are visible

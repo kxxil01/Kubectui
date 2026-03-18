@@ -1,11 +1,11 @@
 //! Resource bookmarks persisted per cluster context.
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 use crate::{
     app::{AppView, PodSortState, ResourceRef, WorkloadSortState},
     state::ClusterSnapshot,
+    time::now_unix_seconds,
     ui::contains_ci,
 };
 
@@ -27,7 +27,7 @@ impl BookmarkEntry {
     pub fn new(resource: ResourceRef) -> Self {
         Self {
             resource,
-            bookmarked_at_unix: Utc::now().timestamp(),
+            bookmarked_at_unix: now_unix_seconds(),
         }
     }
 

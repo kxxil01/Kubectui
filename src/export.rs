@@ -2,11 +2,13 @@
 
 use std::path::PathBuf;
 
+use crate::time::format_local;
+
 /// Writes `content` to a log file and returns the path.
 ///
 /// Default location: `$TMPDIR/kubectui-logs-{label}-{timestamp}.log`
 pub fn save_logs_to_file(label: &str, content: &str) -> std::io::Result<PathBuf> {
-    let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+    let timestamp = format_local(crate::time::now(), "%Y%m%d-%H%M%S");
     let safe_label: String = label
         .chars()
         .map(|c| {

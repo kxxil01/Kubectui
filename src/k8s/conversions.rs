@@ -3,7 +3,7 @@
 //! These conversions are used by both the polling path (`client.rs`) and
 //! the watch path (`state/watch.rs`) to produce identical typed DTOs.
 
-use chrono::Utc;
+use crate::time::{AppTimestamp, age_duration_from_timestamp, now};
 use std::collections::BTreeMap;
 
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
@@ -20,7 +20,9 @@ use k8s_openapi::api::rbac::v1::{
 };
 use k8s_openapi::api::scheduling::v1::PriorityClass;
 use k8s_openapi::api::storage::v1::StorageClass;
+use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+use kube::core::PartialObjectMeta;
 
 use crate::cronjob::cronjob_next_schedule_time;
 use crate::k8s::dtos::{
@@ -35,18 +37,36 @@ use crate::state::alerts::{format_mib, format_millicores, parse_mib, parse_milli
 
 /// Common metadata fields extracted from any Kubernetes resource.
 pub(crate) struct CommonMetadata {
-    pub name: String,
-    pub namespace: String,
-    pub created_at: Option<chrono::DateTime<Utc>>,
-    pub age: Option<std::time::Duration>,
+    pub(crate) name: String,
+    pub(crate) namespace: String,
+    pub(crate) created_at: Option<AppTimestamp>,
+    pub(crate) age: Option<std::time::Duration>,
+}
+
+/// Converts a Kubernetes `jiff::Timestamp` into the app's canonical timestamp.
+pub(crate) fn app_timestamp_from_k8s_timestamp(
+    timestamp: &k8s_openapi::jiff::Timestamp,
+) -> Option<AppTimestamp> {
+    Some(*timestamp)
+}
+
+/// Computes a non-negative age from a creation timestamp relative to `now`.
+pub(crate) fn age_from_created_at(
+    created_at: Option<AppTimestamp>,
+    now: AppTimestamp,
+) -> Option<std::time::Duration> {
+    age_duration_from_timestamp(created_at, now)
 }
 
 /// Extracts standard metadata fields shared by all Kubernetes resources.
 pub(crate) fn extract_common_metadata(
     meta: &k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta,
 ) -> CommonMetadata {
-    let now = Utc::now();
-    let created_at = meta.creation_timestamp.as_ref().map(|ts| ts.0);
+    let now = now();
+    let created_at = meta
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
     CommonMetadata {
         name: meta.name.clone().unwrap_or_else(|| "<unknown>".to_string()),
         namespace: meta
@@ -54,7 +74,7 @@ pub(crate) fn extract_common_metadata(
             .clone()
             .unwrap_or_else(|| "default".to_string()),
         created_at,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: age_from_created_at(created_at, now),
     }
 }
 
@@ -142,7 +162,11 @@ pub fn pod_to_info(pod: Pod) -> PodInfo {
         node: pod.spec.as_ref().and_then(|spec| spec.node_name.clone()),
         pod_ip: pod.status.as_ref().and_then(|status| status.pod_ip.clone()),
         restarts,
-        created_at: pod.metadata.creation_timestamp.as_ref().map(|ts| ts.0),
+        created_at: pod
+            .metadata
+            .creation_timestamp
+            .as_ref()
+            .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0)),
         labels: pod
             .metadata
             .labels
@@ -176,7 +200,7 @@ pub fn pod_to_info(pod: Pod) -> PodInfo {
 
 /// Converts a raw Kubernetes `Deployment` into a [`DeploymentInfo`] DTO.
 pub fn deployment_to_info(dep: Deployment) -> DeploymentInfo {
-    let now = Utc::now();
+    let now = now();
     let desired_replicas = dep.spec.as_ref().and_then(|s| s.replicas).unwrap_or(1);
     let ready_replicas = dep
         .status
@@ -193,7 +217,11 @@ pub fn deployment_to_info(dep: Deployment) -> DeploymentInfo {
         .as_ref()
         .and_then(|s| s.updated_replicas)
         .unwrap_or(0);
-    let created_at = dep.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let created_at = dep
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
     let image = extract_image_from_pod_spec(
         dep.spec
             .as_ref()
@@ -212,17 +240,21 @@ pub fn deployment_to_info(dep: Deployment) -> DeploymentInfo {
         updated_replicas,
         created_at,
         ready: format!("{ready_replicas}/{desired_replicas}"),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: age_from_created_at(created_at, now),
         image,
     }
 }
 
 /// Converts a raw Kubernetes `ReplicaSet` into a [`ReplicaSetInfo`] DTO.
 pub fn replicaset_to_info(rs: ReplicaSet) -> ReplicaSetInfo {
-    let now = Utc::now();
+    let now = now();
     let spec = rs.spec.as_ref();
     let status = rs.status.as_ref();
-    let created_at = rs.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let created_at = rs
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
 
     ReplicaSetInfo {
         name: rs.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -237,7 +269,7 @@ pub fn replicaset_to_info(rs: ReplicaSet) -> ReplicaSetInfo {
             spec.and_then(|s| s.template.as_ref())
                 .and_then(|t| t.spec.as_ref()),
         ),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: age_from_created_at(created_at, now),
         created_at,
         owner_references: rs
             .metadata
@@ -255,10 +287,14 @@ pub fn replicaset_to_info(rs: ReplicaSet) -> ReplicaSetInfo {
 
 /// Converts a raw Kubernetes `StatefulSet` into a [`StatefulSetInfo`] DTO.
 pub fn statefulset_to_info(ss: StatefulSet) -> StatefulSetInfo {
-    let now = Utc::now();
+    let now = now();
     let spec = ss.spec.as_ref();
     let status = ss.status.as_ref();
-    let created_at = ss.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let created_at = ss
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
 
     StatefulSetInfo {
         name: ss.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -269,23 +305,27 @@ pub fn statefulset_to_info(ss: StatefulSet) -> StatefulSetInfo {
         desired_replicas: spec.and_then(|s| s.replicas).unwrap_or(1),
         ready_replicas: status.and_then(|s| s.ready_replicas).unwrap_or(0),
         service_name: spec
-            .map(|s| s.service_name.clone())
+            .and_then(|s| s.service_name.clone())
             .unwrap_or_else(|| "<none>".to_string()),
         pod_management_policy: spec
             .and_then(|s| s.pod_management_policy.clone())
             .unwrap_or_else(|| "OrderedReady".to_string()),
         image: extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: age_from_created_at(created_at, now),
         created_at,
     }
 }
 
 /// Converts a raw Kubernetes `DaemonSet` into a [`DaemonSetInfo`] DTO.
 pub fn daemonset_to_info(ds: DaemonSet) -> DaemonSetInfo {
-    let now = Utc::now();
+    let now = now();
     let spec = ds.spec.as_ref();
     let status = ds.status.as_ref();
-    let created_at = ds.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let created_at = ds
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
 
     let desired_count = status.map(|s| s.desired_number_scheduled).unwrap_or(0);
     let ready_count = status.map(|s| s.number_ready).unwrap_or(0);
@@ -327,14 +367,14 @@ pub fn daemonset_to_info(ds: DaemonSet) -> DaemonSetInfo {
             format!("{unavailable_count} pods unavailable")
         },
         image: extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: age_from_created_at(created_at, now),
         created_at,
     }
 }
 
 /// Converts a raw Kubernetes `Service` into a [`ServiceInfo`] DTO.
 pub fn service_to_info(svc: Service) -> ServiceInfo {
-    let now = Utc::now();
+    let now = now();
     let ports = svc
         .spec
         .as_ref()
@@ -359,7 +399,11 @@ pub fn service_to_info(svc: Service) -> ServiceInfo {
         .and_then(|spec| spec.type_.clone())
         .unwrap_or_else(|| "ClusterIP".to_string());
 
-    let created_at = svc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let created_at = svc
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
 
     ServiceInfo {
         name: svc.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -376,7 +420,7 @@ pub fn service_to_info(svc: Service) -> ServiceInfo {
             .and_then(|spec| spec.selector.clone())
             .unwrap_or_default(),
         created_at,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: age_from_created_at(created_at, now),
     }
 }
 
@@ -440,7 +484,11 @@ pub fn node_to_info(node: Node) -> NodeInfo {
         role: node_role(&node),
         cpu_allocatable: alloc.and_then(|a| a.get("cpu").map(|q| q.0.clone())),
         memory_allocatable: alloc.and_then(|a| a.get("memory").map(|q| q.0.clone())),
-        created_at: node.metadata.creation_timestamp.as_ref().map(|ts| ts.0),
+        created_at: node
+            .metadata
+            .creation_timestamp
+            .as_ref()
+            .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0)),
         memory_pressure: node_condition_true(&node, "MemoryPressure"),
         disk_pressure: node_condition_true(&node, "DiskPressure"),
         pid_pressure: node_condition_true(&node, "PIDPressure"),
@@ -455,10 +503,14 @@ pub fn node_to_info(node: Node) -> NodeInfo {
 
 /// Converts a raw Kubernetes `ReplicationController` into a [`ReplicationControllerInfo`] DTO.
 pub fn replication_controller_to_info(rc: ReplicationController) -> ReplicationControllerInfo {
-    let now = Utc::now();
+    let now = now();
     let spec = rc.spec.as_ref();
     let status = rc.status.as_ref();
-    let created_at = rc.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let created_at = rc
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
     ReplicationControllerInfo {
         name: rc.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
         namespace: rc
@@ -472,14 +524,14 @@ pub fn replication_controller_to_info(rc: ReplicationController) -> ReplicationC
             spec.and_then(|s| s.template.as_ref())
                 .and_then(|t| t.spec.as_ref()),
         ),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: age_from_created_at(created_at, now),
         created_at,
     }
 }
 
 /// Converts a raw Kubernetes `Job` into a [`JobInfo`] DTO.
 pub fn job_to_info(job: Job) -> JobInfo {
-    let now = Utc::now();
+    let now = now();
     let spec = job.spec.as_ref();
     let status = job.status.as_ref();
 
@@ -488,11 +540,17 @@ pub fn job_to_info(job: Job) -> JobInfo {
     let active = status.and_then(|s| s.active).unwrap_or(0);
     let desired_completions = spec.and_then(|s| s.completions).unwrap_or(1);
     let parallelism = spec.and_then(|s| s.parallelism).unwrap_or(1);
-    let start_time = status.and_then(|s| s.start_time.as_ref()).map(|ts| ts.0);
+    let start_time = status
+        .and_then(|s| s.start_time.as_ref())
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
     let completion_time = status
         .and_then(|s| s.completion_time.as_ref())
-        .map(|ts| ts.0);
-    let created_at = job.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+    let created_at = job
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
 
     JobInfo {
         name: job.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -508,7 +566,7 @@ pub fn job_to_info(job: Job) -> JobInfo {
         parallelism,
         active_pods: active,
         failed_pods: failed,
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: age_from_created_at(created_at, now),
         created_at,
         owner_references: job
             .metadata
@@ -526,10 +584,14 @@ pub fn job_to_info(job: Job) -> JobInfo {
 
 /// Converts a raw Kubernetes `CronJob` into a [`CronJobInfo`] DTO.
 pub fn cronjob_to_info(cj: CronJob) -> CronJobInfo {
-    let now = Utc::now();
+    let now = now();
     let spec = cj.spec.as_ref();
     let status = cj.status.as_ref();
-    let created_at = cj.metadata.creation_timestamp.as_ref().map(|ts| ts.0);
+    let created_at = cj
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
     let schedule = spec
         .map(|s| s.schedule.clone())
         .unwrap_or_else(|| "<none>".to_string());
@@ -546,7 +608,7 @@ pub fn cronjob_to_info(cj: CronJob) -> CronJobInfo {
         timezone: timezone.clone(),
         last_schedule_time: status
             .and_then(|s| s.last_schedule_time.as_ref())
-            .map(|ts| ts.0),
+            .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0)),
         next_schedule_time: cronjob_next_schedule_time(
             &schedule,
             timezone.as_deref(),
@@ -555,13 +617,13 @@ pub fn cronjob_to_info(cj: CronJob) -> CronJobInfo {
         ),
         last_successful_time: status
             .and_then(|s| s.last_successful_time.as_ref())
-            .map(|ts| ts.0),
+            .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0)),
         suspend,
         active_jobs: status
             .and_then(|s| s.active.as_ref())
             .map(|v| v.len() as i32)
             .unwrap_or(0),
-        age: created_at.and_then(|ts| (now - ts).to_std().ok()),
+        age: age_from_created_at(created_at, now),
         created_at,
     }
 }
@@ -583,14 +645,12 @@ pub(crate) fn format_job_completions(succeeded: i32, parallelism: i32) -> String
 }
 
 pub(crate) fn format_job_duration(
-    start_time: Option<chrono::DateTime<Utc>>,
-    completion_time: Option<chrono::DateTime<Utc>>,
+    start_time: Option<AppTimestamp>,
+    completion_time: Option<AppTimestamp>,
 ) -> Option<String> {
     let start = start_time?;
-    let end = completion_time.unwrap_or_else(Utc::now);
-    let delta = end.signed_duration_since(start);
-
-    let secs = delta.num_seconds().max(0);
+    let end = completion_time.unwrap_or_else(now);
+    let secs = end.as_second().saturating_sub(start.as_second());
     let mins = secs / 60;
     let rem_secs = secs % 60;
 
@@ -913,8 +973,8 @@ pub fn network_policy_to_info(np: NetworkPolicy) -> NetworkPolicyInfo {
         .as_ref()
         .map(|s| {
             s.pod_selector
-                .match_labels
                 .as_ref()
+                .and_then(|selector| selector.match_labels.as_ref())
                 .map(|ml| {
                     ml.iter()
                         .map(|(k, v)| format!("{k}={v}"))
@@ -1089,20 +1149,38 @@ pub fn namespace_to_info(ns: Namespace) -> NamespaceInfo {
     let m = extract_common_metadata(&ns.metadata);
     NamespaceInfo {
         name: m.name,
-        status: ns
-            .status
-            .as_ref()
-            .and_then(|s| s.phase.clone())
-            .unwrap_or_else(|| "Active".to_string()),
+        status: namespace_status_from_metadata(&ns.metadata),
         age: m.age,
         created_at: m.created_at,
+    }
+}
+
+/// Converts namespace metadata into the canonical lightweight [`NamespaceInfo`] DTO.
+pub fn namespace_metadata_to_info(ns: PartialObjectMeta<Namespace>) -> NamespaceInfo {
+    let m = extract_common_metadata(&ns.metadata);
+    NamespaceInfo {
+        name: m.name,
+        status: namespace_status_from_metadata(&ns.metadata),
+        age: m.age,
+        created_at: m.created_at,
+    }
+}
+
+fn namespace_status_from_metadata(meta: &ObjectMeta) -> String {
+    if meta.deletion_timestamp.is_some() {
+        "Terminating".to_string()
+    } else {
+        "Active".to_string()
     }
 }
 
 /// Converts a raw `Event` into a [`K8sEventInfo`] DTO.
 pub fn event_to_info(ev: k8s_openapi::api::core::v1::Event) -> K8sEventInfo {
     let m = extract_common_metadata(&ev.metadata);
-    let last_seen = ev.last_timestamp.as_ref().map(|ts| ts.0);
+    let last_seen = ev
+        .last_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
     let involved = format!(
         "{}/{}",
         ev.involved_object.kind.as_deref().unwrap_or(""),
@@ -1230,6 +1308,7 @@ mod tests {
     };
     use k8s_openapi::apimachinery::pkg::api::resource::Quantity;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+    use kube::core::PartialObjectMeta;
     use std::collections::BTreeMap;
 
     fn minimal_pod(name: &str, namespace: &str) -> Pod {
@@ -1241,6 +1320,37 @@ mod tests {
             },
             ..Default::default()
         }
+    }
+
+    #[test]
+    fn namespace_to_info_uses_metadata_status_rules() {
+        let info = namespace_to_info(Namespace {
+            metadata: ObjectMeta {
+                name: Some("default".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(info.name, "default");
+        assert_eq!(info.status, "Active");
+    }
+
+    #[test]
+    fn namespace_metadata_to_info_marks_terminating_namespaces() {
+        let info = namespace_metadata_to_info(PartialObjectMeta::<Namespace> {
+            metadata: ObjectMeta {
+                name: Some("staging".to_string()),
+                deletion_timestamp: Some(k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+                    now(),
+                )),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        assert_eq!(info.name, "staging");
+        assert_eq!(info.status, "Terminating");
     }
 
     #[test]

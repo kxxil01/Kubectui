@@ -17,6 +17,7 @@ use crate::{
     bookmarks::BookmarkEntry,
     icons::view_icon,
     state::ClusterSnapshot,
+    time::format_utc,
     ui::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
@@ -80,7 +81,7 @@ fn cached_helm_release_derived(
                     revision: rel.revision.to_string(),
                     updated: rel
                         .updated
-                        .map(|ts| ts.format("%Y-%m-%d %H:%M").to_string())
+                        .map(|ts| format_utc(ts, "%Y-%m-%d %H:%M"))
                         .unwrap_or_else(|| "-".to_string()),
                 }
             })
@@ -187,7 +188,7 @@ pub fn render_helm_releases(
                     Cow::Owned(
                         release
                             .updated
-                            .map(|ts| ts.format("%Y-%m-%d %H:%M").to_string())
+                            .map(|ts| format_utc(ts, "%Y-%m-%d %H:%M"))
                             .unwrap_or_else(|| "-".to_string()),
                     ),
                 )

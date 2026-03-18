@@ -22,6 +22,7 @@ use crate::{
             compute_workload_ready_percent, format_mib, format_millicores,
         },
     },
+    time::format_local,
     ui::{components::default_theme, theme::Theme, utilization_style},
 };
 
@@ -227,7 +228,7 @@ fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot
 
     let last_updated = snapshot
         .last_updated
-        .map(|t| t.format("%H:%M:%S").to_string())
+        .map(|t| format_local(t, "%H:%M:%S"))
         .unwrap_or_else(|| "—".to_string());
     let (metrics_label, metrics_style) = if !snapshot.scope_loaded(RefreshScope::METRICS) {
         ("loading...", theme.badge_warning_style())

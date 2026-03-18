@@ -30,6 +30,7 @@ use crate::{
         ClusterSnapshot, ViewLoadState,
         alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
     },
+    time::{AppTimestamp, age_seconds_since, now_unix_seconds},
     ui::{
         components::{content_block, default_theme},
         theme::Theme,
@@ -1051,7 +1052,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .map(|activity| format!(" {activity} •"))
             .unwrap_or_default();
         let staleness = cluster.last_updated.map_or(String::new(), |ts| {
-            let elapsed = (chrono::Utc::now() - ts).num_seconds();
+            let elapsed = age_seconds_since(ts, now_unix_seconds());
             if elapsed > 45 {
                 format!(" {elapsed}s ago •")
             } else {
@@ -1316,7 +1317,7 @@ fn render_pods_widget(
 
     let name_style = ratatui::prelude::Style::default().fg(theme.fg);
     let dim_style = ratatui::prelude::Style::default().fg(theme.fg_dim);
-    let now_unix = chrono::Utc::now().timestamp();
+    let now_unix = now_unix_seconds();
     let derived = cached_pod_derived(cluster, query, indices.as_ref(), now_unix, cache_variant);
 
     // Build pod metrics lookup only when metric columns are visible
@@ -1588,16 +1589,13 @@ pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
         .split(vertical[1])[1]
 }
 
-/// Formats a `DateTime<Utc>` timestamp as a human-readable age relative to `now_unix`.
+/// Formats a timestamp as a human-readable age relative to `now_unix`.
 #[inline]
-pub(crate) fn format_age_from_timestamp(
-    created_at: Option<chrono::DateTime<chrono::Utc>>,
-    now_unix: i64,
-) -> String {
+pub(crate) fn format_age_from_timestamp(created_at: Option<AppTimestamp>, now_unix: i64) -> String {
     let Some(created_at) = created_at else {
         return "-".to_string();
     };
-    let age_secs = now_unix.saturating_sub(created_at.timestamp());
+    let age_secs = age_seconds_since(created_at, now_unix);
     let days = age_secs / 86_400;
     let hours = (age_secs % 86_400) / 3_600;
     let mins = (age_secs % 3_600) / 60;
@@ -1639,6 +1637,8 @@ pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {
 }
 #[cfg(test)]
 mod tests {
+    use jiff::ToSpan;
+
     use super::resource_table_title;
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -1653,6 +1653,7 @@ mod tests {
             RoleInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
         },
         state::{ClusterSnapshot, DataPhase, ViewLoadState},
+        time::{now, now_unix_seconds},
     };
 
     use super::*;
@@ -2564,29 +2565,30 @@ mod tests {
 
     #[test]
     fn pod_derived_cache_separates_sort_variants() {
-        let now = chrono::Utc::now();
+        let now = now();
         let mut snapshot = ClusterSnapshot::default();
         snapshot.pods.push(crate::k8s::dtos::PodInfo {
             name: "a".to_string(),
-            created_at: Some(now - chrono::Duration::minutes(5)),
+            created_at: Some(now.checked_sub(5.minutes()).expect("timestamp in range")),
             ..crate::k8s::dtos::PodInfo::default()
         });
         snapshot.pods.push(crate::k8s::dtos::PodInfo {
             name: "b".to_string(),
-            created_at: Some(now - chrono::Duration::minutes(1)),
+            created_at: Some(now.checked_sub(1.minute()).expect("timestamp in range")),
             ..crate::k8s::dtos::PodInfo::default()
         });
 
-        let first = cached_pod_derived(&snapshot, "", &[0, 1], now.timestamp(), 0);
-        let second = cached_pod_derived(&snapshot, "", &[1, 0], now.timestamp(), 1);
+        let now_unix = now_unix_seconds();
+        let first = cached_pod_derived(&snapshot, "", &[0, 1], now_unix, 0);
+        let second = cached_pod_derived(&snapshot, "", &[1, 0], now_unix, 1);
 
         assert_eq!(
             first[0].age,
-            format_age_from_timestamp(snapshot.pods[0].created_at, now.timestamp())
+            format_age_from_timestamp(snapshot.pods[0].created_at, now_unix)
         );
         assert_eq!(
             second[0].age,
-            format_age_from_timestamp(snapshot.pods[1].created_at, now.timestamp())
+            format_age_from_timestamp(snapshot.pods[1].created_at, now_unix)
         );
     }
 

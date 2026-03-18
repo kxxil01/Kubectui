@@ -38,7 +38,8 @@ use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
     app::{
-        AppAction, AppView, DetailViewState, LogsViewerState, ResourceRef, load_config, save_config,
+        AppAction, AppState, AppView, DetailViewState, LogsViewerState, ResourceRef, load_config,
+        save_config,
     },
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
@@ -54,7 +55,7 @@ use kubectui::{
     secret::{decode_secret_yaml, encode_secret_yaml},
     state::{
         DataPhase, GlobalState, RefreshScope,
-        watch::{WatchManager, WatchSessionKey, WatchUpdate},
+        watch::{WatchManager, WatchSessionKey, WatchUpdate, WatchedResource},
     },
     ui,
     workbench::{WorkbenchTabKey, WorkbenchTabState},
@@ -163,6 +164,23 @@ pub(crate) fn next_request_id(sequence: &mut u64) -> u64 {
     *sequence
 }
 
+async fn start_watch_manager(
+    client: &K8sClient,
+    context_generation: u64,
+    app: &AppState,
+    watch_tx: &tokio::sync::mpsc::Sender<WatchUpdate>,
+) -> WatchManager {
+    let version = client.fetch_cluster_version().await.ok();
+    let watcher_config = kubectui::state::watch::recommended_watch_config(version.as_ref());
+    let mut watch_manager = WatchManager::new(WatchSessionKey {
+        context_generation,
+        cluster_context: app.current_context_name.clone(),
+        namespace: namespace_scope(app.get_namespace()).map(str::to_string),
+    });
+    watch_manager.start_watches(client.get_client(), watch_tx.clone(), watcher_config);
+    watch_manager
+}
+
 /// Runs KubecTUI's event loop.
 async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
     let mut app = load_config();
@@ -250,15 +268,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
     // Watch-backed resource caches — pushes live updates for core resources.
     let (watch_tx, mut watch_rx) = tokio::sync::mpsc::channel::<WatchUpdate>(32);
-    let mut watch_manager = {
-        let mut wm = WatchManager::new(WatchSessionKey {
-            context_generation: refresh_state.context_generation,
-            cluster_context: app.current_context_name.clone(),
-            namespace: namespace_scope(app.get_namespace()).map(str::to_string),
-        });
-        wm.start_watches(client.get_client(), watch_tx.clone());
-        wm
-    };
+    let mut watch_manager =
+        start_watch_manager(&client, refresh_state.context_generation, &app, &watch_tx).await;
 
     // Start with view-scoped refresh (workload-first for core views, secondary deferred).
     let startup_include_flux = app.view().is_fluxcd();
@@ -731,7 +742,52 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
             // Watch-backed resource updates — live cluster changes via watch streams.
             Some(update) = watch_rx.recv() => {
                 if update.context_generation == refresh_state.context_generation {
+                    let watched_resource = update.resource;
                     global_state.apply_watch_update(update);
+                    snapshot_dirty = true;
+                    if watched_resource == WatchedResource::Namespaces {
+                        needs_redraw = true;
+                        app.set_available_namespaces(global_state.namespaces().to_vec());
+                        let previously_selected_namespace = app.get_namespace().to_string();
+                        let namespace_still_exists = previously_selected_namespace == "all"
+                            || global_state
+                                .namespaces()
+                                .iter()
+                                .any(|ns| ns == &previously_selected_namespace);
+                        if !namespace_still_exists {
+                            app.set_namespace("all".to_string());
+                            app.needs_config_save = true;
+                            app.set_error(format!(
+                                "Namespace '{previously_selected_namespace}' not found. Switched to 'all'."
+                            ));
+                            request_refresh(
+                                &refresh_tx,
+                                &mut global_state,
+                                &client,
+                                None,
+                                refresh_options_for_view(
+                                    app.view(),
+                                    app.view().is_fluxcd(),
+                                    false,
+                                ),
+                                &mut refresh_state,
+                                &mut snapshot_dirty,
+                            );
+                            if app.view() == AppView::Events {
+                                request_events_refresh(
+                                    &events_tx,
+                                    &mut global_state,
+                                    &client,
+                                    None,
+                                    refresh_state.context_generation,
+                                    &mut events_state,
+                                    &mut snapshot_dirty,
+                                );
+                            }
+                        } else {
+                            app.clear_error();
+                        }
+                    }
                 }
             }
 
@@ -1436,12 +1492,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                                 &mut snapshot_dirty,
                             );
                             // Restart watches for the new context.
-                            watch_manager = WatchManager::new(WatchSessionKey {
-                                context_generation: refresh_state.context_generation,
-                                cluster_context: app.current_context_name.clone(),
-                                namespace: namespace_scope(app.get_namespace()).map(str::to_string),
-                            });
-                            watch_manager.start_watches(client.get_client(), watch_tx.clone());
+                            watch_manager = start_watch_manager(
+                                &client,
+                                refresh_state.context_generation,
+                                &app,
+                                &watch_tx,
+                            )
+                            .await;
                             if app.view() == AppView::Events {
                                 request_events_refresh(
                                     &events_tx,
@@ -1947,12 +2004,13 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
                         );
                     }
                     // Restart watches for the new namespace.
-                    watch_manager = WatchManager::new(WatchSessionKey {
-                        context_generation: refresh_state.context_generation,
-                        cluster_context: app.current_context_name.clone(),
-                        namespace: namespace_scope(app.get_namespace()).map(str::to_string),
-                    });
-                    watch_manager.start_watches(client.get_client(), watch_tx.clone());
+                    watch_manager = start_watch_manager(
+                        &client,
+                        refresh_state.context_generation,
+                        &app,
+                        &watch_tx,
+                    )
+                    .await;
                 }
                 AppAction::OpenDetail(resource) => {
                     open_detail_for_resource(
@@ -3289,6 +3347,8 @@ async fn run_app(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Resul
 
 #[cfg(test)]
 mod tests {
+    use jiff::ToSpan;
+
     use super::flux_reconcile::{
         flux_observed_state, flux_reconcile_progress_observed, process_flux_reconcile_verifications,
     };
@@ -3299,7 +3359,6 @@ mod tests {
         queued_refresh_requires_two_phase, refresh_options_for_view, selected_extension_crd,
         selected_flux_reconcile_resource, selected_resource, workbench_follow_streams_to_stop,
     };
-    use chrono::{DateTime, Utc};
     use kubectui::{
         action_history::ActionKind,
         app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
@@ -3307,6 +3366,7 @@ mod tests {
         k8s::dtos::{CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo},
         policy::DetailAction,
         state::{ClusterSnapshot, RefreshOptions, RefreshScope},
+        time::{AppTimestamp, now},
         workbench::{PodLogsTabState, WorkbenchTabState},
     };
     use std::time::{Duration, Instant};
@@ -3396,12 +3456,12 @@ mod tests {
         snapshot.nodes = vec![
             NodeInfo {
                 name: "control-plane".to_string(),
-                created_at: Some(Utc::now()),
+                created_at: Some(now()),
                 ..NodeInfo::default()
             },
             NodeInfo {
                 name: "worker-a".to_string(),
-                created_at: Some(Utc::now()),
+                created_at: Some(now()),
                 ..NodeInfo::default()
             },
         ];
@@ -3520,11 +3580,14 @@ mod tests {
 
     #[test]
     fn normalize_recent_events_sorts_and_truncates() {
-        let now = Utc::now();
+        let now = now();
         let events = (0..300)
             .map(|idx| K8sEventInfo {
                 name: format!("event-{idx}"),
-                last_seen: Some(now - chrono::TimeDelta::seconds(i64::from(idx))),
+                last_seen: Some(
+                    now.checked_sub(i64::from(idx).seconds())
+                        .expect("timestamp in range"),
+                ),
                 ..K8sEventInfo::default()
             })
             .collect::<Vec<_>>();
@@ -3742,7 +3805,7 @@ mod tests {
 
     fn test_flux_resource(
         status: &str,
-        last_reconcile_time: Option<DateTime<Utc>>,
+        last_reconcile_time: Option<AppTimestamp>,
     ) -> FluxResourceInfo {
         FluxResourceInfo {
             name: "apps".to_string(),
@@ -3772,11 +3835,15 @@ mod tests {
 
     #[test]
     fn flux_reconcile_progress_detects_last_reconcile_change() {
-        let baseline_time = Utc::now();
+        let baseline_time = now();
         let baseline = flux_observed_state(&test_flux_resource("Ready", Some(baseline_time)));
         let current = test_flux_resource(
             "Ready",
-            Some(baseline_time + chrono::TimeDelta::seconds(30)),
+            Some(
+                baseline_time
+                    .checked_add(30.seconds())
+                    .expect("timestamp in range"),
+            ),
         );
 
         assert!(flux_reconcile_progress_observed(Some(&baseline), &current));
@@ -3793,12 +3860,16 @@ mod tests {
             "Kustomization 'apps'".to_string(),
             "Requesting reconcile".to_string(),
         );
-        let baseline_time = Utc::now();
+        let baseline_time = now();
         let baseline = flux_observed_state(&test_flux_resource("Ready", Some(baseline_time)));
         let snapshot = ClusterSnapshot {
             flux_resources: vec![test_flux_resource(
                 "Ready",
-                Some(baseline_time + chrono::TimeDelta::seconds(30)),
+                Some(
+                    baseline_time
+                        .checked_add(30.seconds())
+                        .expect("timestamp in range"),
+                ),
             )],
             ..ClusterSnapshot::default()
         };
