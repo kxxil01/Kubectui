@@ -1,9 +1,6 @@
 //! Jobs list rendering.
 
-use std::{
-    borrow::Cow,
-    sync::{Arc, LazyLock, Mutex},
-};
+use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
     layout::{Constraint, Margin, Rect},
@@ -22,7 +19,10 @@ use crate::{
     ui::{
         bookmarked_name_cell,
         components::{content_block, default_theme},
-        filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
+        filter_cache::{
+            DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+            cached_filter_indices_with_variant, data_fingerprint,
+        },
         format_age, format_small_int, render_centered_message, responsive_table_widths,
         sort_header_cell, table_viewport_rows, table_window,
         views::filtering::filtered_job_indices,
@@ -30,23 +30,15 @@ use crate::{
     },
 };
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct JobDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    variant: u64,
-}
-
 #[derive(Debug, Clone)]
 struct JobDerivedCell {
     duration: String,
     age: String,
 }
 
-type JobDerivedCacheValue = Arc<Vec<JobDerivedCell>>;
-static JOB_DERIVED_CACHE: LazyLock<Mutex<Option<(JobDerivedCacheKey, JobDerivedCacheValue)>>> =
-    LazyLock::new(|| Mutex::new(None));
+type JobDerivedCacheValue = DerivedRowsCacheValue<JobDerivedCell>;
+static JOB_DERIVED_CACHE: LazyLock<DerivedRowsCache<JobDerivedCell>> =
+    LazyLock::new(Default::default);
 
 #[allow(clippy::too_many_arguments)]
 pub fn render_jobs(
@@ -226,21 +218,15 @@ fn cached_job_derived(
     indices: &[usize],
     variant: u64,
 ) -> JobDerivedCacheValue {
-    let key = JobDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: cluster.snapshot_version,
         data_fingerprint: data_fingerprint(&cluster.jobs, cluster.snapshot_version),
         variant,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = JOB_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&JOB_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&job_idx| {
@@ -250,14 +236,8 @@ fn cached_job_derived(
                     age: format_age(job.age),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = JOB_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 fn status_style(status: &str, theme: &crate::ui::theme::Theme) -> Style {

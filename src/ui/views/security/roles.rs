@@ -30,15 +30,11 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-// ── Role derived cell cache ────────────────────────────────────────
+use crate::ui::filter_cache::{
+    DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
+};
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RoleDerivedCacheKey {
-    query: String,
-    snapshot_version: u64,
-    data_fingerprint: u64,
-    variant: u64,
-}
+// ── Role derived cell cache ────────────────────────────────────────
 
 #[derive(Debug, Clone)]
 struct RoleDerivedCell {
@@ -46,9 +42,9 @@ struct RoleDerivedCell {
     age: String,
 }
 
-type RoleDerivedCacheValue = Arc<Vec<RoleDerivedCell>>;
-static ROLE_DERIVED_CACHE: LazyLock<Mutex<Option<(RoleDerivedCacheKey, RoleDerivedCacheValue)>>> =
-    LazyLock::new(|| Mutex::new(None));
+type RoleDerivedCacheValue = DerivedRowsCacheValue<RoleDerivedCell>;
+static ROLE_DERIVED_CACHE: LazyLock<DerivedRowsCache<RoleDerivedCell>> =
+    LazyLock::new(Default::default);
 
 fn cached_role_derived(
     snapshot: &ClusterSnapshot,
@@ -56,21 +52,15 @@ fn cached_role_derived(
     indices: &[usize],
     variant: u64,
 ) -> RoleDerivedCacheValue {
-    let key = RoleDerivedCacheKey {
+    let key = DerivedRowsCacheKey {
         query: query.to_string(),
         snapshot_version: snapshot.snapshot_version,
         data_fingerprint: data_fingerprint(&snapshot.roles, snapshot.snapshot_version),
         variant,
+        freshness_bucket: 0,
     };
 
-    if let Ok(cache) = ROLE_DERIVED_CACHE.lock()
-        && let Some((cached_key, cached_value)) = cache.as_ref()
-        && *cached_key == key
-    {
-        return cached_value.clone();
-    }
-
-    let built = Arc::new(
+    cached_derived_rows(&ROLE_DERIVED_CACHE, key, || {
         indices
             .iter()
             .map(|&role_idx| {
@@ -80,14 +70,8 @@ fn cached_role_derived(
                     age: format_age(role.age),
                 }
             })
-            .collect::<Vec<_>>(),
-    );
-
-    if let Ok(mut cache) = ROLE_DERIVED_CACHE.lock() {
-        *cache = Some((key, built.clone()));
-    }
-
-    built
+            .collect()
+    })
 }
 
 // ── Role rules detail cache ────────────────────────────────────────

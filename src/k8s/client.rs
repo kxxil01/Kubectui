@@ -21,6 +21,7 @@ use k8s_openapi::api::{
     policy::v1::PodDisruptionBudget,
     rbac::v1::{ClusterRole, ClusterRoleBinding, Role, RoleBinding},
     scheduling::v1::PriorityClass,
+    storage::v1::StorageClass,
 };
 use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
 use kube::{
@@ -67,6 +68,47 @@ pub struct K8sClient {
     cluster_version_cache: Arc<tokio::sync::RwLock<Option<ClusterVersionInfo>>>,
     flux_targets_cache: Arc<tokio::sync::RwLock<Option<Vec<FluxApiTarget>>>>,
     access_review_cache: Arc<tokio::sync::RwLock<HashMap<ResourceAccessCheck, bool>>>,
+}
+
+/// Generates a namespace-scoped fetch method on `K8sClient`.
+macro_rules! fetch_namespaced {
+    ($(#[$meta:meta])* $method:ident, $k8s_type:ty, $info_type:ty, $converter:path, $resource_name:literal) => {
+        $(#[$meta])*
+        pub async fn $method(&self, namespace: Option<&str>) -> Result<Vec<$info_type>> {
+            let api: Api<$k8s_type> = match namespace {
+                Some(ns) => Api::namespaced(self.client.clone(), ns),
+                None => Api::all(self.client.clone()),
+            };
+            let list = list_items_or_empty(&api, &ListParams::default(), || {
+                if let Some(ns) = namespace {
+                    format!(
+                        concat!("failed fetching ", $resource_name, " in namespace '{}'"),
+                        ns
+                    )
+                } else {
+                    concat!("failed fetching ", $resource_name, " across all namespaces")
+                        .to_string()
+                }
+            })
+            .await?;
+            Ok(list.into_iter().map($converter).collect())
+        }
+    };
+}
+
+/// Generates a cluster-scoped fetch method on `K8sClient`.
+macro_rules! fetch_cluster {
+    ($(#[$meta:meta])* $method:ident, $k8s_type:ty, $info_type:ty, $converter:path, $resource_name:literal) => {
+        $(#[$meta])*
+        pub async fn $method(&self) -> Result<Vec<$info_type>> {
+            let api: Api<$k8s_type> = Api::all(self.client.clone());
+            let list = list_items_or_empty(&api, &ListParams::default(), || {
+                concat!("failed fetching ", $resource_name).to_string()
+            })
+            .await?;
+            Ok(list.into_iter().map($converter).collect())
+        }
+    };
 }
 
 impl K8sClient {
@@ -157,22 +199,6 @@ impl K8sClient {
     /// Returns reference to the underlying Kubernetes client.
     pub fn get_client(&self) -> Client {
         self.client.clone()
-    }
-
-    /// Fetches all nodes from the current cluster.
-    pub async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>> {
-        let nodes_api: Api<Node> = Api::all(self.client.clone());
-        let list = list_items_or_empty(&nodes_api, &ListParams::default(), || {
-            "failed fetching Kubernetes nodes".to_string()
-        })
-        .await?;
-
-        let nodes = list
-            .into_iter()
-            .map(crate::k8s::conversions::node_to_info)
-            .collect();
-
-        Ok(nodes)
     }
 
     /// Cordons a node by setting `spec.unschedulable = true`.
@@ -354,585 +380,159 @@ impl K8sClient {
         Ok(sort_namespaces(names))
     }
 
-    /// Fetches pods from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_pods(&self, namespace: Option<&str>) -> Result<Vec<PodInfo>> {
-        let pods_api: Api<Pod> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&pods_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching pods in namespace '{ns}'")
-            } else {
-                "failed fetching pods across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let pods = list
-            .into_iter()
-            .map(crate::k8s::conversions::pod_to_info)
-            .collect();
-
-        Ok(pods)
-    }
-
-    /// Fetches services from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_services(&self, namespace: Option<&str>) -> Result<Vec<ServiceInfo>> {
-        let services_api: Api<Service> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&services_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching services in namespace '{ns}'")
-            } else {
-                "failed fetching services across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let services = list
-            .into_iter()
-            .map(crate::k8s::conversions::service_to_info)
-            .collect();
-
-        Ok(services)
-    }
-
-    /// Fetches deployments from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_deployments(&self, namespace: Option<&str>) -> Result<Vec<DeploymentInfo>> {
-        let deployments_api: Api<Deployment> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&deployments_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching deployments in namespace '{ns}'")
-            } else {
-                "failed fetching deployments across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let deployments = list
-            .into_iter()
-            .map(crate::k8s::conversions::deployment_to_info)
-            .collect();
-
-        Ok(deployments)
-    }
-
-    /// Fetches statefulsets from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_statefulsets(
-        &self,
-        namespace: Option<&str>,
-    ) -> Result<Vec<StatefulSetInfo>> {
-        let statefulsets_api: Api<StatefulSet> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&statefulsets_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching statefulsets in namespace '{ns}'")
-            } else {
-                "failed fetching statefulsets across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let statefulsets = list
-            .into_iter()
-            .map(crate::k8s::conversions::statefulset_to_info)
-            .collect();
-
-        Ok(statefulsets)
-    }
-
-    /// Fetches daemonsets from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_daemonsets(&self, namespace: Option<&str>) -> Result<Vec<DaemonSetInfo>> {
-        let daemonsets_api: Api<DaemonSet> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&daemonsets_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching daemonsets in namespace '{ns}'")
-            } else {
-                "failed fetching daemonsets across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let daemonsets = list
-            .into_iter()
-            .map(crate::k8s::conversions::daemonset_to_info)
-            .collect();
-
-        Ok(daemonsets)
-    }
-
-    /// Fetches replica sets from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_replicasets(&self, namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>> {
-        let api: Api<ReplicaSet> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching replicasets in namespace '{ns}'")
-            } else {
-                "failed fetching replicasets across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let items = list
-            .into_iter()
-            .map(crate::k8s::conversions::replicaset_to_info)
-            .collect();
-
-        Ok(items)
-    }
-
-    /// Fetches replication controllers from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_replication_controllers(
-        &self,
-        namespace: Option<&str>,
-    ) -> Result<Vec<ReplicationControllerInfo>> {
-        let api: Api<ReplicationController> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching replicationcontrollers in namespace '{ns}'")
-            } else {
-                "failed fetching replicationcontrollers across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let items = list
-            .into_iter()
-            .map(crate::k8s::conversions::replication_controller_to_info)
-            .collect();
-
-        Ok(items)
-    }
-
-    /// Fetches service accounts from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_service_accounts(
-        &self,
-        namespace: Option<&str>,
-    ) -> Result<Vec<ServiceAccountInfo>> {
-        let service_accounts_api: Api<ServiceAccount> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&service_accounts_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching serviceaccounts in namespace '{ns}'")
-            } else {
-                "failed fetching serviceaccounts across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let service_accounts = list
-            .into_iter()
-            .map(crate::k8s::conversions::service_account_to_info)
-            .collect();
-
-        Ok(service_accounts)
-    }
-
-    /// Fetches roles from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_roles(&self, namespace: Option<&str>) -> Result<Vec<RoleInfo>> {
-        let roles_api: Api<Role> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&roles_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching roles in namespace '{ns}'")
-            } else {
-                "failed fetching roles across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let roles = list
-            .into_iter()
-            .map(crate::k8s::conversions::role_to_info)
-            .collect();
-
-        Ok(roles)
-    }
-
-    /// Fetches role bindings from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_role_bindings(
-        &self,
-        namespace: Option<&str>,
-    ) -> Result<Vec<RoleBindingInfo>> {
-        let role_bindings_api: Api<RoleBinding> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&role_bindings_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching rolebindings in namespace '{ns}'")
-            } else {
-                "failed fetching rolebindings across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let role_bindings = list
-            .into_iter()
-            .map(crate::k8s::conversions::role_binding_to_info)
-            .collect();
-
-        Ok(role_bindings)
-    }
-
-    /// Fetches cluster roles (cluster-wide only).
-    pub async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>> {
-        let cluster_roles_api: Api<ClusterRole> = Api::all(self.client.clone());
-
-        let list = list_items_or_empty(&cluster_roles_api, &ListParams::default(), || {
-            "failed fetching clusterroles".to_string()
-        })
-        .await?;
-
-        let cluster_roles = list
-            .into_iter()
-            .map(crate::k8s::conversions::cluster_role_to_info)
-            .collect();
-
-        Ok(cluster_roles)
-    }
-
-    /// Fetches cluster role bindings (cluster-wide only).
-    pub async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>> {
-        let cluster_role_bindings_api: Api<ClusterRoleBinding> = Api::all(self.client.clone());
-
-        let list = list_items_or_empty(&cluster_role_bindings_api, &ListParams::default(), || {
-            "failed fetching clusterrolebindings".to_string()
-        })
-        .await?;
-
-        let cluster_role_bindings = list
-            .into_iter()
-            .map(crate::k8s::conversions::cluster_role_binding_to_info)
-            .collect();
-
-        Ok(cluster_role_bindings)
-    }
-
-    /// Fetches jobs from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_jobs(&self, namespace: Option<&str>) -> Result<Vec<JobInfo>> {
-        let jobs_api: Api<Job> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&jobs_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching jobs in namespace '{ns}'")
-            } else {
-                "failed fetching jobs across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let jobs = list
-            .into_iter()
-            .map(crate::k8s::conversions::job_to_info)
-            .collect();
-
-        Ok(jobs)
-    }
-
-    /// Fetches cronjobs from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_cronjobs(&self, namespace: Option<&str>) -> Result<Vec<CronJobInfo>> {
-        let cronjobs_api: Api<CronJob> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&cronjobs_api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching cronjobs in namespace '{ns}'")
-            } else {
-                "failed fetching cronjobs across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let cronjobs = list
-            .into_iter()
-            .map(crate::k8s::conversions::cronjob_to_info)
-            .collect();
-
-        Ok(cronjobs)
-    }
-
-    /// Fetches resource quotas from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_resource_quotas(
-        &self,
-        namespace: Option<&str>,
-    ) -> Result<Vec<ResourceQuotaInfo>> {
-        let api: Api<ResourceQuota> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching resource quotas in namespace '{ns}'")
-            } else {
-                "failed fetching resource quotas across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let quotas = list
-            .into_iter()
-            .map(crate::k8s::conversions::resource_quota_to_info)
-            .collect();
-
-        Ok(quotas)
-    }
-
-    /// Fetches limit ranges from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_limit_ranges(&self, namespace: Option<&str>) -> Result<Vec<LimitRangeInfo>> {
-        let api: Api<LimitRange> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching limit ranges in namespace '{ns}'")
-            } else {
-                "failed fetching limit ranges across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let ranges = list
-            .into_iter()
-            .map(crate::k8s::conversions::limit_range_to_info)
-            .collect();
-
-        Ok(ranges)
-    }
-
-    /// Fetches pod disruption budgets from a namespace or all namespaces when `namespace` is `None`.
-    pub async fn fetch_pod_disruption_budgets(
-        &self,
-        namespace: Option<&str>,
-    ) -> Result<Vec<PodDisruptionBudgetInfo>> {
-        let api: Api<PodDisruptionBudget> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            if let Some(ns) = namespace {
-                format!("failed fetching pod disruption budgets in namespace '{ns}'")
-            } else {
-                "failed fetching pod disruption budgets across all namespaces".to_string()
-            }
-        })
-        .await?;
-
-        let pdbs = list
-            .into_iter()
-            .map(crate::k8s::conversions::pdb_to_info)
-            .collect();
-
-        Ok(pdbs)
-    }
-
-    /// Fetches Endpoints.
-    pub async fn fetch_endpoints(&self, namespace: Option<&str>) -> Result<Vec<EndpointInfo>> {
-        let api: Api<Endpoints> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching endpoints".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::endpoint_to_info)
-            .collect())
-    }
-
-    /// Fetches Ingresses.
-    pub async fn fetch_ingresses(&self, namespace: Option<&str>) -> Result<Vec<IngressInfo>> {
-        let api: Api<Ingress> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching ingresses".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::ingress_to_info)
-            .collect())
-    }
-
-    /// Fetches IngressClasses.
-    pub async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
-        let api: Api<IngressClass> = Api::all(self.client.clone());
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching ingress classes".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::ingress_class_to_info)
-            .collect())
-    }
-
-    /// Fetches NetworkPolicies.
-    pub async fn fetch_network_policies(
-        &self,
-        namespace: Option<&str>,
-    ) -> Result<Vec<NetworkPolicyInfo>> {
-        let api: Api<NetworkPolicy> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching network policies".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::network_policy_to_info)
-            .collect())
-    }
-
-    /// Fetches ConfigMaps.
-    pub async fn fetch_config_maps(&self, namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> {
-        let api: Api<ConfigMap> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching configmaps".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::config_map_to_info)
-            .collect())
-    }
-
-    /// Fetches Secrets.
-    pub async fn fetch_secrets(&self, namespace: Option<&str>) -> Result<Vec<SecretInfo>> {
-        let api: Api<Secret> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching secrets".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::secret_to_info)
-            .collect())
-    }
-
-    /// Fetches HPAs.
-    pub async fn fetch_hpas(&self, namespace: Option<&str>) -> Result<Vec<HpaInfo>> {
-        let api: Api<HorizontalPodAutoscaler> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching HPAs".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::hpa_to_info)
-            .collect())
-    }
-
-    /// Fetches PersistentVolumeClaims.
-    pub async fn fetch_pvcs(&self, namespace: Option<&str>) -> Result<Vec<PvcInfo>> {
-        let api: Api<PersistentVolumeClaim> = match namespace {
-            Some(ns) => Api::namespaced(self.client.clone(), ns),
-            None => Api::all(self.client.clone()),
-        };
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching PVCs".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::pvc_to_info)
-            .collect())
-    }
-
-    /// Fetches PersistentVolumes.
-    pub async fn fetch_pvs(&self) -> Result<Vec<PvInfo>> {
-        let api: Api<PersistentVolume> = Api::all(self.client.clone());
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching PVs".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::pv_to_info)
-            .collect())
-    }
-
-    /// Fetches StorageClasses.
-    pub async fn fetch_storage_classes(&self) -> Result<Vec<StorageClassInfo>> {
-        use k8s_openapi::api::storage::v1::StorageClass;
-        let api: Api<StorageClass> = Api::all(self.client.clone());
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching storage classes".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::storage_class_to_info)
-            .collect())
-    }
-
-    /// Fetches Namespaces as NamespaceInfo.
-    pub async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
-        let api: Api<Namespace> = Api::all(self.client.clone());
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching namespaces".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::namespace_to_info)
-            .collect())
-    }
+    // ── Namespace-scoped resources ──────────────────────────────────
+    fetch_namespaced!(
+        /// Fetches pods from a namespace or all namespaces.
+        fetch_pods, Pod, PodInfo,
+        crate::k8s::conversions::pod_to_info, "pods"
+    );
+    fetch_namespaced!(
+        /// Fetches services from a namespace or all namespaces.
+        fetch_services, Service, ServiceInfo,
+        crate::k8s::conversions::service_to_info, "services"
+    );
+    fetch_namespaced!(
+        /// Fetches deployments from a namespace or all namespaces.
+        fetch_deployments, Deployment, DeploymentInfo,
+        crate::k8s::conversions::deployment_to_info, "deployments"
+    );
+    fetch_namespaced!(
+        /// Fetches statefulsets from a namespace or all namespaces.
+        fetch_statefulsets, StatefulSet, StatefulSetInfo,
+        crate::k8s::conversions::statefulset_to_info, "statefulsets"
+    );
+    fetch_namespaced!(
+        /// Fetches daemonsets from a namespace or all namespaces.
+        fetch_daemonsets, DaemonSet, DaemonSetInfo,
+        crate::k8s::conversions::daemonset_to_info, "daemonsets"
+    );
+    fetch_namespaced!(
+        /// Fetches replica sets from a namespace or all namespaces.
+        fetch_replicasets, ReplicaSet, ReplicaSetInfo,
+        crate::k8s::conversions::replicaset_to_info, "replicasets"
+    );
+    fetch_namespaced!(
+        /// Fetches replication controllers from a namespace or all namespaces.
+        fetch_replication_controllers, ReplicationController, ReplicationControllerInfo,
+        crate::k8s::conversions::replication_controller_to_info, "replicationcontrollers"
+    );
+    fetch_namespaced!(
+        /// Fetches service accounts from a namespace or all namespaces.
+        fetch_service_accounts, ServiceAccount, ServiceAccountInfo,
+        crate::k8s::conversions::service_account_to_info, "serviceaccounts"
+    );
+    fetch_namespaced!(
+        /// Fetches roles from a namespace or all namespaces.
+        fetch_roles, Role, RoleInfo,
+        crate::k8s::conversions::role_to_info, "roles"
+    );
+    fetch_namespaced!(
+        /// Fetches role bindings from a namespace or all namespaces.
+        fetch_role_bindings, RoleBinding, RoleBindingInfo,
+        crate::k8s::conversions::role_binding_to_info, "rolebindings"
+    );
+    fetch_namespaced!(
+        /// Fetches jobs from a namespace or all namespaces.
+        fetch_jobs, Job, JobInfo,
+        crate::k8s::conversions::job_to_info, "jobs"
+    );
+    fetch_namespaced!(
+        /// Fetches cronjobs from a namespace or all namespaces.
+        fetch_cronjobs, CronJob, CronJobInfo,
+        crate::k8s::conversions::cronjob_to_info, "cronjobs"
+    );
+    fetch_namespaced!(
+        /// Fetches resource quotas from a namespace or all namespaces.
+        fetch_resource_quotas, ResourceQuota, ResourceQuotaInfo,
+        crate::k8s::conversions::resource_quota_to_info, "resource quotas"
+    );
+    fetch_namespaced!(
+        /// Fetches limit ranges from a namespace or all namespaces.
+        fetch_limit_ranges, LimitRange, LimitRangeInfo,
+        crate::k8s::conversions::limit_range_to_info, "limit ranges"
+    );
+    fetch_namespaced!(
+        /// Fetches pod disruption budgets from a namespace or all namespaces.
+        fetch_pod_disruption_budgets, PodDisruptionBudget, PodDisruptionBudgetInfo,
+        crate::k8s::conversions::pdb_to_info, "pod disruption budgets"
+    );
+    fetch_namespaced!(
+        /// Fetches Endpoints.
+        fetch_endpoints, Endpoints, EndpointInfo,
+        crate::k8s::conversions::endpoint_to_info, "endpoints"
+    );
+    fetch_namespaced!(
+        /// Fetches Ingresses.
+        fetch_ingresses, Ingress, IngressInfo,
+        crate::k8s::conversions::ingress_to_info, "ingresses"
+    );
+    fetch_namespaced!(
+        /// Fetches NetworkPolicies.
+        fetch_network_policies, NetworkPolicy, NetworkPolicyInfo,
+        crate::k8s::conversions::network_policy_to_info, "network policies"
+    );
+    fetch_namespaced!(
+        /// Fetches ConfigMaps.
+        fetch_config_maps, ConfigMap, ConfigMapInfo,
+        crate::k8s::conversions::config_map_to_info, "configmaps"
+    );
+    fetch_namespaced!(
+        /// Fetches Secrets.
+        fetch_secrets, Secret, SecretInfo,
+        crate::k8s::conversions::secret_to_info, "secrets"
+    );
+    fetch_namespaced!(
+        /// Fetches HPAs.
+        fetch_hpas, HorizontalPodAutoscaler, HpaInfo,
+        crate::k8s::conversions::hpa_to_info, "HPAs"
+    );
+    fetch_namespaced!(
+        /// Fetches PersistentVolumeClaims.
+        fetch_pvcs, PersistentVolumeClaim, PvcInfo,
+        crate::k8s::conversions::pvc_to_info, "PVCs"
+    );
+
+    // ── Cluster-scoped resources ────────────────────────────────────
+    fetch_cluster!(
+        /// Fetches all nodes from the cluster.
+        fetch_nodes, Node, NodeInfo,
+        crate::k8s::conversions::node_to_info, "Kubernetes nodes"
+    );
+    fetch_cluster!(
+        /// Fetches cluster roles.
+        fetch_cluster_roles, ClusterRole, ClusterRoleInfo,
+        crate::k8s::conversions::cluster_role_to_info, "clusterroles"
+    );
+    fetch_cluster!(
+        /// Fetches cluster role bindings.
+        fetch_cluster_role_bindings, ClusterRoleBinding, ClusterRoleBindingInfo,
+        crate::k8s::conversions::cluster_role_binding_to_info, "clusterrolebindings"
+    );
+    fetch_cluster!(
+        /// Fetches IngressClasses.
+        fetch_ingress_classes, IngressClass, IngressClassInfo,
+        crate::k8s::conversions::ingress_class_to_info, "ingress classes"
+    );
+    fetch_cluster!(
+        /// Fetches PersistentVolumes.
+        fetch_pvs, PersistentVolume, PvInfo,
+        crate::k8s::conversions::pv_to_info, "PVs"
+    );
+    fetch_cluster!(
+        /// Fetches StorageClasses.
+        fetch_storage_classes, StorageClass, StorageClassInfo,
+        crate::k8s::conversions::storage_class_to_info, "storage classes"
+    );
+    fetch_cluster!(
+        /// Fetches Namespaces as NamespaceInfo.
+        fetch_namespace_list, Namespace, NamespaceInfo,
+        crate::k8s::conversions::namespace_to_info, "namespaces"
+    );
+    fetch_cluster!(
+        /// Fetches PriorityClasses.
+        fetch_priority_classes, PriorityClass, PriorityClassInfo,
+        crate::k8s::conversions::priority_class_to_info, "priority classes"
+    );
 
     /// Fetches cluster-wide Events.
     pub async fn fetch_events(&self, namespace: Option<&str>) -> Result<Vec<K8sEventInfo>> {
@@ -958,19 +558,6 @@ impl K8sClient {
         events.sort_unstable_by(|a, b| b.last_seen.cmp(&a.last_seen));
         events.truncate(MAX_RECENT_EVENTS_ITEMS);
         Ok(events)
-    }
-
-    /// Fetches PriorityClasses.
-    pub async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
-        let api: Api<PriorityClass> = Api::all(self.client.clone());
-        let list = list_items_or_empty(&api, &ListParams::default(), || {
-            "failed fetching priority classes".to_string()
-        })
-        .await?;
-        Ok(list
-            .into_iter()
-            .map(crate::k8s::conversions::priority_class_to_info)
-            .collect())
     }
 
     /// Fetches CustomResourceDefinitions cluster-wide.
