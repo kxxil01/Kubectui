@@ -20,11 +20,18 @@
 - `contains_ci`: benchmarked first-byte rejection — slower (breaks SIMD vectorization)
 - Render profiler: all views under 0.25ms p50, total render 225ms/1920 frames — no bottleneck
 
+### Features
+
+| PR | What |
+|----|------|
+| #45 | Nerd Font icon system — `src/icons.rs` with 3 modes (Nerd/Emoji/Plain), 48 view + 9 group + 9 tab + 5 status + 4 chrome icons, `Shift+I` runtime toggle, config persistence |
+| #46 | Wire remaining 7 hardcoded emojis through icon system — zero hardcoded emojis in UI |
+
 ---
 
-## Remaining Refactoring
+## Remaining Opportunities
 
-### `app/mod.rs` (now 2630 lines) — further opportunities
+### `app/mod.rs` (now 2630 lines) — further splits
 - Group 101 `AppAction` variants into sub-enums (WorkbenchAction, NavigationAction, etc.)
 - Extract bookmarks methods (~180 lines) to `app/bookmarks.rs`
 - Extract workbench tab-opening methods (~168 lines) to `app/workbench_tabs.rs`
@@ -33,15 +40,3 @@
 - Extract action dispatch match arms (~1600 lines) to action submodules
 - Extract event loop branches (~1200 lines) to event handler functions
 - Risk: high (must preserve biased select! semantics)
-
----
-
-## Future Features
-
-### Nerd Font Icon System
-Rich resource icons for all 46 views using Nerd Font glyphs (e.g. `󰠰` kubernetes, `󱃲` pod, `󰒍` node).
-- Default: plain text/ASCII (safe for all terminals)
-- Optional: Nerd Font mode toggled via settings (`icon_mode: "nerd"` / `"emoji"` / `"plain"`)
-- Graceful degradation: detect terminal capability or let user choose
-- Reference: k9s, lazydocker, starship patterns
-- Scope: new milestone after refactoring is complete
