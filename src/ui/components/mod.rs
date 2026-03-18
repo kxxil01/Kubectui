@@ -66,6 +66,7 @@ static STATUS_BAR_LINE_CACHE: LazyLock<Mutex<Option<(StatusBarCacheKey, StatusBa
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SidebarCacheKey {
     theme_index: u8,
+    icon_mode: u8,
     active: AppView,
     sidebar_cursor: usize,
     collapsed_mask: u16,
@@ -269,6 +270,7 @@ fn cached_sidebar_lines(
     let counts_hash = hasher.finish();
     let key = SidebarCacheKey {
         theme_index,
+        icon_mode: crate::icons::active_icon_mode() as u8,
         active,
         sidebar_cursor,
         collapsed_mask: collapsed_mask(collapsed),

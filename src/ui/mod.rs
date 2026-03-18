@@ -223,8 +223,11 @@ pub(crate) fn render_table_frame(frame: &mut Frame, area: Rect, tf: TableFrame<'
 }
 
 /// Builds the standard title string for a resource table view.
+///
+/// The `icon` parameter should include its own trailing space (or be empty
+/// for plain mode) — no extra space is inserted between icon and label.
 pub(crate) fn resource_table_title(
-    emoji: &str,
+    icon: &str,
     label: &str,
     total: usize,
     all: usize,
@@ -232,9 +235,9 @@ pub(crate) fn resource_table_title(
     sort_suffix: &str,
 ) -> String {
     if query.is_empty() {
-        format!(" {emoji} {label} ({total}){sort_suffix} ")
+        format!(" {icon}{label} ({total}){sort_suffix} ")
     } else {
-        format!(" {emoji} {label} ({total} of {all}) [/{query}]{sort_suffix}")
+        format!(" {icon}{label} ({total} of {all}) [/{query}]{sort_suffix}")
     }
 }
 
@@ -2634,26 +2637,36 @@ mod tests {
     }
 
     #[test]
-    fn resource_table_title_without_query() {
+    fn resource_table_title_with_icon_no_query() {
+        // Icon strings include their own trailing space
         assert_eq!(
-            resource_table_title("🔌", "Services", 5, 10, "", " [Name ↑]"),
+            resource_table_title("🔌 ", "Services", 5, 10, "", " [Name ↑]"),
             " 🔌 Services (5) [Name ↑] "
         );
     }
 
     #[test]
-    fn resource_table_title_with_query() {
+    fn resource_table_title_with_icon_and_query() {
         assert_eq!(
-            resource_table_title("🔌", "Services", 3, 10, "nginx", " [Name ↑]"),
+            resource_table_title("🔌 ", "Services", 3, 10, "nginx", " [Name ↑]"),
             " 🔌 Services (3 of 10) [/nginx] [Name ↑]"
         );
     }
 
     #[test]
-    fn resource_table_title_no_sort_no_query() {
+    fn resource_table_title_plain_mode_no_icon() {
+        // Plain mode passes "" — no double space before label
         assert_eq!(
-            resource_table_title("🚀", "Deployments", 42, 42, "", ""),
-            " 🚀 Deployments (42) "
+            resource_table_title("", "Deployments", 42, 42, "", ""),
+            " Deployments (42) "
+        );
+    }
+
+    #[test]
+    fn resource_table_title_nerd_icon() {
+        assert_eq!(
+            resource_table_title("󰜟 ", "Deployments", 42, 42, "", ""),
+            " 󰜟 Deployments (42) "
         );
     }
 }

@@ -8,6 +8,8 @@ use ratatui::{
 };
 
 use crate::{
+    app::AppView,
+    icons::view_icon,
     k8s::portforward::TunnelState,
     state::port_forward::TunnelRegistry,
     ui::{components::default_theme, contains_ci},
@@ -61,7 +63,10 @@ pub fn render_port_forwarding(
             ]))
             .alignment(ratatui::layout::Alignment::Center)
             .block(crate::ui::components::content_block(
-                "Port Forwarding",
+                &format!(
+                    "{}Port Forwarding",
+                    view_icon(AppView::PortForwarding).active()
+                ),
                 focused,
             )),
             area,
@@ -115,12 +120,24 @@ pub fn render_port_forwarding(
         Block::default()
             .title(Line::from(if search.is_empty() {
                 vec![
-                    Span::styled(" Port Forwarding ", theme.title_style()),
+                    Span::styled(
+                        format!(
+                            " {}Port Forwarding ",
+                            view_icon(AppView::PortForwarding).active()
+                        ),
+                        theme.title_style(),
+                    ),
                     Span::styled(format!("({}) ", items.len()), theme.muted_style()),
                 ]
             } else {
                 vec![
-                    Span::styled(" Port Forwarding ", theme.title_style()),
+                    Span::styled(
+                        format!(
+                            " {}Port Forwarding ",
+                            view_icon(AppView::PortForwarding).active()
+                        ),
+                        theme.title_style(),
+                    ),
                     Span::styled(
                         format!("({} of {}) ", items.len(), tunnels.len()),
                         theme.muted_style(),
