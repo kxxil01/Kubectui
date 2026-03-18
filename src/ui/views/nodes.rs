@@ -4,13 +4,10 @@ use std::{borrow::Cow, collections::HashMap, sync::LazyLock};
 
 use chrono::Utc;
 use ratatui::{
-    layout::{Margin, Rect},
+    layout::Rect,
     prelude::{Frame, Line, Style},
     text::Span,
-    widgets::{
-        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
-        TableState,
-    },
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -23,13 +20,13 @@ use crate::{
         alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
     },
     ui::{
-        bookmarked_name_cell,
-        components::{content_block, default_theme},
+        TableFrame, bookmarked_name_cell,
+        components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        render_centered_message, responsive_table_widths_vec, sort_header_cell,
+        render_centered_message, render_table_frame, resource_table_title, sort_header_cell,
         table_viewport_rows, table_window, utilization_bar_labeled,
         views::filtering::filtered_node_indices,
         workload_sort_suffix,
@@ -227,46 +224,31 @@ pub fn render_nodes(
         rows.push(Row::new(cells).style(row_style));
     }
 
-    let constraints = crate::columns::visible_constraints(visible_columns);
-    let widths = responsive_table_widths_vec(area.width, &constraints);
-
-    let mut table_state = TableState::default().with_selected(Some(window.selected));
-
     let sort_suffix = workload_sort_suffix(sort);
-    let title = format!(" 🖥  Nodes ({total}){sort_suffix} ");
-    let block = if query.is_empty() {
-        content_block(&title, focused)
-    } else {
-        let all = snapshot.nodes.len();
-        content_block(
-            &format!(" 🖥  Nodes ({total} of {all}) [/{query}]{sort_suffix}"),
+    let title = resource_table_title(
+        "🖥 ",
+        "Nodes",
+        total,
+        snapshot.nodes.len(),
+        query,
+        &sort_suffix,
+    );
+    let widths = crate::columns::visible_constraints(visible_columns);
+
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
             focused,
-        )
-    };
-
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(block)
-        .row_highlight_style(theme.selection_style())
-        .highlight_symbol(theme.highlight_symbol())
-        .highlight_spacing(HighlightSpacing::Always);
-
-    frame.render_stateful_widget(table, area, &mut table_state);
-
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲"))
-        .end_symbol(Some("▼"))
-        .track_symbol(Some("│"))
-        .thumb_symbol("█");
-
-    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(
-        scrollbar,
-        area.inner(Margin {
-            vertical: 1,
-            horizontal: 0,
-        }),
-        &mut scrollbar_state,
+            window,
+            total,
+            selected,
+        },
+        &theme,
     );
 }
 

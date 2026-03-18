@@ -1,13 +1,10 @@
 //! Issue Center view — problem-first cluster diagnostics.
 
 use ratatui::{
-    layout::{Constraint, Margin, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::Span,
-    widgets::{
-        Cell, HighlightSpacing, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table,
-        TableState,
-    },
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -17,8 +14,8 @@ use crate::{
         issues::{compute_issues, filtered_issue_indices},
     },
     ui::{
-        components::{content_block, default_theme},
-        render_centered_message, responsive_table_widths, table_viewport_rows, table_window,
+        TableFrame, components::default_theme, render_centered_message, render_table_frame,
+        table_viewport_rows, table_window,
     },
 };
 
@@ -108,8 +105,6 @@ pub fn render_issues(
         })
         .collect();
 
-    let mut table_state = TableState::default().with_selected(Some(window.selected));
-
     let title = if query.is_empty() {
         if diagnostics_loaded {
             format!(" Issues ({total}) ")
@@ -124,42 +119,28 @@ pub fn render_issues(
             format!(" Issues ({total} of {all}) [/{query}] [partial coverage]")
         }
     };
+    let widths = [
+        Constraint::Length(3),
+        Constraint::Length(20),
+        Constraint::Length(14),
+        Constraint::Min(20),
+        Constraint::Length(16),
+        Constraint::Min(20),
+    ];
 
-    let table = Table::new(
-        rows,
-        responsive_table_widths(
-            area.width,
-            [
-                Constraint::Length(3),
-                Constraint::Length(20),
-                Constraint::Length(14),
-                Constraint::Min(20),
-                Constraint::Length(16),
-                Constraint::Min(20),
-            ],
-        ),
-    )
-    .header(header)
-    .block(content_block(&title, focused))
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-
-    frame.render_stateful_widget(table, area, &mut table_state);
-
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(Some("▲"))
-        .end_symbol(Some("▼"))
-        .track_symbol(Some("│"))
-        .thumb_symbol("█");
-
-    let mut scrollbar_state = ScrollbarState::new(total).position(selected);
-    frame.render_stateful_widget(
-        scrollbar,
-        area.inner(Margin {
-            vertical: 1,
-            horizontal: 0,
-        }),
-        &mut scrollbar_state,
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused,
+            window,
+            total,
+            selected,
+        },
+        &theme,
     );
 }
