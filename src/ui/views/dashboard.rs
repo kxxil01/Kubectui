@@ -263,7 +263,10 @@ fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot
     ];
 
     let block = Block::default()
-        .title(Span::styled(" ⎈ Cluster ", theme.title_style()))
+        .title(Span::styled(
+            format!(" {}Cluster ", crate::icons::chrome_icon("cluster").active()),
+            theme.title_style(),
+        ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(theme.border_active_style())
@@ -411,7 +414,13 @@ fn render_resource_counts(frame: &mut Frame, area: Rect, stats: &DashboardStats,
     ];
 
     let block = Block::default()
-        .title(Span::styled(" 📊 Resources ", theme.title_style()))
+        .title(Span::styled(
+            format!(
+                " {}Resources ",
+                crate::icons::chrome_icon("resources").active()
+            ),
+            theme.title_style(),
+        ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .border_style(theme.border_style())
@@ -726,7 +735,10 @@ fn render_overcommit_governance(
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .title(Span::styled(
-            " ⚖ Commitment & Governance ",
+            format!(
+                " {}Commitment & Governance ",
+                crate::icons::chrome_icon("governance").active()
+            ),
             theme.title_style(),
         ))
         .border_style(Style::default().fg(theme.border))

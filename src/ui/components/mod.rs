@@ -177,11 +177,13 @@ fn cached_header_line(
 
     let title_style = theme.title_style();
     let dim_style = Style::default().fg(theme.fg_dim);
+    let cluster_icon = crate::icons::chrome_icon("cluster").active();
+    let cloud_icon = crate::icons::chrome_icon("cloud").active();
     let mut spans = vec![
-        Span::styled(" ⎈ ", title_style),
+        Span::styled(format!(" {cluster_icon}"), title_style),
         Span::styled(title.to_string(), title_style),
         Span::styled("  │  ", theme.muted_style()),
-        Span::styled("⛅ ", dim_style),
+        Span::styled(cloud_icon.to_string(), dim_style),
         Span::styled(cluster_meta.to_string(), dim_style),
     ];
 

@@ -478,6 +478,39 @@ impl StatusIcons {
     }
 }
 
+// ── UI chrome icons ────────────────────────────────────────────────
+
+/// Returns an icon for UI chrome elements (headers, pickers, dashboard sections).
+pub fn chrome_icon(name: &str) -> Icon {
+    match name {
+        "cluster" => Icon {
+            nerd: "󰠳 ",
+            emoji: "⎈ ",
+            plain: "",
+        },
+        "cloud" => Icon {
+            nerd: "󰅟 ",
+            emoji: "⛅ ",
+            plain: "",
+        },
+        "resources" => Icon {
+            nerd: "󰋗 ",
+            emoji: "📊 ",
+            plain: "",
+        },
+        "governance" => Icon {
+            nerd: "󰳗 ",
+            emoji: "⚖ ",
+            plain: "",
+        },
+        _ => Icon {
+            nerd: "",
+            emoji: "",
+            plain: "",
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
