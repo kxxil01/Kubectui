@@ -188,6 +188,23 @@ pub(crate) struct TableFrame<'a> {
     pub selected: usize,
 }
 
+/// Shared configuration for the common resource table render path.
+pub(crate) struct ResourceTableConfig<'a> {
+    pub snapshot: &'a ClusterSnapshot,
+    pub view: AppView,
+    pub label: &'a str,
+    pub loading_message: &'a str,
+    pub empty_message: &'a str,
+    pub empty_query_message: &'a str,
+    pub query: &'a str,
+    pub focused: bool,
+    pub filtered_total: usize,
+    pub all_total: usize,
+    pub selected_idx: usize,
+    pub widths: &'a [Constraint],
+    pub sort_suffix: &'a str,
+}
+
 /// Renders the shared table frame: selection state, title block, table widget, and scrollbar.
 ///
 /// Views build their own `rows`, `header`, and `widths`, then delegate the identical
@@ -220,6 +237,77 @@ pub(crate) fn render_table_frame(frame: &mut Frame, area: Rect, tf: TableFrame<'
             horizontal: 0,
         }),
         &mut scrollbar_state,
+    );
+}
+
+/// Returns the alternating row style used by standard resource tables.
+#[inline]
+pub(crate) fn striped_row_style(index: usize, theme: &Theme) -> Style {
+    if index.is_multiple_of(2) {
+        Style::default().bg(theme.bg)
+    } else {
+        theme.row_alt_style()
+    }
+}
+
+/// Renders the common resource table path used by workload-style list views.
+pub(crate) fn render_resource_table<'a, FHeader, FRows>(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &Theme,
+    config: ResourceTableConfig<'_>,
+    build_header: FHeader,
+    build_rows: FRows,
+) where
+    FHeader: FnOnce(&Theme) -> Row<'a>,
+    FRows: FnOnce(TableWindow, &Theme) -> Vec<Row<'a>>,
+{
+    if config.filtered_total == 0 {
+        render_centered_message(
+            frame,
+            area,
+            config.snapshot,
+            config.view,
+            config.query,
+            config.label,
+            config.loading_message,
+            config.empty_message,
+            config.empty_query_message,
+            config.focused,
+        );
+        return;
+    }
+
+    let total = config.filtered_total;
+    let selected = config.selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
+    let header = build_header(theme);
+    let rows = build_rows(window, theme);
+    debug_assert_eq!(rows.len(), window.end.saturating_sub(window.start));
+
+    let title = resource_table_title(
+        view_icon(config.view).active(),
+        config.label,
+        total,
+        config.all_total,
+        config.query,
+        config.sort_suffix,
+    );
+
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: config.widths,
+            title: &title,
+            focused: config.focused,
+            window,
+            total,
+            selected,
+        },
+        theme,
     );
 }
 
@@ -545,9 +633,12 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .split(body_root[0])
     };
 
-    let sidebar_counts: Vec<(AppView, Option<usize>)> = {
+    let (sidebar_counts, sidebar_counts_hash): (Vec<(AppView, Option<usize>)>, u64) = {
         use crate::app::SidebarItem;
-        crate::app::sidebar_rows(&app.collapsed_groups)
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = std::hash::DefaultHasher::new();
+        let counts = crate::app::sidebar_rows(&app.collapsed_groups)
             .iter()
             .filter_map(|item| {
                 if let SidebarItem::View(view) = item {
@@ -560,19 +651,25 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     None
                 }
             })
-            .collect()
+            .collect::<Vec<_>>();
+        counts.hash(&mut hasher);
+        (counts, hasher.finish())
     };
 
     {
         let _sidebar_scope = profiling::span_scope("sidebar");
+        let sidebar_data = components::SidebarRenderData {
+            collapsed: &app.collapsed_groups,
+            focus: app.focus,
+            counts_hash: sidebar_counts_hash,
+            counts: &sidebar_counts,
+        };
         components::render_sidebar(
             frame,
             body[0],
             app.view(),
             app.sidebar_cursor,
-            &app.collapsed_groups,
-            app.focus,
-            &sidebar_counts,
+            &sidebar_data,
         );
     }
 

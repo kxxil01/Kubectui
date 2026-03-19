@@ -12,17 +12,15 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
-    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
-        TableFrame, bookmarked_name_cell,
+        ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_small_int, render_centered_message, render_table_frame,
-        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
+        format_age, format_small_int, render_resource_table, sort_header_cell, striped_row_style,
         views::filtering::filtered_pdb_indices,
         workload_sort_suffix,
     },
@@ -103,100 +101,7 @@ pub fn render_pdbs(
 
     let theme = default_theme();
 
-    if indices.is_empty() {
-        render_centered_message(
-            frame,
-            area,
-            cluster,
-            AppView::PodDisruptionBudgets,
-            query,
-            "PodDisruptionBudgets",
-            "Loading pod disruption budgets...",
-            "No pod disruption budgets found",
-            "No pod disruption budgets match the search query",
-            focused,
-        );
-        return;
-    }
-
-    let total = indices.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(area));
-    let header = Row::new([
-        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
-        Cell::from(Span::styled("Namespace", theme.header_style())),
-        Cell::from(Span::styled("Policy", theme.header_style())),
-        Cell::from(Span::styled("Healthy", theme.header_style())),
-        Cell::from(Span::styled("Disruptions", theme.header_style())),
-        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
-    ])
-    .height(1)
-    .style(theme.header_style());
-
     let derived = cached_pdb_derived(cluster, query, &indices, cache_variant);
-
-    let rows: Vec<Row> = indices[window.start..window.end]
-        .iter()
-        .enumerate()
-        .map(|(local_idx, &pdb_idx)| {
-            let idx = window.start + local_idx;
-            let pdb = &cluster.pod_disruption_budgets[pdb_idx];
-            let disrupt_style = disruption_style(pdb.disruptions_allowed, &theme);
-            let row_style = if idx.is_multiple_of(2) {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
-            let (policy, healthy, disruptions, age) = if let Some(cell) = derived.get(idx) {
-                (
-                    Cow::Borrowed(cell.policy.as_str()),
-                    Cow::Borrowed(cell.healthy.as_str()),
-                    Cow::Borrowed(cell.disruptions.as_str()),
-                    Cow::Borrowed(cell.age.as_str()),
-                )
-            } else {
-                (
-                    Cow::Owned(
-                        pdb.min_available
-                            .clone()
-                            .or_else(|| pdb.max_unavailable.clone())
-                            .unwrap_or_else(|| "-".to_string()),
-                    ),
-                    Cow::Owned(format!("{}/{}", pdb.current_healthy, pdb.desired_healthy)),
-                    format_small_int(i64::from(pdb.disruptions_allowed)),
-                    Cow::Owned(format_age(pdb.age)),
-                )
-            };
-            Row::new(vec![
-                bookmarked_name_cell(
-                    &ResourceRef::PodDisruptionBudget(pdb.name.clone(), pdb.namespace.clone()),
-                    bookmarks,
-                    pdb.name.as_str(),
-                    Style::default().fg(theme.fg),
-                    &theme,
-                ),
-                Cell::from(Span::styled(
-                    pdb.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(policy, Style::default().fg(theme.fg_dim))),
-                Cell::from(Span::styled(healthy, Style::default().fg(theme.fg_dim))),
-                Cell::from(Span::styled(disruptions, disrupt_style)),
-                Cell::from(Span::styled(age, theme.inactive_style())),
-            ])
-            .style(row_style)
-        })
-        .collect();
-
-    let sort_suffix = workload_sort_suffix(sort);
-    let title = resource_table_title(
-        view_icon(AppView::PodDisruptionBudgets).active(),
-        "PodDisruptionBudgets",
-        total,
-        cluster.pod_disruption_budgets.len(),
-        query,
-        &sort_suffix,
-    );
     let widths = [
         Constraint::Min(28),
         Constraint::Length(18),
@@ -205,21 +110,90 @@ pub fn render_pdbs(
         Constraint::Length(12),
         Constraint::Length(9),
     ];
-
-    render_table_frame(
+    let sort_suffix = workload_sort_suffix(sort);
+    render_resource_table(
         frame,
         area,
-        TableFrame {
-            rows,
-            header,
-            widths: &widths,
-            title: &title,
-            focused,
-            window,
-            total,
-            selected,
-        },
         &theme,
+        ResourceTableConfig {
+            snapshot: cluster,
+            view: AppView::PodDisruptionBudgets,
+            label: "PodDisruptionBudgets",
+            loading_message: "Loading pod disruption budgets...",
+            empty_message: "No pod disruption budgets found",
+            empty_query_message: "No pod disruption budgets match the search query",
+            query,
+            focused,
+            filtered_total: indices.len(),
+            all_total: cluster.pod_disruption_budgets.len(),
+            selected_idx,
+            widths: &widths,
+            sort_suffix: &sort_suffix,
+        },
+        |theme| {
+            Row::new([
+                sort_header_cell("Name", sort, WorkloadSortColumn::Name, theme, true),
+                Cell::from(Span::styled("Namespace", theme.header_style())),
+                Cell::from(Span::styled("Policy", theme.header_style())),
+                Cell::from(Span::styled("Healthy", theme.header_style())),
+                Cell::from(Span::styled("Disruptions", theme.header_style())),
+                sort_header_cell("Age", sort, WorkloadSortColumn::Age, theme, false),
+            ])
+            .height(1)
+            .style(theme.header_style())
+        },
+        |window, theme| {
+            indices[window.start..window.end]
+                .iter()
+                .enumerate()
+                .map(|(local_idx, &pdb_idx)| {
+                    let idx = window.start + local_idx;
+                    let pdb = &cluster.pod_disruption_budgets[pdb_idx];
+                    let disrupt_style = disruption_style(pdb.disruptions_allowed, theme);
+                    let (policy, healthy, disruptions, age) = if let Some(cell) = derived.get(idx) {
+                        (
+                            Cow::Borrowed(cell.policy.as_str()),
+                            Cow::Borrowed(cell.healthy.as_str()),
+                            Cow::Borrowed(cell.disruptions.as_str()),
+                            Cow::Borrowed(cell.age.as_str()),
+                        )
+                    } else {
+                        (
+                            Cow::Owned(
+                                pdb.min_available
+                                    .clone()
+                                    .or_else(|| pdb.max_unavailable.clone())
+                                    .unwrap_or_else(|| "-".to_string()),
+                            ),
+                            Cow::Owned(format!("{}/{}", pdb.current_healthy, pdb.desired_healthy)),
+                            format_small_int(i64::from(pdb.disruptions_allowed)),
+                            Cow::Owned(format_age(pdb.age)),
+                        )
+                    };
+                    Row::new(vec![
+                        bookmarked_name_cell(
+                            &ResourceRef::PodDisruptionBudget(
+                                pdb.name.clone(),
+                                pdb.namespace.clone(),
+                            ),
+                            bookmarks,
+                            pdb.name.as_str(),
+                            Style::default().fg(theme.fg),
+                            theme,
+                        ),
+                        Cell::from(Span::styled(
+                            pdb.namespace.clone(),
+                            Style::default().fg(theme.fg_dim),
+                        )),
+                        Cell::from(Span::styled(policy, Style::default().fg(theme.fg_dim))),
+                        Cell::from(Span::styled(healthy, Style::default().fg(theme.fg_dim))),
+                        Cell::from(Span::styled(disruptions, disrupt_style)),
+                        Cell::from(Span::styled(age, theme.inactive_style())),
+                    ])
+                    .style(striped_row_style(idx, theme))
+                })
+                .collect()
+        },
     );
 }
 

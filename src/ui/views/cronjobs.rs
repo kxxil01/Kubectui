@@ -15,15 +15,13 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
-    icons::view_icon,
     state::ClusterSnapshot,
     time::{AppTimestamp, format_local},
     ui::{
-        TableFrame, bookmarked_name_cell,
+        ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        format_age, format_small_int, render_centered_message, render_table_frame,
-        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
+        format_age, format_small_int, render_resource_table, sort_header_cell, striped_row_style,
         views::filtering::filtered_cronjob_indices,
         workload_sort_suffix,
     },
@@ -71,109 +69,11 @@ pub fn render_cronjobs(
         cache_variant,
         |q| filtered_cronjob_indices(&cluster.cronjobs, q, sort),
     );
-
-    if indices.is_empty() {
-        render_centered_message(
-            frame,
-            area,
-            cluster,
-            AppView::CronJobs,
-            query,
-            "CronJobs",
-            "Loading cronjobs...",
-            "No cronjobs found",
-            "No cronjobs match the search query",
-            focused,
-        );
-        return;
-    }
-
-    let total = indices.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(area));
-    let header = Row::new([
-        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
-        Cell::from(Span::styled("Namespace", theme.header_style())),
-        Cell::from(Span::styled("Schedule", theme.header_style())),
-        Cell::from(Span::styled("Last Run", theme.header_style())),
-        Cell::from(Span::styled("Next Run", theme.header_style())),
-        Cell::from(Span::styled("Active", theme.header_style())),
-        Cell::from(Span::styled("Suspend", theme.header_style())),
-        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
-    ])
-    .height(1)
-    .style(theme.header_style());
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
     let accent_style = Style::default().fg(theme.accent2);
     let info_style = Style::default().fg(theme.info);
     let derived = cached_cronjob_derived(cluster, query, indices.as_ref(), cache_variant);
-
-    let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
-    for (local_idx, &cj_idx) in indices[window.start..window.end].iter().enumerate() {
-        let idx = window.start + local_idx;
-        let cj = &cluster.cronjobs[cj_idx];
-        let (last_run, next_run, age) = if let Some(cell) = derived.get(idx) {
-            (
-                Cow::Borrowed(cell.last_run.as_str()),
-                Cow::Borrowed(cell.next_run.as_str()),
-                Cow::Borrowed(cell.age.as_str()),
-            )
-        } else {
-            (
-                Cow::Owned(format_time(cj.last_schedule_time)),
-                Cow::Owned(format_time(cj.next_schedule_time)),
-                Cow::Owned(format_age(cj.age)),
-            )
-        };
-        let suspend_style = if cj.suspend {
-            theme.badge_warning_style()
-        } else {
-            theme.badge_success_style()
-        };
-        let row_style = if idx.is_multiple_of(2) {
-            Style::default().bg(theme.bg)
-        } else {
-            theme.row_alt_style()
-        };
-
-        rows.push(
-            Row::new(vec![
-                bookmarked_name_cell(
-                    &ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone()),
-                    bookmarks,
-                    cj.name.as_str(),
-                    name_style,
-                    &theme,
-                ),
-                Cell::from(Span::styled(cj.namespace.as_str(), dim_style)),
-                Cell::from(Span::styled(cj.schedule.as_str(), accent_style)),
-                Cell::from(Span::styled(last_run, dim_style)),
-                Cell::from(Span::styled(next_run, info_style)),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(cj.active_jobs)),
-                    if cj.active_jobs > 0 {
-                        info_style
-                    } else {
-                        theme.inactive_style()
-                    },
-                )),
-                Cell::from(Span::styled(suspend_label(cj.suspend), suspend_style)),
-                Cell::from(Span::styled(age, theme.inactive_style())),
-            ])
-            .style(row_style),
-        );
-    }
-
-    let sort_suffix = workload_sort_suffix(sort);
-    let title = resource_table_title(
-        view_icon(AppView::CronJobs).active(),
-        "CronJobs",
-        total,
-        cluster.cronjobs.len(),
-        query,
-        &sort_suffix,
-    );
     let widths = [
         Constraint::Length(20),
         Constraint::Length(16),
@@ -184,20 +84,93 @@ pub fn render_cronjobs(
         Constraint::Length(10),
         Constraint::Length(9),
     ];
-    render_table_frame(
+    let sort_suffix = workload_sort_suffix(sort);
+    render_resource_table(
         frame,
         area,
-        TableFrame {
-            rows,
-            header,
-            widths: &widths,
-            title: &title,
-            focused,
-            window,
-            total,
-            selected,
-        },
         &theme,
+        ResourceTableConfig {
+            snapshot: cluster,
+            view: AppView::CronJobs,
+            label: "CronJobs",
+            loading_message: "Loading cronjobs...",
+            empty_message: "No cronjobs found",
+            empty_query_message: "No cronjobs match the search query",
+            query,
+            focused,
+            filtered_total: indices.len(),
+            all_total: cluster.cronjobs.len(),
+            selected_idx,
+            widths: &widths,
+            sort_suffix: &sort_suffix,
+        },
+        |theme| {
+            Row::new([
+                sort_header_cell("Name", sort, WorkloadSortColumn::Name, theme, true),
+                Cell::from(Span::styled("Namespace", theme.header_style())),
+                Cell::from(Span::styled("Schedule", theme.header_style())),
+                Cell::from(Span::styled("Last Run", theme.header_style())),
+                Cell::from(Span::styled("Next Run", theme.header_style())),
+                Cell::from(Span::styled("Active", theme.header_style())),
+                Cell::from(Span::styled("Suspend", theme.header_style())),
+                sort_header_cell("Age", sort, WorkloadSortColumn::Age, theme, false),
+            ])
+            .height(1)
+            .style(theme.header_style())
+        },
+        |window, theme| {
+            let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
+            for (local_idx, &cj_idx) in indices[window.start..window.end].iter().enumerate() {
+                let idx = window.start + local_idx;
+                let cj = &cluster.cronjobs[cj_idx];
+                let (last_run, next_run, age) = if let Some(cell) = derived.get(idx) {
+                    (
+                        Cow::Borrowed(cell.last_run.as_str()),
+                        Cow::Borrowed(cell.next_run.as_str()),
+                        Cow::Borrowed(cell.age.as_str()),
+                    )
+                } else {
+                    (
+                        Cow::Owned(format_time(cj.last_schedule_time)),
+                        Cow::Owned(format_time(cj.next_schedule_time)),
+                        Cow::Owned(format_age(cj.age)),
+                    )
+                };
+                let suspend_style = if cj.suspend {
+                    theme.badge_warning_style()
+                } else {
+                    theme.badge_success_style()
+                };
+
+                rows.push(
+                    Row::new(vec![
+                        bookmarked_name_cell(
+                            &ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone()),
+                            bookmarks,
+                            cj.name.as_str(),
+                            name_style,
+                            theme,
+                        ),
+                        Cell::from(Span::styled(cj.namespace.as_str(), dim_style)),
+                        Cell::from(Span::styled(cj.schedule.as_str(), accent_style)),
+                        Cell::from(Span::styled(last_run, dim_style)),
+                        Cell::from(Span::styled(next_run, info_style)),
+                        Cell::from(Span::styled(
+                            format_small_int(i64::from(cj.active_jobs)),
+                            if cj.active_jobs > 0 {
+                                info_style
+                            } else {
+                                theme.inactive_style()
+                            },
+                        )),
+                        Cell::from(Span::styled(suspend_label(cj.suspend), suspend_style)),
+                        Cell::from(Span::styled(age, theme.inactive_style())),
+                    ])
+                    .style(striped_row_style(idx, theme)),
+                );
+            }
+            rows
+        },
     );
 }
 

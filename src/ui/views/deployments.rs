@@ -13,17 +13,16 @@ use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
     columns::ColumnDef,
-    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
-        TableFrame, bookmarked_name_cell,
+        ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_image, format_small_int, render_centered_message, render_table_frame,
-        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
+        format_age, format_image, format_small_int, render_resource_table, sort_header_cell,
+        striped_row_style,
         views::filtering::filtered_deployment_indices,
         workload_sort_suffix,
     },
@@ -65,119 +64,99 @@ pub fn render_deployments(
         |q| filtered_deployment_indices(&snapshot.deployments, q, sort),
     );
 
-    if indices.is_empty() {
-        render_centered_message(
-            frame,
-            area,
-            snapshot,
-            AppView::Deployments,
-            query,
-            "Deployments",
-            "Loading deployments...",
-            "No deployments found",
-            "No deployments match the search query",
-            focused,
-        );
-        return;
-    }
-
-    let total = indices.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(area));
-
-    let header_cells: Vec<Cell> = visible_columns
-        .iter()
-        .map(|col| match col.id {
-            "name" => sort_header_cell(col.label, sort, WorkloadSortColumn::Name, &theme, true),
-            "age" => sort_header_cell(col.label, sort, WorkloadSortColumn::Age, &theme, false),
-            _ => Cell::from(Span::styled(col.label.to_string(), theme.header_style())),
-        })
-        .collect();
-    let header = Row::new(header_cells).height(1).style(theme.header_style());
-
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
     let derived = cached_deployment_derived(snapshot, query, indices.as_ref(), cache_variant);
-
-    let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
-    for (local_idx, &deploy_idx) in indices[window.start..window.end].iter().enumerate() {
-        let idx = window.start + local_idx;
-        let deploy = &snapshot.deployments[deploy_idx];
-        let (age_text, image_text, health) = if let Some(cell) = derived.get(idx) {
-            (
-                Cow::Borrowed(cell.age.as_str()),
-                Cow::Borrowed(cell.image.as_str()),
-                cell.health,
-            )
-        } else {
-            (
-                Cow::Owned(format_age(deploy.age)),
-                Cow::Owned(format_image(deploy.image.as_deref(), 34)),
-                deployment_health_from_ready(&deploy.ready),
-            )
-        };
-        let ready_style = health_style(health, &theme);
-
-        let row_style = if idx.is_multiple_of(2) {
-            Style::default().bg(theme.bg)
-        } else {
-            theme.row_alt_style()
-        };
-
-        let cells: Vec<Cell> = visible_columns
-            .iter()
-            .map(|col| match col.id {
-                "name" => bookmarked_name_cell(
-                    &ResourceRef::Deployment(deploy.name.clone(), deploy.namespace.clone()),
-                    bookmarks,
-                    deploy.name.as_str(),
-                    name_style,
-                    &theme,
-                ),
-                "namespace" => Cell::from(Span::styled(deploy.namespace.as_str(), dim_style)),
-                "ready" => Cell::from(Span::styled(deploy.ready.as_str(), ready_style)),
-                "updated" => Cell::from(Span::styled(
-                    format_small_int(i64::from(deploy.updated_replicas)),
-                    dim_style,
-                )),
-                "available" => Cell::from(Span::styled(
-                    format_small_int(i64::from(deploy.available_replicas)),
-                    dim_style,
-                )),
-                "age" => Cell::from(Span::styled(age_text.to_string(), theme.inactive_style())),
-                "image" => Cell::from(Span::styled(image_text.to_string(), muted_style)),
-                _ => Cell::from(""),
-            })
-            .collect();
-        rows.push(Row::new(cells).style(row_style));
-    }
-
-    let sort_suffix = workload_sort_suffix(sort);
-    let title = resource_table_title(
-        view_icon(AppView::Deployments).active(),
-        "Deployments",
-        total,
-        snapshot.deployments.len(),
-        query,
-        &sort_suffix,
-    );
     let widths = crate::columns::visible_constraints(visible_columns);
+    let sort_suffix = workload_sort_suffix(sort);
 
-    render_table_frame(
+    render_resource_table(
         frame,
         area,
-        TableFrame {
-            rows,
-            header,
-            widths: &widths,
-            title: &title,
-            focused,
-            window,
-            total,
-            selected,
-        },
         &theme,
+        ResourceTableConfig {
+            snapshot,
+            view: AppView::Deployments,
+            label: "Deployments",
+            loading_message: "Loading deployments...",
+            empty_message: "No deployments found",
+            empty_query_message: "No deployments match the search query",
+            query,
+            focused,
+            filtered_total: indices.len(),
+            all_total: snapshot.deployments.len(),
+            selected_idx,
+            widths: &widths,
+            sort_suffix: &sort_suffix,
+        },
+        |theme| {
+            let header_cells: Vec<Cell> = visible_columns
+                .iter()
+                .map(|col| match col.id {
+                    "name" => {
+                        sort_header_cell(col.label, sort, WorkloadSortColumn::Name, theme, true)
+                    }
+                    "age" => {
+                        sort_header_cell(col.label, sort, WorkloadSortColumn::Age, theme, false)
+                    }
+                    _ => Cell::from(Span::styled(col.label.to_string(), theme.header_style())),
+                })
+                .collect();
+            Row::new(header_cells).height(1).style(theme.header_style())
+        },
+        |window, theme| {
+            let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
+            for (local_idx, &deploy_idx) in indices[window.start..window.end].iter().enumerate() {
+                let idx = window.start + local_idx;
+                let deploy = &snapshot.deployments[deploy_idx];
+                let (age_text, image_text, health) = if let Some(cell) = derived.get(idx) {
+                    (
+                        Cow::Borrowed(cell.age.as_str()),
+                        Cow::Borrowed(cell.image.as_str()),
+                        cell.health,
+                    )
+                } else {
+                    (
+                        Cow::Owned(format_age(deploy.age)),
+                        Cow::Owned(format_image(deploy.image.as_deref(), 34)),
+                        deployment_health_from_ready(&deploy.ready),
+                    )
+                };
+                let ready_style = health_style(health, theme);
+                let cells: Vec<Cell> = visible_columns
+                    .iter()
+                    .map(|col| match col.id {
+                        "name" => bookmarked_name_cell(
+                            &ResourceRef::Deployment(deploy.name.clone(), deploy.namespace.clone()),
+                            bookmarks,
+                            deploy.name.as_str(),
+                            name_style,
+                            theme,
+                        ),
+                        "namespace" => {
+                            Cell::from(Span::styled(deploy.namespace.as_str(), dim_style))
+                        }
+                        "ready" => Cell::from(Span::styled(deploy.ready.as_str(), ready_style)),
+                        "updated" => Cell::from(Span::styled(
+                            format_small_int(i64::from(deploy.updated_replicas)),
+                            dim_style,
+                        )),
+                        "available" => Cell::from(Span::styled(
+                            format_small_int(i64::from(deploy.available_replicas)),
+                            dim_style,
+                        )),
+                        "age" => {
+                            Cell::from(Span::styled(age_text.to_string(), theme.inactive_style()))
+                        }
+                        "image" => Cell::from(Span::styled(image_text.to_string(), muted_style)),
+                        _ => Cell::from(""),
+                    })
+                    .collect();
+                rows.push(Row::new(cells).style(striped_row_style(idx, theme)));
+            }
+            rows
+        },
     );
 }
 

@@ -77,41 +77,45 @@ struct SidebarCacheKey {
 
 type SidebarCacheValue = Arc<Vec<Line<'static>>>;
 
+pub struct SidebarRenderData<'a> {
+    pub collapsed: &'a HashSet<NavGroup>,
+    pub focus: crate::app::Focus,
+    pub counts_hash: u64,
+    pub counts: &'a [(AppView, Option<usize>)],
+}
+
 #[derive(Debug, Default)]
 struct SidebarLineCache {
     map: HashMap<SidebarCacheKey, SidebarCacheValue>,
     order: VecDeque<SidebarCacheKey>,
+    last: Option<(SidebarCacheKey, SidebarCacheValue)>,
 }
 
 impl SidebarLineCache {
     fn get(&mut self, key: &SidebarCacheKey) -> Option<SidebarCacheValue> {
+        if let Some((last_key, value)) = self.last.as_ref()
+            && last_key == key
+        {
+            return Some(value.clone());
+        }
+
         let value = self.map.get(key).cloned();
-        if value.is_some() {
-            self.touch(key);
+        if let Some(value) = value.as_ref() {
+            self.last = Some((key.clone(), value.clone()));
         }
         value
     }
 
     fn insert(&mut self, key: SidebarCacheKey, value: SidebarCacheValue) {
+        self.last = Some((key.clone(), value.clone()));
         if self.map.contains_key(&key) {
             self.map.insert(key.clone(), value);
-            self.touch(&key);
             return;
         }
 
         self.map.insert(key.clone(), value);
         self.order.push_back(key);
         self.evict_if_needed();
-    }
-
-    fn touch(&mut self, key: &SidebarCacheKey) {
-        if self.order.back().is_some_and(|k| k == key) {
-            return;
-        }
-        if let Some(pos) = self.order.iter().position(|item| item == key) {
-            self.order.remove(pos);
-            self.order.push_back(key.clone());
-        }
     }
 
     fn evict_if_needed(&mut self) {
@@ -262,26 +266,20 @@ fn cached_sidebar_lines(
     theme_index: u8,
     active: AppView,
     sidebar_cursor: usize,
-    collapsed: &HashSet<NavGroup>,
-    focus: crate::app::Focus,
     theme: &Theme,
-    counts: &[(AppView, Option<usize>)],
+    data: &SidebarRenderData<'_>,
 ) -> SidebarCacheValue {
     use crate::app::{SidebarItem, sidebar_rows};
-    use std::hash::{Hash, Hasher};
 
-    let sidebar_active = focus == crate::app::Focus::Sidebar;
-    let mut hasher = std::hash::DefaultHasher::new();
-    counts.hash(&mut hasher);
-    let counts_hash = hasher.finish();
+    let sidebar_active = data.focus == crate::app::Focus::Sidebar;
     let key = SidebarCacheKey {
         theme_index,
         icon_mode: crate::icons::active_icon_mode() as u8,
         active,
         sidebar_cursor,
-        collapsed_mask: collapsed_mask(collapsed),
+        collapsed_mask: collapsed_mask(data.collapsed),
         sidebar_active,
-        counts_hash,
+        counts_hash: data.counts_hash,
     };
 
     if let Ok(mut cache) = SIDEBAR_LINE_CACHE.lock()
@@ -290,7 +288,7 @@ fn cached_sidebar_lines(
         return value;
     }
 
-    let rows = sidebar_rows(collapsed);
+    let rows = sidebar_rows(data.collapsed);
     let selected_active_style = Style::default()
         .fg(theme.selection_fg)
         .bg(theme.selection_bg)
@@ -312,7 +310,7 @@ fn cached_sidebar_lines(
                 let is_cursor = idx == sidebar_cursor;
                 match item {
                     SidebarItem::Group(group) => {
-                        let is_collapsed = collapsed.contains(group);
+                        let is_collapsed = data.collapsed.contains(group);
                         let line = group.sidebar_text(is_collapsed);
                         if is_cursor {
                             Line::from(vec![Span::styled(line, selected_active_style)])
@@ -323,14 +321,15 @@ fn cached_sidebar_lines(
                     SidebarItem::View(view) => {
                         let is_active = *view == active;
                         let base = view.sidebar_text();
-                        let line = counts
+                        let line = data
+                            .counts
                             .iter()
-                            .find(|(candidate, _)| candidate == view)
+                            .find(|(count_view, _)| count_view == view)
                             .map_or_else(
                                 || base.clone(),
-                                |(_, count)| match count {
-                                    Some(count) => format!("{base} ({count})"),
-                                    None => format!("{base} (…)"),
+                                |count| match count {
+                                    (_, Some(count)) => format!("{base} ({count})"),
+                                    (_, None) => format!("{base} (…)"),
                                 },
                             );
                         if is_cursor && is_active && sidebar_active {
@@ -429,16 +428,14 @@ pub fn render_sidebar(
     area: Rect,
     active: AppView,
     sidebar_cursor: usize,
-    collapsed: &HashSet<NavGroup>,
-    focus: crate::app::Focus,
-    counts: &[(AppView, Option<usize>)],
+    data: &SidebarRenderData<'_>,
 ) {
     use crate::app::Focus;
     use ratatui::layout::Margin;
 
     let theme = default_theme();
     let theme_index = crate::ui::theme::active_theme_index();
-    let sidebar_active = focus == Focus::Sidebar;
+    let sidebar_active = data.focus == Focus::Sidebar;
 
     let border_style = if sidebar_active {
         theme.border_style()
@@ -457,15 +454,7 @@ pub fn render_sidebar(
         horizontal: 1,
         vertical: 1,
     });
-    let lines = cached_sidebar_lines(
-        theme_index,
-        active,
-        sidebar_cursor,
-        collapsed,
-        focus,
-        &theme,
-        counts,
-    );
+    let lines = cached_sidebar_lines(theme_index, active, sidebar_cursor, &theme, data);
 
     let buf = frame.buffer_mut();
     for (i, line) in lines.iter().enumerate() {

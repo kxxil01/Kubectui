@@ -12,17 +12,15 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
-    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
-        TableFrame, bookmarked_name_cell,
+        ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_small_int, render_centered_message, render_table_frame,
-        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
+        format_age, format_small_int, render_resource_table, sort_header_cell, striped_row_style,
         views::filtering::filtered_job_indices,
         workload_sort_suffix,
     },
@@ -61,109 +59,7 @@ pub fn render_jobs(
         |q| filtered_job_indices(&cluster.jobs, q, sort),
     );
 
-    if indices.is_empty() {
-        render_centered_message(
-            frame,
-            area,
-            cluster,
-            AppView::Jobs,
-            query,
-            "Jobs",
-            "Loading jobs...",
-            "No jobs found",
-            "No jobs match the search query",
-            focused,
-        );
-        return;
-    }
-
-    let total = indices.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(area));
-    let header = Row::new([
-        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
-        Cell::from(Span::styled("Namespace", theme.header_style())),
-        Cell::from(Span::styled("Status", theme.header_style())),
-        Cell::from(Span::styled("Completions", theme.header_style())),
-        Cell::from(Span::styled("Duration", theme.header_style())),
-        Cell::from(Span::styled("Active", theme.header_style())),
-        Cell::from(Span::styled("Failed", theme.header_style())),
-        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
-    ])
-    .height(1)
-    .style(theme.header_style());
-
     let derived = cached_job_derived(cluster, query, indices.as_ref(), cache_variant);
-    let rows: Vec<Row> = indices[window.start..window.end]
-        .iter()
-        .enumerate()
-        .map(|(local_idx, &job_idx)| {
-            let idx = window.start + local_idx;
-            let job = &cluster.jobs[job_idx];
-            let (duration, age) = if let Some(cell) = derived.get(idx) {
-                (
-                    Cow::Borrowed(cell.duration.as_str()),
-                    Cow::Borrowed(cell.age.as_str()),
-                )
-            } else {
-                (
-                    Cow::Owned(job.duration.clone().unwrap_or_else(|| "-".to_string())),
-                    Cow::Owned(format_age(job.age)),
-                )
-            };
-            let st = status_style(&job.status, &theme);
-            let failed_style = if job.failed_pods > 0 {
-                theme.badge_error_style()
-            } else {
-                theme.inactive_style()
-            };
-            let row_style = if idx.is_multiple_of(2) {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
-
-            Row::new(vec![
-                bookmarked_name_cell(
-                    &ResourceRef::Job(job.name.clone(), job.namespace.clone()),
-                    bookmarks,
-                    job.name.as_str(),
-                    Style::default().fg(theme.fg),
-                    &theme,
-                ),
-                Cell::from(Span::styled(
-                    job.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(job.status.clone(), st)),
-                Cell::from(Span::styled(
-                    job.completions.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(duration, Style::default().fg(theme.fg_dim))),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(job.active_pods)),
-                    Style::default().fg(theme.info),
-                )),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(job.failed_pods)),
-                    failed_style,
-                )),
-                Cell::from(Span::styled(age, theme.inactive_style())),
-            ])
-            .style(row_style)
-        })
-        .collect();
-
-    let sort_suffix = workload_sort_suffix(sort);
-    let title = resource_table_title(
-        view_icon(AppView::Jobs).active(),
-        "Jobs",
-        total,
-        cluster.jobs.len(),
-        query,
-        &sort_suffix,
-    );
     let widths = [
         Constraint::Length(22),
         Constraint::Length(16),
@@ -174,20 +70,97 @@ pub fn render_jobs(
         Constraint::Length(8),
         Constraint::Length(9),
     ];
-    render_table_frame(
+    let sort_suffix = workload_sort_suffix(sort);
+    render_resource_table(
         frame,
         area,
-        TableFrame {
-            rows,
-            header,
-            widths: &widths,
-            title: &title,
-            focused,
-            window,
-            total,
-            selected,
-        },
         &theme,
+        ResourceTableConfig {
+            snapshot: cluster,
+            view: AppView::Jobs,
+            label: "Jobs",
+            loading_message: "Loading jobs...",
+            empty_message: "No jobs found",
+            empty_query_message: "No jobs match the search query",
+            query,
+            focused,
+            filtered_total: indices.len(),
+            all_total: cluster.jobs.len(),
+            selected_idx,
+            widths: &widths,
+            sort_suffix: &sort_suffix,
+        },
+        |theme| {
+            Row::new([
+                sort_header_cell("Name", sort, WorkloadSortColumn::Name, theme, true),
+                Cell::from(Span::styled("Namespace", theme.header_style())),
+                Cell::from(Span::styled("Status", theme.header_style())),
+                Cell::from(Span::styled("Completions", theme.header_style())),
+                Cell::from(Span::styled("Duration", theme.header_style())),
+                Cell::from(Span::styled("Active", theme.header_style())),
+                Cell::from(Span::styled("Failed", theme.header_style())),
+                sort_header_cell("Age", sort, WorkloadSortColumn::Age, theme, false),
+            ])
+            .height(1)
+            .style(theme.header_style())
+        },
+        |window, theme| {
+            indices[window.start..window.end]
+                .iter()
+                .enumerate()
+                .map(|(local_idx, &job_idx)| {
+                    let idx = window.start + local_idx;
+                    let job = &cluster.jobs[job_idx];
+                    let (duration, age) = if let Some(cell) = derived.get(idx) {
+                        (
+                            Cow::Borrowed(cell.duration.as_str()),
+                            Cow::Borrowed(cell.age.as_str()),
+                        )
+                    } else {
+                        (
+                            Cow::Owned(job.duration.clone().unwrap_or_else(|| "-".to_string())),
+                            Cow::Owned(format_age(job.age)),
+                        )
+                    };
+                    let st = status_style(&job.status, theme);
+                    let failed_style = if job.failed_pods > 0 {
+                        theme.badge_error_style()
+                    } else {
+                        theme.inactive_style()
+                    };
+
+                    Row::new(vec![
+                        bookmarked_name_cell(
+                            &ResourceRef::Job(job.name.clone(), job.namespace.clone()),
+                            bookmarks,
+                            job.name.as_str(),
+                            Style::default().fg(theme.fg),
+                            theme,
+                        ),
+                        Cell::from(Span::styled(
+                            job.namespace.clone(),
+                            Style::default().fg(theme.fg_dim),
+                        )),
+                        Cell::from(Span::styled(job.status.clone(), st)),
+                        Cell::from(Span::styled(
+                            job.completions.clone(),
+                            Style::default().fg(theme.fg_dim),
+                        )),
+                        Cell::from(Span::styled(duration, Style::default().fg(theme.fg_dim))),
+                        Cell::from(Span::styled(
+                            format_small_int(i64::from(job.active_pods)),
+                            Style::default().fg(theme.info),
+                        )),
+                        Cell::from(Span::styled(
+                            format_small_int(i64::from(job.failed_pods)),
+                            failed_style,
+                        )),
+                        Cell::from(Span::styled(age, theme.inactive_style())),
+                    ])
+                    .style(striped_row_style(idx, theme))
+                })
+                .collect()
+        },
     );
 }
 

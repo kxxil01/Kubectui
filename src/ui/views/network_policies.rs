@@ -15,14 +15,12 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
-    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
-        TableFrame, bookmarked_name_cell,
+        ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, render_centered_message, render_table_frame, resource_table_title,
-        table_viewport_rows, table_window,
+        format_small_int, render_resource_table, striped_row_style,
         views::filtering::filtered_network_policy_indices,
     },
 };
@@ -65,92 +63,7 @@ pub fn render_network_policies(
         |q| filtered_network_policy_indices(&cluster.network_policies, q),
     );
 
-    if indices.is_empty() {
-        render_centered_message(
-            frame,
-            area,
-            cluster,
-            AppView::NetworkPolicies,
-            query,
-            "NetworkPolicies",
-            "Loading network policies...",
-            "No network policies found",
-            "No network policies match the search query",
-            focused,
-        );
-        return;
-    }
-
-    let total = indices.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(area));
-
-    let header = Row::new([
-        Cell::from(Span::styled("  NAME", theme.header_style())),
-        Cell::from(Span::styled("NAMESPACE", theme.header_style())),
-        Cell::from(Span::styled("POD SELECTOR", theme.header_style())),
-        Cell::from(Span::styled("INGRESS", theme.header_style())),
-        Cell::from(Span::styled("EGRESS", theme.header_style())),
-    ])
-    .style(theme.header_style())
-    .height(1);
-
     let derived = cached_network_policy_derived(cluster, query, indices.as_ref());
-    let rows: Vec<Row> = indices[window.start..window.end]
-        .iter()
-        .enumerate()
-        .map(|(local_idx, &policy_idx)| {
-            let idx = window.start + local_idx;
-            let policy = &cluster.network_policies[policy_idx];
-            let row_style = if idx.is_multiple_of(2) {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
-            let (pod_selector, ingress, egress) = if let Some(cell) = derived.get(idx) {
-                (
-                    Cow::Borrowed(cell.pod_selector.as_str()),
-                    Cow::Borrowed(cell.ingress.as_str()),
-                    Cow::Borrowed(cell.egress.as_str()),
-                )
-            } else {
-                (
-                    Cow::Owned(policy.pod_selector.clone()),
-                    Cow::Owned(format_small_int(policy.ingress_rules as i64).into_owned()),
-                    Cow::Owned(format_small_int(policy.egress_rules as i64).into_owned()),
-                )
-            };
-            Row::new(vec![
-                bookmarked_name_cell(
-                    &ResourceRef::NetworkPolicy(policy.name.clone(), policy.namespace.clone()),
-                    bookmarks,
-                    policy.name.as_str(),
-                    Style::default().fg(theme.fg),
-                    &theme,
-                ),
-                Cell::from(Span::styled(
-                    policy.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    pod_selector,
-                    Style::default().fg(theme.accent2),
-                )),
-                Cell::from(Span::styled(ingress, Style::default().fg(theme.info))),
-                Cell::from(Span::styled(egress, Style::default().fg(theme.info))),
-            ])
-            .style(row_style)
-        })
-        .collect();
-
-    let title = resource_table_title(
-        view_icon(AppView::NetworkPolicies).active(),
-        "NetworkPolicies",
-        total,
-        cluster.network_policies.len(),
-        query,
-        "",
-    );
     let widths = [
         Constraint::Percentage(26),
         Constraint::Percentage(20),
@@ -158,21 +71,82 @@ pub fn render_network_policies(
         Constraint::Percentage(10),
         Constraint::Percentage(10),
     ];
-
-    render_table_frame(
+    render_resource_table(
         frame,
         area,
-        TableFrame {
-            rows,
-            header,
-            widths: &widths,
-            title: &title,
-            focused,
-            window,
-            total,
-            selected,
-        },
         &theme,
+        ResourceTableConfig {
+            snapshot: cluster,
+            view: AppView::NetworkPolicies,
+            label: "NetworkPolicies",
+            loading_message: "Loading network policies...",
+            empty_message: "No network policies found",
+            empty_query_message: "No network policies match the search query",
+            query,
+            focused,
+            filtered_total: indices.len(),
+            all_total: cluster.network_policies.len(),
+            selected_idx,
+            widths: &widths,
+            sort_suffix: "",
+        },
+        |theme| {
+            Row::new([
+                Cell::from(Span::styled("  NAME", theme.header_style())),
+                Cell::from(Span::styled("NAMESPACE", theme.header_style())),
+                Cell::from(Span::styled("POD SELECTOR", theme.header_style())),
+                Cell::from(Span::styled("INGRESS", theme.header_style())),
+                Cell::from(Span::styled("EGRESS", theme.header_style())),
+            ])
+            .style(theme.header_style())
+            .height(1)
+        },
+        |window, theme| {
+            indices[window.start..window.end]
+                .iter()
+                .enumerate()
+                .map(|(local_idx, &policy_idx)| {
+                    let idx = window.start + local_idx;
+                    let policy = &cluster.network_policies[policy_idx];
+                    let (pod_selector, ingress, egress) = if let Some(cell) = derived.get(idx) {
+                        (
+                            Cow::Borrowed(cell.pod_selector.as_str()),
+                            Cow::Borrowed(cell.ingress.as_str()),
+                            Cow::Borrowed(cell.egress.as_str()),
+                        )
+                    } else {
+                        (
+                            Cow::Owned(policy.pod_selector.clone()),
+                            Cow::Owned(format_small_int(policy.ingress_rules as i64).into_owned()),
+                            Cow::Owned(format_small_int(policy.egress_rules as i64).into_owned()),
+                        )
+                    };
+                    Row::new(vec![
+                        bookmarked_name_cell(
+                            &ResourceRef::NetworkPolicy(
+                                policy.name.clone(),
+                                policy.namespace.clone(),
+                            ),
+                            bookmarks,
+                            policy.name.as_str(),
+                            Style::default().fg(theme.fg),
+                            theme,
+                        ),
+                        Cell::from(Span::styled(
+                            policy.namespace.clone(),
+                            Style::default().fg(theme.fg_dim),
+                        )),
+                        Cell::from(Span::styled(
+                            pod_selector,
+                            Style::default().fg(theme.accent2),
+                        )),
+                        Cell::from(Span::styled(ingress, Style::default().fg(theme.info))),
+                        Cell::from(Span::styled(egress, Style::default().fg(theme.info))),
+                    ])
+                    .style(striped_row_style(idx, theme))
+                })
+                .collect()
+        },
     );
 }
 

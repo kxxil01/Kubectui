@@ -12,17 +12,16 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
-    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
-        TableFrame, bookmarked_name_cell,
+        ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_image, format_small_int, render_centered_message, render_table_frame,
-        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
+        format_age, format_image, format_small_int, render_resource_table, sort_header_cell,
+        striped_row_style,
         views::filtering::filtered_replication_controller_indices,
         workload_sort_suffix,
     },
@@ -62,103 +61,11 @@ pub fn render_replication_controllers(
         cache_variant,
         |q| filtered_replication_controller_indices(&cluster.replication_controllers, q, sort),
     );
-
-    if indices.is_empty() {
-        render_centered_message(
-            frame,
-            area,
-            cluster,
-            AppView::ReplicationControllers,
-            query,
-            "Replication Controllers",
-            "Loading replication controllers...",
-            "No replication controllers found",
-            "No replication controllers match the search query",
-            focused,
-        );
-        return;
-    }
-
-    let total = indices.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(area));
-    let header = Row::new([
-        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
-        Cell::from(Span::styled("Namespace", theme.header_style())),
-        Cell::from(Span::styled("Desired", theme.header_style())),
-        Cell::from(Span::styled("Ready", theme.header_style())),
-        Cell::from(Span::styled("Available", theme.header_style())),
-        Cell::from(Span::styled("Image", theme.header_style())),
-        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
-    ])
-    .height(1)
-    .style(theme.header_style());
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
     let derived =
         cached_replication_controller_derived(cluster, query, indices.as_ref(), cache_variant);
-
-    let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
-    for (local_idx, &rc_idx) in indices[window.start..window.end].iter().enumerate() {
-        let idx = window.start + local_idx;
-        let rc = &cluster.replication_controllers[rc_idx];
-        let ready_style = readiness_style(rc.ready, rc.desired, &theme);
-        let (image, age) = if let Some(cell) = derived.get(idx) {
-            (
-                Cow::Borrowed(cell.image.as_str()),
-                Cow::Borrowed(cell.age.as_str()),
-            )
-        } else {
-            (
-                Cow::Owned(format_image(rc.image.as_deref(), 32)),
-                Cow::Owned(format_age(rc.age)),
-            )
-        };
-        let row_style = if idx.is_multiple_of(2) {
-            Style::default().bg(theme.bg)
-        } else {
-            theme.row_alt_style()
-        };
-
-        rows.push(
-            Row::new(vec![
-                bookmarked_name_cell(
-                    &ResourceRef::ReplicationController(rc.name.clone(), rc.namespace.clone()),
-                    bookmarks,
-                    rc.name.as_str(),
-                    name_style,
-                    &theme,
-                ),
-                Cell::from(Span::styled(rc.namespace.as_str(), dim_style)),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(rc.desired)),
-                    dim_style,
-                )),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(rc.ready)),
-                    ready_style,
-                )),
-                Cell::from(Span::styled(
-                    format_small_int(i64::from(rc.available)),
-                    dim_style,
-                )),
-                Cell::from(Span::styled(image, muted_style)),
-                Cell::from(Span::styled(age, theme.inactive_style())),
-            ])
-            .style(row_style),
-        );
-    }
-
-    let sort_suffix = workload_sort_suffix(sort);
-    let title = resource_table_title(
-        view_icon(AppView::ReplicationControllers).active(),
-        "Replication Controllers",
-        total,
-        cluster.replication_controllers.len(),
-        query,
-        &sort_suffix,
-    );
     let widths = [
         Constraint::Length(28),
         Constraint::Length(16),
@@ -168,20 +75,90 @@ pub fn render_replication_controllers(
         Constraint::Min(24),
         Constraint::Length(9),
     ];
-    render_table_frame(
+    let sort_suffix = workload_sort_suffix(sort);
+    render_resource_table(
         frame,
         area,
-        TableFrame {
-            rows,
-            header,
-            widths: &widths,
-            title: &title,
-            focused,
-            window,
-            total,
-            selected,
-        },
         &theme,
+        ResourceTableConfig {
+            snapshot: cluster,
+            view: AppView::ReplicationControllers,
+            label: "Replication Controllers",
+            loading_message: "Loading replication controllers...",
+            empty_message: "No replication controllers found",
+            empty_query_message: "No replication controllers match the search query",
+            query,
+            focused,
+            filtered_total: indices.len(),
+            all_total: cluster.replication_controllers.len(),
+            selected_idx,
+            widths: &widths,
+            sort_suffix: &sort_suffix,
+        },
+        |theme| {
+            Row::new([
+                sort_header_cell("Name", sort, WorkloadSortColumn::Name, theme, true),
+                Cell::from(Span::styled("Namespace", theme.header_style())),
+                Cell::from(Span::styled("Desired", theme.header_style())),
+                Cell::from(Span::styled("Ready", theme.header_style())),
+                Cell::from(Span::styled("Available", theme.header_style())),
+                Cell::from(Span::styled("Image", theme.header_style())),
+                sort_header_cell("Age", sort, WorkloadSortColumn::Age, theme, false),
+            ])
+            .height(1)
+            .style(theme.header_style())
+        },
+        |window, theme| {
+            let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
+            for (local_idx, &rc_idx) in indices[window.start..window.end].iter().enumerate() {
+                let idx = window.start + local_idx;
+                let rc = &cluster.replication_controllers[rc_idx];
+                let ready_style = readiness_style(rc.ready, rc.desired, theme);
+                let (image, age) = if let Some(cell) = derived.get(idx) {
+                    (
+                        Cow::Borrowed(cell.image.as_str()),
+                        Cow::Borrowed(cell.age.as_str()),
+                    )
+                } else {
+                    (
+                        Cow::Owned(format_image(rc.image.as_deref(), 32)),
+                        Cow::Owned(format_age(rc.age)),
+                    )
+                };
+
+                rows.push(
+                    Row::new(vec![
+                        bookmarked_name_cell(
+                            &ResourceRef::ReplicationController(
+                                rc.name.clone(),
+                                rc.namespace.clone(),
+                            ),
+                            bookmarks,
+                            rc.name.as_str(),
+                            name_style,
+                            theme,
+                        ),
+                        Cell::from(Span::styled(rc.namespace.as_str(), dim_style)),
+                        Cell::from(Span::styled(
+                            format_small_int(i64::from(rc.desired)),
+                            dim_style,
+                        )),
+                        Cell::from(Span::styled(
+                            format_small_int(i64::from(rc.ready)),
+                            ready_style,
+                        )),
+                        Cell::from(Span::styled(
+                            format_small_int(i64::from(rc.available)),
+                            dim_style,
+                        )),
+                        Cell::from(Span::styled(image, muted_style)),
+                        Cell::from(Span::styled(age, theme.inactive_style())),
+                    ])
+                    .style(striped_row_style(idx, theme)),
+                );
+            }
+            rows
+        },
     );
 }
 
