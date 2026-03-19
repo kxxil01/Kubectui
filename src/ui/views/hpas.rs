@@ -12,17 +12,15 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef},
     bookmarks::BookmarkEntry,
-    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
-        TableFrame, bookmarked_name_cell,
+        ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices, data_fingerprint,
         },
-        format_small_int, render_centered_message, render_table_frame, resource_table_title,
-        table_viewport_rows, table_window,
+        format_small_int, render_resource_table, striped_row_style,
         views::filtering::filtered_hpa_indices,
     },
 };
@@ -87,96 +85,7 @@ pub fn render_hpas(
         |q| filtered_hpa_indices(&cluster.hpas, q),
     );
 
-    if indices.is_empty() {
-        render_centered_message(
-            frame,
-            area,
-            cluster,
-            AppView::HPAs,
-            query,
-            "HorizontalPodAutoscalers",
-            "Loading horizontal pod autoscalers...",
-            "No horizontal pod autoscalers found",
-            "No horizontal pod autoscalers match the search query",
-            focused,
-        );
-        return;
-    }
-
-    let total = indices.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(area));
-
-    let header = Row::new([
-        Cell::from(Span::styled("  NAME", theme.header_style())),
-        Cell::from(Span::styled("NAMESPACE", theme.header_style())),
-        Cell::from(Span::styled("REFERENCE", theme.header_style())),
-        Cell::from(Span::styled("MIN", theme.header_style())),
-        Cell::from(Span::styled("MAX", theme.header_style())),
-        Cell::from(Span::styled("REPLICAS", theme.header_style())),
-    ])
-    .style(theme.header_style())
-    .height(1);
-
     let derived = cached_hpa_derived(cluster, query, &indices);
-
-    let rows: Vec<Row> = indices[window.start..window.end]
-        .iter()
-        .enumerate()
-        .map(|(local_idx, &hpa_idx)| {
-            let idx = window.start + local_idx;
-            let hpa = &cluster.hpas[hpa_idx];
-            let row_style = if idx.is_multiple_of(2) {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
-            let (min, max, replicas): (Cow<'_, str>, Cow<'_, str>, Cow<'_, str>) =
-                if let Some(cell) = derived.get(idx) {
-                    (
-                        Cow::Borrowed(cell.min.as_str()),
-                        Cow::Borrowed(cell.max.as_str()),
-                        Cow::Borrowed(cell.replicas.as_str()),
-                    )
-                } else {
-                    (
-                        format_small_int(i64::from(hpa.min_replicas.unwrap_or(1))),
-                        format_small_int(i64::from(hpa.max_replicas)),
-                        Cow::Owned(format!("{}/{}", hpa.current_replicas, hpa.desired_replicas)),
-                    )
-                };
-            Row::new(vec![
-                bookmarked_name_cell(
-                    &ResourceRef::Hpa(hpa.name.clone(), hpa.namespace.clone()),
-                    bookmarks,
-                    hpa.name.as_str(),
-                    Style::default().fg(theme.fg),
-                    &theme,
-                ),
-                Cell::from(Span::styled(
-                    hpa.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(
-                    hpa.reference.clone(),
-                    Style::default().fg(theme.accent2),
-                )),
-                Cell::from(Span::styled(min, Style::default().fg(theme.info))),
-                Cell::from(Span::styled(max, Style::default().fg(theme.info))),
-                Cell::from(Span::styled(replicas, Style::default().fg(theme.warning))),
-            ])
-            .style(row_style)
-        })
-        .collect();
-
-    let title = resource_table_title(
-        view_icon(AppView::HPAs).active(),
-        "HorizontalPodAutoscalers",
-        total,
-        cluster.hpas.len(),
-        query,
-        "",
-    );
     let widths = [
         Constraint::Percentage(23),
         Constraint::Percentage(18),
@@ -185,20 +94,84 @@ pub fn render_hpas(
         Constraint::Percentage(8),
         Constraint::Percentage(14),
     ];
-
-    render_table_frame(
+    render_resource_table(
         frame,
         area,
-        TableFrame {
-            rows,
-            header,
-            widths: &widths,
-            title: &title,
-            focused,
-            window,
-            total,
-            selected,
-        },
         &theme,
+        ResourceTableConfig {
+            snapshot: cluster,
+            view: AppView::HPAs,
+            label: "HorizontalPodAutoscalers",
+            loading_message: "Loading horizontal pod autoscalers...",
+            empty_message: "No horizontal pod autoscalers found",
+            empty_query_message: "No horizontal pod autoscalers match the search query",
+            query,
+            focused,
+            filtered_total: indices.len(),
+            all_total: cluster.hpas.len(),
+            selected_idx,
+            widths: &widths,
+            sort_suffix: "",
+        },
+        |theme| {
+            Row::new([
+                Cell::from(Span::styled("  NAME", theme.header_style())),
+                Cell::from(Span::styled("NAMESPACE", theme.header_style())),
+                Cell::from(Span::styled("REFERENCE", theme.header_style())),
+                Cell::from(Span::styled("MIN", theme.header_style())),
+                Cell::from(Span::styled("MAX", theme.header_style())),
+                Cell::from(Span::styled("REPLICAS", theme.header_style())),
+            ])
+            .style(theme.header_style())
+            .height(1)
+        },
+        |window, theme| {
+            indices[window.start..window.end]
+                .iter()
+                .enumerate()
+                .map(|(local_idx, &hpa_idx)| {
+                    let idx = window.start + local_idx;
+                    let hpa = &cluster.hpas[hpa_idx];
+                    let (min, max, replicas): (Cow<'_, str>, Cow<'_, str>, Cow<'_, str>) =
+                        if let Some(cell) = derived.get(idx) {
+                            (
+                                Cow::Borrowed(cell.min.as_str()),
+                                Cow::Borrowed(cell.max.as_str()),
+                                Cow::Borrowed(cell.replicas.as_str()),
+                            )
+                        } else {
+                            (
+                                format_small_int(i64::from(hpa.min_replicas.unwrap_or(1))),
+                                format_small_int(i64::from(hpa.max_replicas)),
+                                Cow::Owned(format!(
+                                    "{}/{}",
+                                    hpa.current_replicas, hpa.desired_replicas
+                                )),
+                            )
+                        };
+                    Row::new(vec![
+                        bookmarked_name_cell(
+                            &ResourceRef::Hpa(hpa.name.clone(), hpa.namespace.clone()),
+                            bookmarks,
+                            hpa.name.as_str(),
+                            Style::default().fg(theme.fg),
+                            theme,
+                        ),
+                        Cell::from(Span::styled(
+                            hpa.namespace.clone(),
+                            Style::default().fg(theme.fg_dim),
+                        )),
+                        Cell::from(Span::styled(
+                            hpa.reference.clone(),
+                            Style::default().fg(theme.accent2),
+                        )),
+                        Cell::from(Span::styled(min, Style::default().fg(theme.info))),
+                        Cell::from(Span::styled(max, Style::default().fg(theme.info))),
+                        Cell::from(Span::styled(replicas, Style::default().fg(theme.warning))),
+                    ])
+                    .style(striped_row_style(idx, theme))
+                })
+                .collect()
+        },
     );
 }

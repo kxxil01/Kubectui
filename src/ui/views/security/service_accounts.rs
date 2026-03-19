@@ -10,17 +10,15 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
-    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
-        TableFrame, bookmarked_name_cell,
+        ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_small_int, render_centered_message, render_table_frame,
-        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
+        format_age, format_small_int, render_resource_table, sort_header_cell, striped_row_style,
         views::filtering::filtered_service_account_indices,
         workload_sort_suffix,
     },
@@ -60,100 +58,9 @@ pub fn render_service_accounts(
 
     let theme = default_theme();
 
-    if indices.is_empty() {
-        render_centered_message(
-            frame,
-            area,
-            cluster,
-            AppView::ServiceAccounts,
-            query,
-            "ServiceAccounts",
-            "Loading serviceaccounts...",
-            "No serviceaccounts found",
-            "No serviceaccounts match the search query",
-            focused,
-        );
-        return;
-    }
-
-    let total = indices.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(area));
-    let header = Row::new([
-        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
-        Cell::from(Span::styled("Namespace", theme.header_style())),
-        Cell::from(Span::styled("Secrets", theme.header_style())),
-        Cell::from(Span::styled("PullSecrets", theme.header_style())),
-        Cell::from(Span::styled("Automount", theme.header_style())),
-        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
-    ])
-    .height(1)
-    .style(theme.header_style());
-
     let derived = cached_service_account_derived(cluster, query, indices.as_ref(), cache_variant);
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
-
-    let rows: Vec<Row> = indices[window.start..window.end]
-        .iter()
-        .enumerate()
-        .map(|(local_idx, &sa_idx)| {
-            let idx = window.start + local_idx;
-            let sa = &cluster.service_accounts[sa_idx];
-            let (age_text, automount_text) = if let Some(cell) = derived.get(idx) {
-                (
-                    Cow::Borrowed(cell.age.as_str()),
-                    Cow::Borrowed(cell.automount_label),
-                )
-            } else {
-                (
-                    Cow::Owned(format_age(sa.age)),
-                    Cow::Borrowed(automount_label(sa.automount_service_account_token)),
-                )
-            };
-            let row_style = if idx.is_multiple_of(2) {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
-            let automount_style = match sa.automount_service_account_token {
-                Some(true) => theme.badge_success_style(),
-                Some(false) => theme.badge_warning_style(),
-                None => theme.inactive_style(),
-            };
-            Row::new(vec![
-                bookmarked_name_cell(
-                    &ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone()),
-                    bookmarks,
-                    sa.name.as_str(),
-                    name_style,
-                    &theme,
-                ),
-                Cell::from(Span::styled(sa.namespace.as_str(), dim_style)),
-                Cell::from(Span::styled(
-                    format_small_int(sa.secrets_count as i64),
-                    dim_style,
-                )),
-                Cell::from(Span::styled(
-                    format_small_int(sa.image_pull_secrets_count as i64),
-                    dim_style,
-                )),
-                Cell::from(Span::styled(automount_text, automount_style)),
-                Cell::from(Span::styled(age_text, theme.inactive_style())),
-            ])
-            .style(row_style)
-        })
-        .collect();
-
-    let sort_suffix = workload_sort_suffix(sort);
-    let title = resource_table_title(
-        view_icon(AppView::ServiceAccounts).active(),
-        "ServiceAccounts",
-        total,
-        cluster.service_accounts.len(),
-        query,
-        &sort_suffix,
-    );
     let widths = [
         Constraint::Length(26),
         Constraint::Length(18),
@@ -162,20 +69,85 @@ pub fn render_service_accounts(
         Constraint::Length(11),
         Constraint::Fill(1),
     ];
-    render_table_frame(
+    let sort_suffix = workload_sort_suffix(sort);
+    render_resource_table(
         frame,
         area,
-        TableFrame {
-            rows,
-            header,
-            widths: &widths,
-            title: &title,
-            focused,
-            window,
-            total,
-            selected,
-        },
         &theme,
+        ResourceTableConfig {
+            snapshot: cluster,
+            view: AppView::ServiceAccounts,
+            label: "ServiceAccounts",
+            loading_message: "Loading serviceaccounts...",
+            empty_message: "No serviceaccounts found",
+            empty_query_message: "No serviceaccounts match the search query",
+            query,
+            focused,
+            filtered_total: indices.len(),
+            all_total: cluster.service_accounts.len(),
+            selected_idx,
+            widths: &widths,
+            sort_suffix: &sort_suffix,
+        },
+        |theme| {
+            Row::new([
+                sort_header_cell("Name", sort, WorkloadSortColumn::Name, theme, true),
+                Cell::from(Span::styled("Namespace", theme.header_style())),
+                Cell::from(Span::styled("Secrets", theme.header_style())),
+                Cell::from(Span::styled("PullSecrets", theme.header_style())),
+                Cell::from(Span::styled("Automount", theme.header_style())),
+                sort_header_cell("Age", sort, WorkloadSortColumn::Age, theme, false),
+            ])
+            .height(1)
+            .style(theme.header_style())
+        },
+        |window, theme| {
+            indices[window.start..window.end]
+                .iter()
+                .enumerate()
+                .map(|(local_idx, &sa_idx)| {
+                    let idx = window.start + local_idx;
+                    let sa = &cluster.service_accounts[sa_idx];
+                    let (age_text, automount_text) = if let Some(cell) = derived.get(idx) {
+                        (
+                            Cow::Borrowed(cell.age.as_str()),
+                            Cow::Borrowed(cell.automount_label),
+                        )
+                    } else {
+                        (
+                            Cow::Owned(format_age(sa.age)),
+                            Cow::Borrowed(automount_label(sa.automount_service_account_token)),
+                        )
+                    };
+                    let automount_style = match sa.automount_service_account_token {
+                        Some(true) => theme.badge_success_style(),
+                        Some(false) => theme.badge_warning_style(),
+                        None => theme.inactive_style(),
+                    };
+                    Row::new(vec![
+                        bookmarked_name_cell(
+                            &ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone()),
+                            bookmarks,
+                            sa.name.as_str(),
+                            name_style,
+                            theme,
+                        ),
+                        Cell::from(Span::styled(sa.namespace.as_str(), dim_style)),
+                        Cell::from(Span::styled(
+                            format_small_int(sa.secrets_count as i64),
+                            dim_style,
+                        )),
+                        Cell::from(Span::styled(
+                            format_small_int(sa.image_pull_secrets_count as i64),
+                            dim_style,
+                        )),
+                        Cell::from(Span::styled(automount_text, automount_style)),
+                        Cell::from(Span::styled(age_text, theme.inactive_style())),
+                    ])
+                    .style(striped_row_style(idx, theme))
+                })
+                .collect()
+        },
     );
 }
 
