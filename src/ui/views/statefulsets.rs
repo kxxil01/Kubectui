@@ -12,17 +12,15 @@ use ratatui::{
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
-    icons::view_icon,
     state::ClusterSnapshot,
     ui::{
-        TableFrame, bookmarked_name_cell,
+        ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_image, render_centered_message, render_table_frame,
-        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
+        format_age, format_image, render_resource_table, sort_header_cell, striped_row_style,
         views::filtering::filtered_statefulset_indices,
         workload_sort_suffix,
     },
@@ -62,96 +60,7 @@ pub fn render_statefulsets(
         cache_variant,
         |q| filtered_statefulset_indices(&cluster.statefulsets, q, sort),
     );
-
-    if indices.is_empty() {
-        render_centered_message(
-            frame,
-            area,
-            cluster,
-            AppView::StatefulSets,
-            query,
-            "StatefulSets",
-            "Loading statefulsets...",
-            "No statefulsets found",
-            "No statefulsets match the search query",
-            focused,
-        );
-        return;
-    }
-
-    let total = indices.len();
-    let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(area));
-    let header = Row::new([
-        sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
-        Cell::from(Span::styled("Namespace", theme.header_style())),
-        Cell::from(Span::styled("Ready", theme.header_style())),
-        Cell::from(Span::styled("Service", theme.header_style())),
-        Cell::from(Span::styled("Image", theme.header_style())),
-        sort_header_cell("Age", sort, WorkloadSortColumn::Age, &theme, false),
-    ])
-    .height(1)
-    .style(theme.header_style());
     let derived = cached_statefulset_derived(cluster, query, indices.as_ref(), cache_variant);
-    let rows: Vec<Row> = indices[window.start..window.end]
-        .iter()
-        .enumerate()
-        .map(|(local_idx, &ss_idx)| {
-            let idx = window.start + local_idx;
-            let ss = &cluster.statefulsets[ss_idx];
-            let (ready, image, age) = if let Some(cell) = derived.get(idx) {
-                (
-                    Cow::Borrowed(cell.ready.as_str()),
-                    Cow::Borrowed(cell.image.as_str()),
-                    Cow::Borrowed(cell.age.as_str()),
-                )
-            } else {
-                (
-                    Cow::Owned(format!("{}/{}", ss.ready_replicas, ss.desired_replicas)),
-                    Cow::Owned(format_image(ss.image.as_deref(), 30)),
-                    Cow::Owned(format_age(ss.age)),
-                )
-            };
-            let ready_style = readiness_style(ss.ready_replicas, ss.desired_replicas, &theme);
-            let row_style = if idx.is_multiple_of(2) {
-                Style::default().bg(theme.bg)
-            } else {
-                theme.row_alt_style()
-            };
-
-            Row::new(vec![
-                bookmarked_name_cell(
-                    &ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone()),
-                    bookmarks,
-                    ss.name.as_str(),
-                    Style::default().fg(theme.fg),
-                    &theme,
-                ),
-                Cell::from(Span::styled(
-                    ss.namespace.clone(),
-                    Style::default().fg(theme.fg_dim),
-                )),
-                Cell::from(Span::styled(ready, ready_style)),
-                Cell::from(Span::styled(
-                    ss.service_name.clone(),
-                    Style::default().fg(theme.info),
-                )),
-                Cell::from(Span::styled(image, Style::default().fg(theme.muted))),
-                Cell::from(Span::styled(age, theme.inactive_style())),
-            ])
-            .style(row_style)
-        })
-        .collect();
-
-    let sort_suffix = workload_sort_suffix(sort);
-    let title = resource_table_title(
-        view_icon(AppView::StatefulSets).active(),
-        "StatefulSets",
-        total,
-        cluster.statefulsets.len(),
-        query,
-        &sort_suffix,
-    );
     let widths = [
         Constraint::Length(22),
         Constraint::Length(16),
@@ -160,20 +69,85 @@ pub fn render_statefulsets(
         Constraint::Min(20),
         Constraint::Length(9),
     ];
-    render_table_frame(
+    let sort_suffix = workload_sort_suffix(sort);
+    render_resource_table(
         frame,
         area,
-        TableFrame {
-            rows,
-            header,
-            widths: &widths,
-            title: &title,
-            focused,
-            window,
-            total,
-            selected,
-        },
         &theme,
+        ResourceTableConfig {
+            snapshot: cluster,
+            view: AppView::StatefulSets,
+            label: "StatefulSets",
+            loading_message: "Loading statefulsets...",
+            empty_message: "No statefulsets found",
+            empty_query_message: "No statefulsets match the search query",
+            query,
+            focused,
+            filtered_total: indices.len(),
+            all_total: cluster.statefulsets.len(),
+            selected_idx,
+            widths: &widths,
+            sort_suffix: &sort_suffix,
+        },
+        |theme| {
+            Row::new([
+                sort_header_cell("Name", sort, WorkloadSortColumn::Name, theme, true),
+                Cell::from(Span::styled("Namespace", theme.header_style())),
+                Cell::from(Span::styled("Ready", theme.header_style())),
+                Cell::from(Span::styled("Service", theme.header_style())),
+                Cell::from(Span::styled("Image", theme.header_style())),
+                sort_header_cell("Age", sort, WorkloadSortColumn::Age, theme, false),
+            ])
+            .height(1)
+            .style(theme.header_style())
+        },
+        |window, theme| {
+            indices[window.start..window.end]
+                .iter()
+                .enumerate()
+                .map(|(local_idx, &ss_idx)| {
+                    let idx = window.start + local_idx;
+                    let ss = &cluster.statefulsets[ss_idx];
+                    let (ready, image, age) = if let Some(cell) = derived.get(idx) {
+                        (
+                            Cow::Borrowed(cell.ready.as_str()),
+                            Cow::Borrowed(cell.image.as_str()),
+                            Cow::Borrowed(cell.age.as_str()),
+                        )
+                    } else {
+                        (
+                            Cow::Owned(format!("{}/{}", ss.ready_replicas, ss.desired_replicas)),
+                            Cow::Owned(format_image(ss.image.as_deref(), 30)),
+                            Cow::Owned(format_age(ss.age)),
+                        )
+                    };
+                    let ready_style =
+                        readiness_style(ss.ready_replicas, ss.desired_replicas, theme);
+
+                    Row::new(vec![
+                        bookmarked_name_cell(
+                            &ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone()),
+                            bookmarks,
+                            ss.name.as_str(),
+                            Style::default().fg(theme.fg),
+                            theme,
+                        ),
+                        Cell::from(Span::styled(
+                            ss.namespace.clone(),
+                            Style::default().fg(theme.fg_dim),
+                        )),
+                        Cell::from(Span::styled(ready, ready_style)),
+                        Cell::from(Span::styled(
+                            ss.service_name.clone(),
+                            Style::default().fg(theme.info),
+                        )),
+                        Cell::from(Span::styled(image, Style::default().fg(theme.muted))),
+                        Cell::from(Span::styled(age, theme.inactive_style())),
+                    ])
+                    .style(striped_row_style(idx, theme))
+                })
+                .collect()
+        },
     );
 }
 
