@@ -98,6 +98,37 @@ impl AppState {
                     _ => AppAction::None,
                 }
             }
+            WorkbenchTabState::ResourceDiff(tab) => {
+                let max_scroll = tab.lines.len().saturating_sub(1);
+                match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.scroll = tab.scroll.saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.scroll = 0;
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        tab.scroll = max_scroll;
+                        AppAction::None
+                    }
+                    KeyCode::PageDown => {
+                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::PageUp => {
+                        tab.scroll = tab.scroll.saturating_sub(10);
+                        AppAction::None
+                    }
+                    _ => AppAction::None,
+                }
+            }
             WorkbenchTabState::DecodedSecret(tab) => {
                 if tab.editing {
                     match key.code {
@@ -534,6 +565,7 @@ impl AppState {
         let allow_plain_r = match &tab.state {
             WorkbenchTabState::ActionHistory(_)
             | WorkbenchTabState::ResourceYaml(_)
+            | WorkbenchTabState::ResourceDiff(_)
             | WorkbenchTabState::DecodedSecret(crate::workbench::DecodedSecretTabState {
                 editing: false,
                 ..
@@ -782,6 +814,15 @@ impl AppState {
                 }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::OpenResourceYaml
+            }
+            KeyCode::Char('D')
+                if self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::ViewConfigDrift)
+                        && !detail.supports_action(DetailAction::Drain)
+                        && !detail.has_confirmation_dialog()
+                }) =>
+            {
+                AppAction::OpenResourceDiff
             }
             KeyCode::Char('o')
                 if self.detail_view.as_ref().is_some_and(|detail| {

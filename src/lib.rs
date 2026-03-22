@@ -17,6 +17,7 @@ pub mod icons;
 pub mod k8s;
 pub mod policy;
 pub mod preferences;
+pub mod resource_diff;
 pub mod secret;
 pub mod state;
 pub mod time;

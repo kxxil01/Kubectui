@@ -41,6 +41,7 @@ pub enum RelationshipCapability {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum DetailAction {
     ViewYaml,
+    ViewConfigDrift,
     ViewDecodedSecret,
     ToggleBookmark,
     ViewEvents,
@@ -72,8 +73,9 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 20] = [
+    pub const ORDER: [DetailAction; 21] = [
         DetailAction::ViewYaml,
+        DetailAction::ViewConfigDrift,
         DetailAction::ViewDecodedSecret,
         DetailAction::ToggleBookmark,
         DetailAction::ViewEvents,
@@ -98,6 +100,7 @@ impl DetailAction {
     pub const fn key_hint(self) -> &'static str {
         match self {
             DetailAction::ViewYaml => "[y]",
+            DetailAction::ViewConfigDrift => "[D]",
             DetailAction::ViewDecodedSecret => "[o]",
             DetailAction::ToggleBookmark => "[B]",
             DetailAction::ViewEvents => "[v]",
@@ -121,6 +124,7 @@ impl DetailAction {
     pub const fn label(self) -> &'static str {
         match self {
             DetailAction::ViewYaml => "YAML",
+            DetailAction::ViewConfigDrift => "Drift",
             DetailAction::ViewDecodedSecret => "Decoded",
             DetailAction::ToggleBookmark => "Bookmark",
             DetailAction::ViewEvents => "Events",
@@ -402,6 +406,7 @@ impl ResourceRef {
     ) -> bool {
         match action {
             DetailAction::ViewYaml => true,
+            DetailAction::ViewConfigDrift => !matches!(self, ResourceRef::Node(_)),
             DetailAction::ViewEvents => self.supports_events_tab(),
             DetailAction::ViewDecodedSecret => matches!(self, ResourceRef::Secret(_, _)),
             DetailAction::ToggleBookmark => true,

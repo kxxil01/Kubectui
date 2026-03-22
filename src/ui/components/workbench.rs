@@ -12,6 +12,7 @@ use ratatui::{
 use crate::{
     action_history::{ActionHistoryEntry, ActionStatus},
     app::{AppState, Focus},
+    resource_diff::{ResourceDiffBaselineKind, ResourceDiffLineKind},
     secret::DecodedSecretValue,
     state::ClusterSnapshot,
     time::format_local,
@@ -141,6 +142,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
         WorkbenchTabState::ResourceYaml(tab) => {
             render_yaml_tab(frame, inner, tab.scroll, active_tab)
         }
+        WorkbenchTabState::ResourceDiff(tab) => render_resource_diff_tab(frame, inner, tab),
         WorkbenchTabState::DecodedSecret(tab) => render_decoded_secret_tab(frame, inner, tab),
         WorkbenchTabState::ResourceEvents(tab) => {
             render_events_tab(frame, inner, tab.scroll, active_tab)
@@ -168,7 +170,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             Line::from(""),
             Line::from("  Open a resource tab with:"),
             Line::from(
-                "  [y] YAML  [o] Decoded  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward",
+                "  [y] YAML  [D] Drift  [o] Decoded  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward",
             ),
             Line::from(""),
             Line::from("  [H] opens action history."),
@@ -417,6 +419,99 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
 
     frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), area);
     render_scrollbar(frame, area, total, window.start);
+}
+
+fn render_resource_diff_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab_state: &crate::workbench::ResourceDiffTabState,
+) {
+    let theme = default_theme();
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(area);
+
+    let baseline = match tab_state
+        .baseline_kind
+        .unwrap_or(ResourceDiffBaselineKind::Missing)
+    {
+        ResourceDiffBaselineKind::LastAppliedAnnotation => {
+            Span::styled(" baseline:last-applied ", theme.badge_success_style())
+        }
+        ResourceDiffBaselineKind::Missing => {
+            Span::styled(" baseline:missing ", theme.badge_warning_style())
+        }
+    };
+    let summary = tab_state
+        .summary
+        .clone()
+        .unwrap_or_else(|| "Waiting for YAML...".to_string());
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            baseline,
+            Span::raw(" "),
+            Span::styled(summary.as_str(), Style::default().fg(theme.fg)),
+            Span::raw("  "),
+            Span::styled("[Esc] back", theme.keybind_desc_style()),
+        ])),
+        sections[0],
+    );
+
+    if tab_state.loading {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Loading resource diff...",
+                theme.inactive_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if let Some(error) = &tab_state.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Error: {error}"),
+                theme.badge_error_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if tab_state.lines.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(summary, theme.inactive_style()))
+                .wrap(Wrap { trim: false }),
+            sections[1],
+        );
+        return;
+    }
+
+    let total = tab_state.lines.len();
+    let window = scroll_window(total, tab_state.scroll, sections[1].height.max(1) as usize);
+    let lines: Vec<Line> = tab_state.lines[window.start..window.end]
+        .iter()
+        .map(|line| {
+            let style = match line.kind {
+                ResourceDiffLineKind::Header => theme.muted_style(),
+                ResourceDiffLineKind::Hunk => Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
+                ResourceDiffLineKind::Context => Style::default().fg(theme.fg),
+                ResourceDiffLineKind::Added => Style::default().fg(theme.success),
+                ResourceDiffLineKind::Removed => Style::default().fg(theme.error),
+            };
+            Line::from(Span::styled(line.content.clone(), style))
+        })
+        .collect();
+
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        sections[1],
+    );
+    render_scrollbar(frame, sections[1], total, window.start);
 }
 
 fn render_decoded_secret_tab(

@@ -43,6 +43,10 @@ pub struct ActionEntry {
 const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     (DetailAction::ViewYaml, &["yaml", "manifest"]),
     (
+        DetailAction::ViewConfigDrift,
+        &["drift", "diff", "config drift", "live vs applied"],
+    ),
+    (
         DetailAction::ViewDecodedSecret,
         &["decoded", "decode", "secret data", "reveal"],
     ),

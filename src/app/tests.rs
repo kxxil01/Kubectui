@@ -984,6 +984,31 @@ fn d_key_does_not_drain_for_pod_detail() {
 }
 
 #[test]
+fn uppercase_d_opens_resource_diff_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+    assert_eq!(action, AppAction::OpenResourceDiff);
+}
+
+#[test]
+fn uppercase_d_is_noop_from_nodes_content_view() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Nodes,
+        ..AppState::default()
+    };
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
 fn u_key_does_not_uncordon_for_pod_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
