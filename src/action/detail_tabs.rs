@@ -10,7 +10,7 @@ use kubectui::{
     workbench::{WorkbenchTabKey, WorkbenchTabState},
 };
 
-use crate::async_types::{DetailAsyncResult, RelationsAsyncResult};
+use crate::async_types::{DetailAsyncResult, RelationsAsyncResult, ResourceDiffAsyncResult};
 use crate::next_request_id;
 use crate::selection_helpers::{
     detail_action_allowed, detail_action_denied_message, selected_resource,
@@ -33,6 +33,29 @@ fn spawn_detail_fetch(
             .map_err(|err| err.to_string());
         let _ = tx
             .send(DetailAsyncResult {
+                request_id,
+                resource,
+                result,
+            })
+            .await;
+    });
+}
+
+fn spawn_resource_diff_fetch(
+    diff_tx: &tokio::sync::mpsc::Sender<ResourceDiffAsyncResult>,
+    client: &K8sClient,
+    resource: ResourceRef,
+    request_id: u64,
+) {
+    let tx = diff_tx.clone();
+    let client_clone = client.clone();
+    tokio::spawn(async move {
+        let result = client_clone
+            .fetch_resource_diff_source_yaml(&resource)
+            .await
+            .map_err(|err| err.to_string());
+        let _ = tx
+            .send(ResourceDiffAsyncResult {
                 request_id,
                 resource,
                 result,
@@ -87,6 +110,41 @@ pub async fn handle_open_resource_yaml(
     if let Some(request_id) = pending_request_id {
         spawn_detail_fetch(detail_tx, client, snapshot, resource, request_id);
     }
+    false
+}
+
+/// Handles `AppAction::OpenResourceDiff`.
+///
+/// Returns `true` if the caller should skip the rest of the action dispatch.
+pub async fn handle_open_resource_diff(
+    app: &mut AppState,
+    client: &K8sClient,
+    snapshot: &ClusterSnapshot,
+    diff_tx: &tokio::sync::mpsc::Sender<ResourceDiffAsyncResult>,
+    diff_request_seq: &mut u64,
+) -> bool {
+    let resource = app
+        .detail_view
+        .as_ref()
+        .and_then(|detail| detail.resource.clone())
+        .or_else(|| selected_resource(app, snapshot));
+    let Some(resource) = resource else {
+        app.set_error("No resource selected for configuration drift inspection.".to_string());
+        return true;
+    };
+    if !detail_action_allowed(app, client, &resource, DetailAction::ViewConfigDrift).await {
+        app.set_error(detail_action_denied_message(
+            DetailAction::ViewConfigDrift,
+            &resource,
+        ));
+        return true;
+    }
+
+    let request_id = next_request_id(diff_request_seq);
+
+    app.detail_view = None;
+    app.open_resource_diff_tab(resource.clone(), None, None, Some(request_id));
+    spawn_resource_diff_fetch(diff_tx, client, resource, request_id);
     false
 }
 

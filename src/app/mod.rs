@@ -80,6 +80,7 @@ pub enum AppAction {
     LogsViewerSearchNext,
     LogsViewerSearchPrev,
     OpenResourceYaml,
+    OpenResourceDiff,
     OpenDecodedSecret,
     OpenResourceEvents,
     OpenActionHistory,

@@ -120,6 +120,7 @@ pub fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
 pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
     match action {
         DetailAction::ViewYaml => AppAction::OpenResourceYaml,
+        DetailAction::ViewConfigDrift => AppAction::OpenResourceDiff,
         DetailAction::ViewDecodedSecret => AppAction::OpenDecodedSecret,
         DetailAction::ToggleBookmark => AppAction::ToggleBookmark,
         DetailAction::ViewEvents => AppAction::OpenResourceEvents,

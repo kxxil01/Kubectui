@@ -131,6 +131,9 @@ pub(crate) async fn run_app_inner(
     // Channel for async detail view fetches — carries the requested resource to prevent stale writes.
     let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel::<DetailAsyncResult>(16);
     let mut detail_request_seq: u64 = 0;
+    let (resource_diff_tx, mut resource_diff_rx) =
+        tokio::sync::mpsc::channel::<ResourceDiffAsyncResult>(16);
+    let mut resource_diff_request_seq: u64 = 0;
     let (logs_viewer_tx, mut logs_viewer_rx) =
         tokio::sync::mpsc::channel::<LogsViewerAsyncResult>(64);
     let mut logs_viewer_request_seq: u64 = 0;
@@ -349,6 +352,53 @@ pub(crate) async fn run_app_inner(
                                 });
                             }
                         }
+                    }
+                }
+            }
+
+            result = resource_diff_rx.recv() => {
+                if let Some(result) = result {
+                    let ResourceDiffAsyncResult {
+                        request_id,
+                        resource,
+                        result,
+                    } = result;
+                    let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
+                        matches!(
+                            &tab.state,
+                            WorkbenchTabState::ResourceDiff(diff_tab)
+                                if diff_tab.resource == resource
+                                    && diff_tab.loading
+                                    && diff_tab.pending_request_id == Some(request_id)
+                        )
+                    });
+                    if !workbench_waiting_for_this {
+                        continue;
+                    }
+
+                    needs_redraw = true;
+                    match result {
+                        Ok(live_yaml) => match kubectui::resource_diff::build_resource_diff(&live_yaml)
+                        {
+                            Ok(diff) => apply_resource_diff_result_to_workbench(
+                                &mut app,
+                                request_id,
+                                &resource,
+                                diff,
+                            ),
+                            Err(err) => apply_resource_diff_error_to_workbench(
+                                &mut app,
+                                request_id,
+                                &resource,
+                                &err.to_string(),
+                            ),
+                        },
+                        Err(err) => apply_resource_diff_error_to_workbench(
+                            &mut app,
+                            request_id,
+                            &resource,
+                            &err,
+                        ),
                     }
                 }
             }
@@ -1962,6 +2012,19 @@ pub(crate) async fn run_app_inner(
                         &cached_snapshot,
                         &detail_tx,
                         &mut detail_request_seq,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
+                AppAction::OpenResourceDiff => {
+                    if action::detail_tabs::handle_open_resource_diff(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                        &resource_diff_tx,
+                        &mut resource_diff_request_seq,
                     )
                     .await
                     {

@@ -226,6 +226,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         AppAction::LogsViewerSelectAllContainers => true,
         AppAction::LogsViewerToggleTimestamps => true,
         AppAction::OpenResourceYaml => true,
+        AppAction::OpenResourceDiff => true,
         AppAction::OpenDecodedSecret => true,
         AppAction::OpenResourceEvents => true,
         AppAction::ToggleBookmark => true,

@@ -37,7 +37,7 @@ Current milestone status:
 - Milestone 19: not started
 - Milestone 20: not started
 - Milestone 21: completed
-- Milestone 22: not started
+- Milestone 22: completed (v1)
 - Milestone 23: not started
 - Milestone 24: not started
 - Milestone 25: not started
@@ -68,6 +68,7 @@ Completion notes:
 - Milestone 18 shipped: CronJob detail now acts as the management panel with next-run display, capped Job execution history, per-run status/duration/pod-count/completion visibility, `Enter` jump into child Job detail, `l` access to selected failed/current Job logs, suspend/resume confirmation on `S`, action palette/help integration, and mutation history coverage.
 - PR #16 hardened the post-M18 surface: canonical RBAC-aware detail/action authorization, graceful forbidden list/discovery degradation, workbench/detail/palette permission preflight, paused CronJob next-run suppression, and CronJob history log gating based on live pods plus log access.
 - Milestone 21 shipped (PR #18): comprehensive resource utilization dashboard — ClusterResourceSummary with cluster-wide CPU/memory utilization and overcommitment percentages, 5-gauge dashboard row (Nodes Ready, Pods Running, Workload Ready, Cluster CPU, Cluster Mem), Overcommit & Governance panel (commitment ratios, missing request/limit counts), Top Pod Consumers panel (top-5 CPU and memory), enhanced Namespace Utilization table with %CPU/R and %MEM/R columns, 10 new hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), enriched node CPU/Memory columns with used/alloc/pct% format and threshold coloring, pod_metrics pipeline integration via metrics.k8s.io with graceful degradation, compact dashboard layout for small terminals, 20+ new tests, 3 criterion benchmarks.
+- Milestone 22 shipped (v1): workbench-hosted Drift tab, action palette integration, detail-view `D` shortcut, last-applied baseline extraction from `kubectl.kubernetes.io/last-applied-configuration`, full-fidelity manifest fetch for diffing (no truncation / no RBAC placeholder parsing), deterministic normalized unified diff rendering, explicit no-baseline / unavailable-manifest states, and regression coverage for normalization, ordering, and keybinding behavior. Current scope is client-side apply baseline only; managedFields/SSA fallback is not implemented.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
 - 2026-03-18 kube 3.1 metadata watch adoption: namespace discovery and the Namespaces view now use metadata-only `Namespace` payloads end-to-end. The canonical watch path uses `metadata_watcher()` for cluster-scoped namespace updates, polling uses `list_metadata()` for namespace fetches, and namespace status is derived consistently from metadata (`Active` vs `Terminating`) so the picker and namespace view stay live with lower API payload cost.
@@ -1531,7 +1532,7 @@ Right-sizing is consistently the #1 cost optimization lever in Kubernetes. Teams
 
 ### Status
 
-Not started
+Completed (v1: last-applied baseline)
 
 ### Goal
 
@@ -1545,8 +1546,21 @@ Configuration drift is a top-3 operational concern. When something breaks, the f
 
 - diff between live resource state and last-applied-configuration annotation
 - unified diff rendering with add/remove/change highlighting
-- noise filtering: exclude auto-managed fields (resourceVersion, generation, managedFields, status)
+- noise filtering: exclude top-level auto-managed fields (resourceVersion, generation, managedFields, status, etc.) without stripping nested user config
 - available from detail view and action palette
+
+### Implemented in v1
+
+- dedicated workbench Drift tab with loading, error, no-baseline, no-drift, and diff states
+- dedicated full-manifest fetch path for drift inspection so diffing does not depend on truncated display YAML
+- explicit unavailable-manifest errors for RBAC or missing Helm release secret cases
+- deterministic key-sorted unified diff to avoid false positives from YAML/JSON key order alone
+- detail-view `D` shortcut, action palette entry, and help overlay wiring
+
+### Remaining follow-up
+
+- server-side apply / `managedFields` fallback baseline when no last-applied annotation exists
+- optional richer path-aware normalization if a concrete noisy resource class proves it necessary
 
 ### Tasks
 
@@ -1571,14 +1585,15 @@ Configuration drift is a top-3 operational concern. When something breaks, the f
 
 ### Guardrails
 
-- filter system fields aggressively to reduce noise
-- support both client-side apply (annotation) and server-side apply (managedFields) where feasible
+- filter only API-managed top-level fields aggressively enough to reduce noise without hiding nested desired config
+- support client-side apply baseline first; only add server-side apply fallback when it can be done without inventing a false baseline
 - clearly indicate when no baseline is available
 
 ### Acceptance Criteria
 
 - users can answer "has this resource been manually edited?" in one keypress
 - drift is clearly highlighted with minimal noise
+- unavailable manifests fail clearly instead of silently degrading into misleading "no baseline" output
 
 ---
 
@@ -1839,16 +1854,11 @@ This is the execution order.
 
 - Milestone 19: Ephemeral Debug Container Launcher
 - Milestone 20: Helm Release History & Rollback
-- Milestone 21: Resource Utilization Overlay
 
 ## P6
 
-- Milestone 22: Resource Diff View
 - Milestone 23: Plugin / Custom Action System
 - Milestone 24: Resource Sanitizer / Best Practice Linter
-
-## P7
-
 - Milestone 25: Network Policy Visualizer
 
 ## Continuous
@@ -1859,13 +1869,13 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M18 are complete. The next milestone is M19: Ephemeral Debug Container Launcher.
+M0-M18 and M21-M22 are complete. The next unstarted milestone is M19: Ephemeral Debug Container Launcher.
 
 Recommended near-term order:
 
 - M19: Ephemeral Debug Container Launcher
 - M20: Helm Release History & Rollback
-- M21: Resource Utilization Overlay
+- M23: Plugin / Custom Action System
 
 Do not start next with:
 

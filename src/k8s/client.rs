@@ -871,6 +871,23 @@ impl K8sClient {
             })
     }
 
+    /// Fetches a concrete resource as a full, untruncated manifest for diffing.
+    pub async fn fetch_resource_yaml_for_diff(
+        &self,
+        kind: &str,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<String> {
+        yaml::get_resource_yaml_for_diff(&self.client, kind, name, namespace)
+            .await
+            .with_context(|| {
+                format!(
+                    "failed preparing diff source YAML for kind='{kind}' name='{name}' namespace='{}'",
+                    namespace.unwrap_or("<cluster-scope>")
+                )
+            })
+    }
+
     /// Fetches YAML for a custom resource using explicit CRD API coordinates.
     pub async fn fetch_custom_resource_yaml(
         &self,
@@ -889,6 +906,66 @@ impl K8sClient {
                     namespace.unwrap_or("<cluster-scope>")
                 )
             })
+    }
+
+    /// Fetches a custom-resource manifest as a full, untruncated YAML document.
+    pub async fn fetch_custom_resource_yaml_for_diff(
+        &self,
+        group: &str,
+        version: &str,
+        kind: &str,
+        plural: &str,
+        name: &str,
+        namespace: Option<&str>,
+    ) -> Result<String> {
+        yaml::get_custom_resource_yaml_for_diff(
+            &self.client,
+            group,
+            version,
+            kind,
+            plural,
+            name,
+            namespace,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "failed preparing diff source YAML for CRD {group}/{version}/{kind} name='{name}' namespace='{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            )
+        })
+    }
+
+    /// Fetches the canonical live manifest source for drift inspection.
+    pub async fn fetch_resource_diff_source_yaml(&self, resource: &ResourceRef) -> Result<String> {
+        match resource {
+            ResourceRef::CustomResource {
+                group,
+                version,
+                kind,
+                plural,
+                name,
+                namespace,
+            } => {
+                self.fetch_custom_resource_yaml_for_diff(
+                    group,
+                    version,
+                    kind,
+                    plural,
+                    name,
+                    namespace.as_deref(),
+                )
+                .await
+            }
+            ResourceRef::HelmRelease(name, namespace) => {
+                self.fetch_helm_release_yaml_for_diff(name, namespace).await
+            }
+            _ => {
+                let kind = resource.kind().to_ascii_lowercase();
+                self.fetch_resource_yaml_for_diff(&kind, resource.name(), resource.namespace())
+                    .await
+            }
+        }
     }
 
     /// Applies edited YAML back to the cluster (server-side apply).
@@ -1040,15 +1117,52 @@ impl K8sClient {
         release_name: &str,
         namespace: &str,
     ) -> Result<String> {
+        self.fetch_helm_release_secret_yaml(release_name, namespace, true, true)
+            .await
+    }
+
+    /// Fetches the Helm release secret as a full, untruncated YAML document.
+    pub async fn fetch_helm_release_yaml_for_diff(
+        &self,
+        release_name: &str,
+        namespace: &str,
+    ) -> Result<String> {
+        self.fetch_helm_release_secret_yaml(release_name, namespace, false, false)
+            .await
+    }
+
+    async fn fetch_helm_release_secret_yaml(
+        &self,
+        release_name: &str,
+        namespace: &str,
+        truncate: bool,
+        allow_missing_comment: bool,
+    ) -> Result<String> {
         use k8s_openapi::api::core::v1::Secret;
         use kube::api::ListParams;
 
         let secrets_api: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
         let lp = ListParams::default().labels(&format!("owner=helm,name={release_name}"));
-        let list = list_items_or_empty(&secrets_api, &lp, || {
-            format!("failed fetching Helm release secrets for '{release_name}'")
-        })
-        .await?;
+        let list = if allow_missing_comment {
+            list_items_or_empty(&secrets_api, &lp, || {
+                format!("failed fetching Helm release secrets for '{release_name}'")
+            })
+            .await?
+        } else {
+            match secrets_api.list(&lp).await {
+                Ok(list) => list.items,
+                Err(err) if is_forbidden_error(&err) => {
+                    return Err(anyhow::anyhow!(
+                        "RBAC denied reading Helm release secrets for '{release_name}' in namespace '{namespace}'"
+                    ));
+                }
+                Err(err) => {
+                    return Err(err).with_context(|| {
+                        format!("failed fetching Helm release secrets for '{release_name}'")
+                    });
+                }
+            }
+        };
 
         // Find the latest revision (highest version label)
         let latest = list.into_iter().max_by_key(|s| {
@@ -1064,10 +1178,17 @@ impl K8sClient {
             Some(secret) => {
                 let rendered = serde_yaml::to_string(&secret)
                     .context("failed serializing Helm release secret to YAML")?;
-                Ok(yaml::truncate_yaml(rendered))
+                Ok(if truncate {
+                    yaml::truncate_yaml(rendered)
+                } else {
+                    rendered
+                })
             }
-            None => Ok(format!(
+            None if allow_missing_comment => Ok(format!(
                 "# No Helm release secret found for '{release_name}' in namespace '{namespace}'"
+            )),
+            None => Err(anyhow::anyhow!(
+                "no Helm release secret found for '{release_name}' in namespace '{namespace}'"
             )),
         }
     }

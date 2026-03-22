@@ -71,6 +71,7 @@ pub const fn detail_action_requires_authorization(action: DetailAction) -> bool 
     matches!(
         action,
         DetailAction::ViewYaml
+            | DetailAction::ViewConfigDrift
             | DetailAction::ViewDecodedSecret
             | DetailAction::ViewEvents
             | DetailAction::Logs
@@ -94,7 +95,7 @@ pub const fn detail_action_requires_authorization(action: DetailAction) -> bool 
 impl ResourceRef {
     pub fn authorization_checks(&self, action: DetailAction) -> Vec<ResourceAccessCheck> {
         match action {
-            DetailAction::ViewYaml => match self {
+            DetailAction::ViewYaml | DetailAction::ViewConfigDrift => match self {
                 ResourceRef::HelmRelease(_, namespace) => vec![ResourceAccessCheck::resource(
                     "list",
                     None,

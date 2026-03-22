@@ -29,19 +29,7 @@ pub async fn get_resource_yaml(
     let (api_resource, namespaced) = api_resource_for_kind(kind)
         .with_context(|| format!("unsupported resource kind '{kind}'"))?;
 
-    let api: Api<DynamicObject> = if namespaced {
-        match namespace {
-            Some(ns) => Api::namespaced_with(client.clone(), ns, &api_resource),
-            None => {
-                return Err(anyhow!(
-                    "resource kind '{}' requires a namespace",
-                    kind.to_ascii_lowercase()
-                ));
-            }
-        }
-    } else {
-        Api::all_with(client.clone(), &api_resource)
-    };
+    let api = resource_api(client, &api_resource, namespaced, kind, namespace)?;
 
     let fetched = match api.get(name).await {
         Ok(obj) => obj,
@@ -61,9 +49,38 @@ pub async fn get_resource_yaml(
         }
     };
 
-    let rendered =
-        serde_yaml::to_string(&fetched).context("failed serializing resource to YAML")?;
-    Ok(truncate_yaml(rendered))
+    render_yaml(&fetched, true).context("failed serializing resource to YAML")
+}
+
+/// Fetches a full-fidelity manifest for drift inspection.
+///
+/// Unlike [`get_resource_yaml`], this never truncates the payload and never
+/// degrades RBAC failures into comment-only placeholders.
+pub async fn get_resource_yaml_for_diff(
+    client: &Client,
+    kind: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> Result<String> {
+    let (api_resource, namespaced) = api_resource_for_kind(kind)
+        .with_context(|| format!("unsupported resource kind '{kind}'"))?;
+    let api = resource_api(client, &api_resource, namespaced, kind, namespace)?;
+
+    let fetched = api.get(name).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            anyhow!(
+                "RBAC denied reading live manifest for {kind}/{name} in namespace '{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            )
+        } else {
+            anyhow!(err).context(format!(
+                "failed fetching resource kind='{kind}' name='{name}' namespace='{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            ))
+        }
+    })?;
+
+    render_yaml(&fetched, false).context("failed serializing resource to YAML")
 }
 
 /// Applies edited YAML back to the cluster using server-side apply.
@@ -117,6 +134,35 @@ pub fn truncate_yaml(yaml: String) -> String {
 
     let truncated = &yaml[..cut];
     format!("{truncated}\n... (truncated)")
+}
+
+fn resource_api(
+    client: &Client,
+    api_resource: &ApiResource,
+    namespaced: bool,
+    kind: &str,
+    namespace: Option<&str>,
+) -> Result<Api<DynamicObject>> {
+    if namespaced {
+        match namespace {
+            Some(ns) => Ok(Api::namespaced_with(client.clone(), ns, api_resource)),
+            None => Err(anyhow!(
+                "resource kind '{}' requires a namespace",
+                kind.to_ascii_lowercase()
+            )),
+        }
+    } else {
+        Ok(Api::all_with(client.clone(), api_resource))
+    }
+}
+
+fn render_yaml(object: &DynamicObject, truncate: bool) -> Result<String> {
+    let rendered = serde_yaml::to_string(object)?;
+    Ok(if truncate {
+        truncate_yaml(rendered)
+    } else {
+        rendered
+    })
 }
 
 fn api_resource_for_kind(kind: &str) -> Result<(ApiResource, bool)> {
@@ -341,9 +387,43 @@ pub async fn get_custom_resource_yaml(
         }
     };
 
-    let rendered =
-        serde_yaml::to_string(&fetched).context("failed serializing custom resource to YAML")?;
-    Ok(truncate_yaml(rendered))
+    render_yaml(&fetched, true).context("failed serializing custom resource to YAML")
+}
+
+/// Fetches a full-fidelity custom-resource manifest for drift inspection.
+pub async fn get_custom_resource_yaml_for_diff(
+    client: &Client,
+    group: &str,
+    version: &str,
+    kind: &str,
+    plural: &str,
+    name: &str,
+    namespace: Option<&str>,
+) -> Result<String> {
+    let gvk = GroupVersionKind::gvk(group, version, kind);
+    let mut ar = ApiResource::from_gvk(&gvk);
+    ar.plural = plural.to_string();
+
+    let api: Api<DynamicObject> = match namespace {
+        Some(ns) => Api::namespaced_with(client.clone(), ns, &ar),
+        None => Api::all_with(client.clone(), &ar),
+    };
+
+    let fetched = api.get(name).await.map_err(|err| {
+        if is_forbidden_error(&err) {
+            anyhow!(
+                "RBAC denied reading live manifest for {group}/{version}/{kind} '{name}' in namespace '{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            )
+        } else {
+            anyhow!(err).context(format!(
+                "failed fetching custom resource {group}/{version}/{kind} name='{name}' namespace='{}'",
+                namespace.unwrap_or("<cluster-scope>")
+            ))
+        }
+    })?;
+
+    render_yaml(&fetched, false).context("failed serializing custom resource to YAML")
 }
 
 fn is_forbidden_error(err: &kube::Error) -> bool {

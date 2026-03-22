@@ -168,6 +168,13 @@ pub struct DetailAsyncResult {
 }
 
 #[derive(Debug)]
+pub struct ResourceDiffAsyncResult {
+    pub request_id: u64,
+    pub resource: ResourceRef,
+    pub result: Result<String, String>,
+}
+
+#[derive(Debug)]
 pub struct EventsAsyncResult {
     pub request_id: u64,
     pub context_generation: u64,
