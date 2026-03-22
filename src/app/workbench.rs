@@ -1,5 +1,8 @@
 use super::*;
-use crate::{policy::DetailAction, ui::components::scale_dialog::ScaleTargetKind};
+use crate::{
+    policy::DetailAction, resource_diff::ResourceDiffResult,
+    ui::components::scale_dialog::ScaleTargetKind, workbench::ResourceDiffTabState,
+};
 
 impl AppState {
     pub fn active_component(&self) -> ActiveComponent {
@@ -96,6 +99,25 @@ impl AppState {
         tab.pending_request_id = pending_request_id;
         self.workbench
             .open_tab(WorkbenchTabState::ResourceYaml(tab));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_resource_diff_tab(
+        &mut self,
+        resource: ResourceRef,
+        diff: Option<ResourceDiffResult>,
+        error: Option<String>,
+        pending_request_id: Option<u64>,
+    ) {
+        let mut tab = ResourceDiffTabState::new(resource);
+        tab.loading = diff.is_none() && error.is_none();
+        tab.error = error;
+        tab.pending_request_id = pending_request_id;
+        if let Some(diff) = diff {
+            tab.apply_result(diff);
+        }
+        self.workbench
+            .open_tab(WorkbenchTabState::ResourceDiff(tab));
         self.focus = Focus::Workbench;
     }
 

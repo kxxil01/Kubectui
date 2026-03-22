@@ -11,6 +11,7 @@ use kubectui::{
     app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
     coordinator::{LogStreamStatus, UpdateMessage},
     k8s::{client::K8sClient, portforward::PortForwarderService},
+    resource_diff::ResourceDiffResult,
     secret::decode_secret_yaml,
     state::{GlobalState, RefreshOptions, RefreshScope},
     workbench::{WorkbenchTabKey, WorkbenchTabState},
@@ -242,6 +243,38 @@ pub(crate) fn apply_detail_error_to_workbench(
         secret_tab.loading = false;
         secret_tab.error = Some(error.to_string());
         secret_tab.pending_request_id = None;
+    }
+}
+
+pub(crate) fn apply_resource_diff_result_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    diff: ResourceDiffResult,
+) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceDiff(resource.clone()))
+        && let WorkbenchTabState::ResourceDiff(diff_tab) = &mut tab.state
+        && diff_tab.pending_request_id == Some(request_id)
+    {
+        diff_tab.apply_result(diff);
+    }
+}
+
+pub(crate) fn apply_resource_diff_error_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    error: &str,
+) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::ResourceDiff(resource.clone()))
+        && let WorkbenchTabState::ResourceDiff(diff_tab) = &mut tab.state
+        && diff_tab.pending_request_id == Some(request_id)
+    {
+        diff_tab.set_error(error.to_string());
     }
 }
 

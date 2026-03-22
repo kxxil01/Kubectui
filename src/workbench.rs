@@ -5,6 +5,7 @@ use crate::{
     app::{LogsViewerState, ResourceRef},
     icons::tab_icon,
     k8s::client::EventInfo,
+    resource_diff::{ResourceDiffBaselineKind, ResourceDiffLine, ResourceDiffResult},
     secret::DecodedSecretEntry,
     timeline::{TimelineEntry, build_timeline},
     ui::components::port_forward_dialog::PortForwardDialog,
@@ -21,6 +22,7 @@ pub const MAX_TIMELINE_EVENTS: usize = 200;
 pub enum WorkbenchTabKind {
     ActionHistory,
     ResourceYaml,
+    ResourceDiff,
     DecodedSecret,
     ResourceEvents,
     PodLogs,
@@ -35,6 +37,7 @@ impl WorkbenchTabKind {
         match self {
             WorkbenchTabKind::ActionHistory => "History",
             WorkbenchTabKind::ResourceYaml => "YAML",
+            WorkbenchTabKind::ResourceDiff => "Drift",
             WorkbenchTabKind::DecodedSecret => "Decoded",
             WorkbenchTabKind::ResourceEvents => "Timeline",
             WorkbenchTabKind::PodLogs => "Logs",
@@ -50,6 +53,7 @@ impl WorkbenchTabKind {
 pub enum WorkbenchTabKey {
     ActionHistory,
     ResourceYaml(ResourceRef),
+    ResourceDiff(ResourceRef),
     DecodedSecret(ResourceRef),
     ResourceEvents(ResourceRef),
     PodLogs(ResourceRef),
@@ -106,6 +110,53 @@ impl ResourceYamlTabState {
             loading: true,
             error: None,
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ResourceDiffTabState {
+    pub resource: ResourceRef,
+    pub pending_request_id: Option<u64>,
+    pub baseline_kind: Option<ResourceDiffBaselineKind>,
+    pub summary: Option<String>,
+    pub lines: Vec<ResourceDiffLine>,
+    pub scroll: usize,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+impl ResourceDiffTabState {
+    pub fn new(resource: ResourceRef) -> Self {
+        Self {
+            resource,
+            pending_request_id: None,
+            baseline_kind: None,
+            summary: None,
+            lines: Vec::new(),
+            scroll: 0,
+            loading: true,
+            error: None,
+        }
+    }
+
+    pub fn apply_result(&mut self, diff: ResourceDiffResult) {
+        self.baseline_kind = Some(diff.baseline_kind);
+        self.summary = Some(diff.summary);
+        self.lines = diff.lines;
+        self.scroll = 0;
+        self.loading = false;
+        self.error = None;
+        self.pending_request_id = None;
+    }
+
+    pub fn set_error(&mut self, error: String) {
+        self.baseline_kind = None;
+        self.summary = None;
+        self.lines.clear();
+        self.scroll = 0;
+        self.loading = false;
+        self.error = Some(error);
+        self.pending_request_id = None;
     }
 }
 
@@ -472,6 +523,7 @@ impl RelationsTabState {
 pub enum WorkbenchTabState {
     ActionHistory(ActionHistoryTabState),
     ResourceYaml(ResourceYamlTabState),
+    ResourceDiff(ResourceDiffTabState),
     DecodedSecret(DecodedSecretTabState),
     ResourceEvents(ResourceEventsTabState),
     PodLogs(PodLogsTabState),
@@ -486,6 +538,7 @@ impl WorkbenchTabState {
         match self {
             Self::ActionHistory(_) => WorkbenchTabKind::ActionHistory,
             Self::ResourceYaml(_) => WorkbenchTabKind::ResourceYaml,
+            Self::ResourceDiff(_) => WorkbenchTabKind::ResourceDiff,
             Self::DecodedSecret(_) => WorkbenchTabKind::DecodedSecret,
             Self::ResourceEvents(_) => WorkbenchTabKind::ResourceEvents,
             Self::PodLogs(_) => WorkbenchTabKind::PodLogs,
@@ -500,6 +553,7 @@ impl WorkbenchTabState {
         match self {
             Self::ActionHistory(_) => WorkbenchTabKey::ActionHistory,
             Self::ResourceYaml(tab) => WorkbenchTabKey::ResourceYaml(tab.resource.clone()),
+            Self::ResourceDiff(tab) => WorkbenchTabKey::ResourceDiff(tab.resource.clone()),
             Self::DecodedSecret(tab) => WorkbenchTabKey::DecodedSecret(tab.resource.clone()),
             Self::ResourceEvents(tab) => WorkbenchTabKey::ResourceEvents(tab.resource.clone()),
             Self::PodLogs(tab) => WorkbenchTabKey::PodLogs(tab.resource.clone()),
@@ -516,6 +570,9 @@ impl WorkbenchTabState {
         match self {
             Self::ActionHistory(_) => format!("{icon}{kind_label}"),
             Self::ResourceYaml(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
+            Self::ResourceDiff(tab) => {
                 format!("{icon}{kind_label} {}", resource_title(&tab.resource))
             }
             Self::DecodedSecret(tab) => {
@@ -706,7 +763,7 @@ impl WorkbenchState {
         self.tabs.iter().any(|tab| tab.state.key() == *key)
     }
 
-    /// Remove all resource-bound tabs (YAML, Events, Logs, Exec) that become
+    /// Remove all resource-bound tabs (YAML, Drift, Events, Logs, Exec) that become
     /// stale after a context or namespace switch.  ActionHistory and PortForward
     /// are retained since they are not resource-scoped.
     pub fn close_resource_tabs(&mut self) {
@@ -799,6 +856,21 @@ mod tests {
             pod("pod-0"),
         )));
         let second = state.open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState::new(
+            pod("pod-0"),
+        )));
+
+        assert_eq!(first, second);
+        assert_eq!(state.tabs.len(), 1);
+        assert!(state.open);
+    }
+
+    #[test]
+    fn resource_diff_tab_deduplicates_by_resource() {
+        let mut state = WorkbenchState::default();
+        let first = state.open_tab(WorkbenchTabState::ResourceDiff(ResourceDiffTabState::new(
+            pod("pod-0"),
+        )));
+        let second = state.open_tab(WorkbenchTabState::ResourceDiff(ResourceDiffTabState::new(
             pod("pod-0"),
         )));
 

@@ -45,6 +45,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Detail View",
         &[
             ("y", "View YAML"),
+            ("D", "View config drift (live vs last-applied)"),
             ("o", "View decoded Secret data"),
             ("B", "Toggle bookmark"),
             ("v", "View timeline"),
