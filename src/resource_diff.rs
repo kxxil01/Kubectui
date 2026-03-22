@@ -4,6 +4,8 @@ use anyhow::{Context, Result, anyhow};
 use serde_json::{Map, Value};
 
 const LAST_APPLIED_ANNOTATION: &str = "kubectl.kubernetes.io/last-applied-configuration";
+const ROLLOUT_RESTART_ANNOTATION: &str = "kubectl.kubernetes.io/restartedAt";
+const MAX_SAFE_DIFF_MATRIX_CELLS: usize = 4_000_000;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceDiffBaselineKind {
@@ -75,6 +77,14 @@ pub fn build_resource_diff(live_yaml: &str) -> Result<ResourceDiffResult> {
         });
     }
 
+    if !diff_matrix_fits_budget(&applied_text, &live_text) {
+        return Ok(ResourceDiffResult {
+            baseline_kind: ResourceDiffBaselineKind::LastAppliedAnnotation,
+            summary: "Drift detected, but the normalized manifest is too large for safe inline diff rendering.".to_string(),
+            lines: Vec::new(),
+        });
+    }
+
     let (lines, added, removed) = build_unified_diff(&applied_text, &live_text);
     Ok(ResourceDiffResult {
         baseline_kind: ResourceDiffBaselineKind::LastAppliedAnnotation,
@@ -141,6 +151,7 @@ fn normalize_resource_value(value: &mut Value) {
     }
 
     map.remove("status");
+    remove_rollout_restart_annotation(map);
     *value = sort_value(value.take());
 }
 
@@ -163,6 +174,40 @@ fn sort_value(value: Value) -> Value {
         Value::Array(items) => Value::Array(items.into_iter().map(sort_value).collect()),
         other => other,
     }
+}
+
+fn remove_rollout_restart_annotation(map: &mut Map<String, Value>) {
+    let Some(spec) = map.get_mut("spec").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(template) = spec.get_mut("template").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(metadata) = template.get_mut("metadata").and_then(Value::as_object_mut) else {
+        return;
+    };
+    let Some(annotations) = metadata
+        .get_mut("annotations")
+        .and_then(Value::as_object_mut)
+    else {
+        return;
+    };
+    annotations.remove(ROLLOUT_RESTART_ANNOTATION);
+    if annotations.is_empty() {
+        metadata.remove("annotations");
+    }
+    if metadata.is_empty() {
+        template.remove("metadata");
+    }
+}
+
+fn diff_matrix_fits_budget(old_text: &str, new_text: &str) -> bool {
+    let old_lines = old_text.lines().count();
+    let new_lines = new_text.lines().count();
+    old_lines
+        .saturating_add(1)
+        .saturating_mul(new_lines.saturating_add(1))
+        <= MAX_SAFE_DIFF_MATRIX_CELLS
 }
 
 fn build_unified_diff(old_text: &str, new_text: &str) -> (Vec<ResourceDiffLine>, usize, usize) {
@@ -262,8 +307,8 @@ fn diff_operations<'a>(
 #[cfg(test)]
 mod tests {
     use super::{
-        LAST_APPLIED_ANNOTATION, ResourceDiffBaselineKind, ResourceDiffLineKind,
-        build_resource_diff, normalize_resource_value,
+        LAST_APPLIED_ANNOTATION, ROLLOUT_RESTART_ANNOTATION, ResourceDiffBaselineKind,
+        ResourceDiffLineKind, build_resource_diff, normalize_resource_value,
     };
     use serde_json::json;
 
@@ -448,6 +493,75 @@ data:
                 .iter()
                 .any(|line| line.kind == ResourceDiffLineKind::Added)
         );
+    }
+
+    #[test]
+    fn strips_rollout_restart_annotation_from_pod_template() {
+        let mut value = json!({
+            "apiVersion": "apps/v1",
+            "kind": "Deployment",
+            "metadata": {
+                "name": "demo",
+                "annotations": {
+                    LAST_APPLIED_ANNOTATION: "{}"
+                }
+            },
+            "spec": {
+                "template": {
+                    "metadata": {
+                        "annotations": {
+                            ROLLOUT_RESTART_ANNOTATION: "2026-03-22T15:00:00Z",
+                            "team": "platform"
+                        }
+                    }
+                }
+            }
+        });
+
+        normalize_resource_value(&mut value);
+        assert_eq!(
+            value,
+            json!({
+                "apiVersion": "apps/v1",
+                "kind": "Deployment",
+                "metadata": {
+                    "name": "demo"
+                },
+                "spec": {
+                    "template": {
+                        "metadata": {
+                            "annotations": {
+                                "team": "platform"
+                            }
+                        }
+                    }
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn skips_inline_diff_when_manifest_is_too_large() {
+        let live_lines = (0..2_500)
+            .map(|idx| format!("  key-{idx}: live"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let live_yaml = format!(
+            "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: giant\n  annotations:\n    kubectl.kubernetes.io/last-applied-configuration: |\n      {{\"apiVersion\":\"v1\",\"kind\":\"ConfigMap\",\"metadata\":{{\"name\":\"giant\"}},\"data\":{{{}}}}}\ndata:\n{}\n",
+            (0..2_500)
+                .map(|idx| format!("\\\"key-{idx}\\\":\\\"baseline\\\""))
+                .collect::<Vec<_>>()
+                .join(","),
+            live_lines
+        );
+
+        let result = build_resource_diff(&live_yaml).expect("diff should build");
+        assert_eq!(
+            result.baseline_kind,
+            ResourceDiffBaselineKind::LastAppliedAnnotation
+        );
+        assert!(result.lines.is_empty());
+        assert!(result.summary.contains("too large for safe inline diff"));
     }
 
     #[test]
