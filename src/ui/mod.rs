@@ -1238,7 +1238,8 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     if app.help_overlay.is_open() {
         let _help_scope = profiling::span_scope("overlay.help");
-        app.help_overlay.render(frame, frame.area());
+        app.help_overlay
+            .render(frame, frame.area(), app.detail_view.as_ref());
     }
 }
 

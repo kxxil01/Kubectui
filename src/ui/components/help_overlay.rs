@@ -8,12 +8,32 @@ use ratatui::{
 };
 
 use crate::ui::components::default_theme;
+use crate::{app::DetailViewState, policy::DetailAction};
 
 #[derive(Debug, Clone, Default)]
 pub struct HelpOverlay {
     is_open: bool,
     scroll: usize,
 }
+
+const DETAIL_BASE_BINDINGS: &[(&str, &str)] = &[
+    ("y", "View YAML"),
+    ("o", "View decoded Secret data"),
+    ("B", "Toggle bookmark"),
+    ("v", "View timeline"),
+    ("l", "View logs"),
+    ("x", "Exec into pod"),
+    ("f", "Port forward"),
+    ("s", "Scale replicas"),
+    ("p", "Probe panel"),
+    ("R", "Restart rollout"),
+    ("e", "Edit YAML"),
+    ("d", "Delete resource"),
+    ("F", "Force delete (in confirm dialog)"),
+    ("T", "Trigger CronJob"),
+    ("S", "Pause/resume CronJob"),
+    ("w", "View relations"),
+];
 
 const SECTIONS: &[(&str, &[(&str, &str)])] = &[
     (
@@ -39,28 +59,6 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("[ / ]", "Previous / next workbench tab"),
             ("Ctrl+W", "Close workbench tab"),
             ("Ctrl+Up / Ctrl+Down", "Resize workbench"),
-        ],
-    ),
-    (
-        "Detail View",
-        &[
-            ("y", "View YAML"),
-            ("D", "View config drift (live vs last-applied)"),
-            ("o", "View decoded Secret data"),
-            ("B", "Toggle bookmark"),
-            ("v", "View timeline"),
-            ("l", "View logs"),
-            ("x", "Exec into pod"),
-            ("f", "Port forward"),
-            ("s", "Scale replicas"),
-            ("p", "Probe panel"),
-            ("R", "Restart rollout"),
-            ("e", "Edit YAML"),
-            ("d", "Delete resource"),
-            ("F", "Force delete (in confirm dialog)"),
-            ("T", "Trigger CronJob"),
-            ("S", "Pause/resume CronJob"),
-            ("w", "View relations"),
         ],
     ),
     (
@@ -198,6 +196,9 @@ impl HelpOverlay {
 
     pub fn total_lines() -> usize {
         let mut count = 0;
+        count += 1;
+        count += detail_bindings(None).len();
+        count += 1;
         for (_, bindings) in SECTIONS {
             count += 1; // section header
             count += bindings.len();
@@ -206,7 +207,7 @@ impl HelpOverlay {
         count
     }
 
-    pub fn render(&self, frame: &mut Frame, area: Rect) {
+    pub fn render(&self, frame: &mut Frame, area: Rect, detail: Option<&DetailViewState>) {
         let theme = default_theme();
 
         let popup_width = 60u16.min(area.width.saturating_sub(4));
@@ -235,6 +236,20 @@ impl HelpOverlay {
             .split(inner);
 
         let mut lines: Vec<Line> = Vec::new();
+        lines.push(Line::from(Span::styled(
+            "  Detail View",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )));
+        for (key, desc) in detail_bindings(detail) {
+            lines.push(Line::from(vec![
+                Span::styled(format!("    {key:<24}"), Style::default().fg(theme.fg)),
+                Span::styled(desc, Style::default().fg(theme.fg_dim)),
+            ]));
+        }
+        lines.push(Line::from(""));
+
         for (section_name, bindings) in SECTIONS {
             lines.push(Line::from(Span::styled(
                 format!("  {section_name}"),
@@ -276,6 +291,20 @@ impl HelpOverlay {
     }
 }
 
+fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'static str)> {
+    let mut bindings = Vec::with_capacity(DETAIL_BASE_BINDINGS.len() + 1);
+    if detail.is_some_and(|detail| {
+        detail.supports_action(DetailAction::ViewConfigDrift)
+            && !detail.supports_action(DetailAction::Drain)
+    }) {
+        bindings.push(("D", "View config drift (live vs last-applied)"));
+    } else if detail.is_some_and(|detail| detail.supports_action(DetailAction::Drain)) {
+        bindings.push(("D", "Drain node (with confirmation)"));
+    }
+    bindings.extend_from_slice(DETAIL_BASE_BINDINGS);
+    bindings
+}
+
 fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let y = area.y + (area.height.saturating_sub(height)) / 2;
@@ -285,6 +314,7 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::{DetailViewState, ResourceRef};
 
     #[test]
     fn help_overlay_toggle() {
@@ -312,5 +342,28 @@ mod tests {
     #[test]
     fn total_lines_is_nonzero() {
         assert!(HelpOverlay::total_lines() > 20);
+    }
+
+    #[test]
+    fn detail_bindings_show_drift_for_non_node_detail() {
+        let detail = DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+            ..DetailViewState::default()
+        };
+
+        let bindings = detail_bindings(Some(&detail));
+        assert!(bindings.contains(&("D", "View config drift (live vs last-applied)")));
+    }
+
+    #[test]
+    fn detail_bindings_show_drain_for_node_detail() {
+        let detail = DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            ..DetailViewState::default()
+        };
+
+        let bindings = detail_bindings(Some(&detail));
+        assert!(bindings.contains(&("D", "Drain node (with confirmation)")));
+        assert!(!bindings.contains(&("D", "View config drift (live vs last-applied)")));
     }
 }
