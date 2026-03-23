@@ -109,6 +109,7 @@ impl AppState {
             return;
         }
         self.sidebar_cursor = (self.sidebar_cursor + 1) % rows.len();
+        self.auto_expand_collapsed_group_at_cursor();
     }
 
     pub fn sidebar_cursor_up(&mut self) {
@@ -121,6 +122,19 @@ impl AppState {
         } else {
             self.sidebar_cursor - 1
         };
+        self.auto_expand_collapsed_group_at_cursor();
+    }
+
+    /// If the sidebar cursor is on a collapsed group header, expand it so
+    /// its child views become visible during j/k navigation.
+    fn auto_expand_collapsed_group_at_cursor(&mut self) {
+        let rows = sidebar_rows(&self.collapsed_groups);
+        if let Some(SidebarItem::Group(g)) = rows.get(self.sidebar_cursor)
+            && self.collapsed_groups.contains(g)
+        {
+            self.collapsed_groups.remove(g);
+            self.needs_config_save = true;
+        }
     }
 
     pub fn sidebar_activate(&mut self) -> AppAction {
