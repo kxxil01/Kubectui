@@ -9,7 +9,15 @@ use kubectui::{
 };
 
 use crate::async_types::{DebugContainerDialogBootstrapResult, DebugContainerLaunchAsyncResult};
-use crate::selection_helpers::{detail_action_allowed, detail_action_denied_message};
+use crate::selection_helpers::{detail_action_allowed_strict, detail_action_denied_message};
+
+fn debug_container_authorization_message(resource: &ResourceRef) -> String {
+    format!(
+        "Debug launch requires confirmed 'pods/exec' and 'pods/ephemeralcontainers' access for {} '{}'. Authorization could not be verified.",
+        resource.kind(),
+        resource.name()
+    )
+}
 
 pub async fn handle_debug_container_dialog_open(
     app: &mut AppState,
@@ -29,12 +37,20 @@ pub async fn handle_debug_container_dialog_open(
         app.set_error("Debug containers are only available for Pod resources.".to_string());
         return true;
     };
-    if !detail_action_allowed(app, client, &resource, DetailAction::DebugContainer).await {
-        app.set_error(detail_action_denied_message(
-            DetailAction::DebugContainer,
-            &resource,
-        ));
-        return true;
+    match detail_action_allowed_strict(app, client, &resource, DetailAction::DebugContainer).await
+    {
+        Some(true) => {}
+        Some(false) => {
+            app.set_error(detail_action_denied_message(
+                DetailAction::DebugContainer,
+                &resource,
+            ));
+            return true;
+        }
+        None => {
+            app.set_error(debug_container_authorization_message(&resource));
+            return true;
+        }
     }
 
     *request_seq = request_seq.wrapping_add(1).max(1);
@@ -89,12 +105,20 @@ pub async fn handle_debug_container_dialog_submit(
         app.set_error("Debug container launch is unavailable for the selected Pod.".to_string());
         return true;
     }
-    if !detail_action_allowed(app, client, &resource, DetailAction::DebugContainer).await {
-        app.set_error(detail_action_denied_message(
-            DetailAction::DebugContainer,
-            &resource,
-        ));
-        return true;
+    match detail_action_allowed_strict(app, client, &resource, DetailAction::DebugContainer).await
+    {
+        Some(true) => {}
+        Some(false) => {
+            app.set_error(detail_action_denied_message(
+                DetailAction::DebugContainer,
+                &resource,
+            ));
+            return true;
+        }
+        None => {
+            app.set_error(debug_container_authorization_message(&resource));
+            return true;
+        }
     }
 
     let Some(dialog) = app

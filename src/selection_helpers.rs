@@ -365,6 +365,10 @@ pub fn cached_detail_action_authorization(
         .map(|status| status == DetailActionAuthorization::Allowed)
 }
 
+fn resolve_detail_action_authorization(cached: Option<bool>, live: Option<bool>) -> Option<bool> {
+    cached.or(live)
+}
+
 /// Checks whether the given detail action is allowed (cache first, then live query).
 pub async fn detail_action_allowed(
     app: &AppState,
@@ -372,14 +376,34 @@ pub async fn detail_action_allowed(
     resource: &ResourceRef,
     action: DetailAction,
 ) -> bool {
-    if let Some(allowed) = cached_detail_action_authorization(app, resource, action) {
-        return allowed;
-    }
+    let cached = cached_detail_action_authorization(app, resource, action);
+    let live = if cached.is_some() {
+        None
+    } else {
+        client.is_detail_action_authorized(resource, action).await
+    };
 
-    client
-        .is_detail_action_authorized(resource, action)
-        .await
-        .unwrap_or(true)
+    resolve_detail_action_authorization(cached, live).unwrap_or(true)
+}
+
+/// Checks whether the given detail action is explicitly authorized.
+///
+/// Unlike [`detail_action_allowed`], this fails closed when authorization cannot be
+/// determined. Use it for actions that must not proceed on ambiguous RBAC state.
+pub async fn detail_action_allowed_strict(
+    app: &AppState,
+    client: &K8sClient,
+    resource: &ResourceRef,
+    action: DetailAction,
+) -> Option<bool> {
+    let cached = cached_detail_action_authorization(app, resource, action);
+    let live = if cached.is_some() {
+        None
+    } else {
+        client.is_detail_action_authorized(resource, action).await
+    };
+
+    resolve_detail_action_authorization(cached, live)
 }
 
 /// Builds a human-readable denial message for the given action and resource.
