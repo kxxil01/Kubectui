@@ -34,7 +34,7 @@ Current milestone status:
 - Milestone 16: completed
 - Milestone 17: completed
 - Milestone 18: completed
-- Milestone 19: not started
+- Milestone 19: completed
 - Milestone 20: not started
 - Milestone 21: completed
 - Milestone 22: completed (v1)
@@ -67,6 +67,7 @@ Completion notes:
 - Milestone 17 shipped: persistent per-context bookmarks, dedicated Bookmarks view, jump-to-resource navigation, `B` toggle from list/detail, stale bookmark indication, command/help integration, and inline bookmark markers across normal list views.
 - Milestone 18 shipped: CronJob detail now acts as the management panel with next-run display, capped Job execution history, per-run status/duration/pod-count/completion visibility, `Enter` jump into child Job detail, `l` access to selected failed/current Job logs, suspend/resume confirmation on `S`, action palette/help integration, and mutation history coverage.
 - PR #16 hardened the post-M18 surface: canonical RBAC-aware detail/action authorization, graceful forbidden list/discovery degradation, workbench/detail/palette permission preflight, paused CronJob next-run suppression, and CronJob history log gating based on live pods plus log access.
+- Milestone 19 shipped (PR #53): Pod-only ephemeral debug container launcher with preset/custom image selection, optional target-container PID namespace targeting, Kubernetes version/capability checks for stable ephemeral containers, action palette and detail-view `g` integration, action history coverage, and exec workbench reuse so the launched container opens in the canonical shell tab path. Follow-up tri-state detail authorization hardening also shipped with M19 so privileged actions now fail closed on unknown RBAC while read-only actions remain best-effort.
 - Milestone 21 shipped (PR #18): comprehensive resource utilization dashboard — ClusterResourceSummary with cluster-wide CPU/memory utilization and overcommitment percentages, 5-gauge dashboard row (Nodes Ready, Pods Running, Workload Ready, Cluster CPU, Cluster Mem), Overcommit & Governance panel (commitment ratios, missing request/limit counts), Top Pod Consumers panel (top-5 CPU and memory), enhanced Namespace Utilization table with %CPU/R and %MEM/R columns, 10 new hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), enriched node CPU/Memory columns with used/alloc/pct% format and threshold coloring, pod_metrics pipeline integration via metrics.k8s.io with graceful degradation, compact dashboard layout for small terminals, 20+ new tests, 3 criterion benchmarks.
 - Milestone 22 shipped (v1): workbench-hosted Drift tab, action palette integration, detail-view `D` shortcut, last-applied baseline extraction from `kubectl.kubernetes.io/last-applied-configuration`, full-fidelity manifest fetch for diffing (no truncation / no RBAC placeholder parsing), deterministic normalized unified diff rendering, explicit no-baseline / unavailable-manifest states, and regression coverage for normalization, ordering, and keybinding behavior. Current scope is client-side apply baseline only; managedFields/SSA fallback is not implemented.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
@@ -101,6 +102,7 @@ Verification status for completed milestones:
 - Render profiling check passes on 2026-03-18: 5-run median vs pre-patch `HEAD` improved slightly (`render` `242.530ms -> 242.121ms`, `-0.409ms`, `-0.17%`; `sidebar` `18.366ms -> 18.342ms`; `header` `13.920ms -> 13.810ms`)
 - Latest ordinary-table render-template verification on 2026-03-19: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass after expanding helper coverage and tightening the sidebar cache path. The latest clean 5-run render-profile comparison vs clean `HEAD` is now positive across the primary global metrics (`render` median `240.670ms -> 238.851ms`, `-1.819ms`, `-0.76%`; `sidebar` `17.928ms -> 17.594ms`, `-0.334ms`, `-1.86%`; `header` `13.994ms -> 13.705ms`, `-0.289ms`, `-2.07%`). Treat the broader expansion and sidebar follow-up as shipped with the performance gate satisfied.
 - Latest structural refactor verification on 2026-03-19: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass after the `app/mod.rs` split, test extraction, and `main.rs` startup/helper extraction. Current root sizes are materially lower: `src/app/mod.rs` `2575 -> 267` lines, `src/main.rs` `3941 -> 3254` lines. The remaining large `main.rs` surface is now concentrated in the event loop rather than mixed with startup and test code.
+- Latest M19 + tri-state authorization verification on 2026-03-24: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally. PR #53 also passed GitHub `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)` before merge.
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -1358,7 +1360,7 @@ CronJob management (database backups, cleanup scripts, report generation) is a d
 
 ### Status
 
-Not started
+Completed (PR #53)
 
 ### Goal
 
@@ -1376,6 +1378,20 @@ Production containers increasingly use distroless or scratch-based images that l
 - launch directly into shell session in the ephemeral container
 - reuse existing exec/shell workbench tab infrastructure
 
+### What shipped
+
+- Pod-only debug container launcher wired into the canonical detail/action/workbench path
+- preset image picker plus custom image input
+- optional target-container PID namespace targeting
+- Kubernetes version/capability checks for stable ephemeral containers
+- action palette entry and detail-view `g` shortcut
+- action history coverage and exec-tab/session reuse when re-launching on the same Pod
+- regression coverage for dialog behavior, routing, authorization, and session cleanup
+
+### Remaining validation gap
+
+- live-cluster smoke behavior under a real kube context and real RBAC for `pods/ephemeralcontainers` and `pods/exec`
+
 ### Tasks
 
 1. Add `DebugContainerDialog` state model with image selection and options.
@@ -1383,11 +1399,11 @@ Production containers increasingly use distroless or scratch-based images that l
 3. Add process namespace targeting toggle (share PID namespace with target container).
 4. Implement ephemeral container creation via Kubernetes API (pods/ephemeralcontainers subresource).
 5. After container is running, open exec session into the debug container (reuse ExecTabState).
-6. Add `D` keybinding in pod detail view to launch debug dialog (when pod is running).
+6. Add `g` keybinding in pod detail view to launch debug dialog (when pod is running).
 7. Add action palette: "Debug container" for pod resources.
 8. Record debug container creation in action history.
 9. Update help overlay.
-10. Add tests for dialog state, API payload construction, image presets.
+10. Add tests for dialog state, API payload construction, image presets, routing, and session replacement.
 
 ### Deliverables
 
@@ -1849,10 +1865,10 @@ This is the execution order.
 ## P4 (Completed)
 
 - Milestone 18: CronJob/Job Management Panel ✅
+- Milestone 19: Ephemeral Debug Container Launcher ✅
 
 ## P5 (Next)
 
-- Milestone 19: Ephemeral Debug Container Launcher
 - Milestone 20: Helm Release History & Rollback
 
 ## P6
@@ -1869,13 +1885,13 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M18 and M21-M22 are complete. The next unstarted milestone is M19: Ephemeral Debug Container Launcher.
+M0-M19 and M21-M22 are complete. The next unstarted milestone is M20: Helm Release History & Rollback.
 
 Recommended near-term order:
 
-- M19: Ephemeral Debug Container Launcher
 - M20: Helm Release History & Rollback
 - M23: Plugin / Custom Action System
+- M24: Resource Sanitizer / Best Practice Linter
 
 Do not start next with:
 
