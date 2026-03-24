@@ -5,8 +5,8 @@ use std::time::Instant;
 use kubectui::{
     app::{AppView, DetailViewState, ResourceRef},
     k8s::{
-        client::K8sClient, dtos::K8sEventInfo, probes::ContainerProbes,
-        relationships::RelationNode, workload_logs::WorkloadLogTarget,
+        client::K8sClient, dtos::K8sEventInfo, exec::DebugContainerLaunchResult,
+        probes::ContainerProbes, relationships::RelationNode, workload_logs::WorkloadLogTarget,
     },
     state::{GlobalState, RefreshOptions, RefreshScope},
     time::AppTimestamp,
@@ -145,6 +145,23 @@ pub struct ExecBootstrapResult {
     pub session_id: u64,
     pub resource: ResourceRef,
     pub result: Result<Vec<String>, String>,
+}
+
+#[derive(Debug)]
+pub struct DebugContainerDialogBootstrapResult {
+    pub request_id: u64,
+    pub resource: ResourceRef,
+    pub result: Result<Vec<String>, String>,
+}
+
+#[derive(Debug)]
+pub struct DebugContainerLaunchAsyncResult {
+    pub action_history_id: u64,
+    pub context_generation: u64,
+    pub origin_view: AppView,
+    pub resource: ResourceRef,
+    pub session_id: u64,
+    pub result: Result<DebugContainerLaunchResult, String>,
 }
 
 #[derive(Debug)]

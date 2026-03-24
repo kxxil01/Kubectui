@@ -6,6 +6,7 @@ use std::{
 
 pub mod command_palette;
 pub mod context_picker;
+pub mod debug_container_dialog;
 pub mod help_overlay;
 pub mod input_field;
 pub mod namespace_picker;
@@ -16,6 +17,10 @@ pub mod workbench;
 
 pub use command_palette::{CommandPalette, CommandPaletteAction};
 pub use context_picker::{ContextPicker, ContextPickerAction};
+pub use debug_container_dialog::{
+    DebugContainerDialogEvent, DebugContainerDialogState, DebugContainerField,
+    render_debug_container_dialog,
+};
 pub use input_field::InputFieldWidget;
 pub use namespace_picker::{NamespacePicker, NamespacePickerAction};
 pub use port_forward_dialog::{FormField, PortForwardAction, PortForwardDialog, PortForwardMode};

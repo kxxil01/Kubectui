@@ -47,6 +47,7 @@ pub enum DetailAction {
     ViewEvents,
     Logs,
     Exec,
+    DebugContainer,
     PortForward,
     Probes,
     Scale,
@@ -73,7 +74,7 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 21] = [
+    pub const ORDER: [DetailAction; 22] = [
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
         DetailAction::ViewDecodedSecret,
@@ -81,6 +82,7 @@ impl DetailAction {
         DetailAction::ViewEvents,
         DetailAction::Logs,
         DetailAction::Exec,
+        DetailAction::DebugContainer,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -106,6 +108,7 @@ impl DetailAction {
             DetailAction::ViewEvents => "[v]",
             DetailAction::Logs => "[l]",
             DetailAction::Exec => "[x]",
+            DetailAction::DebugContainer => "[g]",
             DetailAction::PortForward => "[f]",
             DetailAction::Probes => "[p]",
             DetailAction::Scale => "[s]",
@@ -130,6 +133,7 @@ impl DetailAction {
             DetailAction::ViewEvents => "Events",
             DetailAction::Logs => "Logs",
             DetailAction::Exec => "Exec",
+            DetailAction::DebugContainer => "Debug",
             DetailAction::PortForward => "Port-Fwd",
             DetailAction::Probes => "Probes",
             DetailAction::Scale => "Scale",
@@ -420,7 +424,10 @@ impl ResourceRef {
                     | ResourceRef::ReplicationController(_, _)
                     | ResourceRef::Job(_, _)
             ),
-            DetailAction::Exec | DetailAction::PortForward | DetailAction::Probes => {
+            DetailAction::Exec
+            | DetailAction::DebugContainer
+            | DetailAction::PortForward
+            | DetailAction::Probes => {
                 matches!(self, ResourceRef::Pod(_, _))
             }
             DetailAction::Scale => {
@@ -520,6 +527,7 @@ impl DetailViewState {
 
     pub fn has_blocking_detail_overlay(&self) -> bool {
         self.scale_dialog.is_some()
+            || self.debug_dialog.is_some()
             || self.probe_panel.is_some()
             || self.confirm_delete
             || self.confirm_drain
@@ -539,6 +547,7 @@ impl DetailViewState {
                 | DetailAction::ViewEvents
                 | DetailAction::Logs
                 | DetailAction::Exec
+                | DetailAction::DebugContainer
                 | DetailAction::PortForward
                 | DetailAction::Probes
                 | DetailAction::Scale
@@ -616,6 +625,7 @@ mod tests {
         };
 
         assert!(detail.supports_action(DetailAction::Logs));
+        assert!(detail.supports_action(DetailAction::DebugContainer));
         assert!(detail.supports_action(DetailAction::PortForward));
         assert!(detail.supports_action(DetailAction::Probes));
         assert!(detail.supports_action(DetailAction::EditYaml));
@@ -759,10 +769,12 @@ mod tests {
         detail.metadata.node_unschedulable = Some(false);
         assert!(detail.supports_action(DetailAction::Cordon));
         assert!(!detail.supports_action(DetailAction::Uncordon));
+        assert!(!detail.supports_action(DetailAction::DebugContainer));
 
         detail.metadata.node_unschedulable = Some(true);
         assert!(!detail.supports_action(DetailAction::Cordon));
         assert!(detail.supports_action(DetailAction::Uncordon));
+        assert!(!detail.supports_action(DetailAction::DebugContainer));
     }
 
     #[test]

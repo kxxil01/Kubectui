@@ -76,6 +76,7 @@ pub const fn detail_action_requires_authorization(action: DetailAction) -> bool 
             | DetailAction::ViewEvents
             | DetailAction::Logs
             | DetailAction::Exec
+            | DetailAction::DebugContainer
             | DetailAction::PortForward
             | DetailAction::Probes
             | DetailAction::Scale
@@ -164,6 +165,28 @@ impl ResourceRef {
             DetailAction::Exec => match self {
                 ResourceRef::Pod(name, namespace) => vec![
                     ResourceAccessCheck::resource("get", None, "pods", Some(namespace), Some(name)),
+                    ResourceAccessCheck::subresource(
+                        "create",
+                        None,
+                        "pods",
+                        "exec",
+                        Some(namespace),
+                        Some(name),
+                    ),
+                ],
+                _ => Vec::new(),
+            },
+            DetailAction::DebugContainer => match self {
+                ResourceRef::Pod(name, namespace) => vec![
+                    ResourceAccessCheck::resource("get", None, "pods", Some(namespace), Some(name)),
+                    ResourceAccessCheck::subresource(
+                        "patch",
+                        None,
+                        "pods",
+                        "ephemeralcontainers",
+                        Some(namespace),
+                        Some(name),
+                    ),
                     ResourceAccessCheck::subresource(
                         "create",
                         None,

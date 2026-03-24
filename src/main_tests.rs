@@ -432,10 +432,25 @@ fn palette_node_actions_require_loaded_detail() {
 }
 
 #[test]
+fn palette_debug_container_requires_loaded_detail() {
+    assert!(palette_action_requires_loaded_detail(
+        &AppAction::DebugContainerDialogOpen
+    ));
+}
+
+#[test]
 fn palette_drain_maps_to_confirmation_action() {
     assert_eq!(
         map_palette_detail_action(DetailAction::Drain),
         AppAction::ConfirmDrainNode
+    );
+}
+
+#[test]
+fn palette_debug_container_maps_to_dialog_open() {
+    assert_eq!(
+        map_palette_detail_action(DetailAction::DebugContainer),
+        AppAction::DebugContainerDialogOpen
     );
 }
 

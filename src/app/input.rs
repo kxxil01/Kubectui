@@ -701,6 +701,23 @@ impl AppState {
             ActiveComponent::LogsViewer | ActiveComponent::PortForward => {
                 return self.handle_workbench_key_event(key);
             }
+            ActiveComponent::DebugContainer => {
+                if let Some(detail) = &mut self.detail_view
+                    && let Some(dialog) = &mut detail.debug_dialog
+                {
+                    return match dialog.handle_key(key) {
+                        crate::ui::components::DebugContainerDialogEvent::None => AppAction::None,
+                        crate::ui::components::DebugContainerDialogEvent::Submit => {
+                            AppAction::DebugContainerDialogSubmit
+                        }
+                        crate::ui::components::DebugContainerDialogEvent::Close => {
+                            detail.debug_dialog = None;
+                            AppAction::None
+                        }
+                    };
+                }
+                return AppAction::None;
+            }
             ActiveComponent::Scale => {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
@@ -879,6 +896,14 @@ impl AppState {
                     || (self.detail_view.is_none() && self.focus == Focus::Content) =>
             {
                 AppAction::OpenExec
+            }
+            KeyCode::Char('g')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) =>
+            {
+                AppAction::DebugContainerDialogOpen
             }
             KeyCode::Char('f')
                 if self

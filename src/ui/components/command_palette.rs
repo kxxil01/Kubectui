@@ -55,6 +55,10 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     (DetailAction::Logs, &["logs", "log"]),
     (DetailAction::Exec, &["exec", "shell", "terminal"]),
     (
+        DetailAction::DebugContainer,
+        &["debug", "debug container", "ephemeral", "kubectl debug"],
+    ),
+    (
         DetailAction::PortForward,
         &["port-forward", "forward", "tunnel", "pf"],
     ),
@@ -757,6 +761,11 @@ mod tests {
         let entries = action_entries_for_resource(Some(&resource));
         assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
         assert!(entries.iter().any(|e| e.action == DetailAction::Exec));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.action == DetailAction::DebugContainer)
+        );
         assert!(!entries.iter().any(|e| e.action == DetailAction::Scale));
     }
 

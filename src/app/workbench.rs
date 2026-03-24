@@ -22,7 +22,9 @@ impl AppState {
             return ActiveComponent::None;
         };
 
-        if detail.scale_dialog.is_some() {
+        if detail.debug_dialog.is_some() {
+            ActiveComponent::DebugContainer
+        } else if detail.scale_dialog.is_some() {
             ActiveComponent::Scale
         } else if detail.probe_panel.is_some() {
             ActiveComponent::ProbePanel
@@ -182,6 +184,20 @@ impl AppState {
             .open_tab(WorkbenchTabState::Exec(ExecTabState::new(
                 resource, session_id, pod_name, namespace,
             )));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_exec_tab_for_container(
+        &mut self,
+        resource: ResourceRef,
+        session_id: u64,
+        pod_name: String,
+        namespace: String,
+        container_name: String,
+    ) {
+        let mut tab = ExecTabState::new(resource, session_id, pod_name, namespace);
+        tab.preset_container(container_name);
+        self.workbench.open_tab(WorkbenchTabState::Exec(tab));
         self.focus = Focus::Workbench;
     }
 

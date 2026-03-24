@@ -42,8 +42,11 @@ use crate::{
         ActionAuthorizationMap, DetailActionAuthorization, ResourceAccessCheck,
         detail_action_requires_authorization,
     },
-    k8s::conversions::{
-        age_from_created_at, app_timestamp_from_k8s_timestamp, namespace_metadata_to_info,
+    k8s::{
+        conversions::{
+            age_from_created_at, app_timestamp_from_k8s_timestamp, namespace_metadata_to_info,
+        },
+        exec::{DebugContainerLaunchRequest, DebugContainerLaunchResult, launch_debug_container},
     },
     policy::DetailAction,
 };
@@ -65,6 +68,7 @@ pub use crate::k8s::{
 const MAX_EVENTS_LIST_LIMIT: u32 = 1000;
 const MAX_RECENT_EVENTS_ITEMS: usize = 250;
 const CLIENT_RETRY_BUFFER_SIZE: usize = 1024;
+const EPHEMERAL_CONTAINERS_MIN_MINOR: u32 = 25;
 
 /// Configured Kubernetes client wrapper.
 #[derive(Clone)]
@@ -968,6 +972,15 @@ impl K8sClient {
         }
     }
 
+    /// Launches an ephemeral debug container in a running Pod.
+    pub async fn launch_debug_container(
+        &self,
+        request: &DebugContainerLaunchRequest,
+    ) -> Result<DebugContainerLaunchResult> {
+        self.ensure_ephemeral_containers_supported().await?;
+        launch_debug_container(self, request).await
+    }
+
     /// Applies edited YAML back to the cluster (server-side apply).
     pub async fn apply_resource_yaml(
         &self,
@@ -1444,6 +1457,37 @@ impl K8sClient {
             .insert(check.clone(), allowed);
         Some(allowed)
     }
+}
+
+impl K8sClient {
+    async fn ensure_ephemeral_containers_supported(&self) -> Result<()> {
+        let Ok(version) = self.fetch_cluster_version().await else {
+            return Ok(());
+        };
+        if let Some((major, minor)) = parse_kubernetes_minor_version(version.git_version.as_str())
+            && (major < 1 || (major == 1 && minor < EPHEMERAL_CONTAINERS_MIN_MINOR))
+        {
+            anyhow::bail!(
+                "Cluster {} does not support stable ephemeral debug containers. Kubernetes v1.{}+ is required.",
+                version.git_version,
+                EPHEMERAL_CONTAINERS_MIN_MINOR
+            );
+        }
+        Ok(())
+    }
+}
+
+fn parse_kubernetes_minor_version(git_version: &str) -> Option<(u32, u32)> {
+    let version = git_version.strip_prefix('v').unwrap_or(git_version);
+    let mut parts = version.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor_raw = parts.next()?;
+    let minor_digits: String = minor_raw
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect();
+    let minor = minor_digits.parse().ok()?;
+    Some((major, minor))
 }
 
 fn build_kube_client(config: Config) -> Result<Client> {
