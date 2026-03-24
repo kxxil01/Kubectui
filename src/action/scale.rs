@@ -13,7 +13,7 @@ use kubectui::{
 
 use crate::async_types::ScaleAsyncResult;
 use crate::mutation_helpers::begin_detail_mutation;
-use crate::selection_helpers::{detail_action_allowed, detail_action_denied_message};
+use crate::selection_helpers::detail_action_block_message;
 
 /// Opens the scale dialog, reading the current replica count from the snapshot.
 ///
@@ -107,8 +107,10 @@ pub async fn handle_scale_dialog_submit(
         }
     });
     if let Some((resource, name, namespace, kind_label, replicas)) = scale_info {
-        if !detail_action_allowed(app, client, &resource, DetailAction::Scale).await {
-            app.set_error(detail_action_denied_message(DetailAction::Scale, &resource));
+        if let Some(message) =
+            detail_action_block_message(app, client, &resource, DetailAction::Scale).await
+        {
+            app.set_error(message);
             return true;
         }
         let resource_label = format!("{kind_label} '{name}' in namespace '{namespace}'");

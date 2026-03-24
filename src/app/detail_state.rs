@@ -8,6 +8,7 @@ use crate::{
         dtos::{NodeMetricsInfo, OwnerRefInfo, PodMetricsInfo},
     },
     ui::components::{
+        debug_container_dialog::DebugContainerDialogState,
         probe_panel::ProbePanelState as ProbePanelComponentState, scale_dialog::ScaleDialogState,
     },
     ui::contains_ci,
@@ -39,6 +40,7 @@ pub enum ActiveComponent {
     None,
     LogsViewer,
     PortForward,
+    DebugContainer,
     Scale,
     ProbePanel,
 }
@@ -223,6 +225,7 @@ pub struct DetailViewState {
     pub metrics_unavailable_message: Option<String>,
     pub loading: bool,
     pub error: Option<String>,
+    pub debug_dialog: Option<DebugContainerDialogState>,
     pub scale_dialog: Option<ScaleDialogState>,
     pub probe_panel: Option<ProbePanelComponentState>,
     pub cronjob_history: Vec<CronJobHistoryEntry>,

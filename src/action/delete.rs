@@ -11,7 +11,7 @@ use kubectui::{
 
 use crate::async_types::DeleteAsyncResult;
 use crate::mutation_helpers::begin_detail_mutation;
-use crate::selection_helpers::{detail_action_allowed, detail_action_denied_message};
+use crate::selection_helpers::detail_action_block_message;
 
 /// Spawns an async task to delete a Kubernetes resource.
 #[allow(clippy::too_many_arguments)]
@@ -109,11 +109,10 @@ pub async fn handle_delete_resource(
     }
     let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
     if let Some(resource) = delete_resource {
-        if !detail_action_allowed(app, client, &resource, DetailAction::Delete).await {
-            app.set_error(detail_action_denied_message(
-                DetailAction::Delete,
-                &resource,
-            ));
+        if let Some(message) =
+            detail_action_block_message(app, client, &resource, DetailAction::Delete).await
+        {
+            app.set_error(message);
             return true;
         }
         if delete_in_flight_id.is_some() {
@@ -181,11 +180,10 @@ pub async fn handle_force_delete_resource(
     }
     let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
     if let Some(resource) = delete_resource {
-        if !detail_action_allowed(app, client, &resource, DetailAction::Delete).await {
-            app.set_error(detail_action_denied_message(
-                DetailAction::Delete,
-                &resource,
-            ));
+        if let Some(message) =
+            detail_action_block_message(app, client, &resource, DetailAction::Delete).await
+        {
+            app.set_error(message);
             return true;
         }
         if delete_in_flight_id.is_some() {

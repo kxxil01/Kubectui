@@ -997,6 +997,53 @@ fn uppercase_d_opens_resource_diff_for_pod_detail() {
 }
 
 #[test]
+fn g_key_opens_debug_dialog_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::DebugContainerDialogOpen);
+}
+
+#[test]
+fn g_key_is_noop_for_node_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
+fn escape_closes_debug_dialog_before_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        debug_dialog: Some(crate::ui::components::DebugContainerDialogState::new(
+            "pod-0", "ns",
+        )),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
+    assert!(
+        app.detail_view
+            .as_ref()
+            .is_some_and(|detail| detail.debug_dialog.is_none())
+    );
+}
+
+#[test]
 fn uppercase_d_is_noop_from_nodes_content_view() {
     let mut app = AppState {
         focus: Focus::Content,

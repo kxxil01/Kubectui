@@ -429,6 +429,17 @@ impl ExecTabState {
         }
     }
 
+    pub fn preset_container(&mut self, container_name: impl Into<String>) {
+        let container_name = container_name.into();
+        self.container_name = container_name.clone();
+        self.containers = vec![container_name];
+        self.container_cursor = 0;
+        self.picking_container = false;
+        self.loading = true;
+        self.exited = false;
+        self.error = None;
+    }
+
     /// Max pending fragment size before force-flushing (1 MB).
     const MAX_PENDING_FRAGMENT: usize = 1_048_576;
 
@@ -759,6 +770,15 @@ impl WorkbenchState {
         self.tabs.iter_mut().find(|tab| tab.state.key() == *key)
     }
 
+    pub fn exec_session_id(&self, resource: &ResourceRef) -> Option<u64> {
+        self.tabs.iter().find_map(|tab| match &tab.state {
+            WorkbenchTabState::Exec(exec_tab) if &exec_tab.resource == resource => {
+                Some(exec_tab.session_id)
+            }
+            _ => None,
+        })
+    }
+
     pub fn has_tab(&self, key: &WorkbenchTabKey) -> bool {
         self.tabs.iter().any(|tab| tab.state.key() == *key)
     }
@@ -1064,6 +1084,20 @@ mod tests {
         tab.scroll = 0; // user scrolled to top
         tab.append_output("line4\n");
         assert_eq!(tab.scroll, 0); // stays at top
+    }
+
+    #[test]
+    fn exec_session_id_returns_matching_tab_session() {
+        let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::Exec(ExecTabState::new(
+            pod("pod-0"),
+            41,
+            "pod-0".into(),
+            "ns".into(),
+        )));
+
+        assert_eq!(state.exec_session_id(&pod("pod-0")), Some(41));
+        assert_eq!(state.exec_session_id(&pod("pod-1")), None);
     }
 
     #[test]

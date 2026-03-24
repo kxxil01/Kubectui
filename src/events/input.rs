@@ -84,6 +84,15 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             } else if app_state
                 .detail_view
                 .as_ref()
+                .and_then(|d| d.debug_dialog.as_ref())
+                .is_some()
+            {
+                if let Some(detail) = &mut app_state.detail_view {
+                    detail.debug_dialog = None;
+                }
+            } else if app_state
+                .detail_view
+                .as_ref()
                 .and_then(|d| d.probe_panel.as_ref())
                 .is_some()
             {
@@ -235,6 +244,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenExec => true,
+        AppAction::DebugContainerDialogOpen | AppAction::DebugContainerDialogSubmit => true,
         AppAction::PortForwardOpen => {
             app_state.open_port_forward();
             true

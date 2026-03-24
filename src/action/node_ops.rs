@@ -11,7 +11,7 @@ use kubectui::{
 
 use crate::async_types::{NodeOpKind, NodeOpsAsyncResult};
 use crate::mutation_helpers::begin_detail_mutation;
-use crate::selection_helpers::{detail_action_allowed, detail_action_denied_message};
+use crate::selection_helpers::detail_action_block_message;
 
 /// Handles the confirm-drain-node action (opens the confirmation dialog).
 pub fn handle_confirm_drain_node(app: &mut AppState) {
@@ -42,11 +42,10 @@ pub async fn handle_cordon_node(
     });
     if let Some(name) = node_name {
         let resource = ResourceRef::Node(name.clone());
-        if !detail_action_allowed(app, client, &resource, DetailAction::Cordon).await {
-            app.set_error(detail_action_denied_message(
-                DetailAction::Cordon,
-                &resource,
-            ));
+        if let Some(message) =
+            detail_action_block_message(app, client, &resource, DetailAction::Cordon).await
+        {
+            app.set_error(message);
             return true;
         }
         *node_op_in_flight = true;
@@ -103,11 +102,10 @@ pub async fn handle_uncordon_node(
     });
     if let Some(name) = node_name {
         let resource = ResourceRef::Node(name.clone());
-        if !detail_action_allowed(app, client, &resource, DetailAction::Uncordon).await {
-            app.set_error(detail_action_denied_message(
-                DetailAction::Uncordon,
-                &resource,
-            ));
+        if let Some(message) =
+            detail_action_block_message(app, client, &resource, DetailAction::Uncordon).await
+        {
+            app.set_error(message);
             return true;
         }
         *node_op_in_flight = true;
@@ -169,8 +167,10 @@ pub async fn handle_drain_node(
     });
     if let Some(name) = node_name {
         let resource = ResourceRef::Node(name.clone());
-        if !detail_action_allowed(app, client, &resource, DetailAction::Drain).await {
-            app.set_error(detail_action_denied_message(DetailAction::Drain, &resource));
+        if let Some(message) =
+            detail_action_block_message(app, client, &resource, DetailAction::Drain).await
+        {
+            app.set_error(message);
             return true;
         }
         *node_op_in_flight = true;

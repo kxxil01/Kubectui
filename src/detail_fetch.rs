@@ -64,6 +64,7 @@ pub(crate) async fn fetch_detail_view(
         metrics_unavailable_message,
         loading: false,
         error: None,
+        debug_dialog: None,
         scale_dialog: None,
         probe_panel: None,
         cronjob_history,
@@ -88,6 +89,7 @@ async fn fetch_cronjob_history_log_access(
         client
             .is_detail_action_authorized(&resource, DetailAction::Logs)
             .await
+            .map(|status| status.permits(DetailAction::Logs))
     }))
     .await;
 
