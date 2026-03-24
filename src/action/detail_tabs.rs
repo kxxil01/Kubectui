@@ -12,9 +12,7 @@ use kubectui::{
 
 use crate::async_types::{DetailAsyncResult, RelationsAsyncResult, ResourceDiffAsyncResult};
 use crate::next_request_id;
-use crate::selection_helpers::{
-    detail_action_allowed, detail_action_denied_message, selected_resource,
-};
+use crate::selection_helpers::{detail_action_block_message, selected_resource};
 
 /// Spawns an async detail-view fetch for a resource.
 fn spawn_detail_fetch(
@@ -83,11 +81,10 @@ pub async fn handle_open_resource_yaml(
         app.set_error("No resource selected for YAML inspection.".to_string());
         return true;
     };
-    if !detail_action_allowed(app, client, &resource, DetailAction::ViewYaml).await {
-        app.set_error(detail_action_denied_message(
-            DetailAction::ViewYaml,
-            &resource,
-        ));
+    if let Some(message) =
+        detail_action_block_message(app, client, &resource, DetailAction::ViewYaml).await
+    {
+        app.set_error(message);
         return true;
     }
     let cached_yaml = app
@@ -132,11 +129,10 @@ pub async fn handle_open_resource_diff(
         app.set_error("No resource selected for configuration drift inspection.".to_string());
         return true;
     };
-    if !detail_action_allowed(app, client, &resource, DetailAction::ViewConfigDrift).await {
-        app.set_error(detail_action_denied_message(
-            DetailAction::ViewConfigDrift,
-            &resource,
-        ));
+    if let Some(message) =
+        detail_action_block_message(app, client, &resource, DetailAction::ViewConfigDrift).await
+    {
+        app.set_error(message);
         return true;
     }
 
@@ -171,11 +167,10 @@ pub async fn handle_open_decoded_secret(
         app.set_error("Decoded Secret view is only available for Secret resources.".to_string());
         return true;
     }
-    if !detail_action_allowed(app, client, &resource, DetailAction::ViewDecodedSecret).await {
-        app.set_error(detail_action_denied_message(
-            DetailAction::ViewDecodedSecret,
-            &resource,
-        ));
+    if let Some(message) =
+        detail_action_block_message(app, client, &resource, DetailAction::ViewDecodedSecret).await
+    {
+        app.set_error(message);
         return true;
     }
     let cached_yaml = app
@@ -246,11 +241,10 @@ pub async fn handle_open_resource_events(
         app.set_error("No resource selected for event inspection.".to_string());
         return true;
     };
-    if !detail_action_allowed(app, client, &resource, DetailAction::ViewEvents).await {
-        app.set_error(detail_action_denied_message(
-            DetailAction::ViewEvents,
-            &resource,
-        ));
+    if let Some(message) =
+        detail_action_block_message(app, client, &resource, DetailAction::ViewEvents).await
+    {
+        app.set_error(message);
         return true;
     }
     let cached_events = app

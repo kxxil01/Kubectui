@@ -11,7 +11,7 @@ use kubectui::{
 
 use crate::async_types::{SetCronJobSuspendAsyncResult, TriggerCronJobAsyncResult};
 use crate::mutation_helpers::begin_detail_mutation;
-use crate::selection_helpers::{detail_action_allowed, detail_action_denied_message};
+use crate::selection_helpers::detail_action_block_message;
 
 /// Handles triggering a CronJob to create a new Job.
 ///
@@ -32,11 +32,10 @@ pub async fn handle_trigger_cronjob(
     });
     if let Some((name, namespace)) = cronjob_info {
         let resource = ResourceRef::CronJob(name.clone(), namespace.clone());
-        if !detail_action_allowed(app, client, &resource, DetailAction::Trigger).await {
-            app.set_error(detail_action_denied_message(
-                DetailAction::Trigger,
-                &resource,
-            ));
+        if let Some(message) =
+            detail_action_block_message(app, client, &resource, DetailAction::Trigger).await
+        {
+            app.set_error(message);
             return true;
         }
         let resource_label = format!("CronJob '{name}'");
@@ -109,8 +108,10 @@ pub async fn handle_set_cronjob_suspend(
         } else {
             DetailAction::ResumeCronJob
         };
-        if !detail_action_allowed(app, client, &resource, detail_action).await {
-            app.set_error(detail_action_denied_message(detail_action, &resource));
+        if let Some(message) =
+            detail_action_block_message(app, client, &resource, detail_action).await
+        {
+            app.set_error(message);
             return true;
         }
         if let Some(detail) = &mut app.detail_view {

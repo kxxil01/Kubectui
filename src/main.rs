@@ -2219,8 +2219,11 @@ pub(crate) async fn run_app_inner(
                         app.set_error("No resource selected for logs.".to_string());
                         continue;
                     };
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::Logs).await {
-                        app.set_error(detail_action_denied_message(DetailAction::Logs, &resource));
+                    if let Some(message) =
+                        detail_action_block_message(&app, &client, &resource, DetailAction::Logs)
+                            .await
+                    {
+                        app.set_error(message);
                         continue;
                     }
                     let Some((pod_name, pod_ns, pod_resource)) = (match &resource {
@@ -2331,8 +2334,11 @@ pub(crate) async fn run_app_inner(
                         continue;
                     };
                     let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::Exec).await {
-                        app.set_error(detail_action_denied_message(DetailAction::Exec, &resource));
+                    if let Some(message) =
+                        detail_action_block_message(&app, &client, &resource, DetailAction::Exec)
+                            .await
+                    {
+                        app.set_error(message);
                         continue;
                     }
 
@@ -2771,13 +2777,15 @@ pub(crate) async fn run_app_inner(
                     let Some(resource) = resource else {
                         continue;
                     };
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::PortForward)
-                        .await
+                    if let Some(message) = detail_action_block_message(
+                        &app,
+                        &client,
+                        &resource,
+                        DetailAction::PortForward,
+                    )
+                    .await
                     {
-                        app.set_error(detail_action_denied_message(
-                            DetailAction::PortForward,
-                            &resource,
-                        ));
+                        app.set_error(message);
                         continue;
                     }
                     app.detail_view = None;
@@ -2843,13 +2851,15 @@ pub(crate) async fn run_app_inner(
                             "daemonset" => ResourceRef::DaemonSet(name.clone(), namespace.clone()),
                             _ => unreachable!("validated restartable resource"),
                         };
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Restart)
-                            .await
+                        if let Some(message) = detail_action_block_message(
+                            &app,
+                            &client,
+                            &resource,
+                            DetailAction::Restart,
+                        )
+                        .await
                         {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Restart,
-                                &resource,
-                            ));
+                            app.set_error(message);
                             continue;
                         }
                         let resource_label =
@@ -3036,13 +3046,15 @@ pub(crate) async fn run_app_inner(
                     });
 
                     if let Some((resource, kind, name, namespace, yaml_content)) = edit_info {
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::EditYaml)
-                            .await
+                        if let Some(message) = detail_action_block_message(
+                            &app,
+                            &client,
+                            &resource,
+                            DetailAction::EditYaml,
+                        )
+                        .await
                         {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::EditYaml,
-                                &resource,
-                            ));
+                            app.set_error(message);
                             continue;
                         }
                         // Write YAML to a temp file with unique suffix to prevent
@@ -3237,17 +3249,19 @@ pub(crate) async fn run_app_inner(
                         resource_label.clone(),
                         format!("Applying decoded Secret changes to {resource_label}..."),
                     );
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::EditYaml)
-                        .await
+                    if let Some(message) = detail_action_block_message(
+                        &app,
+                        &client,
+                        &resource,
+                        DetailAction::EditYaml,
+                    )
+                    .await
                     {
-                        app.set_error(detail_action_denied_message(
-                            DetailAction::EditYaml,
-                            &resource,
-                        ));
+                        app.set_error(message.clone());
                         app.complete_action_history(
                             action_history_id,
                             ActionStatus::Failed,
-                            detail_action_denied_message(DetailAction::EditYaml, &resource),
+                            message,
                             true,
                         );
                         continue;
@@ -3408,13 +3422,15 @@ pub(crate) async fn run_app_inner(
                         let tx = probe_tx.clone();
                         let k = client.get_client();
                         let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Probes)
-                            .await
+                        if let Some(message) = detail_action_block_message(
+                            &app,
+                            &client,
+                            &resource,
+                            DetailAction::Probes,
+                        )
+                        .await
                         {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Probes,
-                                &resource,
-                            ));
+                            app.set_error(message);
                             continue;
                         }
                         tokio::spawn(async move {

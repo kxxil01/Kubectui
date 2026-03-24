@@ -8,9 +8,28 @@ use crate::{app::ResourceRef, policy::DetailAction};
 pub enum DetailActionAuthorization {
     Allowed,
     Denied,
+    Unknown,
 }
 
 pub type ActionAuthorizationMap = BTreeMap<DetailAction, DetailActionAuthorization>;
+
+impl DetailActionAuthorization {
+    pub const fn from_allowed(allowed: Option<bool>) -> Self {
+        match allowed {
+            Some(true) => Self::Allowed,
+            Some(false) => Self::Denied,
+            None => Self::Unknown,
+        }
+    }
+
+    pub const fn permits(self, action: DetailAction) -> bool {
+        match self {
+            Self::Allowed => true,
+            Self::Denied => false,
+            Self::Unknown => !detail_action_requires_strict_authorization(action),
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ResourceAccessCheck {
@@ -79,6 +98,27 @@ pub const fn detail_action_requires_authorization(action: DetailAction) -> bool 
             | DetailAction::DebugContainer
             | DetailAction::PortForward
             | DetailAction::Probes
+            | DetailAction::Scale
+            | DetailAction::Restart
+            | DetailAction::FluxReconcile
+            | DetailAction::EditYaml
+            | DetailAction::Delete
+            | DetailAction::Trigger
+            | DetailAction::SuspendCronJob
+            | DetailAction::ResumeCronJob
+            | DetailAction::Cordon
+            | DetailAction::Uncordon
+            | DetailAction::Drain
+    )
+}
+
+pub const fn detail_action_requires_strict_authorization(action: DetailAction) -> bool {
+    matches!(
+        action,
+        DetailAction::ViewDecodedSecret
+            | DetailAction::Exec
+            | DetailAction::DebugContainer
+            | DetailAction::PortForward
             | DetailAction::Scale
             | DetailAction::Restart
             | DetailAction::FluxReconcile

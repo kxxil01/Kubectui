@@ -357,45 +357,27 @@ pub fn cached_detail_action_authorization(
     app: &AppState,
     resource: &ResourceRef,
     action: DetailAction,
-) -> Option<bool> {
+) -> Option<DetailActionAuthorization> {
     app.detail_view
         .as_ref()
         .filter(|detail| detail.resource.as_ref() == Some(resource))
         .and_then(|detail| detail.metadata.action_authorizations.get(&action).copied())
-        .map(|status| status == DetailActionAuthorization::Allowed)
 }
 
-fn resolve_detail_action_authorization(cached: Option<bool>, live: Option<bool>) -> Option<bool> {
+fn resolve_detail_action_authorization(
+    cached: Option<DetailActionAuthorization>,
+    live: Option<DetailActionAuthorization>,
+) -> Option<DetailActionAuthorization> {
     cached.or(live)
 }
 
-/// Checks whether the given detail action is allowed (cache first, then live query).
-pub async fn detail_action_allowed(
+/// Resolves the canonical tri-state authorization for a detail action.
+pub async fn detail_action_authorization(
     app: &AppState,
     client: &K8sClient,
     resource: &ResourceRef,
     action: DetailAction,
-) -> bool {
-    let cached = cached_detail_action_authorization(app, resource, action);
-    let live = if cached.is_some() {
-        None
-    } else {
-        client.is_detail_action_authorized(resource, action).await
-    };
-
-    resolve_detail_action_authorization(cached, live).unwrap_or(true)
-}
-
-/// Checks whether the given detail action is explicitly authorized.
-///
-/// Unlike [`detail_action_allowed`], this fails closed when authorization cannot be
-/// determined. Use it for actions that must not proceed on ambiguous RBAC state.
-pub async fn detail_action_allowed_strict(
-    app: &AppState,
-    client: &K8sClient,
-    resource: &ResourceRef,
-    action: DetailAction,
-) -> Option<bool> {
+) -> Option<DetailActionAuthorization> {
     let cached = cached_detail_action_authorization(app, resource, action);
     let live = if cached.is_some() {
         None
@@ -406,14 +388,45 @@ pub async fn detail_action_allowed_strict(
     resolve_detail_action_authorization(cached, live)
 }
 
+/// Returns a human-readable blocking message when an action should not proceed.
+pub async fn detail_action_block_message(
+    app: &AppState,
+    client: &K8sClient,
+    resource: &ResourceRef,
+    action: DetailAction,
+) -> Option<String> {
+    let status = detail_action_authorization(app, client, resource, action)
+        .await
+        .unwrap_or(DetailActionAuthorization::Unknown);
+    (!status.permits(action)).then(|| detail_action_denied_message(action, resource, status))
+}
+
 /// Builds a human-readable denial message for the given action and resource.
-pub fn detail_action_denied_message(action: DetailAction, resource: &ResourceRef) -> String {
-    format!(
-        "{} is not allowed for {} '{}'.",
-        action.label(),
-        resource.kind(),
-        resource.name()
-    )
+pub fn detail_action_denied_message(
+    action: DetailAction,
+    resource: &ResourceRef,
+    status: DetailActionAuthorization,
+) -> String {
+    match status {
+        DetailActionAuthorization::Denied => format!(
+            "{} is not allowed for {} '{}'.",
+            action.label(),
+            resource.kind(),
+            resource.name()
+        ),
+        DetailActionAuthorization::Unknown => format!(
+            "{} requires verified authorization for {} '{}', but access could not be confirmed.",
+            action.label(),
+            resource.kind(),
+            resource.name()
+        ),
+        DetailActionAuthorization::Allowed => format!(
+            "{} is already allowed for {} '{}'.",
+            action.label(),
+            resource.kind(),
+            resource.name()
+        ),
+    }
 }
 
 /// Navigates to the bookmarked resource's primary view and returns the ref.
@@ -617,5 +630,46 @@ pub fn apply_extension_fetch_result(app: &mut AppState, result: ExtensionFetchRe
     match result.result {
         Ok(items) => app.set_extension_instances(result.crd_name, items, None),
         Err(err) => app.set_extension_instances(result.crd_name, Vec::new(), Some(err)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_detail_action_authorization;
+    use kubectui::authorization::DetailActionAuthorization;
+
+    #[test]
+    fn resolve_authorization_prefers_cached_value() {
+        assert_eq!(
+            resolve_detail_action_authorization(
+                Some(DetailActionAuthorization::Allowed),
+                Some(DetailActionAuthorization::Denied),
+            ),
+            Some(DetailActionAuthorization::Allowed)
+        );
+        assert_eq!(
+            resolve_detail_action_authorization(
+                Some(DetailActionAuthorization::Denied),
+                Some(DetailActionAuthorization::Allowed),
+            ),
+            Some(DetailActionAuthorization::Denied)
+        );
+    }
+
+    #[test]
+    fn resolve_authorization_uses_live_when_cache_missing() {
+        assert_eq!(
+            resolve_detail_action_authorization(None, Some(DetailActionAuthorization::Allowed),),
+            Some(DetailActionAuthorization::Allowed)
+        );
+        assert_eq!(
+            resolve_detail_action_authorization(None, Some(DetailActionAuthorization::Unknown),),
+            Some(DetailActionAuthorization::Unknown)
+        );
+    }
+
+    #[test]
+    fn resolve_authorization_preserves_unknown_when_no_signal_exists() {
+        assert_eq!(resolve_detail_action_authorization(None, None), None);
     }
 }

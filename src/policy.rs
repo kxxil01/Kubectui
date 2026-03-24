@@ -3,9 +3,7 @@
 use crate::k8s::flux::flux_reconcile_support;
 use crate::{
     app::{AppView, DetailViewState, ResourceRef, WorkloadSortColumn},
-    authorization::{
-        ActionAuthorizationMap, DetailActionAuthorization, detail_action_requires_authorization,
-    },
+    authorization::{ActionAuthorizationMap, detail_action_requires_authorization},
 };
 
 /// Shared list-level actions that are view-dependent.
@@ -493,7 +491,7 @@ fn supports_action_borrowed(
     if detail_action_requires_authorization(action) {
         return action_authorizations
             .get(&action)
-            .is_none_or(|status| *status == DetailActionAuthorization::Allowed);
+            .is_none_or(|status| status.permits(action));
     }
 
     true
@@ -689,6 +687,26 @@ mod tests {
             .metadata
             .action_authorizations
             .insert(DetailAction::Logs, DetailActionAuthorization::Allowed);
+
+        assert!(detail.supports_action(DetailAction::Logs));
+        assert!(!detail.supports_action(DetailAction::Exec));
+    }
+
+    #[test]
+    fn unknown_authorization_hides_strict_actions_but_keeps_reads_available() {
+        let mut detail = DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: Pod".to_string()),
+            ..DetailViewState::default()
+        };
+        detail
+            .metadata
+            .action_authorizations
+            .insert(DetailAction::Exec, DetailActionAuthorization::Unknown);
+        detail
+            .metadata
+            .action_authorizations
+            .insert(DetailAction::Logs, DetailActionAuthorization::Unknown);
 
         assert!(detail.supports_action(DetailAction::Logs));
         assert!(!detail.supports_action(DetailAction::Exec));

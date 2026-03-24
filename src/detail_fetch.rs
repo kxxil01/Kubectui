@@ -89,6 +89,7 @@ async fn fetch_cronjob_history_log_access(
         client
             .is_detail_action_authorized(&resource, DetailAction::Logs)
             .await
+            .map(|status| status.permits(DetailAction::Logs))
     }))
     .await;
 

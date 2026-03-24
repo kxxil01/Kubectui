@@ -827,15 +827,9 @@ impl K8sClient {
                 continue;
             }
 
-            match self.evaluate_access_checks(&checks).await {
-                Some(true) => {
-                    authorizations.insert(action, DetailActionAuthorization::Allowed);
-                }
-                Some(false) => {
-                    authorizations.insert(action, DetailActionAuthorization::Denied);
-                }
-                None => {}
-            }
+            let status =
+                DetailActionAuthorization::from_allowed(self.evaluate_access_checks(&checks).await);
+            authorizations.insert(action, status);
         }
 
         authorizations
@@ -845,9 +839,9 @@ impl K8sClient {
         &self,
         resource: &ResourceRef,
         action: DetailAction,
-    ) -> Option<bool> {
+    ) -> Option<DetailActionAuthorization> {
         if !detail_action_requires_authorization(action) {
-            return Some(true);
+            return Some(DetailActionAuthorization::Allowed);
         }
 
         let checks = resource.authorization_checks(action);
@@ -855,7 +849,9 @@ impl K8sClient {
             return None;
         }
 
-        self.evaluate_access_checks(&checks).await
+        Some(DetailActionAuthorization::from_allowed(
+            self.evaluate_access_checks(&checks).await,
+        ))
     }
 
     /// Fetches a concrete resource and renders it as YAML.
