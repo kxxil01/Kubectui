@@ -28,6 +28,15 @@ debug/
 # Claude Code (local settings only; .claude/settings.json is shared)
 .claude/settings.local.json
 
+# Serena (local cache, overlays, and ad-hoc memories)
+.serena/cache/
+.serena/project.local.yml
+.serena/memories/**
+!.serena/memories/completion_checklist.md
+!.serena/memories/project_overview.md
+!.serena/memories/style_and_conventions.md
+!.serena/memories/suggested_commands.md
+
 # OS
 Thumbs.db
 .DS_Store
