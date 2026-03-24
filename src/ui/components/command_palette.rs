@@ -55,6 +55,10 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     (DetailAction::Logs, &["logs", "log"]),
     (DetailAction::Exec, &["exec", "shell", "terminal"]),
     (
+        DetailAction::DebugContainer,
+        &["debug", "debug container", "ephemeral", "kubectl debug"],
+    ),
+    (
         DetailAction::PortForward,
         &["port-forward", "forward", "tunnel", "pf"],
     ),
@@ -757,6 +761,11 @@ mod tests {
         let entries = action_entries_for_resource(Some(&resource));
         assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
         assert!(entries.iter().any(|e| e.action == DetailAction::Exec));
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.action == DetailAction::DebugContainer)
+        );
         assert!(!entries.iter().any(|e| e.action == DetailAction::Scale));
     }
 
@@ -825,6 +834,23 @@ mod tests {
         resource.action_authorizations.insert(
             DetailAction::Exec,
             crate::authorization::DetailActionAuthorization::Denied,
+        );
+        let entries = action_entries_for_resource(Some(&resource));
+
+        assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
+        assert!(!entries.iter().any(|e| e.action == DetailAction::Exec));
+    }
+
+    #[test]
+    fn palette_hides_unknown_strict_actions_but_keeps_reads() {
+        let mut resource = ctx(ResourceRef::Pod("test".into(), "default".into()), None);
+        resource.action_authorizations.insert(
+            DetailAction::Exec,
+            crate::authorization::DetailActionAuthorization::Unknown,
+        );
+        resource.action_authorizations.insert(
+            DetailAction::Logs,
+            crate::authorization::DetailActionAuthorization::Unknown,
         );
         let entries = action_entries_for_resource(Some(&resource));
 

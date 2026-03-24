@@ -14,7 +14,8 @@ use crate::{
     app::DetailViewState,
     ui::{
         components::{
-            default_theme, probe_panel::render_probe_panel, scale_dialog::render_scale_dialog,
+            default_theme, probe_panel::render_probe_panel, render_debug_container_dialog,
+            scale_dialog::render_scale_dialog,
         },
         format_age, table_window,
     },
@@ -712,6 +713,8 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         render_drain_confirm(frame, popup, detail_state);
     } else if detail_state.confirm_cronjob_suspend.is_some() {
         render_cronjob_suspend_confirm(frame, popup, detail_state);
+    } else if let Some(dialog) = &detail_state.debug_dialog {
+        render_debug_container_dialog(frame, popup, dialog);
     }
 }
 

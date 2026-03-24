@@ -3,9 +3,7 @@
 use crate::k8s::flux::flux_reconcile_support;
 use crate::{
     app::{AppView, DetailViewState, ResourceRef, WorkloadSortColumn},
-    authorization::{
-        ActionAuthorizationMap, DetailActionAuthorization, detail_action_requires_authorization,
-    },
+    authorization::{ActionAuthorizationMap, detail_action_requires_authorization},
 };
 
 /// Shared list-level actions that are view-dependent.
@@ -47,6 +45,7 @@ pub enum DetailAction {
     ViewEvents,
     Logs,
     Exec,
+    DebugContainer,
     PortForward,
     Probes,
     Scale,
@@ -73,7 +72,7 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 21] = [
+    pub const ORDER: [DetailAction; 22] = [
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
         DetailAction::ViewDecodedSecret,
@@ -81,6 +80,7 @@ impl DetailAction {
         DetailAction::ViewEvents,
         DetailAction::Logs,
         DetailAction::Exec,
+        DetailAction::DebugContainer,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -106,6 +106,7 @@ impl DetailAction {
             DetailAction::ViewEvents => "[v]",
             DetailAction::Logs => "[l]",
             DetailAction::Exec => "[x]",
+            DetailAction::DebugContainer => "[g]",
             DetailAction::PortForward => "[f]",
             DetailAction::Probes => "[p]",
             DetailAction::Scale => "[s]",
@@ -130,6 +131,7 @@ impl DetailAction {
             DetailAction::ViewEvents => "Events",
             DetailAction::Logs => "Logs",
             DetailAction::Exec => "Exec",
+            DetailAction::DebugContainer => "Debug",
             DetailAction::PortForward => "Port-Fwd",
             DetailAction::Probes => "Probes",
             DetailAction::Scale => "Scale",
@@ -420,7 +422,10 @@ impl ResourceRef {
                     | ResourceRef::ReplicationController(_, _)
                     | ResourceRef::Job(_, _)
             ),
-            DetailAction::Exec | DetailAction::PortForward | DetailAction::Probes => {
+            DetailAction::Exec
+            | DetailAction::DebugContainer
+            | DetailAction::PortForward
+            | DetailAction::Probes => {
                 matches!(self, ResourceRef::Pod(_, _))
             }
             DetailAction::Scale => {
@@ -486,7 +491,7 @@ fn supports_action_borrowed(
     if detail_action_requires_authorization(action) {
         return action_authorizations
             .get(&action)
-            .is_none_or(|status| *status == DetailActionAuthorization::Allowed);
+            .is_none_or(|status| status.permits(action));
     }
 
     true
@@ -520,6 +525,7 @@ impl DetailViewState {
 
     pub fn has_blocking_detail_overlay(&self) -> bool {
         self.scale_dialog.is_some()
+            || self.debug_dialog.is_some()
             || self.probe_panel.is_some()
             || self.confirm_delete
             || self.confirm_drain
@@ -539,6 +545,7 @@ impl DetailViewState {
                 | DetailAction::ViewEvents
                 | DetailAction::Logs
                 | DetailAction::Exec
+                | DetailAction::DebugContainer
                 | DetailAction::PortForward
                 | DetailAction::Probes
                 | DetailAction::Scale
@@ -616,6 +623,7 @@ mod tests {
         };
 
         assert!(detail.supports_action(DetailAction::Logs));
+        assert!(detail.supports_action(DetailAction::DebugContainer));
         assert!(detail.supports_action(DetailAction::PortForward));
         assert!(detail.supports_action(DetailAction::Probes));
         assert!(detail.supports_action(DetailAction::EditYaml));
@@ -679,6 +687,26 @@ mod tests {
             .metadata
             .action_authorizations
             .insert(DetailAction::Logs, DetailActionAuthorization::Allowed);
+
+        assert!(detail.supports_action(DetailAction::Logs));
+        assert!(!detail.supports_action(DetailAction::Exec));
+    }
+
+    #[test]
+    fn unknown_authorization_hides_strict_actions_but_keeps_reads_available() {
+        let mut detail = DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+            yaml: Some("kind: Pod".to_string()),
+            ..DetailViewState::default()
+        };
+        detail
+            .metadata
+            .action_authorizations
+            .insert(DetailAction::Exec, DetailActionAuthorization::Unknown);
+        detail
+            .metadata
+            .action_authorizations
+            .insert(DetailAction::Logs, DetailActionAuthorization::Unknown);
 
         assert!(detail.supports_action(DetailAction::Logs));
         assert!(!detail.supports_action(DetailAction::Exec));
@@ -759,10 +787,12 @@ mod tests {
         detail.metadata.node_unschedulable = Some(false);
         assert!(detail.supports_action(DetailAction::Cordon));
         assert!(!detail.supports_action(DetailAction::Uncordon));
+        assert!(!detail.supports_action(DetailAction::DebugContainer));
 
         detail.metadata.node_unschedulable = Some(true);
         assert!(!detail.supports_action(DetailAction::Cordon));
         assert!(detail.supports_action(DetailAction::Uncordon));
+        assert!(!detail.supports_action(DetailAction::DebugContainer));
     }
 
     #[test]

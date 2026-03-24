@@ -85,6 +85,8 @@ pub enum AppAction {
     OpenResourceEvents,
     OpenActionHistory,
     OpenExec,
+    DebugContainerDialogOpen,
+    DebugContainerDialogSubmit,
     PortForwardOpen,
     PortForwardCreate(
         (

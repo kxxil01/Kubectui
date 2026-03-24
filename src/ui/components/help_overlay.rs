@@ -292,7 +292,7 @@ impl HelpOverlay {
 }
 
 fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'static str)> {
-    let mut bindings = Vec::with_capacity(DETAIL_BASE_BINDINGS.len() + 1);
+    let mut bindings = Vec::with_capacity(DETAIL_BASE_BINDINGS.len() + 2);
     if detail.is_some_and(|detail| {
         detail.supports_action(DetailAction::ViewConfigDrift)
             && !detail.supports_action(DetailAction::Drain)
@@ -300,6 +300,9 @@ fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'sta
         bindings.push(("D", "View config drift (live vs last-applied)"));
     } else if detail.is_some_and(|detail| detail.supports_action(DetailAction::Drain)) {
         bindings.push(("D", "Drain node (with confirmation)"));
+    }
+    if detail.is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) {
+        bindings.push(("g", "Launch debug container"));
     }
     bindings.extend_from_slice(DETAIL_BASE_BINDINGS);
     bindings
@@ -353,6 +356,7 @@ mod tests {
 
         let bindings = detail_bindings(Some(&detail));
         assert!(bindings.contains(&("D", "View config drift (live vs last-applied)")));
+        assert!(bindings.contains(&("g", "Launch debug container")));
     }
 
     #[test]

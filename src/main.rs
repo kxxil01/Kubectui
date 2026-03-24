@@ -157,6 +157,11 @@ pub(crate) async fn run_app_inner(
     let mut relations_request_seq: u64 = 0;
     let (exec_bootstrap_tx, mut exec_bootstrap_rx) =
         tokio::sync::mpsc::channel::<ExecBootstrapResult>(16);
+    let (debug_dialog_bootstrap_tx, mut debug_dialog_bootstrap_rx) =
+        tokio::sync::mpsc::channel::<DebugContainerDialogBootstrapResult>(16);
+    let mut debug_dialog_request_seq: u64 = 0;
+    let (debug_launch_tx, mut debug_launch_rx) =
+        tokio::sync::mpsc::channel::<DebugContainerLaunchAsyncResult>(16);
     let (exec_update_tx, mut exec_update_rx) = tokio::sync::mpsc::channel::<ExecEvent>(128);
     let mut next_exec_session_id: u64 = 1;
     let mut exec_sessions: HashMap<u64, ExecSessionHandle> = HashMap::new();
@@ -1243,6 +1248,132 @@ pub(crate) async fn run_app_inner(
                 }
             }
 
+            result = debug_dialog_bootstrap_rx.recv() => {
+                if let Some(result) = result {
+                    needs_redraw = true;
+                    if let Some(detail) = app.detail_view.as_mut()
+                        && detail.resource.as_ref() == Some(&result.resource)
+                        && let Some(dialog) = detail.debug_dialog.as_mut()
+                        && dialog.pending_request_id == Some(result.request_id)
+                    {
+                        match result.result {
+                            Ok(containers) => dialog.set_target_containers(containers),
+                            Err(err) => dialog.set_target_fetch_error(err),
+                        }
+                    }
+                }
+            }
+
+            result = debug_launch_rx.recv() => {
+                if let Some(result) = result {
+                    needs_redraw = true;
+                    if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            "Debug container launch was cancelled because the active context changed.",
+                            true,
+                        );
+                        continue;
+                    }
+
+                    match result.result {
+                        Ok(launch) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!(
+                                    "Started debug container '{}' in Pod '{}'.",
+                                    launch.container_name, launch.pod_name
+                                ),
+                                true,
+                            );
+                            apply_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                format!(
+                                    "Started debug container '{}' in Pod '{}'. Refreshing view...",
+                                    launch.container_name, launch.pod_name
+                                ),
+                                false,
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
+                            app.detail_view = None;
+                            if let Some(existing_session_id) =
+                                app.workbench().exec_session_id(&result.resource)
+                                && let Some(handle) = exec_sessions.remove(&existing_session_id)
+                            {
+                                let _ = handle.cancel_tx.send(());
+                            }
+                            app.open_exec_tab_for_container(
+                                result.resource.clone(),
+                                result.session_id,
+                                launch.pod_name.clone(),
+                                launch.namespace.clone(),
+                                launch.container_name.clone(),
+                            );
+                            match spawn_exec_session(
+                                client.clone(),
+                                result.session_id,
+                                launch.pod_name,
+                                launch.namespace,
+                                launch.container_name.clone(),
+                                exec_update_tx.clone(),
+                            )
+                            .await
+                            {
+                                Ok(handle) => {
+                                    exec_sessions.insert(result.session_id, handle);
+                                }
+                                Err(err) => {
+                                    if let Some(tab) = app
+                                        .workbench_mut()
+                                        .find_tab_mut(&WorkbenchTabKey::Exec(result.resource))
+                                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                    {
+                                        exec_tab.loading = false;
+                                        exec_tab.error = Some(format!(
+                                            "Debug container launched, but shell attach failed: {err:#}"
+                                        ));
+                                    }
+                                    app.set_error(format!(
+                                        "Debug container launched, but shell attach failed: {err:#}"
+                                    ));
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("Debug container launch failed: {err}"),
+                                true,
+                            );
+                            if let Some(detail) = app.detail_view.as_mut()
+                                && detail.resource.as_ref() == Some(&result.resource)
+                                && let Some(dialog) = detail.debug_dialog.as_mut()
+                            {
+                                dialog.set_pending_launch(false);
+                                dialog.error_message = Some(err);
+                            } else {
+                                status_message_clear_at = None;
+                                app.set_error(format!("Debug container launch failed: {err}"));
+                            }
+                        }
+                    }
+                }
+            }
+
             result = exec_update_rx.recv() => {
                 needs_redraw = true;
                 if let Some(result) = result {
@@ -2088,8 +2219,11 @@ pub(crate) async fn run_app_inner(
                         app.set_error("No resource selected for logs.".to_string());
                         continue;
                     };
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::Logs).await {
-                        app.set_error(detail_action_denied_message(DetailAction::Logs, &resource));
+                    if let Some(message) =
+                        detail_action_block_message(&app, &client, &resource, DetailAction::Logs)
+                            .await
+                    {
+                        app.set_error(message);
                         continue;
                     }
                     let Some((pod_name, pod_ns, pod_resource)) = (match &resource {
@@ -2200,9 +2334,18 @@ pub(crate) async fn run_app_inner(
                         continue;
                     };
                     let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::Exec).await {
-                        app.set_error(detail_action_denied_message(DetailAction::Exec, &resource));
+                    if let Some(message) =
+                        detail_action_block_message(&app, &client, &resource, DetailAction::Exec)
+                            .await
+                    {
+                        app.set_error(message);
                         continue;
+                    }
+
+                    if let Some(existing_session_id) = app.workbench().exec_session_id(&resource)
+                        && let Some(handle) = exec_sessions.remove(&existing_session_id)
+                    {
+                        let _ = handle.cancel_tx.send(());
                     }
 
                     let session_id = next_exec_session_id;
@@ -2228,6 +2371,31 @@ pub(crate) async fn run_app_inner(
                             })
                             .await;
                     });
+                }
+                AppAction::DebugContainerDialogOpen => {
+                    if action::debug::handle_debug_container_dialog_open(
+                        &mut app,
+                        &client,
+                        &debug_dialog_bootstrap_tx,
+                        &mut debug_dialog_request_seq,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
+                AppAction::DebugContainerDialogSubmit => {
+                    if action::debug::handle_debug_container_dialog_submit(
+                        &mut app,
+                        &client,
+                        &debug_launch_tx,
+                        &mut next_exec_session_id,
+                        refresh_state.context_generation,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
                 }
                 AppAction::ExecSelectContainer(container_name) => {
                     let mut start_session: Option<(u64, ResourceRef, String, String, String)> =
@@ -2609,13 +2777,15 @@ pub(crate) async fn run_app_inner(
                     let Some(resource) = resource else {
                         continue;
                     };
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::PortForward)
-                        .await
+                    if let Some(message) = detail_action_block_message(
+                        &app,
+                        &client,
+                        &resource,
+                        DetailAction::PortForward,
+                    )
+                    .await
                     {
-                        app.set_error(detail_action_denied_message(
-                            DetailAction::PortForward,
-                            &resource,
-                        ));
+                        app.set_error(message);
                         continue;
                     }
                     app.detail_view = None;
@@ -2681,13 +2851,15 @@ pub(crate) async fn run_app_inner(
                             "daemonset" => ResourceRef::DaemonSet(name.clone(), namespace.clone()),
                             _ => unreachable!("validated restartable resource"),
                         };
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Restart)
-                            .await
+                        if let Some(message) = detail_action_block_message(
+                            &app,
+                            &client,
+                            &resource,
+                            DetailAction::Restart,
+                        )
+                        .await
                         {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Restart,
-                                &resource,
-                            ));
+                            app.set_error(message);
                             continue;
                         }
                         let resource_label =
@@ -2874,13 +3046,15 @@ pub(crate) async fn run_app_inner(
                     });
 
                     if let Some((resource, kind, name, namespace, yaml_content)) = edit_info {
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::EditYaml)
-                            .await
+                        if let Some(message) = detail_action_block_message(
+                            &app,
+                            &client,
+                            &resource,
+                            DetailAction::EditYaml,
+                        )
+                        .await
                         {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::EditYaml,
-                                &resource,
-                            ));
+                            app.set_error(message);
                             continue;
                         }
                         // Write YAML to a temp file with unique suffix to prevent
@@ -3075,17 +3249,19 @@ pub(crate) async fn run_app_inner(
                         resource_label.clone(),
                         format!("Applying decoded Secret changes to {resource_label}..."),
                     );
-                    if !detail_action_allowed(&app, &client, &resource, DetailAction::EditYaml)
-                        .await
+                    if let Some(message) = detail_action_block_message(
+                        &app,
+                        &client,
+                        &resource,
+                        DetailAction::EditYaml,
+                    )
+                    .await
                     {
-                        app.set_error(detail_action_denied_message(
-                            DetailAction::EditYaml,
-                            &resource,
-                        ));
+                        app.set_error(message.clone());
                         app.complete_action_history(
                             action_history_id,
                             ActionStatus::Failed,
-                            detail_action_denied_message(DetailAction::EditYaml, &resource),
+                            message,
                             true,
                         );
                         continue;
@@ -3246,13 +3422,15 @@ pub(crate) async fn run_app_inner(
                         let tx = probe_tx.clone();
                         let k = client.get_client();
                         let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
-                        if !detail_action_allowed(&app, &client, &resource, DetailAction::Probes)
-                            .await
+                        if let Some(message) = detail_action_block_message(
+                            &app,
+                            &client,
+                            &resource,
+                            DetailAction::Probes,
+                        )
+                        .await
                         {
-                            app.set_error(detail_action_denied_message(
-                                DetailAction::Probes,
-                                &resource,
-                            ));
+                            app.set_error(message);
                             continue;
                         }
                         tokio::spawn(async move {
