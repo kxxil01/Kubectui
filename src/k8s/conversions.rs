@@ -889,7 +889,21 @@ pub fn service_account_to_info(sa: ServiceAccount) -> ServiceAccountInfo {
         name: m.name,
         namespace: m.namespace,
         secrets_count: sa.secrets.as_ref().map_or(0, |v| v.len()),
+        secret_names: sa
+            .secrets
+            .as_ref()
+            .map(|refs| {
+                refs.iter()
+                    .filter_map(|secret| secret.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
         image_pull_secrets_count: sa.image_pull_secrets.as_ref().map_or(0, |v| v.len()),
+        image_pull_secret_names: sa
+            .image_pull_secrets
+            .as_ref()
+            .map(|refs| refs.iter().map(|secret| secret.name.clone()).collect())
+            .unwrap_or_default(),
         automount_service_account_token: sa.automount_service_account_token,
         age: m.age,
         created_at: m.created_at,
