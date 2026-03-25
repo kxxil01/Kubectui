@@ -61,6 +61,7 @@ fn view_info(view: AppView) -> (&'static str, Option<&'static [ColumnDef]>) {
         AppView::Dashboard => ("dashboard", None),
         AppView::Bookmarks => ("bookmarks", None),
         AppView::Issues => ("issues", Some(ISSUE_COLUMNS)),
+        AppView::HealthReport => ("health_report", Some(ISSUE_COLUMNS)),
         AppView::Nodes => ("nodes", Some(NODE_COLUMNS)),
         AppView::Namespaces => ("namespaces", Some(NAMESPACE_COLUMNS)),
         AppView::Events => ("events", Some(EVENT_COLUMNS)),

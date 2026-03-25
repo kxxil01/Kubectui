@@ -13,5 +13,6 @@ pub mod portforward_errors;
 pub mod probes;
 pub mod relationships;
 pub mod scaling;
+pub mod selectors;
 pub mod workload_logs;
 pub mod yaml;

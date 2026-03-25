@@ -1,4 +1,6 @@
-//! Canonical resource drift computation for live vs. last-applied state.
+//! Canonical resource drift computation for live vs. declarative state.
+
+use std::collections::BTreeSet;
 
 use anyhow::{Context, Result, anyhow};
 use serde_json::{Map, Value};
@@ -10,6 +12,7 @@ const MAX_SAFE_DIFF_MATRIX_CELLS: usize = 4_000_000;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceDiffBaselineKind {
     LastAppliedAnnotation,
+    ServerSideApplyManagedFields,
     Missing,
 }
 
@@ -17,6 +20,7 @@ impl ResourceDiffBaselineKind {
     pub const fn label(self) -> &'static str {
         match self {
             Self::LastAppliedAnnotation => "last-applied",
+            Self::ServerSideApplyManagedFields => "ssa-managedFields",
             Self::Missing => "no baseline",
         }
     }
@@ -44,15 +48,27 @@ pub struct ResourceDiffResult {
     pub lines: Vec<ResourceDiffLine>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SsaApplyEntry {
+    manager: String,
+    api_version: Option<String>,
+    time: Option<String>,
+    subresource: Option<String>,
+}
+
 pub fn build_resource_diff(live_yaml: &str) -> Result<ResourceDiffResult> {
     let mut live = parse_manifest(
         live_yaml,
         "live manifest YAML is unavailable or is not a Kubernetes object manifest",
     )?;
     let baseline = extract_last_applied(&live);
+    let ssa_apply_entries = extract_ssa_apply_entries(&live);
     normalize_resource_value(&mut live);
 
     let Some(baseline_yaml) = baseline else {
+        if !ssa_apply_entries.is_empty() {
+            return Ok(build_ssa_managed_fields_notice(&ssa_apply_entries));
+        }
         return Ok(ResourceDiffResult {
             baseline_kind: ResourceDiffBaselineKind::Missing,
             summary: "No client-side apply baseline available. Resource may be managed by Helm, server-side apply, or imperative create.".to_string(),
@@ -109,6 +125,130 @@ fn extract_last_applied(value: &Value) -> Option<String> {
         .get(LAST_APPLIED_ANNOTATION)?
         .as_str()
         .map(str::to_string)
+}
+
+fn extract_ssa_apply_entries(value: &Value) -> Vec<SsaApplyEntry> {
+    let Some(entries) = value
+        .get("metadata")
+        .and_then(|metadata| metadata.get("managedFields"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+
+    let mut apply_entries = entries
+        .iter()
+        .filter_map(Value::as_object)
+        .filter_map(|entry| {
+            let operation = entry.get("operation").and_then(Value::as_str)?;
+            if operation != "Apply" {
+                return None;
+            }
+
+            let fields_type = entry.get("fieldsType").and_then(Value::as_str);
+            if let Some(fields_type) = fields_type
+                && fields_type != "FieldsV1"
+            {
+                return None;
+            }
+
+            let subresource = entry
+                .get("subresource")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            if matches!(subresource.as_deref(), Some("status")) {
+                return None;
+            }
+
+            Some(SsaApplyEntry {
+                manager: entry
+                    .get("manager")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string(),
+                api_version: entry
+                    .get("apiVersion")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                time: entry
+                    .get("time")
+                    .and_then(Value::as_str)
+                    .map(str::to_string),
+                subresource,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    apply_entries.sort_unstable_by(|left, right| {
+        right
+            .time
+            .cmp(&left.time)
+            .then_with(|| left.manager.cmp(&right.manager))
+            .then_with(|| left.subresource.cmp(&right.subresource))
+    });
+
+    apply_entries
+}
+
+fn build_ssa_managed_fields_notice(entries: &[SsaApplyEntry]) -> ResourceDiffResult {
+    let unique_managers = entries
+        .iter()
+        .map(|entry| entry.manager.as_str())
+        .collect::<BTreeSet<_>>();
+    let latest = &entries[0];
+    let manager_summary = if unique_managers.len() == 1 {
+        format!("manager '{}'", latest.manager)
+    } else {
+        format!(
+            "{} apply managers (latest '{}')",
+            unique_managers.len(),
+            latest.manager
+        )
+    };
+
+    let mut lines = vec![
+        ResourceDiffLine {
+            kind: ResourceDiffLineKind::Header,
+            content: "# server-side apply ownership metadata".to_string(),
+        },
+        ResourceDiffLine {
+            kind: ResourceDiffLineKind::Context,
+            content: format!(" managedFields reports {manager_summary}."),
+        },
+        ResourceDiffLine {
+            kind: ResourceDiffLineKind::Context,
+            content: " Kubernetes managedFields record field ownership and update time, not the previously applied field values.".to_string(),
+        },
+        ResourceDiffLine {
+            kind: ResourceDiffLineKind::Context,
+            content: " A historical live-vs-applied diff cannot be reconstructed from SSA metadata alone.".to_string(),
+        },
+    ];
+
+    for entry in entries {
+        let mut detail = format!(" manager: {}", entry.manager);
+        if let Some(api_version) = &entry.api_version {
+            detail.push_str(&format!("  apiVersion: {api_version}"));
+        }
+        if let Some(time) = &entry.time {
+            detail.push_str(&format!("  time: {time}"));
+        }
+        if let Some(subresource) = &entry.subresource {
+            detail.push_str(&format!("  subresource: {subresource}"));
+        }
+        lines.push(ResourceDiffLine {
+            kind: ResourceDiffLineKind::Context,
+            content: detail,
+        });
+    }
+
+    ResourceDiffResult {
+        baseline_kind: ResourceDiffBaselineKind::ServerSideApplyManagedFields,
+        summary: format!(
+            "No client-side apply baseline available. This resource is managed by server-side apply via {manager_summary}, but managedFields does not preserve prior applied values."
+        ),
+        lines,
+    }
 }
 
 fn normalize_resource_value(value: &mut Value) {
@@ -333,6 +473,101 @@ data:
                 .summary
                 .contains("No client-side apply baseline available")
         );
+    }
+
+    #[test]
+    fn reports_ssa_notice_when_apply_managed_fields_exist_without_last_applied() {
+        let result = build_resource_diff(
+            r#"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  managedFields:
+    - manager: kubectl
+      operation: Apply
+      apiVersion: apps/v1
+      fieldsType: FieldsV1
+      time: "2026-03-24T14:20:00Z"
+      fieldsV1: {}
+spec:
+  replicas: 2
+"#,
+        )
+        .expect("diff should build");
+
+        assert_eq!(
+            result.baseline_kind,
+            ResourceDiffBaselineKind::ServerSideApplyManagedFields
+        );
+        assert!(
+            result
+                .summary
+                .contains("managedFields does not preserve prior applied values")
+        );
+        assert!(
+            result
+                .lines
+                .iter()
+                .any(|line| line.content.contains("manager: kubectl"))
+        );
+    }
+
+    #[test]
+    fn ignores_status_subresource_apply_entries_for_ssa_fallback() {
+        let result = build_resource_diff(
+            r#"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  managedFields:
+    - manager: kube-controller-manager
+      operation: Apply
+      apiVersion: apps/v1
+      fieldsType: FieldsV1
+      subresource: status
+      time: "2026-03-24T14:20:00Z"
+      fieldsV1: {}
+spec:
+  replicas: 2
+"#,
+        )
+        .expect("diff should build");
+
+        assert_eq!(result.baseline_kind, ResourceDiffBaselineKind::Missing);
+        assert!(result.lines.is_empty());
+    }
+
+    #[test]
+    fn prefers_last_applied_annotation_over_ssa_notice() {
+        let result = build_resource_diff(
+            r#"
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: demo
+  annotations:
+    kubectl.kubernetes.io/last-applied-configuration: |
+      {"apiVersion":"v1","kind":"ConfigMap","metadata":{"name":"demo"},"data":{"hello":"world"}}
+  managedFields:
+    - manager: kubectl
+      operation: Apply
+      apiVersion: v1
+      fieldsType: FieldsV1
+      time: "2026-03-24T14:20:00Z"
+      fieldsV1: {}
+data:
+  hello: world
+"#,
+        )
+        .expect("diff should build");
+
+        assert_eq!(
+            result.baseline_kind,
+            ResourceDiffBaselineKind::LastAppliedAnnotation
+        );
+        assert!(result.summary.contains("No drift detected"));
     }
 
     #[test]

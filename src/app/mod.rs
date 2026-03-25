@@ -140,6 +140,8 @@ pub enum AppAction {
         resource: ResourceRef,
     },
     OpenRelationships,
+    OpenNetworkPolicyView,
+    OpenNetworkConnectivity,
     ConfirmDrainNode,
     CordonNode,
     UncordonNode,

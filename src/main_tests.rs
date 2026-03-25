@@ -14,7 +14,9 @@ use kubectui::{
     action_history::ActionKind,
     app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
     bookmarks::BookmarkEntry,
-    k8s::dtos::{CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo},
+    k8s::dtos::{
+        ConfigMapInfo, CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo,
+    },
     policy::DetailAction,
     state::{ClusterSnapshot, RefreshOptions, RefreshScope},
     time::{AppTimestamp, now},
@@ -284,6 +286,7 @@ fn pods_and_nodes_refresh_profiles_backfill_metrics() {
 fn services_and_issues_refresh_profiles_split_background_scopes() {
     let services = refresh_options_for_view(AppView::Services, false, false);
     let issues = refresh_options_for_view(AppView::Issues, false, false);
+    let health_report = refresh_options_for_view(AppView::HealthReport, false, false);
 
     assert_eq!(services.primary_scope, RefreshScope::SERVICES);
     assert!(services.options.scope.contains(RefreshScope::NETWORK));
@@ -295,6 +298,33 @@ fn services_and_issues_refresh_profiles_split_background_scopes() {
             .contains(RefreshScope::LEGACY_SECONDARY)
     );
     assert!(issues.options.scope.contains(RefreshScope::FLUX));
+    assert_eq!(health_report.primary_scope, issues.primary_scope);
+    assert_eq!(health_report.options.scope, issues.options.scope);
+}
+
+#[test]
+fn health_report_selected_resource_uses_sanitizer_only_rows() {
+    let mut app = AppState::default();
+    app.view = AppView::HealthReport;
+
+    let mut snapshot = ClusterSnapshot::default();
+    snapshot.snapshot_version = 41;
+    snapshot.nodes.push(NodeInfo {
+        name: "node-a".to_string(),
+        ready: false,
+        ..Default::default()
+    });
+    snapshot.config_maps.push(ConfigMapInfo {
+        name: "unused-config".to_string(),
+        namespace: "default".to_string(),
+        ..Default::default()
+    });
+
+    let selected = selected_resource(&app, &snapshot).expect("selected resource");
+    assert_eq!(
+        selected,
+        ResourceRef::ConfigMap("unused-config".to_string(), "default".to_string())
+    );
 }
 
 #[test]
@@ -452,6 +482,28 @@ fn palette_debug_container_maps_to_dialog_open() {
         map_palette_detail_action(DetailAction::DebugContainer),
         AppAction::DebugContainerDialogOpen
     );
+}
+
+#[test]
+fn palette_network_policy_maps_to_analysis_open() {
+    assert_eq!(
+        map_palette_detail_action(DetailAction::ViewNetworkPolicies),
+        AppAction::OpenNetworkPolicyView
+    );
+    assert!(!palette_action_requires_loaded_detail(
+        &AppAction::OpenNetworkPolicyView
+    ));
+}
+
+#[test]
+fn palette_connectivity_maps_to_query_open() {
+    assert_eq!(
+        map_palette_detail_action(DetailAction::CheckNetworkConnectivity),
+        AppAction::OpenNetworkConnectivity
+    );
+    assert!(!palette_action_requires_loaded_detail(
+        &AppAction::OpenNetworkConnectivity
+    ));
 }
 
 #[test]

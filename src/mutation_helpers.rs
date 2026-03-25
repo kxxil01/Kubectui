@@ -138,6 +138,8 @@ pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
         DetailAction::Trigger => AppAction::TriggerCronJob,
         DetailAction::SuspendCronJob => AppAction::ConfirmCronJobSuspend(true),
         DetailAction::ResumeCronJob => AppAction::ConfirmCronJobSuspend(false),
+        DetailAction::ViewNetworkPolicies => AppAction::OpenNetworkPolicyView,
+        DetailAction::CheckNetworkConnectivity => AppAction::OpenNetworkConnectivity,
         DetailAction::ViewRelationships => AppAction::OpenRelationships,
         DetailAction::Cordon => AppAction::CordonNode,
         DetailAction::Uncordon => AppAction::UncordonNode,
@@ -256,7 +258,7 @@ pub fn refresh_options_for_view(
             RefreshScope::LOCAL_HELM_REPOSITORIES,
         ),
         AppView::PortForwarding => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
-        AppView::Issues => RefreshDispatch::new(
+        AppView::Issues | AppView::HealthReport => RefreshDispatch::new(
             RefreshScope::CORE_OVERVIEW,
             RefreshScope::CORE_OVERVIEW
                 .union(RefreshScope::LEGACY_SECONDARY)

@@ -56,6 +56,8 @@ pub enum DetailAction {
     Trigger,
     SuspendCronJob,
     ResumeCronJob,
+    ViewNetworkPolicies,
+    CheckNetworkConnectivity,
     ViewRelationships,
     Cordon,
     Uncordon,
@@ -72,7 +74,7 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 22] = [
+    pub const ORDER: [DetailAction; 24] = [
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
         DetailAction::ViewDecodedSecret,
@@ -91,6 +93,8 @@ impl DetailAction {
         DetailAction::Trigger,
         DetailAction::SuspendCronJob,
         DetailAction::ResumeCronJob,
+        DetailAction::ViewNetworkPolicies,
+        DetailAction::CheckNetworkConnectivity,
         DetailAction::ViewRelationships,
         DetailAction::Cordon,
         DetailAction::Uncordon,
@@ -115,6 +119,8 @@ impl DetailAction {
             DetailAction::Delete => "[d]",
             DetailAction::Trigger => "[T]",
             DetailAction::SuspendCronJob | DetailAction::ResumeCronJob => "[S]",
+            DetailAction::ViewNetworkPolicies => "[N]",
+            DetailAction::CheckNetworkConnectivity => "[C]",
             DetailAction::ViewRelationships => "[w]",
             DetailAction::Cordon => "[c]",
             DetailAction::Uncordon => "[u]",
@@ -142,6 +148,8 @@ impl DetailAction {
             DetailAction::Trigger => "Trigger",
             DetailAction::SuspendCronJob => "Suspend",
             DetailAction::ResumeCronJob => "Resume",
+            DetailAction::ViewNetworkPolicies => "NetPol",
+            DetailAction::CheckNetworkConnectivity => "Reach",
             DetailAction::ViewRelationships => "Relations",
             DetailAction::Cordon => "Cordon",
             DetailAction::Uncordon => "Uncordon",
@@ -280,7 +288,8 @@ impl AppView {
             | AppView::PortForwarding
             | AppView::HelmCharts
             | AppView::Extensions
-            | AppView::Issues => PERSISTENCE_NONE,
+            | AppView::Issues
+            | AppView::HealthReport => PERSISTENCE_NONE,
             AppView::Pods
             | AppView::Nodes
             | AppView::Services
@@ -451,6 +460,13 @@ impl ResourceRef {
             DetailAction::ResumeCronJob => {
                 matches!(self, ResourceRef::CronJob(_, _)) && cronjob_suspended.unwrap_or(false)
             }
+            DetailAction::ViewNetworkPolicies => matches!(
+                self,
+                ResourceRef::Pod(_, _)
+                    | ResourceRef::Namespace(_)
+                    | ResourceRef::NetworkPolicy(_, _)
+            ),
+            DetailAction::CheckNetworkConnectivity => matches!(self, ResourceRef::Pod(_, _)),
             DetailAction::ViewRelationships => {
                 crate::k8s::relationships::resource_has_relationships(self)
             }
@@ -556,6 +572,8 @@ impl DetailViewState {
                 | DetailAction::Trigger
                 | DetailAction::SuspendCronJob
                 | DetailAction::ResumeCronJob
+                | DetailAction::ViewNetworkPolicies
+                | DetailAction::CheckNetworkConnectivity
                 | DetailAction::ViewRelationships
                 | DetailAction::Cordon
                 | DetailAction::Uncordon
@@ -626,6 +644,7 @@ mod tests {
         assert!(detail.supports_action(DetailAction::DebugContainer));
         assert!(detail.supports_action(DetailAction::PortForward));
         assert!(detail.supports_action(DetailAction::Probes));
+        assert!(detail.supports_action(DetailAction::CheckNetworkConnectivity));
         assert!(detail.supports_action(DetailAction::EditYaml));
         assert!(detail.supports_action(DetailAction::Delete));
         assert!(!detail.supports_action(DetailAction::Scale));
@@ -751,6 +770,38 @@ mod tests {
 
         let cm = ResourceRef::ConfigMap("cm".to_string(), "ns".to_string());
         assert!(!cm.supports_detail_action(DetailAction::ViewRelationships, None, None));
+    }
+
+    #[test]
+    fn network_policy_view_action_is_available_for_supported_resources() {
+        assert!(
+            ResourceRef::Pod("pod-0".to_string(), "ns".to_string()).supports_detail_action(
+                DetailAction::ViewNetworkPolicies,
+                None,
+                None,
+            )
+        );
+        assert!(
+            ResourceRef::Namespace("ns".to_string()).supports_detail_action(
+                DetailAction::ViewNetworkPolicies,
+                None,
+                None,
+            )
+        );
+        assert!(
+            ResourceRef::NetworkPolicy("np".to_string(), "ns".to_string()).supports_detail_action(
+                DetailAction::ViewNetworkPolicies,
+                None,
+                None
+            )
+        );
+        assert!(
+            !ResourceRef::Node("node-0".to_string()).supports_detail_action(
+                DetailAction::ViewNetworkPolicies,
+                None,
+                None,
+            )
+        );
     }
 
     #[test]
