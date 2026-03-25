@@ -26,12 +26,14 @@ use kube::core::PartialObjectMeta;
 
 use crate::cronjob::cronjob_next_schedule_time;
 use crate::k8s::dtos::{
-    ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo, DaemonSetInfo,
-    DeploymentInfo, EndpointInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo,
-    LimitRangeInfo, LimitSpec, NamespaceInfo, NetworkPolicyInfo, NodeInfo, OwnerRefInfo,
-    PodDisruptionBudgetInfo, PodInfo, PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo,
-    ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject, RoleInfo,
-    SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
+    ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, ContainerPortInfo, CronJobInfo,
+    DaemonSetInfo, DeploymentInfo, EndpointInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
+    K8sEventInfo, LabelSelectorInfo, LabelSelectorRequirementInfo, LimitRangeInfo, LimitSpec,
+    NamespaceInfo, NetworkPolicyInfo, NetworkPolicyPeerInfo, NetworkPolicyPortInfo,
+    NetworkPolicyRuleInfo, NodeInfo, OwnerRefInfo, PodDisruptionBudgetInfo, PodInfo,
+    PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo, ReplicationControllerInfo,
+    ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject, RoleInfo, SecretInfo,
+    ServiceAccountInfo, ServiceInfo, ServicePortInfo, StatefulSetInfo, StorageClassInfo,
 };
 use crate::state::alerts::{format_mib, format_millicores, parse_mib, parse_millicores};
 
@@ -78,6 +80,93 @@ pub(crate) fn extract_common_metadata(
     }
 }
 
+fn label_selector_to_info(
+    selector: Option<&k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector>,
+) -> LabelSelectorInfo {
+    let Some(selector) = selector else {
+        return LabelSelectorInfo::default();
+    };
+
+    LabelSelectorInfo {
+        match_labels: selector.match_labels.clone().unwrap_or_default(),
+        match_expressions: selector
+            .match_expressions
+            .as_ref()
+            .map(|requirements| {
+                requirements
+                    .iter()
+                    .map(|req| LabelSelectorRequirementInfo {
+                        key: req.key.clone(),
+                        operator: req.operator.clone(),
+                        values: req.values.clone().unwrap_or_default(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
+}
+
+fn pod_spec_images(spec: Option<&PodSpec>) -> Vec<String> {
+    spec.map(|spec| {
+        spec.containers
+            .iter()
+            .filter_map(|container| container.image.clone())
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+fn collect_pod_spec_resource_refs(spec: Option<&PodSpec>) -> (Vec<String>, Vec<String>) {
+    let mut referenced_config_maps = BTreeMap::<String, ()>::new();
+    let mut referenced_secrets = BTreeMap::<String, ()>::new();
+    let Some(spec) = spec else {
+        return (Vec::new(), Vec::new());
+    };
+
+    for volume in spec.volumes.as_deref().unwrap_or_default() {
+        if let Some(config_map) = &volume.config_map {
+            referenced_config_maps.insert(config_map.name.clone(), ());
+        }
+        if let Some(secret) = &volume.secret
+            && let Some(name) = &secret.secret_name
+        {
+            referenced_secrets.insert(name.clone(), ());
+        }
+    }
+    for image_pull_secret in spec.image_pull_secrets.as_deref().unwrap_or_default() {
+        referenced_secrets.insert(image_pull_secret.name.clone(), ());
+    }
+    for container in spec
+        .containers
+        .iter()
+        .chain(spec.init_containers.as_deref().unwrap_or_default().iter())
+    {
+        for env_from in container.env_from.as_deref().unwrap_or_default() {
+            if let Some(config_map_ref) = &env_from.config_map_ref {
+                referenced_config_maps.insert(config_map_ref.name.clone(), ());
+            }
+            if let Some(secret_ref) = &env_from.secret_ref {
+                referenced_secrets.insert(secret_ref.name.clone(), ());
+            }
+        }
+        for env in container.env.as_deref().unwrap_or_default() {
+            if let Some(value_from) = &env.value_from {
+                if let Some(config_map_key_ref) = &value_from.config_map_key_ref {
+                    referenced_config_maps.insert(config_map_key_ref.name.clone(), ());
+                }
+                if let Some(secret_key_ref) = &value_from.secret_key_ref {
+                    referenced_secrets.insert(secret_key_ref.name.clone(), ());
+                }
+            }
+        }
+    }
+
+    (
+        referenced_config_maps.into_keys().collect(),
+        referenced_secrets.into_keys().collect(),
+    )
+}
+
 /// Extracts the first container image from a pod spec.
 pub fn extract_image_from_pod_spec(pod_spec: Option<&PodSpec>) -> Option<String> {
     pod_spec
@@ -108,6 +197,48 @@ pub fn pod_to_info(pod: Pod) -> PodInfo {
         .as_ref()
         .map(|spec| spec.containers.as_slice())
         .unwrap_or_default();
+
+    let spec = pod.spec.as_ref();
+    let pod_run_as_non_root = spec
+        .and_then(|spec| spec.security_context.as_ref())
+        .and_then(|context| context.run_as_non_root);
+    let run_as_non_root_configured = !containers.is_empty()
+        && containers.iter().all(|container| {
+            container
+                .security_context
+                .as_ref()
+                .and_then(|context| context.run_as_non_root)
+                .or(pod_run_as_non_root)
+                == Some(true)
+        });
+
+    let missing_liveness_probes = containers
+        .iter()
+        .filter(|container| container.liveness_probe.is_none())
+        .count();
+    let missing_readiness_probes = containers
+        .iter()
+        .filter(|container| container.readiness_probe.is_none())
+        .count();
+
+    let mut container_ports = containers
+        .iter()
+        .flat_map(|container| container.ports.as_deref().unwrap_or_default().iter())
+        .map(|port| ContainerPortInfo {
+            name: port.name.clone(),
+            container_port: port.container_port,
+            protocol: port.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
+        })
+        .collect::<Vec<_>>();
+    container_ports.sort_unstable_by(|left, right| {
+        left.protocol
+            .cmp(&right.protocol)
+            .then_with(|| left.container_port.cmp(&right.container_port))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    container_ports.dedup();
+
+    let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(spec);
 
     let (cpu_request, memory_request, cpu_limit, memory_limit) = {
         let mut cpu_req_m: u64 = 0;
@@ -195,6 +326,19 @@ pub fn pod_to_info(pod: Pod) -> PodInfo {
         memory_request,
         cpu_limit,
         memory_limit,
+        container_images: containers
+            .iter()
+            .filter_map(|container| container.image.clone())
+            .collect(),
+        container_ports,
+        missing_liveness_probes,
+        missing_readiness_probes,
+        run_as_non_root_configured,
+        host_network: spec.and_then(|spec| spec.host_network).unwrap_or(false),
+        host_pid: spec.and_then(|spec| spec.host_pid).unwrap_or(false),
+        host_ipc: spec.and_then(|spec| spec.host_ipc).unwrap_or(false),
+        referenced_config_maps,
+        referenced_secrets,
     }
 }
 
@@ -222,11 +366,18 @@ pub fn deployment_to_info(dep: Deployment) -> DeploymentInfo {
         .creation_timestamp
         .as_ref()
         .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
-    let image = extract_image_from_pod_spec(
-        dep.spec
-            .as_ref()
-            .and_then(|spec| spec.template.spec.as_ref()),
-    );
+    let pod_spec = dep
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.template.spec.as_ref());
+    let image = extract_image_from_pod_spec(pod_spec);
+    let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
+    let pod_template_labels = dep
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.template.metadata.as_ref())
+        .and_then(|meta| meta.labels.clone())
+        .unwrap_or_default();
 
     DeploymentInfo {
         name: dep.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -242,6 +393,22 @@ pub fn deployment_to_info(dep: Deployment) -> DeploymentInfo {
         ready: format!("{ready_replicas}/{desired_replicas}"),
         age: age_from_created_at(created_at, now),
         image,
+        images: pod_spec_images(pod_spec),
+        selector: dep
+            .spec
+            .as_ref()
+            .map(|spec| label_selector_to_info(Some(&spec.selector)))
+            .unwrap_or_default(),
+        pod_template_labels,
+        referenced_config_maps,
+        referenced_secrets,
+        annotations: dep
+            .metadata
+            .annotations
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
     }
 }
 
@@ -255,6 +422,10 @@ pub fn replicaset_to_info(rs: ReplicaSet) -> ReplicaSetInfo {
         .creation_timestamp
         .as_ref()
         .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+    let pod_spec = spec
+        .and_then(|s| s.template.as_ref())
+        .and_then(|t| t.spec.as_ref());
+    let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
 
     ReplicaSetInfo {
         name: rs.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -265,10 +436,9 @@ pub fn replicaset_to_info(rs: ReplicaSet) -> ReplicaSetInfo {
         desired: spec.and_then(|s| s.replicas).unwrap_or(0),
         ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
         available: status.and_then(|s| s.available_replicas).unwrap_or(0),
-        image: extract_image_from_pod_spec(
-            spec.and_then(|s| s.template.as_ref())
-                .and_then(|t| t.spec.as_ref()),
-        ),
+        image: extract_image_from_pod_spec(pod_spec),
+        referenced_config_maps,
+        referenced_secrets,
         age: age_from_created_at(created_at, now),
         created_at,
         owner_references: rs
@@ -295,6 +465,8 @@ pub fn statefulset_to_info(ss: StatefulSet) -> StatefulSetInfo {
         .creation_timestamp
         .as_ref()
         .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+    let pod_spec = spec.and_then(|s| s.template.spec.as_ref());
+    let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
 
     StatefulSetInfo {
         name: ss.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -310,7 +482,9 @@ pub fn statefulset_to_info(ss: StatefulSet) -> StatefulSetInfo {
         pod_management_policy: spec
             .and_then(|s| s.pod_management_policy.clone())
             .unwrap_or_else(|| "OrderedReady".to_string()),
-        image: extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
+        image: extract_image_from_pod_spec(pod_spec),
+        referenced_config_maps,
+        referenced_secrets,
         age: age_from_created_at(created_at, now),
         created_at,
     }
@@ -330,6 +504,8 @@ pub fn daemonset_to_info(ds: DaemonSet) -> DaemonSetInfo {
     let desired_count = status.map(|s| s.desired_number_scheduled).unwrap_or(0);
     let ready_count = status.map(|s| s.number_ready).unwrap_or(0);
     let unavailable_count = status.and_then(|s| s.number_unavailable).unwrap_or(0);
+    let pod_spec = spec.and_then(|s| s.template.spec.as_ref());
+    let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
 
     DaemonSetInfo {
         name: ds.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -366,7 +542,9 @@ pub fn daemonset_to_info(ds: DaemonSet) -> DaemonSetInfo {
         } else {
             format!("{unavailable_count} pods unavailable")
         },
-        image: extract_image_from_pod_spec(spec.and_then(|s| s.template.spec.as_ref())),
+        image: extract_image_from_pod_spec(pod_spec),
+        referenced_config_maps,
+        referenced_secrets,
         age: age_from_created_at(created_at, now),
         created_at,
     }
@@ -375,6 +553,28 @@ pub fn daemonset_to_info(ds: DaemonSet) -> DaemonSetInfo {
 /// Converts a raw Kubernetes `Service` into a [`ServiceInfo`] DTO.
 pub fn service_to_info(svc: Service) -> ServiceInfo {
     let now = now();
+    let port_mappings = svc
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.ports.as_ref())
+        .map(|ports| {
+            ports
+                .iter()
+                .map(|port| ServicePortInfo {
+                    port: port.port,
+                    protocol: port.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
+                    target_port_name: match &port.target_port {
+                        Some(IntOrString::String(name)) => Some(name.clone()),
+                        _ => None,
+                    },
+                    target_port_number: match &port.target_port {
+                        Some(IntOrString::Int(number)) => Some(*number),
+                        _ => None,
+                    },
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     let ports = svc
         .spec
         .as_ref()
@@ -419,6 +619,14 @@ pub fn service_to_info(svc: Service) -> ServiceInfo {
             .as_ref()
             .and_then(|spec| spec.selector.clone())
             .unwrap_or_default(),
+        port_mappings,
+        annotations: svc
+            .metadata
+            .annotations
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
         created_at,
         age: age_from_created_at(created_at, now),
     }
@@ -511,6 +719,10 @@ pub fn replication_controller_to_info(rc: ReplicationController) -> ReplicationC
         .creation_timestamp
         .as_ref()
         .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+    let pod_spec = spec
+        .and_then(|s| s.template.as_ref())
+        .and_then(|t| t.spec.as_ref());
+    let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
     ReplicationControllerInfo {
         name: rc.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
         namespace: rc
@@ -520,10 +732,9 @@ pub fn replication_controller_to_info(rc: ReplicationController) -> ReplicationC
         desired: spec.and_then(|s| s.replicas).unwrap_or(0),
         ready: status.and_then(|s| s.ready_replicas).unwrap_or(0),
         available: status.and_then(|s| s.available_replicas).unwrap_or(0),
-        image: extract_image_from_pod_spec(
-            spec.and_then(|s| s.template.as_ref())
-                .and_then(|t| t.spec.as_ref()),
-        ),
+        image: extract_image_from_pod_spec(pod_spec),
+        referenced_config_maps,
+        referenced_secrets,
         age: age_from_created_at(created_at, now),
         created_at,
     }
@@ -551,6 +762,8 @@ pub fn job_to_info(job: Job) -> JobInfo {
         .creation_timestamp
         .as_ref()
         .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+    let pod_spec = spec.and_then(|s| s.template.spec.as_ref());
+    let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
 
     JobInfo {
         name: job.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -566,6 +779,8 @@ pub fn job_to_info(job: Job) -> JobInfo {
         parallelism,
         active_pods: active,
         failed_pods: failed,
+        referenced_config_maps,
+        referenced_secrets,
         age: age_from_created_at(created_at, now),
         created_at,
         owner_references: job
@@ -597,6 +812,10 @@ pub fn cronjob_to_info(cj: CronJob) -> CronJobInfo {
         .unwrap_or_else(|| "<none>".to_string());
     let timezone = spec.and_then(|s| s.time_zone.clone());
     let suspend = spec.and_then(|s| s.suspend).unwrap_or(false);
+    let pod_spec = spec
+        .and_then(|s| s.job_template.spec.as_ref())
+        .and_then(|job_spec| job_spec.template.spec.as_ref());
+    let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
 
     CronJobInfo {
         name: cj.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -623,6 +842,8 @@ pub fn cronjob_to_info(cj: CronJob) -> CronJobInfo {
             .and_then(|s| s.active.as_ref())
             .map(|v| v.len() as i32)
             .unwrap_or(0),
+        referenced_config_maps,
+        referenced_secrets,
         age: age_from_created_at(created_at, now),
         created_at,
     }
@@ -832,6 +1053,7 @@ pub fn pdb_to_info(pdb: PodDisruptionBudget) -> PodDisruptionBudgetInfo {
         desired_healthy: status.map(|s| s.desired_healthy).unwrap_or(0),
         disruptions_allowed: status.map(|s| s.disruptions_allowed).unwrap_or(0),
         expected_pods: status.map(|s| s.expected_pods).unwrap_or(0),
+        selector: spec.map(|spec| label_selector_to_info(spec.selector.as_ref())),
         age: m.age,
         created_at: m.created_at,
     }
@@ -968,38 +1190,152 @@ pub fn ingress_class_to_info(ic: IngressClass) -> IngressClassInfo {
 /// Converts a raw `NetworkPolicy` into a [`NetworkPolicyInfo`] DTO.
 pub fn network_policy_to_info(np: NetworkPolicy) -> NetworkPolicyInfo {
     let m = extract_common_metadata(&np.metadata);
-    let pod_selector = np
-        .spec
-        .as_ref()
-        .map(|s| {
-            s.pod_selector
-                .as_ref()
-                .and_then(|selector| selector.match_labels.as_ref())
-                .map(|ml| {
-                    ml.iter()
-                        .map(|(k, v)| format!("{k}={v}"))
-                        .collect::<Vec<_>>()
-                        .join(",")
+    let spec = np.spec.as_ref();
+    let pod_selector_spec = spec
+        .map(|spec| label_selector_to_info(spec.pod_selector.as_ref()))
+        .unwrap_or_default();
+    let pod_selector = if pod_selector_spec.match_labels.is_empty()
+        && pod_selector_spec.match_expressions.is_empty()
+    {
+        "<all>".to_string()
+    } else {
+        pod_selector_spec
+            .match_labels
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    let ingress: Vec<NetworkPolicyRuleInfo> = spec
+        .and_then(|spec| spec.ingress.as_ref())
+        .map(|rules| {
+            rules
+                .iter()
+                .map(|rule| NetworkPolicyRuleInfo {
+                    peers: rule
+                        .from
+                        .as_ref()
+                        .map(|peers| {
+                            peers
+                                .iter()
+                                .map(|peer| NetworkPolicyPeerInfo {
+                                    pod_selector: peer
+                                        .pod_selector
+                                        .as_ref()
+                                        .map(|selector| label_selector_to_info(Some(selector))),
+                                    namespace_selector: peer
+                                        .namespace_selector
+                                        .as_ref()
+                                        .map(|selector| label_selector_to_info(Some(selector))),
+                                    ip_block_cidr: peer
+                                        .ip_block
+                                        .as_ref()
+                                        .map(|ip_block| ip_block.cidr.clone()),
+                                    ip_block_except: peer
+                                        .ip_block
+                                        .as_ref()
+                                        .and_then(|ip_block| ip_block.except.clone())
+                                        .unwrap_or_default(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    ports: rule
+                        .ports
+                        .as_ref()
+                        .map(|ports| {
+                            ports
+                                .iter()
+                                .map(|port| NetworkPolicyPortInfo {
+                                    protocol: port.protocol.clone(),
+                                    port_name: match &port.port {
+                                        Some(IntOrString::String(name)) => Some(name.clone()),
+                                        _ => None,
+                                    },
+                                    port_number: match &port.port {
+                                        Some(IntOrString::Int(number)) => Some(*number),
+                                        _ => None,
+                                    },
+                                    end_port: port.end_port,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
                 })
-                .unwrap_or_else(|| "<all>".to_string())
+                .collect()
         })
         .unwrap_or_default();
-    let ingress_rules = np
-        .spec
-        .as_ref()
-        .and_then(|s| s.ingress.as_ref())
-        .map(|r| r.len())
-        .unwrap_or(0);
-    let egress_rules = np
-        .spec
-        .as_ref()
-        .and_then(|s| s.egress.as_ref())
-        .map(|r| r.len())
-        .unwrap_or(0);
+    let egress: Vec<NetworkPolicyRuleInfo> = spec
+        .and_then(|spec| spec.egress.as_ref())
+        .map(|rules| {
+            rules
+                .iter()
+                .map(|rule| NetworkPolicyRuleInfo {
+                    peers: rule
+                        .to
+                        .as_ref()
+                        .map(|peers| {
+                            peers
+                                .iter()
+                                .map(|peer| NetworkPolicyPeerInfo {
+                                    pod_selector: peer
+                                        .pod_selector
+                                        .as_ref()
+                                        .map(|selector| label_selector_to_info(Some(selector))),
+                                    namespace_selector: peer
+                                        .namespace_selector
+                                        .as_ref()
+                                        .map(|selector| label_selector_to_info(Some(selector))),
+                                    ip_block_cidr: peer
+                                        .ip_block
+                                        .as_ref()
+                                        .map(|ip_block| ip_block.cidr.clone()),
+                                    ip_block_except: peer
+                                        .ip_block
+                                        .as_ref()
+                                        .and_then(|ip_block| ip_block.except.clone())
+                                        .unwrap_or_default(),
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                    ports: rule
+                        .ports
+                        .as_ref()
+                        .map(|ports| {
+                            ports
+                                .iter()
+                                .map(|port| NetworkPolicyPortInfo {
+                                    protocol: port.protocol.clone(),
+                                    port_name: match &port.port {
+                                        Some(IntOrString::String(name)) => Some(name.clone()),
+                                        _ => None,
+                                    },
+                                    port_number: match &port.port {
+                                        Some(IntOrString::Int(number)) => Some(*number),
+                                        _ => None,
+                                    },
+                                    end_port: port.end_port,
+                                })
+                                .collect()
+                        })
+                        .unwrap_or_default(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let ingress_rules = ingress.len();
+    let egress_rules = egress.len();
     NetworkPolicyInfo {
         name: m.name,
         namespace: m.namespace,
         pod_selector,
+        pod_selector_spec,
+        policy_types: spec
+            .and_then(|spec| spec.policy_types.clone())
+            .unwrap_or_default(),
+        ingress,
+        egress,
         ingress_rules,
         egress_rules,
         age: m.age,
@@ -1016,6 +1352,12 @@ pub fn config_map_to_info(cm: k8s_openapi::api::core::v1::ConfigMap) -> ConfigMa
         name: m.name,
         namespace: m.namespace,
         data_count,
+        annotations: cm
+            .metadata
+            .annotations
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
         age: m.age,
         created_at: m.created_at,
     }
@@ -1030,6 +1372,12 @@ pub fn secret_to_info(s: k8s_openapi::api::core::v1::Secret) -> SecretInfo {
         namespace: m.namespace,
         type_: s.type_.unwrap_or_else(|| "Opaque".to_string()),
         data_count,
+        annotations: s
+            .metadata
+            .annotations
+            .unwrap_or_default()
+            .into_iter()
+            .collect(),
         age: m.age,
         created_at: m.created_at,
     }
@@ -1150,6 +1498,7 @@ pub fn namespace_to_info(ns: Namespace) -> NamespaceInfo {
     NamespaceInfo {
         name: m.name,
         status: namespace_status_from_metadata(&ns.metadata),
+        labels: ns.metadata.labels.clone().unwrap_or_default(),
         age: m.age,
         created_at: m.created_at,
     }
@@ -1161,6 +1510,7 @@ pub fn namespace_metadata_to_info(ns: PartialObjectMeta<Namespace>) -> Namespace
     NamespaceInfo {
         name: m.name,
         status: namespace_status_from_metadata(&ns.metadata),
+        labels: ns.metadata.labels.clone().unwrap_or_default(),
         age: m.age,
         created_at: m.created_at,
     }

@@ -519,9 +519,22 @@ pub fn filtered_indices_for_view(
         AppView::Dashboard | AppView::Bookmarks | AppView::PortForwarding | AppView::Extensions => {
             Vec::new()
         }
-        AppView::Issues => {
+        AppView::Issues | AppView::HealthReport => {
             let issues = compute_issues(snapshot);
-            filtered_issue_indices(&issues, query.trim())
+            let trimmed = query.trim();
+            if view == AppView::HealthReport {
+                issues
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, issue)| {
+                        (issue.source == crate::state::issues::ClusterIssueSource::Sanitizer
+                            && issue.matches_query(trimmed))
+                        .then_some(idx)
+                    })
+                    .collect()
+            } else {
+                filtered_issue_indices(&issues, trimmed)
+            }
         }
         AppView::Nodes => filtered_node_indices(&snapshot.nodes, query, workload_sort),
         AppView::Pods => filtered_pod_indices(&snapshot.pods, query, pod_sort),

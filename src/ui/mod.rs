@@ -967,6 +967,14 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 content_focused,
             ),
+            AppView::HealthReport => views::issue_center::render_health_report(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+                content_focused,
+            ),
             AppView::Bookmarks => views::bookmarks::render_bookmarks(
                 frame,
                 content,
@@ -1744,11 +1752,12 @@ mod tests {
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
         bookmarks::BookmarkEntry,
         k8s::dtos::{
-            ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo, CustomResourceDefinitionInfo,
-            CustomResourceInfo, DaemonSetInfo, DeploymentInfo, FluxResourceInfo, IngressClassInfo,
-            IngressInfo, JobInfo, LimitRangeInfo, NetworkPolicyInfo, NodeInfo,
-            PodDisruptionBudgetInfo, PodInfo, PvInfo, PvcInfo, ResourceQuotaInfo, RoleBindingInfo,
-            RoleInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
+            ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
+            CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo, DeploymentInfo,
+            FluxResourceInfo, IngressClassInfo, IngressInfo, JobInfo, LimitRangeInfo,
+            NetworkPolicyInfo, NodeInfo, PodDisruptionBudgetInfo, PodInfo, PvInfo, PvcInfo,
+            ResourceQuotaInfo, RoleBindingInfo, RoleInfo, ServiceAccountInfo, ServiceInfo,
+            StatefulSetInfo, StorageClassInfo,
         },
         state::{ClusterSnapshot, DataPhase, ViewLoadState},
         time::{now, now_unix_seconds},
@@ -2008,6 +2017,28 @@ mod tests {
         };
         let text = render_to_string(&app_with_view(AppView::Issues), &snapshot);
         assert!(text.contains("partial coverage"));
+    }
+
+    #[test]
+    fn health_report_view_filters_out_runtime_issues() {
+        let snapshot = ClusterSnapshot {
+            snapshot_version: 42,
+            nodes: vec![NodeInfo {
+                name: "node-a".to_string(),
+                ready: false,
+                ..NodeInfo::default()
+            }],
+            config_maps: vec![ConfigMapInfo {
+                name: "unused-config".to_string(),
+                namespace: "default".to_string(),
+                ..ConfigMapInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        };
+
+        let text = render_to_string(&app_with_view(AppView::HealthReport), &snapshot);
+        assert!(text.contains("unused-config"));
+        assert!(!text.contains("Node Not Ready"));
     }
 
     /// Verifies nodes view renders without panic for multiple list sizes.

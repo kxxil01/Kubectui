@@ -175,6 +175,7 @@ pub struct ClusterSnapshot {
     pub node_metrics: Vec<NodeMetricsInfo>,
     pub pod_metrics: Vec<PodMetricsInfo>,
     pub issue_count: usize,
+    pub sanitizer_count: usize,
     pub namespaces_count: usize,
     pub phase: DataPhase,
     pub last_updated: Option<AppTimestamp>,
@@ -231,6 +232,7 @@ impl Default for ClusterSnapshot {
             node_metrics: Vec::new(),
             pod_metrics: Vec::new(),
             issue_count: 0,
+            sanitizer_count: 0,
             namespaces_count: 0,
             phase: DataPhase::Idle,
             last_updated: None,
@@ -312,6 +314,7 @@ impl ClusterSnapshot {
             AppView::FluxCDReceivers => Some(self.flux_counts.receivers),
             AppView::FluxCDSources => Some(self.flux_counts.sources),
             AppView::Issues => Some(self.issue_count),
+            AppView::HealthReport => Some(self.sanitizer_count),
             // Dashboard, Bookmarks, and PortForwarding don't have direct collections
             AppView::Dashboard | AppView::Bookmarks | AppView::PortForwarding => None,
         }
@@ -742,7 +745,10 @@ impl GlobalState {
         }
         self.snapshot_dirty = false;
         let count = issues::compute_issues(&self.snapshot).len();
-        Arc::make_mut(&mut self.snapshot).issue_count = count;
+        let sanitizer_count = issues::sanitizer_issue_count(&self.snapshot);
+        let snapshot = Arc::make_mut(&mut self.snapshot);
+        snapshot.issue_count = count;
+        snapshot.sanitizer_count = sanitizer_count;
     }
 
     /// Returns fetched namespaces.
@@ -754,7 +760,7 @@ impl GlobalState {
         match view {
             AppView::Dashboard => RefreshScope::CORE_OVERVIEW,
             AppView::Bookmarks | AppView::PortForwarding => RefreshScope::NONE,
-            AppView::Issues => RefreshScope::CORE_OVERVIEW
+            AppView::Issues | AppView::HealthReport => RefreshScope::CORE_OVERVIEW
                 .union(RefreshScope::LEGACY_SECONDARY)
                 .union(RefreshScope::FLUX),
             AppView::Nodes => RefreshScope::NODES,
@@ -864,7 +870,9 @@ impl GlobalState {
             AppView::ClusterRoleBindings => !self.snapshot.cluster_role_bindings.is_empty(),
             AppView::RoleBindings => !self.snapshot.role_bindings.is_empty(),
             AppView::Extensions => !self.snapshot.custom_resource_definitions.is_empty(),
-            AppView::Issues => !self.snapshot.pods.is_empty() || !self.snapshot.nodes.is_empty(),
+            AppView::Issues | AppView::HealthReport => {
+                !self.snapshot.pods.is_empty() || !self.snapshot.nodes.is_empty()
+            }
         }
     }
 

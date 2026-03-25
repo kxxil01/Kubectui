@@ -5,10 +5,12 @@ use crate::{
     app::{LogsViewerState, ResourceRef},
     icons::tab_icon,
     k8s::client::EventInfo,
+    network_policy_analysis::NetworkPolicyAnalysis,
+    network_policy_connectivity::ConnectivityAnalysis,
     resource_diff::{ResourceDiffBaselineKind, ResourceDiffLine, ResourceDiffResult},
     secret::DecodedSecretEntry,
     timeline::{TimelineEntry, build_timeline},
-    ui::components::port_forward_dialog::PortForwardDialog,
+    ui::components::{input_field::InputFieldWidget, port_forward_dialog::PortForwardDialog},
 };
 
 pub const DEFAULT_WORKBENCH_HEIGHT: u16 = 12;
@@ -30,6 +32,8 @@ pub enum WorkbenchTabKind {
     Exec,
     PortForward,
     Relations,
+    NetworkPolicy,
+    Connectivity,
 }
 
 impl WorkbenchTabKind {
@@ -45,6 +49,8 @@ impl WorkbenchTabKind {
             WorkbenchTabKind::Exec => "Exec",
             WorkbenchTabKind::PortForward => "Port-Forward",
             WorkbenchTabKind::Relations => "Relations",
+            WorkbenchTabKind::NetworkPolicy => "NetPol",
+            WorkbenchTabKind::Connectivity => "Reach",
         }
     }
 }
@@ -61,6 +67,8 @@ pub enum WorkbenchTabKey {
     Exec(ResourceRef),
     PortForward,
     Relations(ResourceRef),
+    NetworkPolicy(ResourceRef),
+    Connectivity(ResourceRef),
 }
 
 #[derive(Debug, Clone, Default)]
@@ -493,6 +501,173 @@ pub struct RelationsTabState {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct NetworkPolicyTabState {
+    pub resource: ResourceRef,
+    pub summary_lines: Vec<String>,
+    pub tree: Vec<crate::k8s::relationships::RelationNode>,
+    pub cursor: usize,
+    pub expanded: std::collections::HashSet<usize>,
+    pub loading: bool,
+    pub error: Option<String>,
+}
+
+impl NetworkPolicyTabState {
+    pub fn new(resource: ResourceRef) -> Self {
+        Self {
+            resource,
+            summary_lines: Vec::new(),
+            tree: Vec::new(),
+            cursor: 0,
+            expanded: std::collections::HashSet::new(),
+            loading: false,
+            error: None,
+        }
+    }
+
+    pub fn apply_analysis(&mut self, analysis: NetworkPolicyAnalysis) {
+        let mut expanded = std::collections::HashSet::new();
+        let mut counter = 0usize;
+        for section in &analysis.tree {
+            expanded.insert(counter);
+            counter += 1;
+            for child in &section.children {
+                expanded.insert(counter);
+                counter += 1;
+                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
+            }
+        }
+        self.summary_lines = analysis.summary_lines;
+        self.tree = analysis.tree;
+        self.expanded = expanded;
+        let flat = crate::k8s::relationships::flatten_tree(&self.tree, &self.expanded);
+        if self.cursor >= flat.len() {
+            self.cursor = flat.len().saturating_sub(1);
+        }
+        self.loading = false;
+        self.error = None;
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConnectivityTargetOption {
+    pub resource: ResourceRef,
+    pub display: String,
+    pub status: String,
+    pub pod_ip: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectivityTabFocus {
+    Filter,
+    Targets,
+    Result,
+}
+
+#[derive(Debug, Clone)]
+pub struct ConnectivityTabState {
+    pub source: ResourceRef,
+    pub focus: ConnectivityTabFocus,
+    pub filter: InputFieldWidget,
+    pub targets: Vec<ConnectivityTargetOption>,
+    pub filtered_target_indices: Vec<usize>,
+    pub selected_target: usize,
+    pub current_target: Option<ResourceRef>,
+    pub summary_lines: Vec<String>,
+    pub tree: Vec<crate::k8s::relationships::RelationNode>,
+    pub tree_cursor: usize,
+    pub expanded: std::collections::HashSet<usize>,
+    pub error: Option<String>,
+}
+
+impl ConnectivityTabState {
+    pub fn new(source: ResourceRef, targets: Vec<ConnectivityTargetOption>) -> Self {
+        let mut tab = Self {
+            source,
+            focus: ConnectivityTabFocus::Targets,
+            filter: InputFieldWidget::new(64),
+            targets,
+            filtered_target_indices: Vec::new(),
+            selected_target: 0,
+            current_target: None,
+            summary_lines: vec![
+                "Select a target pod, then press [Enter] to evaluate whether any traffic is allowed by policy intent."
+                    .to_string(),
+                "Result shows intent only; CNI enforcement/runtime packet filters may still differ."
+                    .to_string(),
+            ],
+            tree: Vec::new(),
+            tree_cursor: 0,
+            expanded: std::collections::HashSet::new(),
+            error: None,
+        };
+        tab.refresh_filter();
+        tab
+    }
+
+    pub fn refresh_filter(&mut self) {
+        let query = self.filter.value.to_ascii_lowercase();
+        self.filtered_target_indices = self
+            .targets
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, target)| {
+                (query.is_empty()
+                    || target.display.to_ascii_lowercase().contains(&query)
+                    || target.status.to_ascii_lowercase().contains(&query)
+                    || target
+                        .pod_ip
+                        .as_deref()
+                        .unwrap_or_default()
+                        .to_ascii_lowercase()
+                        .contains(&query))
+                .then_some(idx)
+            })
+            .collect();
+        let max = self.filtered_target_indices.len().saturating_sub(1);
+        self.selected_target = self.selected_target.min(max);
+    }
+
+    pub fn selected_target_option(&self) -> Option<&ConnectivityTargetOption> {
+        self.filtered_target_indices
+            .get(self.selected_target)
+            .and_then(|idx| self.targets.get(*idx))
+    }
+
+    pub fn apply_analysis(&mut self, target: ResourceRef, analysis: ConnectivityAnalysis) {
+        self.current_target = Some(target);
+        self.summary_lines = analysis.summary_lines;
+        self.tree = analysis.tree;
+        self.focus = ConnectivityTabFocus::Result;
+        self.tree_cursor = 0;
+        self.error = None;
+        self.expanded.clear();
+
+        let mut counter = 0usize;
+        for section in &self.tree {
+            self.expanded.insert(counter);
+            counter += 1;
+            for child in &section.children {
+                self.expanded.insert(counter);
+                counter += 1;
+                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
+            }
+        }
+    }
+
+    pub fn set_error(&mut self, error: String) {
+        self.error = Some(error);
+        self.current_target = None;
+        self.summary_lines = vec![
+            "Connectivity query could not be evaluated from the current snapshot.".to_string(),
+        ];
+        self.tree.clear();
+        self.tree_cursor = 0;
+        self.expanded.clear();
+        self.focus = ConnectivityTabFocus::Targets;
+    }
+}
+
 impl RelationsTabState {
     pub fn new(resource: ResourceRef) -> Self {
         Self {
@@ -542,6 +717,8 @@ pub enum WorkbenchTabState {
     Exec(ExecTabState),
     PortForward(PortForwardTabState),
     Relations(RelationsTabState),
+    NetworkPolicy(NetworkPolicyTabState),
+    Connectivity(ConnectivityTabState),
 }
 
 impl WorkbenchTabState {
@@ -557,6 +734,8 @@ impl WorkbenchTabState {
             Self::Exec(_) => WorkbenchTabKind::Exec,
             Self::PortForward(_) => WorkbenchTabKind::PortForward,
             Self::Relations(_) => WorkbenchTabKind::Relations,
+            Self::NetworkPolicy(_) => WorkbenchTabKind::NetworkPolicy,
+            Self::Connectivity(_) => WorkbenchTabKind::Connectivity,
         }
     }
 
@@ -572,6 +751,8 @@ impl WorkbenchTabState {
             Self::Exec(tab) => WorkbenchTabKey::Exec(tab.resource.clone()),
             Self::PortForward(_) => WorkbenchTabKey::PortForward,
             Self::Relations(tab) => WorkbenchTabKey::Relations(tab.resource.clone()),
+            Self::NetworkPolicy(tab) => WorkbenchTabKey::NetworkPolicy(tab.resource.clone()),
+            Self::Connectivity(tab) => WorkbenchTabKey::Connectivity(tab.source.clone()),
         }
     }
 
@@ -605,6 +786,12 @@ impl WorkbenchTabState {
             },
             Self::Relations(tab) => {
                 format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
+            Self::NetworkPolicy(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
+            Self::Connectivity(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.source))
             }
         }
     }
@@ -892,6 +1079,38 @@ mod tests {
         )));
         let second = state.open_tab(WorkbenchTabState::ResourceDiff(ResourceDiffTabState::new(
             pod("pod-0"),
+        )));
+
+        assert_eq!(first, second);
+        assert_eq!(state.tabs.len(), 1);
+        assert!(state.open);
+    }
+
+    #[test]
+    fn network_policy_tab_deduplicates_by_resource() {
+        let mut state = WorkbenchState::default();
+        let first = state.open_tab(WorkbenchTabState::NetworkPolicy(
+            NetworkPolicyTabState::new(pod("pod-0")),
+        ));
+        let second = state.open_tab(WorkbenchTabState::NetworkPolicy(
+            NetworkPolicyTabState::new(pod("pod-0")),
+        ));
+
+        assert_eq!(first, second);
+        assert_eq!(state.tabs.len(), 1);
+        assert!(state.open);
+    }
+
+    #[test]
+    fn connectivity_tab_deduplicates_by_source_resource() {
+        let mut state = WorkbenchState::default();
+        let first = state.open_tab(WorkbenchTabState::Connectivity(ConnectivityTabState::new(
+            pod("pod-0"),
+            Vec::new(),
+        )));
+        let second = state.open_tab(WorkbenchTabState::Connectivity(ConnectivityTabState::new(
+            pod("pod-0"),
+            Vec::new(),
         )));
 
         assert_eq!(first, second);

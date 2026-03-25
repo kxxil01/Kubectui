@@ -34,10 +34,22 @@ pub fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<R
     match app.view() {
         AppView::Dashboard => None,
         AppView::Bookmarks => selected_bookmark_resource(app.bookmarks(), idx, app.search_query()),
-        AppView::Issues => {
+        AppView::Issues | AppView::HealthReport => {
             let issues = kubectui::state::issues::compute_issues(snapshot);
             let query = app.search_query().trim();
-            let indices = kubectui::state::issues::filtered_issue_indices(&issues, query);
+            let indices = if app.view() == AppView::HealthReport {
+                issues
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, issue)| {
+                        (issue.source == kubectui::state::issues::ClusterIssueSource::Sanitizer
+                            && issue.matches_query(query))
+                        .then_some(idx)
+                    })
+                    .collect()
+            } else {
+                kubectui::state::issues::filtered_issue_indices(&issues, query)
+            };
             filtered_index(&indices, idx).map(|i| issues[i].resource_ref.clone())
         }
         AppView::HelmCharts => None,

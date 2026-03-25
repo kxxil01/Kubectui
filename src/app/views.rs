@@ -49,6 +49,7 @@ pub enum AppView {
     // Overview
     Dashboard,
     Bookmarks,
+    HealthReport,
     Nodes,
     // Workloads
     Pods,
@@ -108,11 +109,12 @@ pub enum AppView {
 }
 
 impl AppView {
-    const ORDER: [AppView; 48] = [
+    const ORDER: [AppView; 49] = [
         // Overview
         AppView::Dashboard,
         AppView::Bookmarks,
         AppView::Issues,
+        AppView::HealthReport,
         AppView::Nodes,
         AppView::Namespaces,
         AppView::Events,
@@ -175,6 +177,7 @@ impl AppView {
         match self {
             AppView::Dashboard => "Dashboard",
             AppView::Bookmarks => "Bookmarks",
+            AppView::HealthReport => "Health Report",
             AppView::Nodes => "Nodes",
             AppView::Pods => "Pods",
             AppView::Deployments => "Deployments",
@@ -240,6 +243,7 @@ impl AppView {
         match self {
             AppView::Dashboard => "view.dashboard",
             AppView::Bookmarks => "view.bookmarks",
+            AppView::HealthReport => "view.health_report",
             AppView::Nodes => "view.nodes",
             AppView::Pods => "view.pods",
             AppView::Deployments => "view.deployments",
@@ -292,9 +296,11 @@ impl AppView {
     /// Returns the NavGroup this view belongs to.
     pub const fn group(self) -> NavGroup {
         match self {
-            AppView::Dashboard | AppView::Bookmarks | AppView::Issues | AppView::Nodes => {
-                NavGroup::Overview
-            }
+            AppView::Dashboard
+            | AppView::Bookmarks
+            | AppView::Issues
+            | AppView::HealthReport
+            | AppView::Nodes => NavGroup::Overview,
             AppView::Pods
             | AppView::Deployments
             | AppView::StatefulSets
@@ -382,7 +388,7 @@ impl AppView {
     }
 
     /// Enumerates all available top-level tabs in stable order.
-    pub const fn tabs() -> &'static [AppView; 48] {
+    pub const fn tabs() -> &'static [AppView; Self::COUNT] {
         &Self::ORDER
     }
 }

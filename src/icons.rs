@@ -104,6 +104,11 @@ pub fn view_icon(view: AppView) -> Icon {
             emoji: "⭐ ",
             plain: "",
         },
+        AppView::HealthReport => Icon {
+            nerd: "󰓶 ",
+            emoji: "🩺 ",
+            plain: "",
+        },
         AppView::Issues => Icon {
             nerd: "󰀬 ",
             emoji: "⚠ ",
@@ -425,6 +430,16 @@ pub fn tab_icon(kind: &str) -> Icon {
         "Relations" => Icon {
             nerd: "󰙅 ",
             emoji: "🔗 ",
+            plain: "",
+        },
+        "NetPol" => Icon {
+            nerd: "󰒃 ",
+            emoji: "🛡 ",
+            plain: "",
+        },
+        "Reach" => Icon {
+            nerd: "󰛳 ",
+            emoji: "🧭 ",
             plain: "",
         },
         _ => Icon {
