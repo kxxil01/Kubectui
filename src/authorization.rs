@@ -486,6 +486,248 @@ impl ResourceRef {
 mod tests {
     use super::*;
 
+    // ── from_allowed round-trip ──────────────────────────────────────
+
+    #[test]
+    fn from_allowed_maps_all_three_states() {
+        assert_eq!(
+            DetailActionAuthorization::from_allowed(Some(true)),
+            DetailActionAuthorization::Allowed
+        );
+        assert_eq!(
+            DetailActionAuthorization::from_allowed(Some(false)),
+            DetailActionAuthorization::Denied
+        );
+        assert_eq!(
+            DetailActionAuthorization::from_allowed(None),
+            DetailActionAuthorization::Unknown
+        );
+    }
+
+    // ── permits() exhaustive edge cases ──────────────────────────────
+
+    #[test]
+    fn allowed_permits_every_action() {
+        for action in DetailAction::ORDER {
+            assert!(
+                DetailActionAuthorization::Allowed.permits(action),
+                "Allowed should permit {:?}",
+                action
+            );
+        }
+    }
+
+    #[test]
+    fn denied_blocks_every_action() {
+        for action in DetailAction::ORDER {
+            assert!(
+                !DetailActionAuthorization::Denied.permits(action),
+                "Denied should block {:?}",
+                action
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_blocks_all_strict_actions() {
+        let strict_actions = [
+            DetailAction::ViewDecodedSecret,
+            DetailAction::Exec,
+            DetailAction::DebugContainer,
+            DetailAction::PortForward,
+            DetailAction::Scale,
+            DetailAction::Restart,
+            DetailAction::FluxReconcile,
+            DetailAction::EditYaml,
+            DetailAction::Delete,
+            DetailAction::Trigger,
+            DetailAction::SuspendCronJob,
+            DetailAction::ResumeCronJob,
+            DetailAction::Cordon,
+            DetailAction::Uncordon,
+            DetailAction::Drain,
+        ];
+        for action in strict_actions {
+            assert!(
+                !DetailActionAuthorization::Unknown.permits(action),
+                "Unknown should block strict action {:?}",
+                action
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_permits_soft_read_actions() {
+        let soft_actions = [
+            DetailAction::ViewYaml,
+            DetailAction::ViewConfigDrift,
+            DetailAction::ViewEvents,
+            DetailAction::Logs,
+            DetailAction::Probes,
+        ];
+        for action in soft_actions {
+            assert!(
+                DetailActionAuthorization::Unknown.permits(action),
+                "Unknown should permit soft action {:?}",
+                action
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_permits_non_auth_actions() {
+        assert!(DetailActionAuthorization::Unknown.permits(DetailAction::ToggleBookmark));
+        assert!(DetailActionAuthorization::Unknown.permits(DetailAction::ViewRelationships));
+    }
+
+    // ── strict vs requires_authorization consistency ─────────────────
+
+    #[test]
+    fn strict_is_subset_of_requires_authorization() {
+        for action in DetailAction::ORDER {
+            if detail_action_requires_strict_authorization(action) {
+                assert!(
+                    detail_action_requires_authorization(action),
+                    "{:?} is strict but not in requires_authorization",
+                    action
+                );
+            }
+        }
+    }
+
+    // ── authorization_checks edge cases ──────────────────────────────
+
+    #[test]
+    fn exec_on_non_pod_returns_empty_checks() {
+        let deploy = ResourceRef::Deployment("api".into(), "default".into());
+        assert!(deploy.authorization_checks(DetailAction::Exec).is_empty());
+    }
+
+    #[test]
+    fn port_forward_on_non_pod_returns_empty_checks() {
+        let node = ResourceRef::Node("node-0".into());
+        assert!(
+            node.authorization_checks(DetailAction::PortForward)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn scale_on_daemonset_returns_empty_checks() {
+        let ds = ResourceRef::DaemonSet("daemon".into(), "default".into());
+        assert!(ds.authorization_checks(DetailAction::Scale).is_empty());
+    }
+
+    #[test]
+    fn helm_release_base_access_returns_none_so_delete_has_no_checks() {
+        let helm = ResourceRef::HelmRelease("release".into(), "default".into());
+        assert!(helm.authorization_checks(DetailAction::Delete).is_empty());
+    }
+
+    #[test]
+    fn helm_release_view_yaml_checks_secrets_list() {
+        let helm = ResourceRef::HelmRelease("release".into(), "default".into());
+        let checks = helm.authorization_checks(DetailAction::ViewYaml);
+        assert_eq!(checks.len(), 1);
+        assert_eq!(checks[0].resource, "secrets");
+        assert_eq!(checks[0].verb, "list");
+    }
+
+    #[test]
+    fn bookmark_and_relationships_require_no_authorization_checks() {
+        let pod = ResourceRef::Pod("pod-0".into(), "ns".into());
+        assert!(
+            pod.authorization_checks(DetailAction::ToggleBookmark)
+                .is_empty()
+        );
+        assert!(
+            pod.authorization_checks(DetailAction::ViewRelationships)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn debug_container_requires_get_ephemeral_and_exec_subresources() {
+        let pod = ResourceRef::Pod("api-0".into(), "default".into());
+        let checks = pod.authorization_checks(DetailAction::DebugContainer);
+        assert_eq!(checks.len(), 3);
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.verb == "get" && c.resource == "pods")
+        );
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.verb == "patch"
+                    && c.subresource.as_deref() == Some("ephemeralcontainers"))
+        );
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.verb == "create" && c.subresource.as_deref() == Some("exec"))
+        );
+    }
+
+    #[test]
+    fn drain_checks_include_pod_eviction_subresource() {
+        let node = ResourceRef::Node("node-0".into());
+        let checks = node.authorization_checks(DetailAction::Drain);
+        assert_eq!(checks.len(), 3);
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.verb == "patch" && c.resource == "nodes")
+        );
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.verb == "list" && c.resource == "pods")
+        );
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.verb == "create" && c.subresource.as_deref() == Some("eviction"))
+        );
+    }
+
+    #[test]
+    fn edit_yaml_combines_view_yaml_and_patch_checks() {
+        let pod = ResourceRef::Pod("api-0".into(), "default".into());
+        let view_checks = pod.authorization_checks(DetailAction::ViewYaml);
+        let edit_checks = pod.authorization_checks(DetailAction::EditYaml);
+        assert!(edit_checks.len() > view_checks.len());
+        assert!(edit_checks.iter().any(|c| c.verb == "patch"));
+        assert!(edit_checks.iter().any(|c| c.verb == "get"));
+    }
+
+    #[test]
+    fn trigger_cronjob_requires_get_cronjob_and_create_job() {
+        let cj = ResourceRef::CronJob("nightly".into(), "ops".into());
+        let checks = cj.authorization_checks(DetailAction::Trigger);
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.verb == "get" && c.resource == "cronjobs")
+        );
+        assert!(
+            checks
+                .iter()
+                .any(|c| c.verb == "create" && c.resource == "jobs")
+        );
+    }
+
+    #[test]
+    fn view_events_for_cluster_scoped_resource_returns_empty() {
+        let node = ResourceRef::Node("node-0".into());
+        assert!(
+            node.authorization_checks(DetailAction::ViewEvents)
+                .is_empty()
+        );
+    }
+
+    // ── original tests ───────────────────────────────────────────────
+
     #[test]
     fn pod_logs_and_exec_use_distinct_subresource_checks() {
         let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());

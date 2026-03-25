@@ -672,4 +672,75 @@ mod tests {
     fn resolve_authorization_preserves_unknown_when_no_signal_exists() {
         assert_eq!(resolve_detail_action_authorization(None, None), None);
     }
+
+    #[test]
+    fn resolve_authorization_cached_unknown_wins_over_live_allowed() {
+        assert_eq!(
+            resolve_detail_action_authorization(
+                Some(DetailActionAuthorization::Unknown),
+                Some(DetailActionAuthorization::Allowed),
+            ),
+            Some(DetailActionAuthorization::Unknown)
+        );
+    }
+
+    #[test]
+    fn resolve_authorization_cached_denied_wins_over_live_allowed() {
+        assert_eq!(
+            resolve_detail_action_authorization(
+                Some(DetailActionAuthorization::Denied),
+                Some(DetailActionAuthorization::Allowed),
+            ),
+            Some(DetailActionAuthorization::Denied)
+        );
+    }
+
+    // ── detail_action_denied_message ─────────────────────────────────
+
+    #[test]
+    fn denied_message_contains_action_label_and_resource_info() {
+        use super::detail_action_denied_message;
+        use kubectui::app::ResourceRef;
+        use kubectui::policy::DetailAction;
+
+        let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+        let msg = detail_action_denied_message(
+            DetailAction::Exec,
+            &resource,
+            DetailActionAuthorization::Denied,
+        );
+        assert!(msg.contains("not allowed"), "msg = {msg}");
+        assert!(msg.contains("api-0"), "msg = {msg}");
+    }
+
+    #[test]
+    fn unknown_message_mentions_verified_authorization() {
+        use super::detail_action_denied_message;
+        use kubectui::app::ResourceRef;
+        use kubectui::policy::DetailAction;
+
+        let resource = ResourceRef::Node("node-0".to_string());
+        let msg = detail_action_denied_message(
+            DetailAction::Drain,
+            &resource,
+            DetailActionAuthorization::Unknown,
+        );
+        assert!(msg.contains("verified authorization"), "msg = {msg}");
+        assert!(msg.contains("node-0"), "msg = {msg}");
+    }
+
+    #[test]
+    fn allowed_message_is_informational() {
+        use super::detail_action_denied_message;
+        use kubectui::app::ResourceRef;
+        use kubectui::policy::DetailAction;
+
+        let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+        let msg = detail_action_denied_message(
+            DetailAction::Logs,
+            &resource,
+            DetailActionAuthorization::Allowed,
+        );
+        assert!(msg.contains("already allowed"), "msg = {msg}");
+    }
 }
