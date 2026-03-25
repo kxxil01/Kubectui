@@ -40,6 +40,7 @@ pub enum RelationshipCapability {
 pub enum DetailAction {
     ViewYaml,
     ViewConfigDrift,
+    ViewHelmHistory,
     ViewDecodedSecret,
     ToggleBookmark,
     ViewEvents,
@@ -74,9 +75,10 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 24] = [
+    pub const ORDER: [DetailAction; 25] = [
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
+        DetailAction::ViewHelmHistory,
         DetailAction::ViewDecodedSecret,
         DetailAction::ToggleBookmark,
         DetailAction::ViewEvents,
@@ -105,6 +107,7 @@ impl DetailAction {
         match self {
             DetailAction::ViewYaml => "[y]",
             DetailAction::ViewConfigDrift => "[D]",
+            DetailAction::ViewHelmHistory => "[h]",
             DetailAction::ViewDecodedSecret => "[o]",
             DetailAction::ToggleBookmark => "[B]",
             DetailAction::ViewEvents => "[v]",
@@ -132,6 +135,7 @@ impl DetailAction {
         match self {
             DetailAction::ViewYaml => "YAML",
             DetailAction::ViewConfigDrift => "Drift",
+            DetailAction::ViewHelmHistory => "Helm",
             DetailAction::ViewDecodedSecret => "Decoded",
             DetailAction::ToggleBookmark => "Bookmark",
             DetailAction::ViewEvents => "Events",
@@ -418,6 +422,7 @@ impl ResourceRef {
         match action {
             DetailAction::ViewYaml => true,
             DetailAction::ViewConfigDrift => !matches!(self, ResourceRef::Node(_)),
+            DetailAction::ViewHelmHistory => matches!(self, ResourceRef::HelmRelease(_, _)),
             DetailAction::ViewEvents => self.supports_events_tab(),
             DetailAction::ViewDecodedSecret => matches!(self, ResourceRef::Secret(_, _)),
             DetailAction::ToggleBookmark => true,
@@ -557,6 +562,7 @@ impl DetailViewState {
             action,
             DetailAction::ViewYaml
                 | DetailAction::ViewDecodedSecret
+                | DetailAction::ViewHelmHistory
                 | DetailAction::ToggleBookmark
                 | DetailAction::ViewEvents
                 | DetailAction::Logs
@@ -744,6 +750,7 @@ mod tests {
     fn helm_release_does_not_offer_unsupported_mutations() {
         let helm = ResourceRef::HelmRelease("release".to_string(), "default".to_string());
 
+        assert!(helm.supports_detail_action(DetailAction::ViewHelmHistory, None, None));
         assert!(!helm.supports_detail_action(DetailAction::EditYaml, None, None));
         assert!(!helm.supports_detail_action(DetailAction::Delete, None, None));
     }

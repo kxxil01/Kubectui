@@ -19,6 +19,7 @@ pub enum ActionKind {
     Suspend,
     Resume,
     DebugContainer,
+    Rollback,
     Cordon,
     Uncordon,
     Drain,
@@ -36,6 +37,7 @@ impl ActionKind {
             ActionKind::Suspend => "Suspend",
             ActionKind::Resume => "Resume",
             ActionKind::DebugContainer => "Debug",
+            ActionKind::Rollback => "Rollback",
             ActionKind::Cordon => "Cordon",
             ActionKind::Uncordon => "Uncordon",
             ActionKind::Drain => "Drain",
@@ -221,6 +223,7 @@ mod tests {
         assert_eq!(ActionKind::Suspend.label(), "Suspend");
         assert_eq!(ActionKind::Resume.label(), "Resume");
         assert_eq!(ActionKind::DebugContainer.label(), "Debug");
+        assert_eq!(ActionKind::Rollback.label(), "Rollback");
     }
 
     #[test]

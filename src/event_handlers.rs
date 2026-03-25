@@ -10,8 +10,8 @@ use anyhow::Result;
 use kubectui::{
     app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
     coordinator::{LogStreamStatus, UpdateMessage},
-    k8s::{client::K8sClient, portforward::PortForwarderService},
-    resource_diff::ResourceDiffResult,
+    k8s::{client::K8sClient, helm::HelmHistoryResult, portforward::PortForwarderService},
+    resource_diff::{ResourceDiffResult, YamlDocumentDiffResult},
     secret::decode_secret_yaml,
     state::{GlobalState, RefreshOptions, RefreshScope},
     workbench::{WorkbenchTabKey, WorkbenchTabState},
@@ -275,6 +275,72 @@ pub(crate) fn apply_resource_diff_error_to_workbench(
         && diff_tab.pending_request_id == Some(request_id)
     {
         diff_tab.set_error(error.to_string());
+    }
+}
+
+pub(crate) fn apply_helm_history_result_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    history: HelmHistoryResult,
+) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::HelmHistory(resource.clone()))
+        && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+        && history_tab.pending_history_request_id == Some(request_id)
+    {
+        history_tab.apply_history(history);
+    }
+}
+
+pub(crate) fn apply_helm_history_error_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    error: &str,
+) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::HelmHistory(resource.clone()))
+        && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+        && history_tab.pending_history_request_id == Some(request_id)
+    {
+        history_tab.set_history_error(error.to_string());
+    }
+}
+
+pub(crate) fn apply_helm_values_diff_result_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    diff: YamlDocumentDiffResult,
+) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::HelmHistory(resource.clone()))
+        && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+        && let Some(diff_state) = history_tab.diff.as_mut()
+        && diff_state.pending_request_id == Some(request_id)
+    {
+        diff_state.apply_result(diff);
+    }
+}
+
+pub(crate) fn apply_helm_values_diff_error_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    error: &str,
+) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::HelmHistory(resource.clone()))
+        && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+        && let Some(diff_state) = history_tab.diff.as_mut()
+        && diff_state.pending_request_id == Some(request_id)
+    {
+        diff_state.set_error(error.to_string());
     }
 }
 

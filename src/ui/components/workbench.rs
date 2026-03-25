@@ -143,6 +143,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
             render_yaml_tab(frame, inner, tab.scroll, active_tab)
         }
         WorkbenchTabState::ResourceDiff(tab) => render_resource_diff_tab(frame, inner, tab),
+        WorkbenchTabState::HelmHistory(tab) => render_helm_history_tab(frame, inner, tab),
         WorkbenchTabState::DecodedSecret(tab) => render_decoded_secret_tab(frame, inner, tab),
         WorkbenchTabState::ResourceEvents(tab) => {
             render_events_tab(frame, inner, tab.scroll, active_tab)
@@ -709,29 +710,309 @@ fn render_resource_diff_tab(
         return;
     }
 
-    let total = tab_state.lines.len();
-    let window = scroll_window(total, tab_state.scroll, sections[1].height.max(1) as usize);
-    let lines: Vec<Line> = tab_state.lines[window.start..window.end]
+    render_diff_lines(frame, sections[1], &tab_state.lines, tab_state.scroll);
+}
+
+fn render_helm_history_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab: &crate::workbench::HelmHistoryTabState,
+) {
+    let theme = default_theme();
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(area);
+
+    let mode_badge = if tab.rollback_pending {
+        Span::styled(" rollback:running ", theme.badge_warning_style())
+    } else if tab.confirm_rollback_revision.is_some() {
+        Span::styled(" rollback:confirm ", theme.badge_warning_style())
+    } else if tab.diff.is_some() {
+        Span::styled(" mode:values-diff ", theme.badge_success_style())
+    } else {
+        Span::styled(" mode:history ", theme.badge_success_style())
+    };
+    let cli_badge = tab
+        .cli_version
+        .as_ref()
+        .map(|version| Span::styled(format!(" helm:{version} "), theme.badge_warning_style()))
+        .unwrap_or_else(|| Span::styled(" helm:detecting ", theme.badge_warning_style()));
+    let summary = if let Some(revision) = tab.selected_revision() {
+        format!(
+            "rev {}  {}  chart:{}  app:{}  {}",
+            revision.revision,
+            revision.status,
+            revision.chart,
+            if revision.app_version.is_empty() {
+                "n/a"
+            } else {
+                revision.app_version.as_str()
+            },
+            revision.updated
+        )
+    } else if tab.loading {
+        "Waiting for Helm history...".to_string()
+    } else if let Some(error) = &tab.error {
+        format!("Error: {error}")
+    } else {
+        "No Helm revisions available.".to_string()
+    };
+    let hint = if tab.rollback_pending {
+        "[rollback in progress]"
+    } else if tab.confirm_rollback_revision.is_some() {
+        "[Enter/y/R] confirm  [Esc] cancel"
+    } else if tab.diff.is_some() {
+        "[Esc] back  [R] rollback"
+    } else {
+        "[Enter] diff selected vs current  [R] rollback  [j/k] move"
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                mode_badge,
+                Span::raw(" "),
+                cli_badge,
+                Span::raw(" "),
+                Span::styled(summary, Style::default().fg(theme.fg)),
+            ]),
+            Line::from(Span::styled(hint, theme.keybind_desc_style())),
+        ]),
+        sections[0],
+    );
+
+    if tab.rollback_pending {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Helm rollback is running. Action history will update when the CLI call completes.",
+                theme.inactive_style(),
+            ))
+            .wrap(Wrap { trim: false }),
+            sections[1],
+        );
+        return;
+    }
+
+    if let Some(target_revision) = tab.confirm_rollback_revision {
+        let current = tab
+            .current_revision
+            .map(|revision| revision.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(Span::styled(
+                    format!(
+                        " Roll back this release from revision {current} to revision {target_revision}?"
+                    ),
+                    theme.section_title_style(),
+                )),
+                Line::from(""),
+                Line::from(
+                    " Helm rollback will mutate the live release in the current kube context.",
+                ),
+                Line::from(
+                    " Kubectui will wait for Helm and refresh the release history after completion.",
+                ),
+            ])
+            .wrap(Wrap { trim: false }),
+            sections[1],
+        );
+        return;
+    }
+
+    if let Some(diff) = &tab.diff {
+        render_helm_values_diff(frame, sections[1], diff);
+        return;
+    }
+
+    if tab.loading && tab.revisions.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Loading Helm release history...",
+                theme.inactive_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if let Some(error) = &tab.error
+        && tab.revisions.is_empty()
+    {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Error: {error}"),
+                theme.badge_error_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if tab.revisions.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " No Helm history returned for this release.",
+                theme.inactive_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    let total = tab.revisions.len();
+    let window = centered_window(total, tab.selected, sections[1].height.max(1) as usize);
+    let lines = tab.revisions[window.start..window.end]
         .iter()
-        .map(|line| {
-            let style = match line.kind {
-                ResourceDiffLineKind::Header => theme.muted_style(),
-                ResourceDiffLineKind::Hunk => Style::default()
-                    .fg(theme.accent)
-                    .add_modifier(Modifier::BOLD),
-                ResourceDiffLineKind::Context => Style::default().fg(theme.fg),
-                ResourceDiffLineKind::Added => Style::default().fg(theme.success),
-                ResourceDiffLineKind::Removed => Style::default().fg(theme.error),
-            };
-            Line::from(Span::styled(line.content.clone(), style))
+        .enumerate()
+        .map(|(offset, revision)| {
+            let selected = window.start + offset == tab.selected;
+            render_helm_revision_line(revision, selected, tab.current_revision, &theme)
         })
-        .collect();
+        .collect::<Vec<_>>();
 
     frame.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }),
         sections[1],
     );
     render_scrollbar(frame, sections[1], total, window.start);
+}
+
+fn render_helm_values_diff(
+    frame: &mut Frame,
+    area: Rect,
+    diff: &crate::workbench::HelmValuesDiffState,
+) {
+    let theme = default_theme();
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+
+    let summary = diff
+        .summary
+        .clone()
+        .unwrap_or_else(|| "Waiting for Helm values diff...".to_string());
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!(
+                    " current:{} target:{} ",
+                    diff.current_revision, diff.target_revision
+                ),
+                theme.badge_success_style(),
+            ),
+            Span::raw(" "),
+            Span::styled(summary.as_str(), Style::default().fg(theme.fg)),
+        ])),
+        sections[0],
+    );
+
+    if diff.loading {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Loading Helm values diff...",
+                theme.inactive_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if let Some(error) = &diff.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Error: {error}"),
+                theme.badge_error_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if diff.lines.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(summary, theme.inactive_style()))
+                .wrap(Wrap { trim: false }),
+            sections[1],
+        );
+        return;
+    }
+
+    render_diff_lines(frame, sections[1], &diff.lines, diff.scroll);
+}
+
+fn render_helm_revision_line<'a>(
+    revision: &crate::k8s::dtos::HelmReleaseRevisionInfo,
+    selected: bool,
+    current_revision: Option<i32>,
+    theme: &crate::ui::theme::Theme,
+) -> Line<'a> {
+    let row_style = if selected {
+        theme.hover_style()
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    let status_style = match revision.status.as_str() {
+        "deployed" => Style::default().fg(theme.success),
+        "failed" => Style::default().fg(theme.error),
+        "superseded" | "pending-install" | "pending-upgrade" | "pending-rollback" => {
+            Style::default().fg(theme.warning)
+        }
+        _ => Style::default().fg(theme.fg_dim),
+    };
+    let current_badge = if Some(revision.revision) == current_revision {
+        Span::styled(" current ", theme.badge_success_style())
+    } else {
+        Span::styled(" target  ", theme.badge_warning_style())
+    };
+    let app_version = if revision.app_version.is_empty() {
+        "n/a"
+    } else {
+        revision.app_version.as_str()
+    };
+
+    Line::from(vec![
+        Span::styled(if selected { "> " } else { "  " }, row_style),
+        current_badge,
+        Span::raw(" "),
+        Span::styled(format!("rev {:>3} ", revision.revision), row_style),
+        Span::styled(format!("{:<18}", revision.status), status_style),
+        Span::styled(format!(" chart:{} ", revision.chart), row_style),
+        Span::styled(format!(" app:{} ", app_version), row_style),
+        Span::styled(revision.updated.clone(), theme.muted_style()),
+    ])
+}
+
+fn render_diff_lines(
+    frame: &mut Frame,
+    area: Rect,
+    lines: &[crate::resource_diff::ResourceDiffLine],
+    scroll: usize,
+) {
+    let total = lines.len();
+    let window = scroll_window(total, scroll, area.height.max(1) as usize);
+    let rendered = lines[window.start..window.end]
+        .iter()
+        .map(render_diff_line)
+        .collect::<Vec<_>>();
+
+    frame.render_widget(Paragraph::new(rendered).wrap(Wrap { trim: false }), area);
+    render_scrollbar(frame, area, total, window.start);
+}
+
+fn render_diff_line<'a>(line: &crate::resource_diff::ResourceDiffLine) -> Line<'a> {
+    let theme = default_theme();
+    let style = match line.kind {
+        ResourceDiffLineKind::Header => theme.muted_style(),
+        ResourceDiffLineKind::Hunk => Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+        ResourceDiffLineKind::Context => Style::default().fg(theme.fg),
+        ResourceDiffLineKind::Added => Style::default().fg(theme.success),
+        ResourceDiffLineKind::Removed => Style::default().fg(theme.error),
+    };
+    Line::from(Span::styled(line.content.clone(), style))
 }
 
 fn render_decoded_secret_tab(

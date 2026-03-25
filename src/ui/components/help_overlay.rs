@@ -293,7 +293,7 @@ impl HelpOverlay {
 }
 
 fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'static str)> {
-    let mut bindings = Vec::with_capacity(DETAIL_BASE_BINDINGS.len() + 2);
+    let mut bindings = Vec::with_capacity(DETAIL_BASE_BINDINGS.len() + 4);
     if detail.is_some_and(|detail| {
         detail.supports_action(DetailAction::ViewConfigDrift)
             && !detail.supports_action(DetailAction::Drain)
@@ -301,6 +301,9 @@ fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'sta
         bindings.push(("D", "View config drift (live vs last-applied)"));
     } else if detail.is_some_and(|detail| detail.supports_action(DetailAction::Drain)) {
         bindings.push(("D", "Drain node (with confirmation)"));
+    }
+    if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewHelmHistory)) {
+        bindings.push(("h", "View Helm revision history / rollback"));
     }
     if detail.is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) {
         bindings.push(("g", "Launch debug container"));
@@ -360,6 +363,7 @@ mod tests {
 
         let bindings = detail_bindings(Some(&detail));
         assert!(bindings.contains(&("D", "View config drift (live vs last-applied)")));
+        assert!(!bindings.contains(&("h", "View Helm revision history / rollback")));
         assert!(bindings.contains(&("g", "Launch debug container")));
         assert!(bindings.contains(&("C", "Check pod reachability (policy intent)")));
     }
@@ -375,5 +379,19 @@ mod tests {
         assert!(bindings.contains(&("D", "Drain node (with confirmation)")));
         assert!(!bindings.contains(&("D", "View config drift (live vs last-applied)")));
         assert!(!bindings.contains(&("C", "Check pod reachability")));
+    }
+
+    #[test]
+    fn detail_bindings_show_helm_history_for_helm_release_detail() {
+        let detail = DetailViewState {
+            resource: Some(ResourceRef::HelmRelease(
+                "my-app".to_string(),
+                "demo".to_string(),
+            )),
+            ..DetailViewState::default()
+        };
+
+        let bindings = detail_bindings(Some(&detail));
+        assert!(bindings.contains(&("h", "View Helm revision history / rollback")));
     }
 }

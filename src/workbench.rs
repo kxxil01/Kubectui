@@ -4,10 +4,12 @@ use crate::{
     action_history::ActionHistoryState,
     app::{LogsViewerState, ResourceRef},
     icons::tab_icon,
-    k8s::client::EventInfo,
+    k8s::{client::EventInfo, dtos::HelmReleaseRevisionInfo},
     network_policy_analysis::NetworkPolicyAnalysis,
     network_policy_connectivity::ConnectivityAnalysis,
-    resource_diff::{ResourceDiffBaselineKind, ResourceDiffLine, ResourceDiffResult},
+    resource_diff::{
+        ResourceDiffBaselineKind, ResourceDiffLine, ResourceDiffResult, YamlDocumentDiffResult,
+    },
     secret::DecodedSecretEntry,
     timeline::{TimelineEntry, build_timeline},
     ui::components::{input_field::InputFieldWidget, port_forward_dialog::PortForwardDialog},
@@ -25,6 +27,7 @@ pub enum WorkbenchTabKind {
     ActionHistory,
     ResourceYaml,
     ResourceDiff,
+    Helm,
     DecodedSecret,
     ResourceEvents,
     PodLogs,
@@ -42,6 +45,7 @@ impl WorkbenchTabKind {
             WorkbenchTabKind::ActionHistory => "History",
             WorkbenchTabKind::ResourceYaml => "YAML",
             WorkbenchTabKind::ResourceDiff => "Drift",
+            WorkbenchTabKind::Helm => "Helm",
             WorkbenchTabKind::DecodedSecret => "Decoded",
             WorkbenchTabKind::ResourceEvents => "Timeline",
             WorkbenchTabKind::PodLogs => "Logs",
@@ -60,6 +64,7 @@ pub enum WorkbenchTabKey {
     ActionHistory,
     ResourceYaml(ResourceRef),
     ResourceDiff(ResourceRef),
+    HelmHistory(ResourceRef),
     DecodedSecret(ResourceRef),
     ResourceEvents(ResourceRef),
     PodLogs(ResourceRef),
@@ -69,6 +74,175 @@ pub enum WorkbenchTabKey {
     Relations(ResourceRef),
     NetworkPolicy(ResourceRef),
     Connectivity(ResourceRef),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HelmValuesDiffState {
+    pub current_revision: i32,
+    pub target_revision: i32,
+    pub summary: Option<String>,
+    pub lines: Vec<ResourceDiffLine>,
+    pub scroll: usize,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub pending_request_id: Option<u64>,
+}
+
+impl HelmValuesDiffState {
+    pub fn new(current_revision: i32, target_revision: i32, request_id: u64) -> Self {
+        Self {
+            current_revision,
+            target_revision,
+            summary: None,
+            lines: Vec::new(),
+            scroll: 0,
+            loading: true,
+            error: None,
+            pending_request_id: Some(request_id),
+        }
+    }
+
+    pub fn apply_result(&mut self, diff: YamlDocumentDiffResult) {
+        self.summary = Some(diff.summary);
+        self.lines = diff.lines;
+        self.scroll = 0;
+        self.loading = false;
+        self.error = None;
+        self.pending_request_id = None;
+    }
+
+    pub fn set_error(&mut self, error: String) {
+        self.summary = None;
+        self.lines.clear();
+        self.scroll = 0;
+        self.loading = false;
+        self.error = Some(error);
+        self.pending_request_id = None;
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct HelmHistoryTabState {
+    pub resource: ResourceRef,
+    pub pending_history_request_id: Option<u64>,
+    pub cli_version: Option<String>,
+    pub revisions: Vec<HelmReleaseRevisionInfo>,
+    pub selected: usize,
+    pub current_revision: Option<i32>,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub diff: Option<HelmValuesDiffState>,
+    pub confirm_rollback_revision: Option<i32>,
+    pub rollback_pending: bool,
+}
+
+impl HelmHistoryTabState {
+    pub fn new(resource: ResourceRef) -> Self {
+        Self {
+            resource,
+            pending_history_request_id: None,
+            cli_version: None,
+            revisions: Vec::new(),
+            selected: 0,
+            current_revision: None,
+            loading: true,
+            error: None,
+            diff: None,
+            confirm_rollback_revision: None,
+            rollback_pending: false,
+        }
+    }
+
+    pub fn apply_history(&mut self, history: crate::k8s::helm::HelmHistoryResult) {
+        let selected_revision = self.selected_revision().map(|entry| entry.revision);
+        self.cli_version = Some(history.cli_version);
+        self.revisions = history.revisions;
+        self.current_revision = self.revisions.iter().map(|entry| entry.revision).max();
+        self.selected = selected_revision
+            .and_then(|revision| {
+                self.revisions
+                    .iter()
+                    .position(|entry| entry.revision == revision)
+            })
+            .unwrap_or(0)
+            .min(self.revisions.len().saturating_sub(1));
+        self.loading = false;
+        self.error = None;
+        self.pending_history_request_id = None;
+        self.confirm_rollback_revision = None;
+        self.rollback_pending = false;
+        self.diff = None;
+    }
+
+    pub fn set_history_error(&mut self, error: String) {
+        self.loading = false;
+        self.error = Some(error);
+        self.pending_history_request_id = None;
+        self.rollback_pending = false;
+    }
+
+    pub fn refresh(&mut self, request_id: u64) {
+        self.loading = true;
+        self.error = None;
+        self.pending_history_request_id = Some(request_id);
+        self.confirm_rollback_revision = None;
+        self.diff = None;
+    }
+
+    pub fn select_next(&mut self) {
+        if !self.revisions.is_empty() {
+            self.selected = (self.selected + 1).min(self.revisions.len().saturating_sub(1));
+        }
+    }
+
+    pub fn select_previous(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    pub fn select_top(&mut self) {
+        self.selected = 0;
+    }
+
+    pub fn select_bottom(&mut self) {
+        self.selected = self.revisions.len().saturating_sub(1);
+    }
+
+    pub fn selected_revision(&self) -> Option<&HelmReleaseRevisionInfo> {
+        self.revisions
+            .get(self.selected.min(self.revisions.len().saturating_sub(1)))
+    }
+
+    pub fn selected_target_revision(&self) -> Option<i32> {
+        let selected = self.selected_revision()?.revision;
+        (Some(selected) != self.current_revision).then_some(selected)
+    }
+
+    pub fn begin_diff(&mut self, current_revision: i32, target_revision: i32, request_id: u64) {
+        self.confirm_rollback_revision = None;
+        self.diff = Some(HelmValuesDiffState::new(
+            current_revision,
+            target_revision,
+            request_id,
+        ));
+    }
+
+    pub fn close_diff(&mut self) {
+        self.diff = None;
+    }
+
+    pub fn begin_rollback_confirm(&mut self, revision: i32) {
+        self.confirm_rollback_revision = Some(revision);
+    }
+
+    pub fn cancel_rollback_confirm(&mut self) {
+        self.confirm_rollback_revision = None;
+    }
+
+    pub fn begin_rollback(&mut self) {
+        self.rollback_pending = true;
+        self.confirm_rollback_revision = None;
+        self.diff = None;
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -710,6 +884,7 @@ pub enum WorkbenchTabState {
     ActionHistory(ActionHistoryTabState),
     ResourceYaml(ResourceYamlTabState),
     ResourceDiff(ResourceDiffTabState),
+    HelmHistory(HelmHistoryTabState),
     DecodedSecret(DecodedSecretTabState),
     ResourceEvents(ResourceEventsTabState),
     PodLogs(PodLogsTabState),
@@ -727,6 +902,7 @@ impl WorkbenchTabState {
             Self::ActionHistory(_) => WorkbenchTabKind::ActionHistory,
             Self::ResourceYaml(_) => WorkbenchTabKind::ResourceYaml,
             Self::ResourceDiff(_) => WorkbenchTabKind::ResourceDiff,
+            Self::HelmHistory(_) => WorkbenchTabKind::Helm,
             Self::DecodedSecret(_) => WorkbenchTabKind::DecodedSecret,
             Self::ResourceEvents(_) => WorkbenchTabKind::ResourceEvents,
             Self::PodLogs(_) => WorkbenchTabKind::PodLogs,
@@ -744,6 +920,7 @@ impl WorkbenchTabState {
             Self::ActionHistory(_) => WorkbenchTabKey::ActionHistory,
             Self::ResourceYaml(tab) => WorkbenchTabKey::ResourceYaml(tab.resource.clone()),
             Self::ResourceDiff(tab) => WorkbenchTabKey::ResourceDiff(tab.resource.clone()),
+            Self::HelmHistory(tab) => WorkbenchTabKey::HelmHistory(tab.resource.clone()),
             Self::DecodedSecret(tab) => WorkbenchTabKey::DecodedSecret(tab.resource.clone()),
             Self::ResourceEvents(tab) => WorkbenchTabKey::ResourceEvents(tab.resource.clone()),
             Self::PodLogs(tab) => WorkbenchTabKey::PodLogs(tab.resource.clone()),
@@ -765,6 +942,9 @@ impl WorkbenchTabState {
                 format!("{icon}{kind_label} {}", resource_title(&tab.resource))
             }
             Self::ResourceDiff(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
+            Self::HelmHistory(tab) => {
                 format!("{icon}{kind_label} {}", resource_title(&tab.resource))
             }
             Self::DecodedSecret(tab) => {
@@ -1084,6 +1264,63 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(state.tabs.len(), 1);
         assert!(state.open);
+    }
+
+    #[test]
+    fn helm_history_tab_deduplicates_by_resource() {
+        let mut state = WorkbenchState::default();
+        let resource = ResourceRef::HelmRelease("release".to_string(), "default".to_string());
+        let first = state.open_tab(WorkbenchTabState::HelmHistory(HelmHistoryTabState::new(
+            resource.clone(),
+        )));
+        let second = state.open_tab(WorkbenchTabState::HelmHistory(HelmHistoryTabState::new(
+            resource,
+        )));
+
+        assert_eq!(first, second);
+        assert_eq!(state.tabs.len(), 1);
+        assert!(state.open);
+    }
+
+    #[test]
+    fn helm_history_apply_history_preserves_selected_revision_when_still_present() {
+        let mut tab = HelmHistoryTabState::new(ResourceRef::HelmRelease(
+            "release".to_string(),
+            "default".to_string(),
+        ));
+        tab.revisions = vec![
+            HelmReleaseRevisionInfo {
+                revision: 5,
+                ..HelmReleaseRevisionInfo::default()
+            },
+            HelmReleaseRevisionInfo {
+                revision: 4,
+                ..HelmReleaseRevisionInfo::default()
+            },
+        ];
+        tab.selected = 1;
+
+        tab.apply_history(crate::k8s::helm::HelmHistoryResult {
+            cli_version: "v4.1.3".to_string(),
+            revisions: vec![
+                HelmReleaseRevisionInfo {
+                    revision: 6,
+                    ..HelmReleaseRevisionInfo::default()
+                },
+                HelmReleaseRevisionInfo {
+                    revision: 5,
+                    ..HelmReleaseRevisionInfo::default()
+                },
+                HelmReleaseRevisionInfo {
+                    revision: 4,
+                    ..HelmReleaseRevisionInfo::default()
+                },
+            ],
+        });
+
+        assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(4));
+        assert_eq!(tab.current_revision, Some(6));
+        assert!(tab.diff.is_none());
     }
 
     #[test]

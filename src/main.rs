@@ -134,6 +134,14 @@ pub(crate) async fn run_app_inner(
     let (resource_diff_tx, mut resource_diff_rx) =
         tokio::sync::mpsc::channel::<ResourceDiffAsyncResult>(16);
     let mut resource_diff_request_seq: u64 = 0;
+    let (helm_history_tx, mut helm_history_rx) =
+        tokio::sync::mpsc::channel::<HelmHistoryAsyncResult>(16);
+    let mut helm_history_request_seq: u64 = 0;
+    let (helm_values_diff_tx, mut helm_values_diff_rx) =
+        tokio::sync::mpsc::channel::<HelmValuesDiffAsyncResult>(16);
+    let mut helm_values_diff_request_seq: u64 = 0;
+    let (helm_rollback_tx, mut helm_rollback_rx) =
+        tokio::sync::mpsc::channel::<HelmRollbackAsyncResult>(16);
     let (logs_viewer_tx, mut logs_viewer_rx) =
         tokio::sync::mpsc::channel::<LogsViewerAsyncResult>(64);
     let mut logs_viewer_request_seq: u64 = 0;
@@ -404,6 +412,87 @@ pub(crate) async fn run_app_inner(
                             &resource,
                             &err,
                         ),
+                    }
+                }
+            }
+
+            result = helm_history_rx.recv() => {
+                if let Some(result) = result {
+                    let HelmHistoryAsyncResult {
+                        request_id,
+                        resource,
+                        result,
+                    } = result;
+                    let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
+                        matches!(
+                            &tab.state,
+                            WorkbenchTabState::HelmHistory(history_tab)
+                                if history_tab.resource == resource
+                                    && history_tab.pending_history_request_id == Some(request_id)
+                        )
+                    });
+                    if !workbench_waiting_for_this {
+                        continue;
+                    }
+
+                    needs_redraw = true;
+                    match result {
+                        Ok(history) => apply_helm_history_result_to_workbench(
+                            &mut app,
+                            request_id,
+                            &resource,
+                            history,
+                        ),
+                        Err(err) => {
+                            apply_helm_history_error_to_workbench(
+                                &mut app,
+                                request_id,
+                                &resource,
+                                &err,
+                            );
+                        }
+                    }
+                }
+            }
+
+            result = helm_values_diff_rx.recv() => {
+                if let Some(result) = result {
+                    let HelmValuesDiffAsyncResult {
+                        request_id,
+                        resource,
+                        result,
+                    } = result;
+                    let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
+                        matches!(
+                            &tab.state,
+                            WorkbenchTabState::HelmHistory(history_tab)
+                                if history_tab.resource == resource
+                                    && history_tab
+                                        .diff
+                                        .as_ref()
+                                        .is_some_and(|diff| diff.pending_request_id == Some(request_id))
+                        )
+                    });
+                    if !workbench_waiting_for_this {
+                        continue;
+                    }
+
+                    needs_redraw = true;
+                    match result {
+                        Ok(diff) => apply_helm_values_diff_result_to_workbench(
+                            &mut app,
+                            request_id,
+                            &resource,
+                            diff.diff,
+                        ),
+                        Err(err) => {
+                            apply_helm_values_diff_error_to_workbench(
+                                &mut app,
+                                request_id,
+                                &resource,
+                                &err,
+                            );
+                        }
                     }
                 }
             }
@@ -1117,6 +1206,96 @@ pub(crate) async fn run_app_inner(
                                 "{} failed: {err}",
                                 if result.suspend { "Suspend" } else { "Resume" }
                             ));
+                        }
+                    }
+                }
+            }
+
+            result = helm_rollback_rx.recv() => {
+                if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        app.complete_action_history(
+                            result.action_history_id,
+                            ActionStatus::Failed,
+                            "Helm rollback verification was cancelled because the active context changed.",
+                            true,
+                        );
+                        continue;
+                    }
+
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(stdout) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Succeeded,
+                                format!(
+                                    "Rolled back {} to revision {}.",
+                                    result.resource.name(),
+                                    result.target_revision
+                                ),
+                                true,
+                            );
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::HelmHistory(result.resource.clone()))
+                                && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+                            {
+                                history_tab.rollback_pending = false;
+                            }
+                            action::helm::refresh_helm_history_tab(
+                                &mut app,
+                                &helm_history_tx,
+                                &mut helm_history_request_seq,
+                                result.resource.clone(),
+                            );
+                            apply_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                result.origin_view,
+                                if stdout.is_empty() {
+                                    format!(
+                                        "Rolled back Helm release '{}' to revision {}. Refreshing view...",
+                                        result.resource.name(),
+                                        result.target_revision
+                                    )
+                                } else {
+                                    format!(
+                                        "Rolled back Helm release '{}' to revision {}. {}",
+                                        result.resource.name(),
+                                        result.target_revision,
+                                        stdout
+                                    )
+                                },
+                                false,
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
+                        }
+                        Err(err) => {
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::HelmHistory(result.resource.clone()))
+                                && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+                            {
+                                history_tab.rollback_pending = false;
+                            }
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("Helm rollback failed: {err}"),
+                                true,
+                            );
+                            status_message_clear_at = None;
+                            app.set_error(format!("Helm rollback failed: {err}"));
                         }
                     }
                 }
@@ -2173,6 +2352,28 @@ pub(crate) async fn run_app_inner(
                         continue;
                     }
                 }
+                AppAction::OpenHelmHistory => {
+                    if action::helm::handle_open_helm_history(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                        &helm_history_tx,
+                        &mut helm_history_request_seq,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
+                AppAction::OpenHelmValuesDiff => {
+                    if action::helm::handle_open_helm_values_diff(
+                        &mut app,
+                        &helm_values_diff_tx,
+                        &mut helm_values_diff_request_seq,
+                    ) {
+                        continue;
+                    }
+                }
                 AppAction::OpenDecodedSecret => {
                     if action::detail_tabs::handle_open_decoded_secret(
                         &mut app,
@@ -2993,6 +3194,11 @@ pub(crate) async fn run_app_inner(
                 AppAction::ConfirmDrainNode => {
                     action::node_ops::handle_confirm_drain_node(&mut app);
                 }
+                AppAction::ConfirmHelmRollback => {
+                    if action::helm::handle_confirm_helm_rollback(&mut app) {
+                        continue;
+                    }
+                }
                 AppAction::CordonNode if !node_op_in_flight => {
                     if action::node_ops::handle_cordon_node(
                         &mut app,
@@ -3041,6 +3247,16 @@ pub(crate) async fn run_app_inner(
                 }
                 AppAction::DrainNode | AppAction::ForceDrainNode => {
                     action::node_ops::handle_drain_in_flight_guard(&mut app);
+                }
+                AppAction::ExecuteHelmRollback => {
+                    if action::helm::handle_execute_helm_rollback(
+                        &mut app,
+                        &helm_rollback_tx,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    ) {
+                        continue;
+                    }
                 }
                 AppAction::CopyResourceName => {
                     action::copy_export::copy_resource_name(&mut app, &cached_snapshot);
