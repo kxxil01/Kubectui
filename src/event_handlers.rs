@@ -10,7 +10,10 @@ use anyhow::Result;
 use kubectui::{
     app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
     coordinator::{LogStreamStatus, UpdateMessage},
-    k8s::{client::K8sClient, helm::HelmHistoryResult, portforward::PortForwarderService},
+    k8s::{
+        client::K8sClient, helm::HelmHistoryResult, portforward::PortForwarderService,
+        rollout::RolloutInspection,
+    },
     resource_diff::{ResourceDiffResult, YamlDocumentDiffResult},
     secret::decode_secret_yaml,
     state::{GlobalState, RefreshOptions, RefreshScope},
@@ -275,6 +278,38 @@ pub(crate) fn apply_resource_diff_error_to_workbench(
         && diff_tab.pending_request_id == Some(request_id)
     {
         diff_tab.set_error(error.to_string());
+    }
+}
+
+pub(crate) fn apply_rollout_inspection_result_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    inspection: RolloutInspection,
+) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::Rollout(resource.clone()))
+        && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+        && rollout_tab.pending_request_id == Some(request_id)
+    {
+        rollout_tab.apply_inspection(inspection);
+    }
+}
+
+pub(crate) fn apply_rollout_inspection_error_to_workbench(
+    app: &mut AppState,
+    request_id: u64,
+    resource: &ResourceRef,
+    error: &str,
+) {
+    if let Some(tab) = app
+        .workbench
+        .find_tab_mut(&WorkbenchTabKey::Rollout(resource.clone()))
+        && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+        && rollout_tab.pending_request_id == Some(request_id)
+    {
+        rollout_tab.set_error(error.to_string());
     }
 }
 

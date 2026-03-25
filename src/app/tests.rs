@@ -1,6 +1,7 @@
 use super::*;
 use crate::cronjob::CronJobHistoryEntry;
 use crate::k8s::dtos::PodInfo;
+use crate::k8s::rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Verifies full forward tab cycle across all views and wraps to Dashboard.
@@ -1063,6 +1064,35 @@ fn h_key_is_noop_for_pod_detail() {
 }
 
 #[test]
+fn uppercase_o_opens_rollout_for_deployment_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Deployment(
+            "api".to_string(),
+            "default".to_string(),
+        )),
+        yaml: Some("kind: Deployment".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('O'), KeyModifiers::SHIFT));
+    assert_eq!(action, AppAction::OpenRollout);
+}
+
+#[test]
+fn uppercase_o_is_noop_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('O'), KeyModifiers::SHIFT));
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
 fn g_key_is_noop_for_node_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -1119,6 +1149,80 @@ fn uppercase_d_is_noop_from_nodes_content_view() {
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::None);
+}
+
+#[test]
+fn rollout_workbench_shortcuts_dispatch_expected_actions() {
+    let mut app = AppState::default();
+    app.open_rollout_tab(
+        ResourceRef::Deployment("api".to_string(), "default".to_string()),
+        Some(RolloutInspection {
+            kind: RolloutWorkloadKind::Deployment,
+            strategy: "RollingUpdate".to_string(),
+            paused: false,
+            current_revision: Some(5),
+            update_target_revision: Some(5),
+            summary_lines: vec!["Desired 3".to_string()],
+            conditions: Vec::new(),
+            revisions: vec![
+                RolloutRevisionInfo {
+                    revision: 5,
+                    name: "api-5".to_string(),
+                    created: None,
+                    summary: "3/3 ready".to_string(),
+                    change_cause: None,
+                    is_current: true,
+                    is_update_target: true,
+                },
+                RolloutRevisionInfo {
+                    revision: 4,
+                    name: "api-4".to_string(),
+                    created: None,
+                    summary: "3/3 ready".to_string(),
+                    change_cause: None,
+                    is_current: false,
+                    is_update_target: false,
+                },
+            ],
+        }),
+        None,
+        None,
+    );
+    app.focus_workbench();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+    {
+        rollout_tab.selected = 1;
+    }
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('U'), KeyModifiers::SHIFT)),
+        AppAction::ConfirmRolloutUndo
+    );
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+    {
+        rollout_tab.confirm_undo_revision = Some(4);
+    }
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+        AppAction::ExecuteRolloutUndo
+    );
+
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+    {
+        rollout_tab.confirm_undo_revision = None;
+    }
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('P'), KeyModifiers::SHIFT)),
+        AppAction::ToggleRolloutPauseResume
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT)),
+        AppAction::RolloutRestart
+    );
 }
 
 #[test]

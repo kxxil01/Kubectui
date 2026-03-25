@@ -4,7 +4,11 @@ use crate::{
     action_history::ActionHistoryState,
     app::{LogsViewerState, ResourceRef},
     icons::tab_icon,
-    k8s::{client::EventInfo, dtos::HelmReleaseRevisionInfo},
+    k8s::{
+        client::EventInfo,
+        dtos::HelmReleaseRevisionInfo,
+        rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind},
+    },
     network_policy_analysis::NetworkPolicyAnalysis,
     network_policy_connectivity::ConnectivityAnalysis,
     resource_diff::{
@@ -27,6 +31,7 @@ pub enum WorkbenchTabKind {
     ActionHistory,
     ResourceYaml,
     ResourceDiff,
+    Rollout,
     Helm,
     DecodedSecret,
     ResourceEvents,
@@ -45,6 +50,7 @@ impl WorkbenchTabKind {
             WorkbenchTabKind::ActionHistory => "History",
             WorkbenchTabKind::ResourceYaml => "YAML",
             WorkbenchTabKind::ResourceDiff => "Drift",
+            WorkbenchTabKind::Rollout => "Rollout",
             WorkbenchTabKind::Helm => "Helm",
             WorkbenchTabKind::DecodedSecret => "Decoded",
             WorkbenchTabKind::ResourceEvents => "Timeline",
@@ -64,6 +70,7 @@ pub enum WorkbenchTabKey {
     ActionHistory,
     ResourceYaml(ResourceRef),
     ResourceDiff(ResourceRef),
+    Rollout(ResourceRef),
     HelmHistory(ResourceRef),
     DecodedSecret(ResourceRef),
     ResourceEvents(ResourceRef),
@@ -305,6 +312,136 @@ pub struct ResourceDiffTabState {
     pub scroll: usize,
     pub loading: bool,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RolloutMutationState {
+    Restart,
+    Pause,
+    Resume,
+    Undo(i64),
+}
+
+#[derive(Debug, Clone)]
+pub struct RolloutTabState {
+    pub resource: ResourceRef,
+    pub pending_request_id: Option<u64>,
+    pub kind: Option<RolloutWorkloadKind>,
+    pub strategy: Option<String>,
+    pub paused: bool,
+    pub current_revision: Option<i64>,
+    pub update_target_revision: Option<i64>,
+    pub summary_lines: Vec<String>,
+    pub conditions: Vec<crate::k8s::rollout::RolloutConditionInfo>,
+    pub revisions: Vec<RolloutRevisionInfo>,
+    pub selected: usize,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub confirm_undo_revision: Option<i64>,
+    pub mutation_pending: Option<RolloutMutationState>,
+}
+
+impl RolloutTabState {
+    pub fn new(resource: ResourceRef) -> Self {
+        Self {
+            resource,
+            pending_request_id: None,
+            kind: None,
+            strategy: None,
+            paused: false,
+            current_revision: None,
+            update_target_revision: None,
+            summary_lines: Vec::new(),
+            conditions: Vec::new(),
+            revisions: Vec::new(),
+            selected: 0,
+            loading: true,
+            error: None,
+            confirm_undo_revision: None,
+            mutation_pending: None,
+        }
+    }
+
+    pub fn apply_inspection(&mut self, inspection: RolloutInspection) {
+        let selected_revision = self.selected_revision().map(|entry| entry.revision);
+        self.kind = Some(inspection.kind);
+        self.strategy = Some(inspection.strategy);
+        self.paused = inspection.paused;
+        self.current_revision = inspection.current_revision;
+        self.update_target_revision = inspection.update_target_revision;
+        self.summary_lines = inspection.summary_lines;
+        self.conditions = inspection.conditions;
+        self.revisions = inspection.revisions;
+        self.selected = selected_revision
+            .and_then(|revision| {
+                self.revisions
+                    .iter()
+                    .position(|entry| entry.revision == revision)
+            })
+            .unwrap_or(0)
+            .min(self.revisions.len().saturating_sub(1));
+        self.loading = false;
+        self.error = None;
+        self.pending_request_id = None;
+        self.confirm_undo_revision = None;
+        self.mutation_pending = None;
+    }
+
+    pub fn set_error(&mut self, error: String) {
+        self.loading = false;
+        self.error = Some(error);
+        self.pending_request_id = None;
+        self.confirm_undo_revision = None;
+        self.mutation_pending = None;
+    }
+
+    pub fn refresh(&mut self, request_id: u64) {
+        self.loading = true;
+        self.error = None;
+        self.pending_request_id = Some(request_id);
+        self.confirm_undo_revision = None;
+    }
+
+    pub fn select_next(&mut self) {
+        if !self.revisions.is_empty() {
+            self.selected = (self.selected + 1).min(self.revisions.len().saturating_sub(1));
+        }
+    }
+
+    pub fn select_previous(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    pub fn select_top(&mut self) {
+        self.selected = 0;
+    }
+
+    pub fn select_bottom(&mut self) {
+        self.selected = self.revisions.len().saturating_sub(1);
+    }
+
+    pub fn selected_revision(&self) -> Option<&RolloutRevisionInfo> {
+        self.revisions
+            .get(self.selected.min(self.revisions.len().saturating_sub(1)))
+    }
+
+    pub fn selected_undo_revision(&self) -> Option<i64> {
+        let selected = self.selected_revision()?.revision;
+        (Some(selected) != self.current_revision).then_some(selected)
+    }
+
+    pub fn begin_undo_confirm(&mut self, revision: i64) {
+        self.confirm_undo_revision = Some(revision);
+    }
+
+    pub fn cancel_undo_confirm(&mut self) {
+        self.confirm_undo_revision = None;
+    }
+
+    pub fn begin_mutation(&mut self, mutation: RolloutMutationState) {
+        self.confirm_undo_revision = None;
+        self.mutation_pending = Some(mutation);
+    }
 }
 
 impl ResourceDiffTabState {
@@ -884,6 +1021,7 @@ pub enum WorkbenchTabState {
     ActionHistory(ActionHistoryTabState),
     ResourceYaml(ResourceYamlTabState),
     ResourceDiff(ResourceDiffTabState),
+    Rollout(RolloutTabState),
     HelmHistory(HelmHistoryTabState),
     DecodedSecret(DecodedSecretTabState),
     ResourceEvents(ResourceEventsTabState),
@@ -902,6 +1040,7 @@ impl WorkbenchTabState {
             Self::ActionHistory(_) => WorkbenchTabKind::ActionHistory,
             Self::ResourceYaml(_) => WorkbenchTabKind::ResourceYaml,
             Self::ResourceDiff(_) => WorkbenchTabKind::ResourceDiff,
+            Self::Rollout(_) => WorkbenchTabKind::Rollout,
             Self::HelmHistory(_) => WorkbenchTabKind::Helm,
             Self::DecodedSecret(_) => WorkbenchTabKind::DecodedSecret,
             Self::ResourceEvents(_) => WorkbenchTabKind::ResourceEvents,
@@ -920,6 +1059,7 @@ impl WorkbenchTabState {
             Self::ActionHistory(_) => WorkbenchTabKey::ActionHistory,
             Self::ResourceYaml(tab) => WorkbenchTabKey::ResourceYaml(tab.resource.clone()),
             Self::ResourceDiff(tab) => WorkbenchTabKey::ResourceDiff(tab.resource.clone()),
+            Self::Rollout(tab) => WorkbenchTabKey::Rollout(tab.resource.clone()),
             Self::HelmHistory(tab) => WorkbenchTabKey::HelmHistory(tab.resource.clone()),
             Self::DecodedSecret(tab) => WorkbenchTabKey::DecodedSecret(tab.resource.clone()),
             Self::ResourceEvents(tab) => WorkbenchTabKey::ResourceEvents(tab.resource.clone()),
@@ -942,6 +1082,9 @@ impl WorkbenchTabState {
                 format!("{icon}{kind_label} {}", resource_title(&tab.resource))
             }
             Self::ResourceDiff(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
+            Self::Rollout(tab) => {
                 format!("{icon}{kind_label} {}", resource_title(&tab.resource))
             }
             Self::HelmHistory(tab) => {
@@ -1321,6 +1464,94 @@ mod tests {
         assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(4));
         assert_eq!(tab.current_revision, Some(6));
         assert!(tab.diff.is_none());
+    }
+
+    #[test]
+    fn rollout_tab_deduplicates_by_resource() {
+        let mut state = WorkbenchState::default();
+        let resource = ResourceRef::Deployment("api".to_string(), "default".to_string());
+        let first = state.open_tab(WorkbenchTabState::Rollout(RolloutTabState::new(
+            resource.clone(),
+        )));
+        let second = state.open_tab(WorkbenchTabState::Rollout(RolloutTabState::new(resource)));
+
+        assert_eq!(first, second);
+        assert_eq!(state.tabs.len(), 1);
+        assert!(state.open);
+    }
+
+    #[test]
+    fn rollout_apply_inspection_preserves_selected_revision_when_still_present() {
+        let mut tab = RolloutTabState::new(ResourceRef::Deployment(
+            "api".to_string(),
+            "default".to_string(),
+        ));
+        tab.revisions = vec![
+            RolloutRevisionInfo {
+                revision: 5,
+                name: "api-5".to_string(),
+                created: None,
+                summary: "5/5 ready".to_string(),
+                change_cause: None,
+                is_current: true,
+                is_update_target: true,
+            },
+            RolloutRevisionInfo {
+                revision: 4,
+                name: "api-4".to_string(),
+                created: None,
+                summary: "5/5 ready".to_string(),
+                change_cause: None,
+                is_current: false,
+                is_update_target: false,
+            },
+        ];
+        tab.selected = 1;
+
+        tab.apply_inspection(RolloutInspection {
+            kind: RolloutWorkloadKind::Deployment,
+            strategy: "RollingUpdate".to_string(),
+            paused: false,
+            current_revision: Some(6),
+            update_target_revision: Some(6),
+            summary_lines: vec!["Desired 5".to_string()],
+            conditions: Vec::new(),
+            revisions: vec![
+                RolloutRevisionInfo {
+                    revision: 6,
+                    name: "api-6".to_string(),
+                    created: None,
+                    summary: "2/5 ready".to_string(),
+                    change_cause: None,
+                    is_current: true,
+                    is_update_target: true,
+                },
+                RolloutRevisionInfo {
+                    revision: 5,
+                    name: "api-5".to_string(),
+                    created: None,
+                    summary: "5/5 ready".to_string(),
+                    change_cause: None,
+                    is_current: false,
+                    is_update_target: false,
+                },
+                RolloutRevisionInfo {
+                    revision: 4,
+                    name: "api-4".to_string(),
+                    created: None,
+                    summary: "5/5 ready".to_string(),
+                    change_cause: None,
+                    is_current: false,
+                    is_update_target: false,
+                },
+            ],
+        });
+
+        assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(4));
+        assert_eq!(tab.current_revision, Some(6));
+        assert!(!tab.loading);
+        assert!(tab.confirm_undo_revision.is_none());
+        assert!(tab.mutation_pending.is_none());
     }
 
     #[test]

@@ -476,6 +476,13 @@ fn palette_helm_history_does_not_require_loaded_detail() {
 }
 
 #[test]
+fn palette_rollout_does_not_require_loaded_detail() {
+    assert!(!palette_action_requires_loaded_detail(
+        &AppAction::OpenRollout
+    ));
+}
+
+#[test]
 fn palette_drain_maps_to_confirmation_action() {
     assert_eq!(
         map_palette_detail_action(DetailAction::Drain),
@@ -496,6 +503,14 @@ fn palette_helm_history_maps_to_open_history() {
     assert_eq!(
         map_palette_detail_action(DetailAction::ViewHelmHistory),
         AppAction::OpenHelmHistory
+    );
+}
+
+#[test]
+fn palette_rollout_maps_to_open_rollout() {
+    assert_eq!(
+        map_palette_detail_action(DetailAction::ViewRollout),
+        AppAction::OpenRollout
     );
 }
 

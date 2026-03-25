@@ -1761,6 +1761,7 @@ mod tests {
                 ServiceInfo, StatefulSetInfo, StorageClassInfo,
             },
             helm::HelmHistoryResult,
+            rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind},
         },
         state::{ClusterSnapshot, DataPhase, ViewLoadState},
         time::{now, now_unix_seconds},
@@ -2143,6 +2144,54 @@ mod tests {
         let snapshot = ClusterSnapshot::default();
         let rendered = render_to_string(&app, &snapshot);
         assert!(rendered.contains("Helm"));
+        assert!(rendered.contains("rev   7"));
+    }
+
+    #[test]
+    fn render_rollout_workbench_smoke() {
+        let mut app = app_with_view(AppView::Deployments);
+        let resource = ResourceRef::Deployment("api".to_string(), "default".to_string());
+        app.open_rollout_tab(
+            resource,
+            Some(RolloutInspection {
+                kind: RolloutWorkloadKind::Deployment,
+                strategy: "RollingUpdate".to_string(),
+                paused: false,
+                current_revision: Some(7),
+                update_target_revision: Some(7),
+                summary_lines: vec![
+                    "Desired 3 · Updated 3 · Ready 3 · Available 3".to_string(),
+                    "Observed generation 12".to_string(),
+                ],
+                conditions: Vec::new(),
+                revisions: vec![
+                    RolloutRevisionInfo {
+                        revision: 7,
+                        name: "api-7".to_string(),
+                        created: Some("2026-03-25T10:15:00Z".to_string()),
+                        summary: "3/3 ready".to_string(),
+                        change_cause: Some("deploy api:7".to_string()),
+                        is_current: true,
+                        is_update_target: true,
+                    },
+                    RolloutRevisionInfo {
+                        revision: 6,
+                        name: "api-6".to_string(),
+                        created: Some("2026-03-24T09:12:00Z".to_string()),
+                        summary: "3/3 ready".to_string(),
+                        change_cause: Some("deploy api:6".to_string()),
+                        is_current: false,
+                        is_update_target: false,
+                    },
+                ],
+            }),
+            None,
+            None,
+        );
+
+        let snapshot = ClusterSnapshot::default();
+        let rendered = render_to_string(&app, &snapshot);
+        assert!(rendered.contains("Rollout"));
         assert!(rendered.contains("rev   7"));
     }
 
