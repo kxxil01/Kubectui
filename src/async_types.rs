@@ -5,8 +5,13 @@ use std::time::Instant;
 use kubectui::{
     app::{AppView, DetailViewState, ResourceRef},
     k8s::{
-        client::K8sClient, dtos::K8sEventInfo, exec::DebugContainerLaunchResult,
-        probes::ContainerProbes, relationships::RelationNode, workload_logs::WorkloadLogTarget,
+        client::K8sClient,
+        dtos::K8sEventInfo,
+        exec::DebugContainerLaunchResult,
+        helm::{HelmHistoryResult, HelmValuesDiffResult},
+        probes::ContainerProbes,
+        relationships::RelationNode,
+        workload_logs::WorkloadLogTarget,
     },
     state::{GlobalState, RefreshOptions, RefreshScope},
     time::AppTimestamp,
@@ -188,6 +193,30 @@ pub struct DetailAsyncResult {
 pub struct ResourceDiffAsyncResult {
     pub request_id: u64,
     pub resource: ResourceRef,
+    pub result: Result<String, String>,
+}
+
+#[derive(Debug)]
+pub struct HelmHistoryAsyncResult {
+    pub request_id: u64,
+    pub resource: ResourceRef,
+    pub result: Result<HelmHistoryResult, String>,
+}
+
+#[derive(Debug)]
+pub struct HelmValuesDiffAsyncResult {
+    pub request_id: u64,
+    pub resource: ResourceRef,
+    pub result: Result<HelmValuesDiffResult, String>,
+}
+
+#[derive(Debug)]
+pub struct HelmRollbackAsyncResult {
+    pub action_history_id: u64,
+    pub context_generation: u64,
+    pub origin_view: AppView,
+    pub resource: ResourceRef,
+    pub target_revision: i32,
     pub result: Result<String, String>,
 }
 

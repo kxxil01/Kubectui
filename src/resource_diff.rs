@@ -49,6 +49,12 @@ pub struct ResourceDiffResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct YamlDocumentDiffResult {
+    pub summary: String,
+    pub lines: Vec<ResourceDiffLine>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct SsaApplyEntry {
     manager: String,
     api_version: Option<String>,
@@ -101,10 +107,50 @@ pub fn build_resource_diff(live_yaml: &str) -> Result<ResourceDiffResult> {
         });
     }
 
-    let (lines, added, removed) = build_unified_diff(&applied_text, &live_text);
+    let (lines, added, removed) =
+        build_unified_diff_with_labels(&applied_text, &live_text, "applied", "live");
     Ok(ResourceDiffResult {
         baseline_kind: ResourceDiffBaselineKind::LastAppliedAnnotation,
         summary: format!("Drift detected: {added} added, {removed} removed.",),
+        lines,
+    })
+}
+
+pub fn build_yaml_document_diff(
+    old_yaml: &str,
+    new_yaml: &str,
+    old_label: &str,
+    new_label: &str,
+) -> Result<YamlDocumentDiffResult> {
+    let old = sort_value(parse_yaml_document(
+        old_yaml,
+        &format!("{old_label} values are not valid YAML"),
+    )?);
+    let new = sort_value(parse_yaml_document(
+        new_yaml,
+        &format!("{new_label} values are not valid YAML"),
+    )?);
+
+    let old_text = canonical_yaml(&old)?;
+    let new_text = canonical_yaml(&new)?;
+    if old_text == new_text {
+        return Ok(YamlDocumentDiffResult {
+            summary: "No values diff detected after canonicalization.".to_string(),
+            lines: Vec::new(),
+        });
+    }
+
+    if !diff_matrix_fits_budget(&old_text, &new_text) {
+        return Ok(YamlDocumentDiffResult {
+            summary: "Values differ, but the normalized YAML is too large for safe inline diff rendering.".to_string(),
+            lines: Vec::new(),
+        });
+    }
+
+    let (lines, added, removed) =
+        build_unified_diff_with_labels(&old_text, &new_text, old_label, new_label);
+    Ok(YamlDocumentDiffResult {
+        summary: format!("Values diff: {added} added, {removed} removed."),
         lines,
     })
 }
@@ -116,6 +162,16 @@ fn parse_manifest(yaml: &str, invalid_message: &str) -> Result<Value> {
     } else {
         Err(anyhow!("{invalid_message}"))
     }
+}
+
+fn parse_yaml_document(yaml: &str, invalid_message: &str) -> Result<Value> {
+    if yaml.trim().is_empty() {
+        return Ok(Value::Null);
+    }
+
+    serde_yaml::from_str(yaml)
+        .context("invalid YAML")
+        .with_context(|| invalid_message.to_string())
 }
 
 fn extract_last_applied(value: &Value) -> Option<String> {
@@ -350,7 +406,12 @@ fn diff_matrix_fits_budget(old_text: &str, new_text: &str) -> bool {
         <= MAX_SAFE_DIFF_MATRIX_CELLS
 }
 
-fn build_unified_diff(old_text: &str, new_text: &str) -> (Vec<ResourceDiffLine>, usize, usize) {
+fn build_unified_diff_with_labels(
+    old_text: &str,
+    new_text: &str,
+    old_label: &str,
+    new_label: &str,
+) -> (Vec<ResourceDiffLine>, usize, usize) {
     let old_lines: Vec<&str> = old_text.lines().collect();
     let new_lines: Vec<&str> = new_text.lines().collect();
     let operations = diff_operations(&old_lines, &new_lines);
@@ -358,11 +419,11 @@ fn build_unified_diff(old_text: &str, new_text: &str) -> (Vec<ResourceDiffLine>,
     let mut lines = Vec::with_capacity(operations.len() + 3);
     lines.push(ResourceDiffLine {
         kind: ResourceDiffLineKind::Header,
-        content: "--- applied".to_string(),
+        content: format!("--- {old_label}"),
     });
     lines.push(ResourceDiffLine {
         kind: ResourceDiffLineKind::Header,
-        content: "+++ live".to_string(),
+        content: format!("+++ {new_label}"),
     });
     lines.push(ResourceDiffLine {
         kind: ResourceDiffLineKind::Hunk,
@@ -448,7 +509,8 @@ fn diff_operations<'a>(
 mod tests {
     use super::{
         LAST_APPLIED_ANNOTATION, ROLLOUT_RESTART_ANNOTATION, ResourceDiffBaselineKind,
-        ResourceDiffLineKind, build_resource_diff, normalize_resource_value,
+        ResourceDiffLineKind, build_resource_diff, build_yaml_document_diff,
+        normalize_resource_value,
     };
     use serde_json::json;
 
@@ -537,6 +599,41 @@ spec:
 
         assert_eq!(result.baseline_kind, ResourceDiffBaselineKind::Missing);
         assert!(result.lines.is_empty());
+    }
+
+    #[test]
+    fn yaml_document_diff_reports_changes_with_custom_labels() {
+        let diff = build_yaml_document_diff(
+            "replicaCount: 1\nservice:\n  port: 80\n",
+            "replicaCount: 2\nservice:\n  port: 80\n",
+            "current",
+            "target",
+        )
+        .expect("values diff should build");
+
+        assert_eq!(diff.summary, "Values diff: 1 added, 1 removed.");
+        assert!(diff.lines.iter().any(|line| line.content == "--- current"));
+        assert!(diff.lines.iter().any(|line| line.content == "+++ target"));
+        assert!(
+            diff.lines
+                .iter()
+                .any(|line| line.content == "-replicaCount: 1")
+        );
+        assert!(
+            diff.lines
+                .iter()
+                .any(|line| line.content == "+replicaCount: 2")
+        );
+    }
+
+    #[test]
+    fn yaml_document_diff_treats_blank_documents_as_equal() {
+        let diff = build_yaml_document_diff("", "", "old", "new").expect("blank diff should work");
+        assert_eq!(
+            diff.summary,
+            "No values diff detected after canonicalization."
+        );
+        assert!(diff.lines.is_empty());
     }
 
     #[test]

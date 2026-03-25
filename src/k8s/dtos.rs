@@ -772,6 +772,17 @@ pub struct HelmReleaseInfo {
     pub age: Option<Duration>,
 }
 
+/// Single Helm release revision returned by `helm history`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct HelmReleaseRevisionInfo {
+    pub revision: i32,
+    pub updated: String,
+    pub status: String,
+    pub chart: String,
+    pub app_version: String,
+    pub description: String,
+}
+
 /// A single Flux status condition entry.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct FluxCondition {

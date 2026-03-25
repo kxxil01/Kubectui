@@ -47,6 +47,16 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
         &["drift", "diff", "config drift", "live vs applied"],
     ),
     (
+        DetailAction::ViewHelmHistory,
+        &[
+            "helm",
+            "helm history",
+            "history",
+            "rollback",
+            "release history",
+        ],
+    ),
+    (
         DetailAction::ViewDecodedSecret,
         &["decoded", "decode", "secret data", "reveal"],
     ),
@@ -811,6 +821,26 @@ mod tests {
     }
 
     #[test]
+    fn palette_entry_action_aliases_helm_release() {
+        let resource = ctx(
+            ResourceRef::HelmRelease("web".into(), "default".into()),
+            None,
+        );
+        let entries = action_entries_for_resource(Some(&resource));
+
+        assert!(
+            entries
+                .iter()
+                .any(|entry| entry.action == DetailAction::ViewHelmHistory)
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.action == DetailAction::EditYaml)
+        );
+    }
+
+    #[test]
     fn palette_entry_node_actions_follow_unschedulable_state() {
         let schedulable = ctx(ResourceRef::Node("node-a".into()), Some(false));
         let entries = action_entries_for_resource(Some(&schedulable));
@@ -964,6 +994,25 @@ mod tests {
         assert!(entries.iter().any(|entry| {
             matches!(entry, PaletteEntry::Action(DetailAction::ViewDecodedSecret))
         }));
+    }
+
+    #[test]
+    fn filtered_helm_query_matches_history_action() {
+        let mut palette = CommandPalette::default();
+        let resource = ctx(
+            ResourceRef::HelmRelease("web".into(), "default".into()),
+            None,
+        );
+        palette.open_with_context(Some(resource));
+        for c in "rollback".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let entries = palette.filtered();
+        assert!(
+            entries.iter().any(|entry| {
+                matches!(entry, PaletteEntry::Action(DetailAction::ViewHelmHistory))
+            })
+        );
     }
 
     #[test]
