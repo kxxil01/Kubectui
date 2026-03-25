@@ -1477,6 +1477,7 @@ dependencies = [
  "jiff",
  "k8s-openapi",
  "kube",
+ "kubectui",
  "log",
  "paste",
  "ratatui",

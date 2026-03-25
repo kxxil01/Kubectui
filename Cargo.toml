@@ -9,6 +9,9 @@ readme = "README.md"
 keywords = ["kubernetes", "tui", "terminal", "kubectl", "k8s"]
 categories = ["command-line-utilities"]
 
+[features]
+test-utils = []
+
 [dependencies]
 ratatui = "0.30"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net", "io-util"] }
@@ -35,6 +38,7 @@ tower = { version = "0.5.1", features = ["buffer", "retry"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
+kubectui = { path = ".", features = ["test-utils"] }
 
 [[bench]]
 name = "dashboard"

@@ -870,6 +870,233 @@ mod tests {
         assert!(!detail.supports_action(DetailAction::Logs));
     }
 
+    // ── supports_action_borrowed tri-state edge cases ──────────────
+
+    #[test]
+    fn empty_auth_map_permits_all_auth_required_actions() {
+        let resource = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        let empty = ActionAuthorizationMap::new();
+        assert!(supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &empty,
+            DetailAction::Exec
+        ));
+        assert!(supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &empty,
+            DetailAction::Logs
+        ));
+        assert!(supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &empty,
+            DetailAction::Delete
+        ));
+    }
+
+    #[test]
+    fn unknown_in_auth_map_blocks_strict_allows_soft() {
+        let resource = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        let mut auths = ActionAuthorizationMap::new();
+        auths.insert(DetailAction::Exec, DetailActionAuthorization::Unknown);
+        auths.insert(DetailAction::Logs, DetailActionAuthorization::Unknown);
+
+        assert!(!supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &auths,
+            DetailAction::Exec
+        ));
+        assert!(supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &auths,
+            DetailAction::Logs
+        ));
+    }
+
+    #[test]
+    fn denied_in_auth_map_blocks_even_soft_actions() {
+        let resource = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        let mut auths = ActionAuthorizationMap::new();
+        auths.insert(DetailAction::Logs, DetailActionAuthorization::Denied);
+        auths.insert(DetailAction::ViewYaml, DetailActionAuthorization::Denied);
+
+        assert!(!supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &auths,
+            DetailAction::Logs
+        ));
+        assert!(!supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &auths,
+            DetailAction::ViewYaml
+        ));
+    }
+
+    #[test]
+    fn allowed_in_auth_map_permits_strict_actions() {
+        let resource = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        let mut auths = ActionAuthorizationMap::new();
+        auths.insert(DetailAction::Exec, DetailActionAuthorization::Allowed);
+        auths.insert(DetailAction::Delete, DetailActionAuthorization::Allowed);
+
+        assert!(supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &auths,
+            DetailAction::Exec
+        ));
+        assert!(supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &auths,
+            DetailAction::Delete
+        ));
+    }
+
+    #[test]
+    fn non_auth_actions_always_pass_regardless_of_map() {
+        let resource = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        let empty = ActionAuthorizationMap::new();
+        assert!(supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &empty,
+            DetailAction::ToggleBookmark
+        ));
+        assert!(supports_action_borrowed(
+            &resource,
+            None,
+            None,
+            false,
+            &empty,
+            DetailAction::ViewRelationships
+        ));
+    }
+
+    #[test]
+    fn unsupported_resource_action_blocked_even_when_allowed_in_auth_map() {
+        let pod = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+        let mut auths = ActionAuthorizationMap::new();
+        auths.insert(DetailAction::Scale, DetailActionAuthorization::Allowed);
+
+        assert!(!supports_action_borrowed(
+            &pod,
+            None,
+            None,
+            false,
+            &auths,
+            DetailAction::Scale
+        ));
+    }
+
+    #[test]
+    fn node_auth_interacts_with_unschedulable_state() {
+        let node = ResourceRef::Node("node-0".to_string());
+        let mut auths = ActionAuthorizationMap::new();
+        auths.insert(DetailAction::Cordon, DetailActionAuthorization::Allowed);
+        auths.insert(DetailAction::Uncordon, DetailActionAuthorization::Allowed);
+
+        assert!(supports_action_borrowed(
+            &node,
+            Some(false),
+            None,
+            false,
+            &auths,
+            DetailAction::Cordon
+        ));
+        assert!(!supports_action_borrowed(
+            &node,
+            Some(false),
+            None,
+            false,
+            &auths,
+            DetailAction::Uncordon
+        ));
+
+        assert!(!supports_action_borrowed(
+            &node,
+            Some(true),
+            None,
+            false,
+            &auths,
+            DetailAction::Cordon
+        ));
+        assert!(supports_action_borrowed(
+            &node,
+            Some(true),
+            None,
+            false,
+            &auths,
+            DetailAction::Uncordon
+        ));
+    }
+
+    #[test]
+    fn node_drain_unknown_auth_is_blocked() {
+        let node = ResourceRef::Node("node-0".to_string());
+        let mut auths = ActionAuthorizationMap::new();
+        auths.insert(DetailAction::Drain, DetailActionAuthorization::Unknown);
+
+        assert!(!supports_action_borrowed(
+            &node,
+            Some(false),
+            None,
+            false,
+            &auths,
+            DetailAction::Drain
+        ));
+    }
+
+    #[test]
+    fn cronjob_logs_bypass_auth_when_history_available() {
+        let cj = ResourceRef::CronJob("nightly".to_string(), "ops".to_string());
+        let mut auths = ActionAuthorizationMap::new();
+        auths.insert(DetailAction::Logs, DetailActionAuthorization::Denied);
+
+        assert!(supports_action_borrowed(
+            &cj,
+            None,
+            None,
+            true,
+            &auths,
+            DetailAction::Logs
+        ));
+        assert!(!supports_action_borrowed(
+            &cj,
+            None,
+            None,
+            false,
+            &auths,
+            DetailAction::Logs
+        ));
+    }
+
     #[test]
     fn relationship_and_persistence_tables_cover_core_views() {
         assert!(

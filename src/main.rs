@@ -1817,6 +1817,17 @@ pub(crate) async fn run_app_inner(
                                 continue;
                             }
                         };
+                    if let Some(message) = detail_action_block_message(
+                        &app,
+                        &client,
+                        &reconcile_resource,
+                        DetailAction::FluxReconcile,
+                    )
+                    .await
+                    {
+                        app.set_error(message);
+                        continue;
+                    }
 
                     let resource_label = format!(
                         "{} '{}'",
