@@ -57,7 +57,7 @@ fn centered_window(total: usize, selected: usize, viewport_rows: usize) -> Visib
     }
 }
 
-pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster: &ClusterSnapshot) {
+pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, cluster: &ClusterSnapshot) {
     let theme = default_theme();
     let workbench_focused = app.focus == Focus::Workbench;
 
@@ -143,6 +143,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
             render_yaml_tab(frame, inner, tab.scroll, active_tab)
         }
         WorkbenchTabState::ResourceDiff(tab) => render_resource_diff_tab(frame, inner, tab),
+        WorkbenchTabState::Rollout(tab) => render_rollout_tab(frame, inner, cluster, tab),
         WorkbenchTabState::HelmHistory(tab) => render_helm_history_tab(frame, inner, tab),
         WorkbenchTabState::DecodedSecret(tab) => render_decoded_secret_tab(frame, inner, tab),
         WorkbenchTabState::ResourceEvents(tab) => {
@@ -173,7 +174,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             Line::from(""),
             Line::from("  Open a resource tab with:"),
             Line::from(
-                "  [y] YAML  [D] Drift  [o] Decoded  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward",
+                "  [y] YAML  [D] Drift  [O] Rollout  [o] Decoded  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward",
             ),
             Line::from(""),
             Line::from("  [H] opens action history."),
@@ -711,6 +712,273 @@ fn render_resource_diff_tab(
     }
 
     render_diff_lines(frame, sections[1], &tab_state.lines, tab_state.scroll);
+}
+
+fn render_rollout_tab(
+    frame: &mut Frame,
+    area: Rect,
+    cluster: &ClusterSnapshot,
+    tab: &crate::workbench::RolloutTabState,
+) {
+    let theme = default_theme();
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(4), Constraint::Min(0)])
+        .split(area);
+
+    let mode_badge = if let Some(mutation) = tab.mutation_pending {
+        let label = match mutation {
+            crate::workbench::RolloutMutationState::Restart => " mutation:restart ",
+            crate::workbench::RolloutMutationState::Pause => " mutation:pause ",
+            crate::workbench::RolloutMutationState::Resume => " mutation:resume ",
+            crate::workbench::RolloutMutationState::Undo(_) => " mutation:undo ",
+        };
+        Span::styled(label, theme.badge_warning_style())
+    } else if tab.confirm_undo_revision.is_some() {
+        Span::styled(" undo:confirm ", theme.badge_warning_style())
+    } else if tab.loading {
+        Span::styled(" loading ", theme.badge_warning_style())
+    } else {
+        Span::styled(" mode:rollout ", theme.badge_success_style())
+    };
+    let workload_badge_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    let subtle_badge_style = theme.muted_style();
+    let kind_badge = tab
+        .kind
+        .map(|kind| Span::styled(format!(" {} ", kind.label()), workload_badge_style))
+        .unwrap_or_else(|| Span::styled(" Workload ", workload_badge_style));
+    let hint = if tab.mutation_pending.is_some() {
+        "[mutation in progress]"
+    } else if tab.confirm_undo_revision.is_some() {
+        "[Enter/U] confirm undo  [Esc] cancel"
+    } else if tab.kind == Some(crate::k8s::rollout::RolloutWorkloadKind::Deployment) {
+        "[R] restart  [P] pause/resume  [U] undo selected  [j/k] move"
+    } else {
+        "[R] restart  [U] undo selected  [j/k] move"
+    };
+
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![kind_badge, Span::raw(" "), mode_badge]),
+            Line::from(vec![
+                Span::styled(" Live ", theme.inactive_style()),
+                Span::styled(
+                    rollout_live_summary(cluster, &tab.resource)
+                        .unwrap_or_else(|| "snapshot unavailable".to_string()),
+                    Style::default().fg(theme.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Strategy ", theme.inactive_style()),
+                Span::styled(
+                    tab.strategy.as_deref().unwrap_or("n/a"),
+                    Style::default().fg(theme.accent2),
+                ),
+                Span::styled("  Current ", theme.inactive_style()),
+                Span::styled(
+                    tab.current_revision
+                        .map(|revision| revision.to_string())
+                        .unwrap_or_else(|| "n/a".to_string()),
+                    Style::default().fg(theme.fg),
+                ),
+                Span::styled("  Target ", theme.inactive_style()),
+                Span::styled(
+                    tab.update_target_revision
+                        .map(|revision| revision.to_string())
+                        .unwrap_or_else(|| "n/a".to_string()),
+                    Style::default().fg(theme.fg),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Hint ", theme.inactive_style()),
+                Span::styled(hint, Style::default().fg(theme.muted)),
+            ]),
+        ])
+        .wrap(Wrap { trim: false }),
+        sections[0],
+    );
+
+    if tab.mutation_pending.is_some() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Rollout mutation in progress...",
+                theme.inactive_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if let Some(target_revision) = tab.confirm_undo_revision {
+        frame.render_widget(
+            Paragraph::new(vec![
+                Line::from(vec![Span::styled(
+                    format!(" Roll back this workload to revision {target_revision}?"),
+                    theme.section_title_style(),
+                )]),
+                Line::from(""),
+                Line::from(
+                    " This patches the live Pod template from the selected workload revision.",
+                ),
+                Line::from(
+                    " Kubectui will refresh rollout state and workload data after completion.",
+                ),
+            ])
+            .wrap(Wrap { trim: false }),
+            sections[1],
+        );
+        return;
+    }
+
+    if tab.loading && tab.revisions.is_empty() {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Loading rollout state...",
+                theme.inactive_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if let Some(error) = &tab.error {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" Rollout fetch failed: {error}"),
+                theme.badge_error_style(),
+            ))
+            .wrap(Wrap { trim: false }),
+            sections[1],
+        );
+        return;
+    }
+
+    let mut lines = Vec::new();
+    for line in &tab.summary_lines {
+        lines.push(Line::from(vec![
+            Span::styled("  ", theme.inactive_style()),
+            Span::styled(line.clone(), Style::default().fg(theme.fg_dim)),
+        ]));
+    }
+    if !tab.conditions.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Conditions",
+            theme.section_title_style(),
+        )));
+        for condition in &tab.conditions {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("  {:<14}", condition.type_),
+                    Style::default().fg(theme.accent),
+                ),
+                Span::styled(
+                    format!("{:<6}", condition.status),
+                    if condition.status.eq_ignore_ascii_case("true") {
+                        theme.badge_success_style()
+                    } else {
+                        theme.badge_warning_style()
+                    },
+                ),
+                Span::styled(
+                    condition
+                        .reason
+                        .clone()
+                        .or_else(|| condition.message.clone())
+                        .unwrap_or_else(|| "—".to_string()),
+                    Style::default().fg(theme.fg_dim),
+                ),
+            ]));
+        }
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " Revisions",
+        theme.section_title_style(),
+    )));
+    let revision_start = lines.len();
+    if tab.revisions.is_empty() {
+        lines.push(Line::from("  No rollout history available."));
+    } else {
+        for (idx, revision) in tab.revisions.iter().enumerate() {
+            let selected = idx == tab.selected;
+            let mut row_style = Style::default().fg(theme.fg);
+            if selected {
+                row_style = row_style.bg(theme.selection_bg).fg(theme.selection_fg);
+            }
+            let badge = if revision.is_current {
+                " current "
+            } else if revision.is_update_target {
+                " target  "
+            } else {
+                "         "
+            };
+            lines.push(Line::from(vec![
+                Span::styled(if selected { "› " } else { "  " }, row_style),
+                Span::styled(format!("rev {:>3} ", revision.revision), row_style),
+                Span::styled(badge, subtle_badge_style),
+                Span::styled(format!("{} ", revision.summary), row_style),
+                Span::styled(
+                    revision
+                        .change_cause
+                        .clone()
+                        .unwrap_or_else(|| revision.name.clone()),
+                    Style::default().fg(theme.muted),
+                ),
+            ]));
+        }
+    }
+
+    let scroll = if tab.revisions.is_empty() {
+        0
+    } else {
+        (revision_start + tab.selected).saturating_sub(3)
+    };
+    let window = scroll_window(lines.len(), scroll, sections[1].height.max(1) as usize);
+    frame.render_widget(
+        Paragraph::new(lines[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
+        sections[1],
+    );
+    render_scrollbar(frame, sections[1], lines.len(), window.start);
+}
+
+fn rollout_live_summary(
+    cluster: &ClusterSnapshot,
+    resource: &crate::app::ResourceRef,
+) -> Option<String> {
+    match resource {
+        crate::app::ResourceRef::Deployment(name, namespace) => cluster
+            .deployments
+            .iter()
+            .find(|item| &item.name == name && &item.namespace == namespace)
+            .map(|item| {
+                format!(
+                    "Ready {}/{} · Updated {} · Available {}",
+                    item.ready_replicas,
+                    item.desired_replicas,
+                    item.updated_replicas,
+                    item.available_replicas
+                )
+            }),
+        crate::app::ResourceRef::StatefulSet(name, namespace) => cluster
+            .statefulsets
+            .iter()
+            .find(|item| &item.name == name && &item.namespace == namespace)
+            .map(|item| format!("Ready {}/{}", item.ready_replicas, item.desired_replicas)),
+        crate::app::ResourceRef::DaemonSet(name, namespace) => cluster
+            .daemonsets
+            .iter()
+            .find(|item| &item.name == name && &item.namespace == namespace)
+            .map(|item| {
+                format!(
+                    "Ready {}/{} · Unavailable {}",
+                    item.ready_count, item.desired_count, item.unavailable_count
+                )
+            }),
+        _ => None,
+    }
 }
 
 fn render_helm_history_tab(

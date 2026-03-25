@@ -40,6 +40,7 @@ pub enum RelationshipCapability {
 pub enum DetailAction {
     ViewYaml,
     ViewConfigDrift,
+    ViewRollout,
     ViewHelmHistory,
     ViewDecodedSecret,
     ToggleBookmark,
@@ -75,9 +76,10 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 25] = [
+    pub const ORDER: [DetailAction; 26] = [
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
+        DetailAction::ViewRollout,
         DetailAction::ViewHelmHistory,
         DetailAction::ViewDecodedSecret,
         DetailAction::ToggleBookmark,
@@ -107,6 +109,7 @@ impl DetailAction {
         match self {
             DetailAction::ViewYaml => "[y]",
             DetailAction::ViewConfigDrift => "[D]",
+            DetailAction::ViewRollout => "[O]",
             DetailAction::ViewHelmHistory => "[h]",
             DetailAction::ViewDecodedSecret => "[o]",
             DetailAction::ToggleBookmark => "[B]",
@@ -135,6 +138,7 @@ impl DetailAction {
         match self {
             DetailAction::ViewYaml => "YAML",
             DetailAction::ViewConfigDrift => "Drift",
+            DetailAction::ViewRollout => "Rollout",
             DetailAction::ViewHelmHistory => "Helm",
             DetailAction::ViewDecodedSecret => "Decoded",
             DetailAction::ToggleBookmark => "Bookmark",
@@ -422,6 +426,12 @@ impl ResourceRef {
         match action {
             DetailAction::ViewYaml => true,
             DetailAction::ViewConfigDrift => !matches!(self, ResourceRef::Node(_)),
+            DetailAction::ViewRollout => matches!(
+                self,
+                ResourceRef::Deployment(_, _)
+                    | ResourceRef::StatefulSet(_, _)
+                    | ResourceRef::DaemonSet(_, _)
+            ),
             DetailAction::ViewHelmHistory => matches!(self, ResourceRef::HelmRelease(_, _)),
             DetailAction::ViewEvents => self.supports_events_tab(),
             DetailAction::ViewDecodedSecret => matches!(self, ResourceRef::Secret(_, _)),
@@ -671,10 +681,24 @@ mod tests {
 
         assert!(detail.supports_action(DetailAction::Scale));
         assert!(detail.supports_action(DetailAction::Restart));
+        assert!(detail.supports_action(DetailAction::ViewRollout));
         assert!(detail.supports_action(DetailAction::EditYaml));
         assert!(detail.supports_action(DetailAction::Delete));
         assert!(detail.supports_action(DetailAction::Logs));
         assert!(!detail.supports_action(DetailAction::FluxReconcile));
+    }
+
+    #[test]
+    fn rollout_action_is_limited_to_workload_controllers() {
+        let deployment = ResourceRef::Deployment("api".to_string(), "ns".to_string());
+        let statefulset = ResourceRef::StatefulSet("db".to_string(), "ns".to_string());
+        let daemonset = ResourceRef::DaemonSet("agent".to_string(), "ns".to_string());
+        let pod = ResourceRef::Pod("api-0".to_string(), "ns".to_string());
+
+        assert!(deployment.supports_detail_action(DetailAction::ViewRollout, None, None));
+        assert!(statefulset.supports_detail_action(DetailAction::ViewRollout, None, None));
+        assert!(daemonset.supports_detail_action(DetailAction::ViewRollout, None, None));
+        assert!(!pod.supports_detail_action(DetailAction::ViewRollout, None, None));
     }
 
     #[test]

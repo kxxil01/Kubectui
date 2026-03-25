@@ -1,13 +1,14 @@
 use super::*;
 use crate::{
     k8s::helm::HelmHistoryResult,
+    k8s::rollout::RolloutInspection,
     network_policy_analysis::NetworkPolicyAnalysis,
     policy::DetailAction,
     resource_diff::ResourceDiffResult,
     ui::components::scale_dialog::ScaleTargetKind,
     workbench::{
         ConnectivityTabState, ConnectivityTargetOption, HelmHistoryTabState, NetworkPolicyTabState,
-        ResourceDiffTabState,
+        ResourceDiffTabState, RolloutTabState,
     },
 };
 
@@ -127,6 +128,24 @@ impl AppState {
         }
         self.workbench
             .open_tab(WorkbenchTabState::ResourceDiff(tab));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_rollout_tab(
+        &mut self,
+        resource: ResourceRef,
+        inspection: Option<RolloutInspection>,
+        error: Option<String>,
+        pending_request_id: Option<u64>,
+    ) {
+        let mut tab = RolloutTabState::new(resource);
+        tab.loading = inspection.is_none() && error.is_none();
+        tab.error = error;
+        tab.pending_request_id = pending_request_id;
+        if let Some(inspection) = inspection {
+            tab.apply_inspection(inspection);
+        }
+        self.workbench.open_tab(WorkbenchTabState::Rollout(tab));
         self.focus = Focus::Workbench;
     }
 

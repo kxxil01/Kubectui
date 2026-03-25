@@ -11,6 +11,7 @@ use kubectui::{
         helm::{HelmHistoryResult, HelmValuesDiffResult},
         probes::ContainerProbes,
         relationships::RelationNode,
+        rollout::RolloutInspection,
         workload_logs::WorkloadLogTarget,
     },
     state::{GlobalState, RefreshOptions, RefreshScope},
@@ -81,12 +82,22 @@ pub struct ScaleAsyncResult {
     pub result: Result<(), String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RolloutMutationKind {
+    Restart,
+    Pause,
+    Resume,
+    Undo(i64),
+}
+
 #[derive(Debug)]
-pub struct RolloutRestartAsyncResult {
+pub struct RolloutMutationAsyncResult {
     pub action_history_id: u64,
     pub context_generation: u64,
     pub origin_view: AppView,
+    pub resource: ResourceRef,
     pub resource_label: String,
+    pub kind: RolloutMutationKind,
     pub result: Result<(), String>,
 }
 
@@ -194,6 +205,13 @@ pub struct ResourceDiffAsyncResult {
     pub request_id: u64,
     pub resource: ResourceRef,
     pub result: Result<String, String>,
+}
+
+#[derive(Debug)]
+pub struct RolloutInspectionAsyncResult {
+    pub request_id: u64,
+    pub resource: ResourceRef,
+    pub result: Result<RolloutInspection, String>,
 }
 
 #[derive(Debug)]

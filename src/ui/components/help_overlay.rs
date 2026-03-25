@@ -305,6 +305,9 @@ fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'sta
     if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewHelmHistory)) {
         bindings.push(("h", "View Helm revision history / rollback"));
     }
+    if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewRollout)) {
+        bindings.push(("O", "View rollout control center"));
+    }
     if detail.is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) {
         bindings.push(("g", "Launch debug container"));
     }
@@ -364,6 +367,7 @@ mod tests {
         let bindings = detail_bindings(Some(&detail));
         assert!(bindings.contains(&("D", "View config drift (live vs last-applied)")));
         assert!(!bindings.contains(&("h", "View Helm revision history / rollback")));
+        assert!(!bindings.contains(&("O", "View rollout control center")));
         assert!(bindings.contains(&("g", "Launch debug container")));
         assert!(bindings.contains(&("C", "Check pod reachability (policy intent)")));
     }
@@ -393,5 +397,19 @@ mod tests {
 
         let bindings = detail_bindings(Some(&detail));
         assert!(bindings.contains(&("h", "View Helm revision history / rollback")));
+    }
+
+    #[test]
+    fn detail_bindings_show_rollout_for_deployment_detail() {
+        let detail = DetailViewState {
+            resource: Some(ResourceRef::Deployment(
+                "api".to_string(),
+                "default".to_string(),
+            )),
+            ..DetailViewState::default()
+        };
+
+        let bindings = detail_bindings(Some(&detail));
+        assert!(bindings.contains(&("O", "View rollout control center")));
     }
 }

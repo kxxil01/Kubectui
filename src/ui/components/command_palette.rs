@@ -47,6 +47,15 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
         &["drift", "diff", "config drift", "live vs applied"],
     ),
     (
+        DetailAction::ViewRollout,
+        &[
+            "rollout",
+            "rollout center",
+            "rollout status",
+            "undo rollout",
+        ],
+    ),
+    (
         DetailAction::ViewHelmHistory,
         &[
             "helm",
@@ -74,7 +83,10 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     ),
     (DetailAction::Probes, &["probes", "health", "probe"]),
     (DetailAction::Scale, &["scale", "replicas"]),
-    (DetailAction::Restart, &["restart", "rollout"]),
+    (
+        DetailAction::Restart,
+        &["restart", "restart rollout", "rollout restart"],
+    ),
     (DetailAction::FluxReconcile, &["reconcile", "flux"]),
     (DetailAction::EditYaml, &["edit", "modify"]),
     (DetailAction::Delete, &["delete", "remove"]),
@@ -814,10 +826,21 @@ mod tests {
             None,
         );
         let entries = action_entries_for_resource(Some(&resource));
+        let rollout_entry = entries
+            .iter()
+            .find(|e| e.action == DetailAction::ViewRollout)
+            .expect("rollout action");
+        let restart_entry = entries
+            .iter()
+            .find(|e| e.action == DetailAction::Restart)
+            .expect("restart action");
+
+        assert!(rollout_entry.aliases.contains(&"rollout"));
         assert!(entries.iter().any(|e| e.action == DetailAction::Scale));
         assert!(entries.iter().any(|e| e.action == DetailAction::Restart));
         assert!(entries.iter().any(|e| e.action == DetailAction::Logs));
         assert!(!entries.iter().any(|e| e.action == DetailAction::Exec));
+        assert!(!restart_entry.aliases.contains(&"rollout"));
     }
 
     #[test]

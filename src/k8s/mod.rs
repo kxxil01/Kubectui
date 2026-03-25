@@ -12,6 +12,7 @@ pub mod portforward;
 pub mod portforward_errors;
 pub mod probes;
 pub mod relationships;
+pub mod rollout;
 pub mod scaling;
 pub mod selectors;
 pub mod workload_logs;
