@@ -808,6 +808,14 @@ fn collect_used_secret_refs(snapshot: &ClusterSnapshot) -> BTreeSet<(String, Str
             used.insert((workload.namespace.clone(), name.clone()));
         }
     }
+    for service_account in &snapshot.service_accounts {
+        for name in &service_account.secret_names {
+            used.insert((service_account.namespace.clone(), name.clone()));
+        }
+        for name in &service_account.image_pull_secret_names {
+            used.insert((service_account.namespace.clone(), name.clone()));
+        }
+    }
     used
 }
 
@@ -1822,6 +1830,39 @@ mod tests {
                 issue.category,
                 IssueCategory::UnusedConfigMap | IssueCategory::UnusedSecret
             )
+        }));
+    }
+
+    #[test]
+    fn sanitizer_skips_unused_secret_when_service_account_references_it() {
+        let mut snap = empty_snapshot();
+        snap.secrets.push(SecretInfo {
+            name: "registry-creds".into(),
+            namespace: "default".into(),
+            type_: "kubernetes.io/dockerconfigjson".into(),
+            ..Default::default()
+        });
+        snap.secrets.push(SecretInfo {
+            name: "bound-token".into(),
+            namespace: "default".into(),
+            type_: "Opaque".into(),
+            ..Default::default()
+        });
+        snap.service_accounts.push(ServiceAccountInfo {
+            name: "builder".into(),
+            namespace: "default".into(),
+            image_pull_secret_names: vec!["registry-creds".into()],
+            secret_names: vec!["bound-token".into()],
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        assert!(!sanitizer_issues(&issues).iter().any(|issue| {
+            issue.category == IssueCategory::UnusedSecret
+                && matches!(
+                    issue.resource_name.as_str(),
+                    "registry-creds" | "bound-token"
+                )
         }));
     }
 
