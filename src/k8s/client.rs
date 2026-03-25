@@ -175,6 +175,25 @@ impl K8sClient {
         })
     }
 
+    /// Creates a dummy client for unit tests that don't hit the K8s API.
+    ///
+    /// The underlying HTTP client points at an unreachable address so any
+    /// actual API call will fail immediately — use only for tests that
+    /// exercise local logic.
+    #[cfg(any(test, feature = "test-utils"))]
+    pub fn dummy() -> Self {
+        let cfg = kube::Config::new("http://127.0.0.1:1".parse().expect("valid URL"));
+        let client = Client::try_from(cfg).expect("client should build for test URL");
+        Self {
+            client,
+            cluster_url: "http://127.0.0.1:1".to_string(),
+            cluster_context: Some("test".to_string()),
+            cluster_version_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
+            access_review_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
+        }
+    }
+
     /// Returns all context names from `~/.kube/config`, sorted alphabetically.
     /// The current context (if any) is returned first.
     pub fn list_contexts() -> Vec<String> {
@@ -2249,17 +2268,7 @@ mod tests {
     /// Verifies invalid resource kind in YAML fetch returns descriptive error.
     #[tokio::test]
     async fn fetch_resource_yaml_invalid_kind_has_clear_error() {
-        let cfg = kube::Config::new("http://127.0.0.1:1".parse().expect("valid URL"));
-        let client = Client::try_from(cfg).expect("client should build for test URL");
-
-        let k8s = K8sClient {
-            client,
-            cluster_url: "http://127.0.0.1:1".to_string(),
-            cluster_context: Some("test".to_string()),
-            cluster_version_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            flux_targets_cache: Arc::new(tokio::sync::RwLock::new(None)),
-            access_review_cache: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
-        };
+        let k8s = K8sClient::dummy();
 
         let err = k8s
             .fetch_resource_yaml("unsupported", "name", None)

@@ -316,11 +316,7 @@ mod tests {
 
     #[tokio::test]
     async fn execute_scale_rejects_invalid_replica_count_and_sends_no_progress() {
-        let client = Arc::new(
-            K8sClient::connect()
-                .await
-                .expect("kind cluster should be available"),
-        );
+        let client = Arc::new(K8sClient::dummy());
         let request = ScaleRequest::new("any", "default", 101);
         let (tx, mut rx) = mpsc::channel(4);
 
@@ -336,6 +332,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires a live Kubernetes cluster"]
     async fn execute_scale_reports_api_error_when_deployment_missing() {
         let client = Arc::new(
             K8sClient::connect()
