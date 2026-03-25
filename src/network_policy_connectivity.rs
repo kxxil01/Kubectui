@@ -38,24 +38,31 @@ pub fn analyze_connectivity(
     let egress = evaluate_egress(source_pod, target_pod, snapshot);
     let ingress = evaluate_ingress(source_pod, target_pod, snapshot);
     let verdict = egress.allowed && ingress.allowed;
+    let mut summary_lines = vec![
+        format!(
+            "Connectivity intent {} -> {}: {}.",
+            pod_ref(source_pod),
+            pod_ref(target_pod),
+            if verdict {
+                "ALLOW for at least one matching port/protocol"
+            } else {
+                "DENY for all evaluated ports/protocols"
+            }
+        ),
+        "Kubernetes policy intent requires both source egress and destination ingress to allow the traffic."
+            .to_string(),
+        egress.summary,
+        ingress.summary,
+    ];
+    if egress.uses_ip_block || ingress.uses_ip_block {
+        summary_lines.push(
+            "ipBlock-based pod matching is heuristic here. Kubernetes documents ipBlock for cluster-external CIDRs because Pod IPs are ephemeral and unpredictable."
+                .to_string(),
+        );
+    }
 
     Ok(ConnectivityAnalysis {
-        summary_lines: vec![
-            format!(
-                "Connectivity intent {} -> {}: {}.",
-                pod_ref(source_pod),
-                pod_ref(target_pod),
-                if verdict {
-                    "ALLOW for at least one matching port/protocol"
-                } else {
-                    "DENY for all evaluated ports/protocols"
-                }
-            ),
-            "Kubernetes policy intent requires both source egress and destination ingress to allow the traffic."
-                .to_string(),
-            egress.summary,
-            ingress.summary,
-        ],
+        summary_lines,
         tree: vec![
             section(
                 "Verdict",
@@ -80,6 +87,7 @@ struct DirectionEvaluation {
     allowed: bool,
     summary: String,
     node: RelationNode,
+    uses_ip_block: bool,
 }
 
 fn resolve_pod<'a>(
@@ -154,6 +162,7 @@ fn evaluate_direction(
                     pod_ref(selected_pod)
                 ))],
             ),
+            uses_ip_block: false,
         };
     }
 
@@ -161,11 +170,19 @@ fn evaluate_direction(
     let mut matched_rules = 0usize;
     let mut matched_ports = BTreeSet::new();
     let mut children = Vec::with_capacity(policies.len());
+    let mut uses_ip_block = false;
 
     for policy in policies {
         let mut matched_rule_nodes = Vec::new();
         let mut local_rule_count = 0usize;
         for (idx, rule) in rules(policy).iter().enumerate() {
+            if rule
+                .peers
+                .iter()
+                .any(|peer| peer.ip_block_cidr.as_ref().is_some())
+            {
+                uses_ip_block = true;
+            }
             if rule_matches_pod(rule, peer_pod, &policy.namespace, snapshot) {
                 local_rule_count += 1;
                 matched_rules += 1;
@@ -226,6 +243,7 @@ fn evaluate_direction(
         allowed,
         summary,
         node: section(section_label, children),
+        uses_ip_block,
     }
 }
 
@@ -502,6 +520,12 @@ mod tests {
         )
         .expect("connectivity");
         assert!(denied.summary_lines[0].contains("DENY"));
+        assert!(
+            denied
+                .summary_lines
+                .iter()
+                .any(|line| line.contains("cluster-external CIDRs"))
+        );
     }
 
     fn selector(key: &str, value: &str) -> LabelSelectorInfo {
