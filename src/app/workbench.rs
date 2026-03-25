@@ -1,7 +1,12 @@
 use super::*;
 use crate::{
-    policy::DetailAction, resource_diff::ResourceDiffResult,
-    ui::components::scale_dialog::ScaleTargetKind, workbench::ResourceDiffTabState,
+    network_policy_analysis::NetworkPolicyAnalysis,
+    policy::DetailAction,
+    resource_diff::ResourceDiffResult,
+    ui::components::scale_dialog::ScaleTargetKind,
+    workbench::{
+        ConnectivityTabState, ConnectivityTargetOption, NetworkPolicyTabState, ResourceDiffTabState,
+    },
 };
 
 impl AppState {
@@ -156,6 +161,34 @@ impl AppState {
         tab.rebuild_timeline(&self.action_history);
         self.workbench
             .open_tab(WorkbenchTabState::ResourceEvents(tab));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_network_policy_tab(
+        &mut self,
+        resource: ResourceRef,
+        analysis: Option<NetworkPolicyAnalysis>,
+        error: Option<String>,
+    ) {
+        let mut tab = NetworkPolicyTabState::new(resource);
+        tab.error = error;
+        if let Some(analysis) = analysis {
+            tab.apply_analysis(analysis);
+        }
+        self.workbench
+            .open_tab(WorkbenchTabState::NetworkPolicy(tab));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_connectivity_tab(
+        &mut self,
+        source: ResourceRef,
+        targets: Vec<ConnectivityTargetOption>,
+    ) {
+        self.workbench
+            .open_tab(WorkbenchTabState::Connectivity(ConnectivityTabState::new(
+                source, targets,
+            )));
         self.focus = Focus::Workbench;
     }
 

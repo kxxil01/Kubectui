@@ -39,8 +39,8 @@ Current milestone status:
 - Milestone 21: completed
 - Milestone 22: completed (v1)
 - Milestone 23: not started
-- Milestone 24: not started
-- Milestone 25: not started
+- Milestone 24: completed
+- Milestone 25: completed
 - Phase 8 (Watch-Backed Caches): completed
 
 Completion notes:
@@ -69,7 +69,9 @@ Completion notes:
 - PR #16 hardened the post-M18 surface: canonical RBAC-aware detail/action authorization, graceful forbidden list/discovery degradation, workbench/detail/palette permission preflight, paused CronJob next-run suppression, and CronJob history log gating based on live pods plus log access.
 - Milestone 19 shipped (PR #53): Pod-only ephemeral debug container launcher with preset/custom image selection, optional target-container PID namespace targeting, Kubernetes version/capability checks for stable ephemeral containers, action palette and detail-view `g` integration, action history coverage, and exec workbench reuse so the launched container opens in the canonical shell tab path. Follow-up tri-state detail authorization hardening also shipped with M19 so privileged actions now fail closed on unknown RBAC while read-only actions remain best-effort.
 - Milestone 21 shipped (PR #18): comprehensive resource utilization dashboard — ClusterResourceSummary with cluster-wide CPU/memory utilization and overcommitment percentages, 5-gauge dashboard row (Nodes Ready, Pods Running, Workload Ready, Cluster CPU, Cluster Mem), Overcommit & Governance panel (commitment ratios, missing request/limit counts), Top Pod Consumers panel (top-5 CPU and memory), enhanced Namespace Utilization table with %CPU/R and %MEM/R columns, 10 new hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), enriched node CPU/Memory columns with used/alloc/pct% format and threshold coloring, pod_metrics pipeline integration via metrics.k8s.io with graceful degradation, compact dashboard layout for small terminals, 20+ new tests, 3 criterion benchmarks.
-- Milestone 22 shipped (v1): workbench-hosted Drift tab, action palette integration, detail-view `D` shortcut, last-applied baseline extraction from `kubectl.kubernetes.io/last-applied-configuration`, full-fidelity manifest fetch for diffing (no truncation / no RBAC placeholder parsing), deterministic normalized unified diff rendering, explicit no-baseline / unavailable-manifest states, and regression coverage for normalization, ordering, and keybinding behavior. Current scope is client-side apply baseline only; managedFields/SSA fallback is not implemented.
+- Milestone 22 shipped (v1): workbench-hosted Drift tab, action palette integration, detail-view `D` shortcut, last-applied baseline extraction from `kubectl.kubernetes.io/last-applied-configuration`, full-fidelity manifest fetch for diffing (no truncation / no RBAC placeholder parsing), deterministic normalized unified diff rendering, explicit no-baseline / unavailable-manifest states, SSA-aware fallback messaging when only `managedFields` ownership exists, and regression coverage for normalization, ordering, and keybinding behavior. Current scope still does not invent a historical SSA baseline from `managedFields`.
+- Milestone 24 shipped: snapshot-only sanitizer findings integrated into the canonical diagnostics path, dedicated Health Report sidebar view, Issue Center source tagging (`Runtime` vs `Sanitizer`), annotation-based rule suppression via `kubectui.io/ignore`, and high-confidence checks for requests/limits, probes, security context, risky image tags, host namespace usage, missing PDB coverage, naked pods, service target mismatches, and unused ConfigMaps/Secrets. Findings stay cached by `snapshot_version`, use workload-template references to avoid false positives on scaled-to-zero or not-yet-started workloads, remain capped to the Issue Center ceiling, and are covered by regression tests.
+- Milestone 25 shipped: snapshot-only NetworkPolicy analysis for Pods, Namespaces, and NetworkPolicies, dedicated NetPol workbench tab with resolved ingress/egress rule trees, namespace isolation summaries, and a Pod reachability query (`C`) that evaluates source egress plus destination ingress intent in one canonical workbench flow. The connectivity surface reuses the relationship-tree renderer, stays API-free beyond the existing snapshot, explicitly frames output as policy intent rather than CNI enforcement, and caps broad peer expansions so large selectors do not explode the tree/render path.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
 - 2026-03-18 kube 3.1 metadata watch adoption: namespace discovery and the Namespaces view now use metadata-only `Namespace` payloads end-to-end. The canonical watch path uses `metadata_watcher()` for cluster-scoped namespace updates, polling uses `list_metadata()` for namespace fetches, and namespace status is derived consistently from metadata (`Active` vs `Terminating`) so the picker and namespace view stay live with lower API payload cost.
@@ -102,7 +104,7 @@ Verification status for completed milestones:
 - Render profiling check passes on 2026-03-18: 5-run median vs pre-patch `HEAD` improved slightly (`render` `242.530ms -> 242.121ms`, `-0.409ms`, `-0.17%`; `sidebar` `18.366ms -> 18.342ms`; `header` `13.920ms -> 13.810ms`)
 - Latest ordinary-table render-template verification on 2026-03-19: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass after expanding helper coverage and tightening the sidebar cache path. The latest clean 5-run render-profile comparison vs clean `HEAD` is now positive across the primary global metrics (`render` median `240.670ms -> 238.851ms`, `-1.819ms`, `-0.76%`; `sidebar` `17.928ms -> 17.594ms`, `-0.334ms`, `-1.86%`; `header` `13.994ms -> 13.705ms`, `-0.289ms`, `-2.07%`). Treat the broader expansion and sidebar follow-up as shipped with the performance gate satisfied.
 - Latest structural refactor verification on 2026-03-19: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass after the `app/mod.rs` split, test extraction, and `main.rs` startup/helper extraction. Current root sizes are materially lower: `src/app/mod.rs` `2575 -> 267` lines, `src/main.rs` `3941 -> 3254` lines. The remaining large `main.rs` surface is now concentrated in the event loop rather than mixed with startup and test code.
-- Latest M19 + tri-state authorization verification on 2026-03-24: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally. PR #53 also passed GitHub `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)` before merge.
+- Latest M19/M24/M25 verification on 2026-03-25: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after the final sanitizer false-positive fixes, NetworkPolicy selector hardening, and broad-peer render cap landed on the canonical workbench/render routes.
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -1548,7 +1550,7 @@ Right-sizing is consistently the #1 cost optimization lever in Kubernetes. Teams
 
 ### Status
 
-Completed (v1: last-applied baseline)
+Completed (last-applied diff + SSA-aware fallback messaging)
 
 ### Goal
 
@@ -1572,10 +1574,11 @@ Configuration drift is a top-3 operational concern. When something breaks, the f
 - explicit unavailable-manifest errors for RBAC or missing Helm release secret cases
 - deterministic key-sorted unified diff to avoid false positives from YAML/JSON key order alone
 - detail-view `D` shortcut, action palette entry, and help overlay wiring
+- SSA-aware fallback when `managedFields` shows server-side apply ownership but no `last-applied` annotation exists; the tab now explains the limitation explicitly instead of pretending a historical diff can be reconstructed from ownership metadata
 
 ### Remaining follow-up
 
-- server-side apply / `managedFields` fallback baseline when no last-applied annotation exists
+- true historical SSA drift baseline is not implementable from `managedFields` alone because Kubernetes records field ownership there, not prior applied values
 - optional richer path-aware normalization if a concrete noisy resource class proves it necessary
 
 ### Tasks
@@ -1678,7 +1681,7 @@ This is k9s's most powerful extensibility feature and consistently cited as why 
 
 ### Status
 
-Not started
+Completed
 
 ### Goal
 
@@ -1694,6 +1697,25 @@ Catch latent misconfigurations in resources that appear healthy but violate best
 - categories: resource limits, probes, security context, image tags, PDB coverage, naked pods, port mismatches
 - dedicated "Health Report" view with per-resource severity scores
 - integration with Issue Center (sanitizer findings appear alongside runtime issues)
+
+### Implemented
+
+- snapshot-only sanitizer engine on the canonical diagnostics path (no new API calls)
+- Health Report sidebar view backed by sanitizer-only filtering over the shared diagnostics set
+- Issue Center integration with explicit source tagging so runtime and sanitizer findings coexist without duplicate state systems
+- rule suppression via `kubectui.io/ignore`
+- shipped rules:
+  - missing requests / limits
+  - missing probes
+  - missing `runAsNonRoot`
+  - `:latest` or tagless images
+  - `hostNetwork` / `hostPID` / `hostIPC`
+  - missing PDB coverage for scaled Deployments
+  - naked pods
+  - Service target-port mismatches
+  - unused ConfigMaps / Secrets
+- unused ConfigMap / Secret detection also accounts for current workload templates, not just already-running Pods
+- regression coverage for rule logic, suppression, Health Report filtering, and the existing runtime Issue Center workflows
 
 ### Tasks
 
@@ -1743,7 +1765,7 @@ Catch latent misconfigurations in resources that appear healthy but violate best
 
 ### Status
 
-Not started
+Completed
 
 ### Goal
 
@@ -1760,6 +1782,18 @@ NetworkPolicy YAML is notoriously hard to reason about. Label selectors, namespa
 - ingress/egress rule breakdown with resolved pod/namespace targets
 - text-based connectivity graph (reuse relationship explorer rendering)
 - "Can pod A reach pod B?" query tool
+
+### Implemented
+
+- shared snapshot-only NetworkPolicy semantics layer for selector resolution and effective policy-type handling
+- workbench-hosted NetPol analysis for Pods, Namespaces, and NetworkPolicies
+- human-readable trees for Policy → Direction → Rule → Peers + Ports with resolved pod targets
+- namespace isolation summaries and per-pod policy selection/isolation summaries
+- Pod reachability query surface (`C`) with target filtering and allow/deny verdict based on both source egress and destination ingress intent
+- action palette and help-overlay integration for both policy inspection and connectivity checking
+- explicit UI wording that results show policy intent, not CNI enforcement
+- empty `namespaceSelector: {}` and broad peer sets are handled correctly even when namespace metadata is sparse, with capped expansion for large matches
+- regression coverage for selector matching, isolation computation, ingress+egress verdict semantics, IPBlock handling, keybindings, palette mapping, and workbench tab dedupe
 
 ### Tasks
 
@@ -1874,8 +1908,6 @@ This is the execution order.
 ## P6
 
 - Milestone 23: Plugin / Custom Action System
-- Milestone 24: Resource Sanitizer / Best Practice Linter
-- Milestone 25: Network Policy Visualizer
 
 ## Continuous
 
@@ -1885,13 +1917,12 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M19 and M21-M22 are complete. The next unstarted milestone is M20: Helm Release History & Rollback.
+M0-M19 and M21-M25 are complete. The next unstarted milestone is M20: Helm Release History & Rollback.
 
 Recommended near-term order:
 
 - M20: Helm Release History & Rollback
 - M23: Plugin / Custom Action System
-- M24: Resource Sanitizer / Best Practice Linter
 
 Do not start next with:
 

@@ -2191,6 +2191,28 @@ pub(crate) async fn run_app_inner(
                         continue;
                     }
                 }
+                AppAction::OpenNetworkPolicyView => {
+                    if action::detail_tabs::handle_open_network_policies(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
+                AppAction::OpenNetworkConnectivity => {
+                    if action::detail_tabs::handle_open_network_connectivity(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
                 AppAction::OpenResourceEvents => {
                     if action::detail_tabs::handle_open_resource_events(
                         &mut app,

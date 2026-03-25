@@ -3,16 +3,18 @@
 //! Computes per-resource issues from snapshot data (no new API calls).
 //! Results are cached by `snapshot_version` and reused across frames.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 
 use crate::app::ResourceRef;
 use crate::k8s::dtos::AlertSeverity;
+use crate::k8s::selectors::{selector_is_empty, selector_matches_map};
 use crate::state::{ClusterSnapshot, RefreshScope};
 use crate::time::{age_seconds_since, now_unix_seconds};
 use crate::ui::contains_ci;
 
 const MAX_ISSUES: usize = 500;
+const SANITIZER_IGNORE_ANNOTATION: &str = "kubectui.io/ignore";
 
 const fn severity_rank(s: AlertSeverity) -> u8 {
     match s {
@@ -35,6 +37,15 @@ pub enum IssueCategory {
     FluxReconcileFailure,
     ServiceNoEndpoints,
     FailedJob,
+    MissingResourceRequirements,
+    MissingProbes,
+    SecurityContextGap,
+    LatestImageTag,
+    MissingPodDisruptionBudget,
+    NakedPod,
+    ServicePortMismatch,
+    UnusedConfigMap,
+    UnusedSecret,
 }
 
 impl IssueCategory {
@@ -51,12 +62,37 @@ impl IssueCategory {
             Self::FluxReconcileFailure => "Flux Reconcile Fail",
             Self::ServiceNoEndpoints => "No Endpoints",
             Self::FailedJob => "Failed Job",
+            Self::MissingResourceRequirements => "Missing Resources",
+            Self::MissingProbes => "Missing Probes",
+            Self::SecurityContextGap => "Security Context",
+            Self::LatestImageTag => "Image Tag",
+            Self::MissingPodDisruptionBudget => "Missing PDB",
+            Self::NakedPod => "Naked Pod",
+            Self::ServicePortMismatch => "Service Port Mismatch",
+            Self::UnusedConfigMap => "Unused ConfigMap",
+            Self::UnusedSecret => "Unused Secret",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ClusterIssueSource {
+    Runtime,
+    Sanitizer,
+}
+
+impl ClusterIssueSource {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::Runtime => "Runtime",
+            Self::Sanitizer => "Sanitizer",
         }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct ClusterIssue {
+    pub source: ClusterIssueSource,
     pub severity: AlertSeverity,
     pub category: IssueCategory,
     pub resource_kind: &'static str,
@@ -69,12 +105,39 @@ pub struct ClusterIssue {
 impl ClusterIssue {
     /// Returns `true` if any text field matches the query (case-insensitive).
     pub fn matches_query(&self, query: &str) -> bool {
-        contains_ci(self.category.label(), query)
+        contains_ci(self.source.label(), query)
+            || contains_ci(self.category.label(), query)
             || contains_ci(self.resource_kind, query)
             || contains_ci(&self.resource_name, query)
             || contains_ci(&self.namespace, query)
             || contains_ci(&self.message, query)
     }
+}
+
+pub fn sanitizer_issue_count(snapshot: &ClusterSnapshot) -> usize {
+    compute_issues(snapshot)
+        .iter()
+        .filter(|issue| issue.source == ClusterIssueSource::Sanitizer)
+        .count()
+}
+
+fn ignored_rule_names(annotations: &[(String, String)]) -> BTreeSet<String> {
+    annotations
+        .iter()
+        .find(|(key, _)| key == SANITIZER_IGNORE_ANNOTATION)
+        .map(|(_, value)| {
+            value
+                .split(',')
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| value.to_ascii_lowercase())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn rule_ignored(annotations: &[(String, String)], rule_name: &str) -> bool {
+    ignored_rule_names(annotations).contains(&rule_name.to_ascii_lowercase())
 }
 
 /// Returns filtered issue indices matching the search query.
@@ -128,6 +191,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         {
             seen_pod_indices.insert(idx);
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: AlertSeverity::Error,
                 category: IssueCategory::CrashLoopBackOff,
                 resource_kind: "Pod",
@@ -162,6 +226,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
                 .cloned()
                 .unwrap_or_default();
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: AlertSeverity::Error,
                 category: IssueCategory::ImagePullFailure,
                 resource_kind: "Pod",
@@ -189,6 +254,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
                 AlertSeverity::Info
             };
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity,
                 category: IssueCategory::PendingPod,
                 resource_kind: "Pod",
@@ -207,6 +273,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         }
         if pod.status.eq_ignore_ascii_case("failed") {
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: AlertSeverity::Error,
                 category: IssueCategory::FailedPod,
                 resource_kind: "Pod",
@@ -222,6 +289,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
     for node in &snapshot.nodes {
         if !node.ready {
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: AlertSeverity::Error,
                 category: IssueCategory::NodeNotReady,
                 resource_kind: "Node",
@@ -250,6 +318,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         }
         if !pressures.is_empty() {
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: AlertSeverity::Warning,
                 category: IssueCategory::NodePressure,
                 resource_kind: "Node",
@@ -265,6 +334,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
     for dep in &snapshot.deployments {
         if dep.desired_replicas > 0 && dep.ready_replicas < dep.desired_replicas {
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: AlertSeverity::Warning,
                 category: IssueCategory::DegradedWorkload,
                 resource_kind: "Deployment",
@@ -279,6 +349,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
     for sts in &snapshot.statefulsets {
         if sts.desired_replicas > 0 && sts.ready_replicas < sts.desired_replicas {
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: AlertSeverity::Warning,
                 category: IssueCategory::DegradedWorkload,
                 resource_kind: "StatefulSet",
@@ -293,6 +364,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
     for ds in &snapshot.daemonsets {
         if ds.desired_count > 0 && ds.ready_count < ds.desired_count {
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: AlertSeverity::Warning,
                 category: IssueCategory::DegradedWorkload,
                 resource_kind: "DaemonSet",
@@ -313,6 +385,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         };
         if let Some(sev) = severity {
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: sev,
                 category: IssueCategory::StorageIssue,
                 resource_kind: "PVC",
@@ -332,6 +405,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         };
         if let Some(sev) = severity {
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: sev,
                 category: IssueCategory::StorageIssue,
                 resource_kind: "PV",
@@ -353,6 +427,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
                 c.type_.eq_ignore_ascii_case("Stalled") && c.status.eq_ignore_ascii_case("True")
             });
         issues.push(ClusterIssue {
+            source: ClusterIssueSource::Runtime,
             severity: if is_stalled {
                 AlertSeverity::Error
             } else {
@@ -398,6 +473,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         match ep_map.get(&(svc.name.as_str(), svc.namespace.as_str())) {
             Some(ep) if ep.addresses.is_empty() => {
                 issues.push(ClusterIssue {
+                    source: ClusterIssueSource::Runtime,
                     severity: AlertSeverity::Warning,
                     category: IssueCategory::ServiceNoEndpoints,
                     resource_kind: "Service",
@@ -409,6 +485,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
             }
             None if endpoints_loaded => {
                 issues.push(ClusterIssue {
+                    source: ClusterIssueSource::Runtime,
                     severity: AlertSeverity::Warning,
                     category: IssueCategory::ServiceNoEndpoints,
                     resource_kind: "Service",
@@ -426,6 +503,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
     for job in &snapshot.jobs {
         if job.status.eq_ignore_ascii_case("failed") || job.failed_pods > 0 {
             issues.push(ClusterIssue {
+                source: ClusterIssueSource::Runtime,
                 severity: AlertSeverity::Error,
                 category: IssueCategory::FailedJob,
                 resource_kind: "Job",
@@ -441,10 +519,13 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
         }
     }
 
-    // Sort: severity rank (Error first), then category, then name.
+    detect_sanitizer_findings(snapshot, &mut issues);
+
+    // Sort: severity rank (Error first), then source, then category, then name.
     issues.sort_unstable_by(|a, b| {
         severity_rank(a.severity)
             .cmp(&severity_rank(b.severity))
+            .then_with(|| a.source.cmp(&b.source))
             .then_with(|| a.category.cmp(&b.category))
             .then_with(|| a.resource_name.cmp(&b.resource_name))
     });
@@ -453,8 +534,417 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
     issues
 }
 
+fn detect_sanitizer_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
+    detect_pod_sanitizer_findings(snapshot, issues);
+    detect_deployment_pdb_gaps(snapshot, issues);
+    detect_service_port_mismatches(snapshot, issues);
+    detect_unused_config_maps(snapshot, issues);
+    detect_unused_secrets(snapshot, issues);
+}
+
+fn detect_pod_sanitizer_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
+    for pod in &snapshot.pods {
+        let resource_ref = ResourceRef::Pod(pod.name.clone(), pod.namespace.clone());
+
+        if !rule_ignored(&pod.annotations, "missing-resources")
+            && (pod.cpu_request.is_none()
+                || pod.memory_request.is_none()
+                || pod.cpu_limit.is_none()
+                || pod.memory_limit.is_none())
+        {
+            let mut missing = Vec::new();
+            if pod.cpu_request.is_none() {
+                missing.push("cpu request");
+            }
+            if pod.memory_request.is_none() {
+                missing.push("memory request");
+            }
+            if pod.cpu_limit.is_none() {
+                missing.push("cpu limit");
+            }
+            if pod.memory_limit.is_none() {
+                missing.push("memory limit");
+            }
+            issues.push(ClusterIssue {
+                source: ClusterIssueSource::Sanitizer,
+                severity: AlertSeverity::Warning,
+                category: IssueCategory::MissingResourceRequirements,
+                resource_kind: "Pod",
+                resource_name: pod.name.clone(),
+                namespace: pod.namespace.clone(),
+                message: format!("Missing {}.", missing.join(", ")),
+                resource_ref: resource_ref.clone(),
+            });
+        }
+
+        if !rule_ignored(&pod.annotations, "missing-probes")
+            && (pod.missing_liveness_probes > 0 || pod.missing_readiness_probes > 0)
+        {
+            let mut gaps = Vec::new();
+            if pod.missing_liveness_probes > 0 {
+                gaps.push(format!(
+                    "{} container(s) missing liveness probes",
+                    pod.missing_liveness_probes
+                ));
+            }
+            if pod.missing_readiness_probes > 0 {
+                gaps.push(format!(
+                    "{} container(s) missing readiness probes",
+                    pod.missing_readiness_probes
+                ));
+            }
+            issues.push(ClusterIssue {
+                source: ClusterIssueSource::Sanitizer,
+                severity: AlertSeverity::Warning,
+                category: IssueCategory::MissingProbes,
+                resource_kind: "Pod",
+                resource_name: pod.name.clone(),
+                namespace: pod.namespace.clone(),
+                message: gaps.join("; "),
+                resource_ref: resource_ref.clone(),
+            });
+        }
+
+        if !rule_ignored(&pod.annotations, "security-context")
+            && (!pod.run_as_non_root_configured || pod.host_network || pod.host_pid || pod.host_ipc)
+        {
+            let mut gaps = Vec::new();
+            if !pod.run_as_non_root_configured {
+                gaps.push("runAsNonRoot is not enforced".to_string());
+            }
+            if pod.host_network {
+                gaps.push("hostNetwork enabled".to_string());
+            }
+            if pod.host_pid {
+                gaps.push("hostPID enabled".to_string());
+            }
+            if pod.host_ipc {
+                gaps.push("hostIPC enabled".to_string());
+            }
+            let severity = if pod.host_network || pod.host_pid || pod.host_ipc {
+                AlertSeverity::Error
+            } else {
+                AlertSeverity::Warning
+            };
+            issues.push(ClusterIssue {
+                source: ClusterIssueSource::Sanitizer,
+                severity,
+                category: IssueCategory::SecurityContextGap,
+                resource_kind: "Pod",
+                resource_name: pod.name.clone(),
+                namespace: pod.namespace.clone(),
+                message: gaps.join("; "),
+                resource_ref: resource_ref.clone(),
+            });
+        }
+
+        if !rule_ignored(&pod.annotations, "latest-tag") {
+            let drifting_images = pod
+                .container_images
+                .iter()
+                .filter(|image| image_uses_unstable_tag(image))
+                .cloned()
+                .collect::<Vec<_>>();
+            if !drifting_images.is_empty() {
+                issues.push(ClusterIssue {
+                    source: ClusterIssueSource::Sanitizer,
+                    severity: AlertSeverity::Warning,
+                    category: IssueCategory::LatestImageTag,
+                    resource_kind: "Pod",
+                    resource_name: pod.name.clone(),
+                    namespace: pod.namespace.clone(),
+                    message: format!(
+                        "Unstable image reference(s): {}",
+                        drifting_images.join(", ")
+                    ),
+                    resource_ref: resource_ref.clone(),
+                });
+            }
+        }
+
+        if !rule_ignored(&pod.annotations, "naked-pod") && pod.owner_references.is_empty() {
+            issues.push(ClusterIssue {
+                source: ClusterIssueSource::Sanitizer,
+                severity: AlertSeverity::Warning,
+                category: IssueCategory::NakedPod,
+                resource_kind: "Pod",
+                resource_name: pod.name.clone(),
+                namespace: pod.namespace.clone(),
+                message: "Pod has no owning controller.".to_string(),
+                resource_ref,
+            });
+        }
+    }
+}
+
+fn detect_deployment_pdb_gaps(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
+    for deployment in &snapshot.deployments {
+        if deployment.desired_replicas <= 1
+            || selector_is_empty(&deployment.selector)
+            || rule_ignored(&deployment.annotations, "missing-pdb")
+        {
+            continue;
+        }
+
+        let deployment_labels = if deployment.pod_template_labels.is_empty() {
+            &deployment.selector.match_labels
+        } else {
+            &deployment.pod_template_labels
+        };
+        let covered = snapshot.pod_disruption_budgets.iter().any(|pdb| {
+            pdb.namespace == deployment.namespace
+                && pdb
+                    .selector
+                    .as_ref()
+                    .is_some_and(|selector| selector_matches_map(selector, deployment_labels))
+        });
+        if covered {
+            continue;
+        }
+
+        issues.push(ClusterIssue {
+            source: ClusterIssueSource::Sanitizer,
+            severity: AlertSeverity::Warning,
+            category: IssueCategory::MissingPodDisruptionBudget,
+            resource_kind: "Deployment",
+            resource_name: deployment.name.clone(),
+            namespace: deployment.namespace.clone(),
+            message: format!(
+                "Deployment has {} desired replicas but no matching PodDisruptionBudget.",
+                deployment.desired_replicas
+            ),
+            resource_ref: ResourceRef::Deployment(
+                deployment.name.clone(),
+                deployment.namespace.clone(),
+            ),
+        });
+    }
+}
+
+fn collect_used_config_map_refs(snapshot: &ClusterSnapshot) -> BTreeSet<(String, String)> {
+    let mut used = BTreeSet::new();
+    for pod in &snapshot.pods {
+        for name in &pod.referenced_config_maps {
+            used.insert((pod.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.deployments {
+        for name in &workload.referenced_config_maps {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.statefulsets {
+        for name in &workload.referenced_config_maps {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.daemonsets {
+        for name in &workload.referenced_config_maps {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.replicasets {
+        for name in &workload.referenced_config_maps {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.replication_controllers {
+        for name in &workload.referenced_config_maps {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.jobs {
+        for name in &workload.referenced_config_maps {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.cronjobs {
+        for name in &workload.referenced_config_maps {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    used
+}
+
+fn collect_used_secret_refs(snapshot: &ClusterSnapshot) -> BTreeSet<(String, String)> {
+    let mut used = BTreeSet::new();
+    for pod in &snapshot.pods {
+        for name in &pod.referenced_secrets {
+            used.insert((pod.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.deployments {
+        for name in &workload.referenced_secrets {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.statefulsets {
+        for name in &workload.referenced_secrets {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.daemonsets {
+        for name in &workload.referenced_secrets {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.replicasets {
+        for name in &workload.referenced_secrets {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.replication_controllers {
+        for name in &workload.referenced_secrets {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.jobs {
+        for name in &workload.referenced_secrets {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    for workload in &snapshot.cronjobs {
+        for name in &workload.referenced_secrets {
+            used.insert((workload.namespace.clone(), name.clone()));
+        }
+    }
+    used
+}
+
+fn detect_service_port_mismatches(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
+    for service in &snapshot.services {
+        if service.selector.is_empty()
+            || rule_ignored(&service.annotations, "service-port-mismatch")
+        {
+            continue;
+        }
+
+        let matching_pods = snapshot
+            .pods
+            .iter()
+            .filter(|pod| {
+                pod.namespace == service.namespace
+                    && service.selector.iter().all(|(key, expected)| {
+                        pod.labels.iter().any(|(label_key, label_value)| {
+                            label_key == key && label_value == expected
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        if matching_pods.is_empty() {
+            continue;
+        }
+
+        let mismatched_ports = service
+            .port_mappings
+            .iter()
+            .filter(|port| {
+                let protocol = port.protocol.as_str();
+                matching_pods.iter().all(|pod| {
+                    pod.container_ports.iter().all(|container_port| {
+                        if container_port.protocol != protocol {
+                            return true;
+                        }
+                        match (port.target_port_number, port.target_port_name.as_deref()) {
+                            (Some(number), _) => container_port.container_port != number,
+                            (None, Some(name)) => container_port.name.as_deref() != Some(name),
+                            (None, None) => container_port.container_port != port.port,
+                        }
+                    })
+                })
+            })
+            .map(|port| port.port.to_string())
+            .collect::<Vec<_>>();
+
+        if mismatched_ports.is_empty() {
+            continue;
+        }
+
+        issues.push(ClusterIssue {
+            source: ClusterIssueSource::Sanitizer,
+            severity: AlertSeverity::Warning,
+            category: IssueCategory::ServicePortMismatch,
+            resource_kind: "Service",
+            resource_name: service.name.clone(),
+            namespace: service.namespace.clone(),
+            message: format!(
+                "No matching container port found for Service port(s): {}.",
+                mismatched_ports.join(", ")
+            ),
+            resource_ref: ResourceRef::Service(service.name.clone(), service.namespace.clone()),
+        });
+    }
+}
+
+fn detect_unused_config_maps(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
+    let used = collect_used_config_map_refs(snapshot);
+
+    for config_map in &snapshot.config_maps {
+        if config_map.name == "kube-root-ca.crt"
+            || rule_ignored(&config_map.annotations, "unused-configmap")
+        {
+            continue;
+        }
+        if used.contains(&(config_map.namespace.clone(), config_map.name.clone())) {
+            continue;
+        }
+        issues.push(ClusterIssue {
+            source: ClusterIssueSource::Sanitizer,
+            severity: AlertSeverity::Info,
+            category: IssueCategory::UnusedConfigMap,
+            resource_kind: "ConfigMap",
+            resource_name: config_map.name.clone(),
+            namespace: config_map.namespace.clone(),
+            message: "ConfigMap is not referenced by any current Pod or workload template."
+                .to_string(),
+            resource_ref: ResourceRef::ConfigMap(
+                config_map.name.clone(),
+                config_map.namespace.clone(),
+            ),
+        });
+    }
+}
+
+fn detect_unused_secrets(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
+    let used = collect_used_secret_refs(snapshot);
+
+    for secret in &snapshot.secrets {
+        if matches!(
+            secret.type_.as_str(),
+            "kubernetes.io/service-account-token" | "helm.sh/release.v1"
+        ) || rule_ignored(&secret.annotations, "unused-secret")
+        {
+            continue;
+        }
+        if used.contains(&(secret.namespace.clone(), secret.name.clone())) {
+            continue;
+        }
+        issues.push(ClusterIssue {
+            source: ClusterIssueSource::Sanitizer,
+            severity: AlertSeverity::Info,
+            category: IssueCategory::UnusedSecret,
+            resource_kind: "Secret",
+            resource_name: secret.name.clone(),
+            namespace: secret.namespace.clone(),
+            message: "Secret is not referenced by any current Pod or workload template."
+                .to_string(),
+            resource_ref: ResourceRef::Secret(secret.name.clone(), secret.namespace.clone()),
+        });
+    }
+}
+
+fn image_uses_unstable_tag(image: &str) -> bool {
+    let image_without_digest = image.split('@').next().unwrap_or(image);
+    match image_without_digest.rsplit_once(':') {
+        None => true,
+        Some((_, tag)) => tag.eq_ignore_ascii_case("latest"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use jiff::ToSpan;
 
     use super::*;
@@ -464,6 +954,20 @@ mod tests {
 
     fn empty_snapshot() -> ClusterSnapshot {
         ClusterSnapshot::default()
+    }
+
+    fn runtime_issues(issues: &[ClusterIssue]) -> Vec<&ClusterIssue> {
+        issues
+            .iter()
+            .filter(|issue| issue.source == ClusterIssueSource::Runtime)
+            .collect()
+    }
+
+    fn sanitizer_issues(issues: &[ClusterIssue]) -> Vec<&ClusterIssue> {
+        issues
+            .iter()
+            .filter(|issue| issue.source == ClusterIssueSource::Sanitizer)
+            .collect()
     }
 
     #[test]
@@ -478,9 +982,10 @@ mod tests {
             ..Default::default()
         });
         let issues = detect_issues(&snap);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].category, IssueCategory::CrashLoopBackOff);
-        assert_eq!(issues[0].severity, AlertSeverity::Error);
+        let runtime = runtime_issues(&issues);
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, IssueCategory::CrashLoopBackOff);
+        assert_eq!(runtime[0].severity, AlertSeverity::Error);
     }
 
     #[test]
@@ -493,8 +998,9 @@ mod tests {
             ..Default::default()
         });
         let issues = detect_issues(&snap);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].category, IssueCategory::ImagePullFailure);
+        let runtime = runtime_issues(&issues);
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, IssueCategory::ImagePullFailure);
     }
 
     #[test]
@@ -507,8 +1013,9 @@ mod tests {
             ..Default::default()
         });
         let issues = detect_issues(&snap);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].category, IssueCategory::CrashLoopBackOff);
+        let runtime = runtime_issues(&issues);
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, IssueCategory::CrashLoopBackOff);
     }
 
     #[test]
@@ -555,8 +1062,9 @@ mod tests {
             ..Default::default()
         });
         let issues = detect_issues(&snap);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].category, IssueCategory::FailedPod);
+        let runtime = runtime_issues(&issues);
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, IssueCategory::FailedPod);
     }
 
     #[test]
@@ -821,6 +1329,17 @@ mod tests {
             name: "web-0".into(),
             namespace: "default".into(),
             status: "Running".into(),
+            cpu_request: Some("100m".into()),
+            memory_request: Some("128Mi".into()),
+            cpu_limit: Some("500m".into()),
+            memory_limit: Some("256Mi".into()),
+            container_images: vec!["nginx:1.29.0".into()],
+            run_as_non_root_configured: true,
+            owner_references: vec![OwnerRefInfo {
+                kind: "ReplicaSet".into(),
+                name: "web".into(),
+                uid: "uid-1".into(),
+            }],
             ..Default::default()
         });
         let issues = detect_issues(&snap);
@@ -852,9 +1371,10 @@ mod tests {
             ..Default::default()
         });
         let issues = detect_issues(&snap);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].category, IssueCategory::ImagePullFailure);
-        assert!(issues[0].message.contains("ErrImagePull"));
+        let runtime = runtime_issues(&issues);
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, IssueCategory::ImagePullFailure);
+        assert!(runtime[0].message.contains("ErrImagePull"));
     }
 
     #[test]
@@ -867,9 +1387,10 @@ mod tests {
             ..Default::default()
         });
         let issues = detect_issues(&snap);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].category, IssueCategory::ImagePullFailure);
-        assert!(issues[0].message.contains("CreateContainerConfigError"));
+        let runtime = runtime_issues(&issues);
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, IssueCategory::ImagePullFailure);
+        assert!(runtime[0].message.contains("CreateContainerConfigError"));
     }
 
     #[test]
@@ -943,8 +1464,9 @@ mod tests {
             ..Default::default()
         });
         let issues = detect_issues(&snap);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].category, IssueCategory::CrashLoopBackOff);
+        let runtime = runtime_issues(&issues);
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, IssueCategory::CrashLoopBackOff);
     }
 
     #[test]
@@ -958,8 +1480,9 @@ mod tests {
             ..Default::default()
         });
         let issues = detect_issues(&snap);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].category, IssueCategory::CrashLoopBackOff);
+        let runtime = runtime_issues(&issues);
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, IssueCategory::CrashLoopBackOff);
     }
 
     #[test]
@@ -974,8 +1497,9 @@ mod tests {
             ..Default::default()
         });
         let issues = detect_issues(&snap);
-        assert_eq!(issues.len(), 1);
-        assert_eq!(issues[0].category, IssueCategory::ImagePullFailure);
+        let runtime = runtime_issues(&issues);
+        assert_eq!(runtime.len(), 1);
+        assert_eq!(runtime[0].category, IssueCategory::ImagePullFailure);
     }
 
     #[test]
@@ -1066,7 +1590,239 @@ mod tests {
 
         assert!(!Arc::ptr_eq(&a, &b));
         assert!(a.is_empty());
-        assert_eq!(b.len(), 1);
+        assert_eq!(runtime_issues(&b).len(), 1);
+    }
+
+    #[test]
+    fn sanitizer_flags_missing_resources_and_probes_for_running_pod() {
+        let mut snap = empty_snapshot();
+        snap.pods.push(PodInfo {
+            name: "lint-me".into(),
+            namespace: "default".into(),
+            status: "Running".into(),
+            container_images: vec!["repo/app:1.0.0".into()],
+            missing_liveness_probes: 1,
+            missing_readiness_probes: 1,
+            owner_references: vec![OwnerRefInfo {
+                kind: "ReplicaSet".into(),
+                name: "lint-me-rs".into(),
+                uid: "uid-2".into(),
+            }],
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        let sanitizer = sanitizer_issues(&issues);
+
+        assert!(
+            sanitizer
+                .iter()
+                .any(|issue| issue.category == IssueCategory::MissingResourceRequirements)
+        );
+        assert!(
+            sanitizer
+                .iter()
+                .any(|issue| issue.category == IssueCategory::MissingProbes)
+        );
+    }
+
+    #[test]
+    fn sanitizer_honors_ignore_annotation() {
+        let mut snap = empty_snapshot();
+        snap.pods.push(PodInfo {
+            name: "ignored".into(),
+            namespace: "default".into(),
+            status: "Running".into(),
+            annotations: vec![(
+                SANITIZER_IGNORE_ANNOTATION.to_string(),
+                "missing-resources,missing-probes,security-context,latest-tag,naked-pod"
+                    .to_string(),
+            )],
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        assert!(sanitizer_issues(&issues).is_empty());
+    }
+
+    #[test]
+    fn sanitizer_detects_missing_pdb_for_scaled_deployment() {
+        let mut snap = empty_snapshot();
+        snap.deployments.push(DeploymentInfo {
+            name: "web".into(),
+            namespace: "default".into(),
+            desired_replicas: 3,
+            selector: LabelSelectorInfo {
+                match_labels: BTreeMap::from([("app".into(), "web".into())]),
+                match_expressions: Vec::new(),
+            },
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        assert!(sanitizer_issues(&issues).iter().any(|issue| {
+            issue.category == IssueCategory::MissingPodDisruptionBudget
+                && issue.resource_name == "web"
+        }));
+    }
+
+    #[test]
+    fn sanitizer_skips_missing_pdb_when_matching_pdb_exists() {
+        let mut snap = empty_snapshot();
+        let selector = LabelSelectorInfo {
+            match_labels: BTreeMap::from([("app".into(), "web".into())]),
+            match_expressions: Vec::new(),
+        };
+        snap.deployments.push(DeploymentInfo {
+            name: "web".into(),
+            namespace: "default".into(),
+            desired_replicas: 3,
+            selector: selector.clone(),
+            ..Default::default()
+        });
+        snap.pod_disruption_budgets.push(PodDisruptionBudgetInfo {
+            name: "web-pdb".into(),
+            namespace: "default".into(),
+            selector: Some(selector),
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        assert!(!sanitizer_issues(&issues).iter().any(|issue| {
+            issue.category == IssueCategory::MissingPodDisruptionBudget
+                && issue.resource_name == "web"
+        }));
+    }
+
+    #[test]
+    fn sanitizer_matches_pdb_against_pod_template_labels() {
+        let mut snap = empty_snapshot();
+        snap.deployments.push(DeploymentInfo {
+            name: "web".into(),
+            namespace: "default".into(),
+            desired_replicas: 3,
+            selector: LabelSelectorInfo {
+                match_labels: BTreeMap::from([("app".into(), "web".into())]),
+                match_expressions: Vec::new(),
+            },
+            pod_template_labels: BTreeMap::from([
+                ("app".into(), "web".into()),
+                ("tier".into(), "frontend".into()),
+            ]),
+            ..Default::default()
+        });
+        snap.pod_disruption_budgets.push(PodDisruptionBudgetInfo {
+            name: "web-pdb".into(),
+            namespace: "default".into(),
+            selector: Some(LabelSelectorInfo {
+                match_labels: BTreeMap::from([
+                    ("app".into(), "web".into()),
+                    ("tier".into(), "frontend".into()),
+                ]),
+                match_expressions: Vec::new(),
+            }),
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        assert!(!sanitizer_issues(&issues).iter().any(|issue| {
+            issue.category == IssueCategory::MissingPodDisruptionBudget
+                && issue.resource_name == "web"
+        }));
+    }
+
+    #[test]
+    fn sanitizer_detects_service_target_port_mismatch() {
+        let mut snap = empty_snapshot();
+        snap.services.push(ServiceInfo {
+            name: "api".into(),
+            namespace: "default".into(),
+            selector: BTreeMap::from([("app".into(), "api".into())]),
+            port_mappings: vec![ServicePortInfo {
+                port: 80,
+                protocol: "TCP".into(),
+                target_port_name: None,
+                target_port_number: Some(8080),
+            }],
+            ..Default::default()
+        });
+        snap.pods.push(PodInfo {
+            name: "api-0".into(),
+            namespace: "default".into(),
+            labels: vec![("app".into(), "api".into())],
+            container_ports: vec![ContainerPortInfo {
+                name: Some("http".into()),
+                container_port: 9090,
+                protocol: "TCP".into(),
+            }],
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        assert!(sanitizer_issues(&issues).iter().any(|issue| {
+            issue.category == IssueCategory::ServicePortMismatch && issue.resource_name == "api"
+        }));
+    }
+
+    #[test]
+    fn sanitizer_detects_unused_config_map_and_secret() {
+        let mut snap = empty_snapshot();
+        snap.config_maps.push(ConfigMapInfo {
+            name: "unused-config".into(),
+            namespace: "default".into(),
+            ..Default::default()
+        });
+        snap.secrets.push(SecretInfo {
+            name: "unused-secret".into(),
+            namespace: "default".into(),
+            type_: "Opaque".into(),
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        let sanitizer = sanitizer_issues(&issues);
+
+        assert!(
+            sanitizer
+                .iter()
+                .any(|issue| issue.category == IssueCategory::UnusedConfigMap)
+        );
+        assert!(
+            sanitizer
+                .iter()
+                .any(|issue| issue.category == IssueCategory::UnusedSecret)
+        );
+    }
+
+    #[test]
+    fn sanitizer_skips_unused_refs_when_workload_template_uses_them() {
+        let mut snap = empty_snapshot();
+        snap.config_maps.push(ConfigMapInfo {
+            name: "used-config".into(),
+            namespace: "default".into(),
+            ..Default::default()
+        });
+        snap.secrets.push(SecretInfo {
+            name: "used-secret".into(),
+            namespace: "default".into(),
+            type_: "Opaque".into(),
+            ..Default::default()
+        });
+        snap.deployments.push(DeploymentInfo {
+            name: "web".into(),
+            namespace: "default".into(),
+            referenced_config_maps: vec!["used-config".into()],
+            referenced_secrets: vec!["used-secret".into()],
+            ..Default::default()
+        });
+
+        let issues = detect_issues(&snap);
+        assert!(!sanitizer_issues(&issues).iter().any(|issue| {
+            matches!(
+                issue.category,
+                IssueCategory::UnusedConfigMap | IssueCategory::UnusedSecret
+            )
+        }));
     }
 
     #[test]
@@ -1100,6 +1856,7 @@ mod tests {
     #[test]
     fn matches_query_method() {
         let issue = ClusterIssue {
+            source: ClusterIssueSource::Runtime,
             severity: AlertSeverity::Error,
             category: IssueCategory::CrashLoopBackOff,
             resource_kind: "Pod",

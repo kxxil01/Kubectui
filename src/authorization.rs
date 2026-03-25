@@ -312,7 +312,10 @@ impl ResourceRef {
                 ],
                 _ => Vec::new(),
             },
-            DetailAction::ToggleBookmark | DetailAction::ViewRelationships => Vec::new(),
+            DetailAction::ToggleBookmark
+            | DetailAction::ViewNetworkPolicies
+            | DetailAction::CheckNetworkConnectivity
+            | DetailAction::ViewRelationships => Vec::new(),
         }
     }
 

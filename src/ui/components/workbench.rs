@@ -156,6 +156,8 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, _cluster:
         WorkbenchTabState::Relations(tab) => {
             crate::ui::views::relations::render_relations_tab(frame, inner, tab, &theme)
         }
+        WorkbenchTabState::NetworkPolicy(tab) => render_network_policy_tab(frame, inner, tab),
+        WorkbenchTabState::Connectivity(tab) => render_connectivity_tab(frame, inner, tab),
     }
 }
 
@@ -218,6 +220,221 @@ fn render_action_history_tab(
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     render_scrollbar(frame, area, entries.len(), window.start);
+}
+
+fn render_network_policy_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab: &crate::workbench::NetworkPolicyTabState,
+) {
+    let theme = default_theme();
+    let summary_height = tab.summary_lines.len().min(4) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(summary_height), Constraint::Min(0)])
+        .split(area);
+
+    if summary_height > 0 {
+        let lines = tab
+            .summary_lines
+            .iter()
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.clone(),
+                    Style::default().fg(theme.fg_dim),
+                ))
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            sections[0],
+        );
+    }
+
+    crate::ui::views::relations::render_relation_tree(
+        frame,
+        sections[1],
+        crate::ui::views::relations::RelationTreeView {
+            tree: &tab.tree,
+            expanded: &tab.expanded,
+            cursor: tab.cursor,
+            loading: tab.loading,
+            error: tab.error.as_deref(),
+            loading_message: "Loading network policy analysis...",
+            empty_message: "No network policy analysis available.",
+        },
+        &theme,
+    );
+}
+
+fn render_connectivity_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab: &crate::workbench::ConnectivityTabState,
+) {
+    use crate::workbench::ConnectivityTabFocus;
+
+    let theme = default_theme();
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
+        .split(area);
+
+    let left_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(6),
+            Constraint::Length(2),
+        ])
+        .split(columns[0]);
+
+    let source_line = Paragraph::new(vec![
+        Line::from(Span::styled("Source", theme.section_title_style())),
+        Line::from(Span::styled(
+            format!(
+                "{} -> choose target pod",
+                match tab.source.namespace() {
+                    Some(namespace) => format!("{namespace}/{}", tab.source.name()),
+                    None => tab.source.name().to_string(),
+                }
+            ),
+            Style::default().fg(theme.fg),
+        )),
+    ]);
+    frame.render_widget(source_line, left_rows[0]);
+
+    let filter_block = Block::default()
+        .title(Span::styled(
+            " Filter ",
+            if tab.focus == ConnectivityTabFocus::Filter {
+                theme.title_style()
+            } else {
+                theme.section_title_style()
+            },
+        ))
+        .borders(Borders::ALL)
+        .border_style(if tab.focus == ConnectivityTabFocus::Filter {
+            theme.border_active_style()
+        } else {
+            theme.border_style()
+        });
+    let filter_text = Paragraph::new(Line::from(vec![
+        tab.filter
+            .styled_text(tab.focus == ConnectivityTabFocus::Filter),
+    ]))
+    .block(filter_block);
+    frame.render_widget(filter_text, left_rows[1]);
+
+    let target_lines = if tab.filtered_target_indices.is_empty() {
+        vec![Line::from(Span::styled(
+            "No target pod matches the current filter.",
+            Style::default().fg(theme.fg_dim),
+        ))]
+    } else {
+        let window = centered_window(
+            tab.filtered_target_indices.len(),
+            tab.selected_target,
+            left_rows[2].height.saturating_sub(2) as usize,
+        );
+        tab.filtered_target_indices[window.start..window.end]
+            .iter()
+            .enumerate()
+            .map(|(offset, target_idx)| {
+                let absolute = window.start + offset;
+                let target = &tab.targets[*target_idx];
+                let selected = absolute == tab.selected_target;
+                let style = if selected {
+                    theme.selection_style()
+                } else {
+                    Style::default().fg(theme.fg)
+                };
+                let ip = target.pod_ip.as_deref().unwrap_or("-");
+                Line::from(vec![
+                    Span::styled(if selected { "› " } else { "  " }, style),
+                    Span::styled(target.display.clone(), style),
+                    Span::styled(
+                        format!("  {}  {}", target.status, ip),
+                        Style::default().fg(theme.fg_dim),
+                    ),
+                ])
+            })
+            .collect::<Vec<_>>()
+    };
+    let targets_block = Block::default()
+        .title(Span::styled(
+            " Targets ",
+            if tab.focus == ConnectivityTabFocus::Targets {
+                theme.title_style()
+            } else {
+                theme.section_title_style()
+            },
+        ))
+        .borders(Borders::ALL)
+        .border_style(if tab.focus == ConnectivityTabFocus::Targets {
+            theme.border_active_style()
+        } else {
+            theme.border_style()
+        });
+    frame.render_widget(
+        Paragraph::new(target_lines)
+            .block(targets_block)
+            .wrap(Wrap { trim: false }),
+        left_rows[2],
+    );
+
+    let hint = match tab.focus {
+        ConnectivityTabFocus::Filter => "[Tab] targets  [Ctrl+U] clear  [Esc] return",
+        ConnectivityTabFocus::Targets => "[Enter] run  [/] filter  [Tab] result  [Esc] return",
+        ConnectivityTabFocus::Result => {
+            "[Enter] open detail  [/] filter  [Tab] filter  [Esc] return"
+        }
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(hint, theme.keybind_desc_style()))),
+        left_rows[3],
+    );
+
+    let right_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(tab.summary_lines.len().min(4) as u16),
+            Constraint::Min(0),
+        ])
+        .split(columns[1]);
+
+    if !tab.summary_lines.is_empty() {
+        let lines = tab
+            .summary_lines
+            .iter()
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.clone(),
+                    Style::default().fg(theme.fg_dim),
+                ))
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            right_rows[0],
+        );
+    }
+
+    crate::ui::views::relations::render_relation_tree(
+        frame,
+        right_rows[1],
+        crate::ui::views::relations::RelationTreeView {
+            tree: &tab.tree,
+            expanded: &tab.expanded,
+            cursor: tab.tree_cursor,
+            loading: false,
+            error: tab.error.as_deref(),
+            loading_message: "Evaluating connectivity...",
+            empty_message: "Run a connectivity check to inspect policy intent.",
+        },
+        &theme,
+    );
 }
 
 fn render_action_history_line(
@@ -438,6 +655,9 @@ fn render_resource_diff_tab(
     {
         ResourceDiffBaselineKind::LastAppliedAnnotation => {
             Span::styled(" baseline:last-applied ", theme.badge_success_style())
+        }
+        ResourceDiffBaselineKind::ServerSideApplyManagedFields => {
+            Span::styled(" baseline:ssa-managedFields ", theme.badge_warning_style())
         }
         ResourceDiffBaselineKind::Missing => {
             Span::styled(" baseline:missing ", theme.badge_warning_style())

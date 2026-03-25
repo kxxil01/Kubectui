@@ -12,35 +12,63 @@ use crate::k8s::relationships::{FlatNode, RelationKind, flatten_tree};
 use crate::ui::theme::Theme;
 use crate::workbench::RelationsTabState;
 
+pub struct RelationTreeView<'a> {
+    pub tree: &'a [crate::k8s::relationships::RelationNode],
+    pub expanded: &'a std::collections::HashSet<usize>,
+    pub cursor: usize,
+    pub loading: bool,
+    pub error: Option<&'a str>,
+    pub loading_message: &'a str,
+    pub empty_message: &'a str,
+}
+
 pub fn render_relations_tab(frame: &mut Frame, area: Rect, tab: &RelationsTabState, theme: &Theme) {
-    if tab.loading {
-        let text =
-            Paragraph::new("Loading relationships...").style(Style::default().fg(theme.fg_dim));
+    render_relation_tree(
+        frame,
+        area,
+        RelationTreeView {
+            tree: &tab.tree,
+            expanded: &tab.expanded,
+            cursor: tab.cursor,
+            loading: tab.loading,
+            error: tab.error.as_deref(),
+            loading_message: "Loading relationships...",
+            empty_message: "No relationships found.",
+        },
+        theme,
+    );
+}
+
+pub fn render_relation_tree(
+    frame: &mut Frame,
+    area: Rect,
+    view: RelationTreeView<'_>,
+    theme: &Theme,
+) {
+    if view.loading {
+        let text = Paragraph::new(view.loading_message).style(Style::default().fg(theme.fg_dim));
         frame.render_widget(text, area);
         return;
     }
 
-    if let Some(err) = &tab.error {
+    if let Some(err) = view.error {
         let text = Paragraph::new(format!("Error: {err}")).style(Style::default().fg(theme.error));
         frame.render_widget(text, area);
         return;
     }
 
-    if tab.tree.is_empty() {
-        let text =
-            Paragraph::new("No relationships found.").style(Style::default().fg(theme.fg_dim));
+    if view.tree.is_empty() {
+        let text = Paragraph::new(view.empty_message).style(Style::default().fg(theme.fg_dim));
         frame.render_widget(text, area);
         return;
     }
 
-    let flat = flatten_tree(&tab.tree, &tab.expanded);
+    let flat = flatten_tree(view.tree, view.expanded);
     let visible_height = area.height as usize;
-
-    // Scroll so cursor is visible
     let scroll_offset = if flat.is_empty() {
         0
     } else {
-        let cursor = tab.cursor.min(flat.len().saturating_sub(1));
+        let cursor = view.cursor.min(flat.len().saturating_sub(1));
         if cursor < visible_height / 2 {
             0
         } else {
@@ -48,19 +76,15 @@ pub fn render_relations_tab(frame: &mut Frame, area: Rect, tab: &RelationsTabSta
         }
     };
 
-    let mut lines = Vec::new();
-    for (i, node) in flat
+    let lines = flat
         .iter()
         .enumerate()
         .skip(scroll_offset)
         .take(visible_height)
-    {
-        let line = render_flat_node(node, i == tab.cursor, theme);
-        lines.push(line);
-    }
+        .map(|(idx, node)| render_flat_node(node, idx == view.cursor, theme))
+        .collect::<Vec<_>>();
 
-    let paragraph = Paragraph::new(lines);
-    frame.render_widget(paragraph, area);
+    frame.render_widget(Paragraph::new(lines), area);
 }
 
 fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'static> {

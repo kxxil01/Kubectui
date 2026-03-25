@@ -31,6 +31,29 @@ pub struct OwnerRefInfo {
     pub uid: String,
 }
 
+/// Simplified Kubernetes label selector for snapshot-level matching.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct LabelSelectorInfo {
+    pub match_labels: BTreeMap<String, String>,
+    pub match_expressions: Vec<LabelSelectorRequirementInfo>,
+}
+
+/// Single selector requirement from a label selector.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct LabelSelectorRequirementInfo {
+    pub key: String,
+    pub operator: String,
+    pub values: Vec<String>,
+}
+
+/// Simplified container port metadata.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ContainerPortInfo {
+    pub name: Option<String>,
+    pub container_port: i32,
+    pub protocol: String,
+}
+
 /// Lightweight pod view used by state management and rendering.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct PodInfo {
@@ -49,6 +72,25 @@ pub struct PodInfo {
     pub memory_request: Option<String>,
     pub cpu_limit: Option<String>,
     pub memory_limit: Option<String>,
+    pub container_images: Vec<String>,
+    pub container_ports: Vec<ContainerPortInfo>,
+    pub missing_liveness_probes: usize,
+    pub missing_readiness_probes: usize,
+    pub run_as_non_root_configured: bool,
+    pub host_network: bool,
+    pub host_pid: bool,
+    pub host_ipc: bool,
+    pub referenced_config_maps: Vec<String>,
+    pub referenced_secrets: Vec<String>,
+}
+
+/// Structured Service port mapping used by diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ServicePortInfo {
+    pub port: i32,
+    pub protocol: String,
+    pub target_port_name: Option<String>,
+    pub target_port_number: Option<i32>,
 }
 
 /// Lightweight service view used by list and detail pages.
@@ -60,6 +102,8 @@ pub struct ServiceInfo {
     pub cluster_ip: Option<String>,
     pub ports: Vec<String>,
     pub selector: std::collections::BTreeMap<String, String>,
+    pub port_mappings: Vec<ServicePortInfo>,
+    pub annotations: Vec<(String, String)>,
     pub created_at: Option<AppTimestamp>,
     pub age: Option<Duration>,
 }
@@ -77,6 +121,12 @@ pub struct DeploymentInfo {
     pub ready: String,
     pub age: Option<Duration>,
     pub image: Option<String>,
+    pub images: Vec<String>,
+    pub selector: LabelSelectorInfo,
+    pub pod_template_labels: BTreeMap<String, String>,
+    pub referenced_config_maps: Vec<String>,
+    pub referenced_secrets: Vec<String>,
+    pub annotations: Vec<(String, String)>,
 }
 
 /// Lightweight StatefulSet view used by list and detail pages.
@@ -89,6 +139,8 @@ pub struct StatefulSetInfo {
     pub service_name: String,
     pub pod_management_policy: String,
     pub image: Option<String>,
+    pub referenced_config_maps: Vec<String>,
+    pub referenced_secrets: Vec<String>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
 }
@@ -106,6 +158,8 @@ pub struct DaemonSetInfo {
     pub labels: BTreeMap<String, String>,
     pub status_message: String,
     pub image: Option<String>,
+    pub referenced_config_maps: Vec<String>,
+    pub referenced_secrets: Vec<String>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
 }
@@ -192,6 +246,8 @@ pub struct ReplicaSetInfo {
     pub ready: i32,
     pub available: i32,
     pub image: Option<String>,
+    pub referenced_config_maps: Vec<String>,
+    pub referenced_secrets: Vec<String>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
     pub owner_references: Vec<OwnerRefInfo>,
@@ -206,6 +262,8 @@ pub struct ReplicationControllerInfo {
     pub ready: i32,
     pub available: i32,
     pub image: Option<String>,
+    pub referenced_config_maps: Vec<String>,
+    pub referenced_secrets: Vec<String>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
 }
@@ -223,6 +281,8 @@ pub struct JobInfo {
     pub parallelism: i32,
     pub active_pods: i32,
     pub failed_pods: i32,
+    pub referenced_config_maps: Vec<String>,
+    pub referenced_secrets: Vec<String>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
     pub owner_references: Vec<OwnerRefInfo>,
@@ -240,6 +300,8 @@ pub struct CronJobInfo {
     pub last_successful_time: Option<AppTimestamp>,
     pub suspend: bool,
     pub active_jobs: i32,
+    pub referenced_config_maps: Vec<String>,
+    pub referenced_secrets: Vec<String>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
 }
@@ -288,6 +350,7 @@ pub struct PodDisruptionBudgetInfo {
     pub desired_healthy: i32,
     pub disruptions_allowed: i32,
     pub expected_pods: i32,
+    pub selector: Option<LabelSelectorInfo>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
 }
@@ -535,6 +598,7 @@ pub struct ConfigMapInfo {
     pub name: String,
     pub namespace: String,
     pub data_count: usize,
+    pub annotations: Vec<(String, String)>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
 }
@@ -546,6 +610,7 @@ pub struct SecretInfo {
     pub namespace: String,
     pub type_: String,
     pub data_count: usize,
+    pub annotations: Vec<(String, String)>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
 }
@@ -610,8 +675,34 @@ pub struct StorageClassInfo {
 pub struct NamespaceInfo {
     pub name: String,
     pub status: String,
+    pub labels: BTreeMap<String, String>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
+}
+
+/// Simplified NetworkPolicy peer selector payload.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct NetworkPolicyPeerInfo {
+    pub pod_selector: Option<LabelSelectorInfo>,
+    pub namespace_selector: Option<LabelSelectorInfo>,
+    pub ip_block_cidr: Option<String>,
+    pub ip_block_except: Vec<String>,
+}
+
+/// Simplified NetworkPolicy port payload.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct NetworkPolicyPortInfo {
+    pub protocol: Option<String>,
+    pub port_name: Option<String>,
+    pub port_number: Option<i32>,
+    pub end_port: Option<i32>,
+}
+
+/// Simplified NetworkPolicy rule for snapshot-level analysis.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct NetworkPolicyRuleInfo {
+    pub peers: Vec<NetworkPolicyPeerInfo>,
+    pub ports: Vec<NetworkPolicyPortInfo>,
 }
 
 /// Lightweight Event view.
@@ -634,6 +725,10 @@ pub struct NetworkPolicyInfo {
     pub name: String,
     pub namespace: String,
     pub pod_selector: String,
+    pub pod_selector_spec: LabelSelectorInfo,
+    pub policy_types: Vec<String>,
+    pub ingress: Vec<NetworkPolicyRuleInfo>,
+    pub egress: Vec<NetworkPolicyRuleInfo>,
     pub ingress_rules: usize,
     pub egress_rules: usize,
     pub age: Option<Duration>,

@@ -11,6 +11,7 @@ fn tab_cycles_all_views_forward() {
         // Overview
         AppView::Bookmarks,
         AppView::Issues,
+        AppView::HealthReport,
         AppView::Nodes,
         AppView::Namespaces,
         AppView::Events,
@@ -1010,6 +1011,19 @@ fn g_key_opens_debug_dialog_for_pod_detail() {
 }
 
 #[test]
+fn uppercase_c_opens_connectivity_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('C'), KeyModifiers::SHIFT));
+    assert_eq!(action, AppAction::OpenNetworkConnectivity);
+}
+
+#[test]
 fn g_key_is_noop_for_node_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -1019,6 +1033,19 @@ fn g_key_is_noop_for_node_detail() {
     });
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
+fn uppercase_c_is_noop_for_node_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('C'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::None);
 }
 

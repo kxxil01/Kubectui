@@ -88,6 +88,25 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
             "deps",
         ],
     ),
+    (
+        DetailAction::ViewNetworkPolicies,
+        &[
+            "network policy",
+            "network policies",
+            "netpol",
+            "policy view",
+        ],
+    ),
+    (
+        DetailAction::CheckNetworkConnectivity,
+        &[
+            "connectivity",
+            "reachability",
+            "can reach",
+            "network reachability",
+            "check connectivity",
+        ],
+    ),
     (DetailAction::Cordon, &["cordon", "unschedulable"]),
     (DetailAction::Uncordon, &["uncordon", "schedulable"]),
     (DetailAction::Drain, &["drain", "evict"]),
@@ -121,6 +140,10 @@ const COMMANDS: &[Command] = &[
     Command {
         view: AppView::Bookmarks,
         aliases: &["bookmarks", "bookmark", "saved", "pinned"],
+    },
+    Command {
+        view: AppView::HealthReport,
+        aliases: &["health", "health report", "sanitizer", "lint"],
     },
     Command {
         view: AppView::Nodes,
@@ -765,6 +788,11 @@ mod tests {
             entries
                 .iter()
                 .any(|e| e.action == DetailAction::DebugContainer)
+        );
+        assert!(
+            entries
+                .iter()
+                .any(|e| e.action == DetailAction::CheckNetworkConnectivity)
         );
         assert!(!entries.iter().any(|e| e.action == DetailAction::Scale));
     }

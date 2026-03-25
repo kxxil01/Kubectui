@@ -9,7 +9,7 @@ use super::{
 use crate::{
     policy::{DetailAction, ViewAction},
     ui::components::{CommandPaletteAction, ContextPickerAction, NamespacePickerAction},
-    workbench::WorkbenchTabState,
+    workbench::{ConnectivityTabFocus, WorkbenchTabState},
 };
 
 impl AppState {
@@ -505,6 +505,72 @@ impl AppState {
                         && !node.expanded
                     {
                         tab.expanded.insert(node.tree_index);
+                        let flat =
+                            crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
+                    }
+                    AppAction::None
+                }
+                KeyCode::Char('h') | KeyCode::Left => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if let Some(node) = flat.get(tab.cursor) {
+                        if node.expanded {
+                            tab.expanded.remove(&node.tree_index);
+                            let flat =
+                                crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                            tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
+                        } else if tab.cursor > 0 {
+                            for i in (0..tab.cursor).rev() {
+                                if flat[i].depth < node.depth {
+                                    tab.cursor = i;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    AppAction::None
+                }
+                KeyCode::Enter => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if let Some(node) = flat.get(tab.cursor)
+                        && let Some(resource) = &node.resource
+                        && !node.not_found
+                        && node.relation != crate::k8s::relationships::RelationKind::SectionHeader
+                    {
+                        return AppAction::OpenDetail(resource.clone());
+                    }
+                    AppAction::None
+                }
+                _ => AppAction::None,
+            },
+            WorkbenchTabState::NetworkPolicy(tab) => match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if !flat.is_empty() {
+                        tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
+                    }
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.cursor = tab.cursor.saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.cursor = 0;
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    tab.cursor = flat.len().saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('l') | KeyCode::Right => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if let Some(node) = flat.get(tab.cursor)
+                        && node.has_children
+                        && !node.expanded
+                    {
+                        tab.expanded.insert(node.tree_index);
                         // Re-clamp cursor after tree shape change.
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
@@ -546,6 +612,179 @@ impl AppState {
                 KeyCode::Esc => AppAction::EscapePressed,
                 _ => AppAction::None,
             },
+            WorkbenchTabState::Connectivity(tab) => match tab.focus {
+                ConnectivityTabFocus::Filter => match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Tab => {
+                        tab.focus = ConnectivityTabFocus::Targets;
+                        AppAction::None
+                    }
+                    KeyCode::BackTab => {
+                        tab.focus = ConnectivityTabFocus::Result;
+                        AppAction::None
+                    }
+                    KeyCode::Backspace | KeyCode::Delete => {
+                        tab.filter.delete_char();
+                        tab.refresh_filter();
+                        AppAction::None
+                    }
+                    KeyCode::Left => {
+                        tab.filter.cursor_left();
+                        AppAction::None
+                    }
+                    KeyCode::Right => {
+                        tab.filter.cursor_right();
+                        AppAction::None
+                    }
+                    KeyCode::Home => {
+                        tab.filter.cursor_home();
+                        AppAction::None
+                    }
+                    KeyCode::End => {
+                        tab.filter.cursor_end();
+                        AppAction::None
+                    }
+                    KeyCode::Enter => {
+                        tab.focus = ConnectivityTabFocus::Targets;
+                        AppAction::None
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        tab.filter.clear();
+                        tab.refresh_filter();
+                        AppAction::None
+                    }
+                    KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        tab.filter.add_char(ch);
+                        tab.refresh_filter();
+                        AppAction::None
+                    }
+                    _ => AppAction::None,
+                },
+                ConnectivityTabFocus::Targets => match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Tab => {
+                        tab.focus = ConnectivityTabFocus::Result;
+                        AppAction::None
+                    }
+                    KeyCode::BackTab => {
+                        tab.focus = ConnectivityTabFocus::Filter;
+                        AppAction::None
+                    }
+                    KeyCode::Char('/') => {
+                        tab.focus = ConnectivityTabFocus::Filter;
+                        AppAction::None
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        if !tab.filtered_target_indices.is_empty() {
+                            tab.selected_target = (tab.selected_target + 1)
+                                .min(tab.filtered_target_indices.len().saturating_sub(1));
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.selected_target = tab.selected_target.saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.selected_target = 0;
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        tab.selected_target = tab.filtered_target_indices.len().saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Enter => AppAction::OpenNetworkConnectivity,
+                    _ => AppAction::None,
+                },
+                ConnectivityTabFocus::Result => match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Tab => {
+                        tab.focus = ConnectivityTabFocus::Filter;
+                        AppAction::None
+                    }
+                    KeyCode::BackTab => {
+                        tab.focus = ConnectivityTabFocus::Targets;
+                        AppAction::None
+                    }
+                    KeyCode::Char('/') => {
+                        tab.focus = ConnectivityTabFocus::Filter;
+                        AppAction::None
+                    }
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        let flat =
+                            crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        if !flat.is_empty() {
+                            tab.tree_cursor =
+                                (tab.tree_cursor + 1).min(flat.len().saturating_sub(1));
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.tree_cursor = tab.tree_cursor.saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.tree_cursor = 0;
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        let flat =
+                            crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        tab.tree_cursor = flat.len().saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Char('l') | KeyCode::Right => {
+                        let flat =
+                            crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        if let Some(node) = flat.get(tab.tree_cursor)
+                            && node.has_children
+                            && !node.expanded
+                        {
+                            tab.expanded.insert(node.tree_index);
+                            let flat =
+                                crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                            tab.tree_cursor = tab.tree_cursor.min(flat.len().saturating_sub(1));
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::Char('h') | KeyCode::Left => {
+                        let flat =
+                            crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        if let Some(node) = flat.get(tab.tree_cursor) {
+                            if node.expanded {
+                                tab.expanded.remove(&node.tree_index);
+                                let flat = crate::k8s::relationships::flatten_tree(
+                                    &tab.tree,
+                                    &tab.expanded,
+                                );
+                                tab.tree_cursor = tab.tree_cursor.min(flat.len().saturating_sub(1));
+                            } else if tab.tree_cursor > 0 {
+                                for i in (0..tab.tree_cursor).rev() {
+                                    if flat[i].depth < node.depth {
+                                        tab.tree_cursor = i;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::Enter => {
+                        let flat =
+                            crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        if let Some(node) = flat.get(tab.tree_cursor)
+                            && let Some(resource) = &node.resource
+                            && !node.not_found
+                            && node.relation
+                                != crate::k8s::relationships::RelationKind::SectionHeader
+                        {
+                            return AppAction::OpenDetail(resource.clone());
+                        }
+                        AppAction::None
+                    }
+                    _ => AppAction::None,
+                },
+            },
         }
     }
 
@@ -571,7 +810,9 @@ impl AppState {
                 ..
             })
             | WorkbenchTabState::ResourceEvents(_)
-            | WorkbenchTabState::Relations(_) => true,
+            | WorkbenchTabState::Relations(_)
+            | WorkbenchTabState::NetworkPolicy(_) => true,
+            WorkbenchTabState::Connectivity(tab) => tab.focus != ConnectivityTabFocus::Filter,
             WorkbenchTabState::PodLogs(tab) => {
                 !tab.viewer.searching && !tab.viewer.picking_container
             }
@@ -840,6 +1081,26 @@ impl AppState {
                 }) =>
             {
                 AppAction::OpenResourceDiff
+            }
+            KeyCode::Char('N')
+                if self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::ViewNetworkPolicies)
+                }) && !self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
+            {
+                AppAction::OpenNetworkPolicyView
+            }
+            KeyCode::Char('C')
+                if self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::CheckNetworkConnectivity)
+                }) && !self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
+            {
+                AppAction::OpenNetworkConnectivity
             }
             KeyCode::Char('o')
                 if self.detail_view.as_ref().is_some_and(|detail| {

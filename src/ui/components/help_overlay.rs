@@ -32,6 +32,7 @@ const DETAIL_BASE_BINDINGS: &[(&str, &str)] = &[
     ("F", "Force delete (in confirm dialog)"),
     ("T", "Trigger CronJob"),
     ("S", "Pause/resume CronJob"),
+    ("N", "View network policy analysis"),
     ("w", "View relations"),
 ];
 
@@ -304,6 +305,9 @@ fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'sta
     if detail.is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) {
         bindings.push(("g", "Launch debug container"));
     }
+    if detail.is_some_and(|detail| detail.supports_action(DetailAction::CheckNetworkConnectivity)) {
+        bindings.push(("C", "Check pod reachability (policy intent)"));
+    }
     bindings.extend_from_slice(DETAIL_BASE_BINDINGS);
     bindings
 }
@@ -357,6 +361,7 @@ mod tests {
         let bindings = detail_bindings(Some(&detail));
         assert!(bindings.contains(&("D", "View config drift (live vs last-applied)")));
         assert!(bindings.contains(&("g", "Launch debug container")));
+        assert!(bindings.contains(&("C", "Check pod reachability (policy intent)")));
     }
 
     #[test]
@@ -369,5 +374,6 @@ mod tests {
         let bindings = detail_bindings(Some(&detail));
         assert!(bindings.contains(&("D", "Drain node (with confirmation)")));
         assert!(!bindings.contains(&("D", "View config drift (live vs last-applied)")));
+        assert!(!bindings.contains(&("C", "Check pod reachability")));
     }
 }
