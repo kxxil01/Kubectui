@@ -1024,6 +1024,45 @@ fn uppercase_c_opens_connectivity_for_pod_detail() {
 }
 
 #[test]
+fn h_key_opens_helm_history_for_helm_release_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::HelmRelease(
+            "web".to_string(),
+            "default".to_string(),
+        )),
+        yaml: Some("kind: Secret".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::OpenHelmHistory);
+}
+
+#[test]
+fn h_key_opens_helm_history_from_helm_releases_view() {
+    let mut app = AppState::default();
+    app.view = AppView::HelmReleases;
+    app.focus = Focus::Content;
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::OpenHelmHistory);
+}
+
+#[test]
+fn h_key_is_noop_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
 fn g_key_is_noop_for_node_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {

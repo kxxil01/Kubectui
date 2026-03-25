@@ -1751,13 +1751,16 @@ mod tests {
     use crate::{
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
         bookmarks::BookmarkEntry,
-        k8s::dtos::{
-            ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
-            CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo, DeploymentInfo,
-            FluxResourceInfo, IngressClassInfo, IngressInfo, JobInfo, LimitRangeInfo,
-            NetworkPolicyInfo, NodeInfo, PodDisruptionBudgetInfo, PodInfo, PvInfo, PvcInfo,
-            ResourceQuotaInfo, RoleBindingInfo, RoleInfo, ServiceAccountInfo, ServiceInfo,
-            StatefulSetInfo, StorageClassInfo,
+        k8s::{
+            dtos::{
+                ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
+                CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo, DeploymentInfo,
+                FluxResourceInfo, HelmReleaseRevisionInfo, IngressClassInfo, IngressInfo, JobInfo,
+                LimitRangeInfo, NetworkPolicyInfo, NodeInfo, PodDisruptionBudgetInfo, PodInfo,
+                PvInfo, PvcInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo, ServiceAccountInfo,
+                ServiceInfo, StatefulSetInfo, StorageClassInfo,
+            },
+            helm::HelmHistoryResult,
         },
         state::{ClusterSnapshot, DataPhase, ViewLoadState},
         time::{now, now_unix_seconds},
@@ -2104,6 +2107,43 @@ mod tests {
         app.workbench.toggle_open();
         let snapshot = ClusterSnapshot::default();
         draw_with_size(&app, &snapshot, 120, 40);
+    }
+
+    #[test]
+    fn render_helm_history_workbench_smoke() {
+        let mut app = app_with_view(AppView::HelmReleases);
+        let resource = ResourceRef::HelmRelease("web".to_string(), "default".to_string());
+        app.open_helm_history_tab(
+            resource,
+            Some(HelmHistoryResult {
+                cli_version: "v4.1.3".to_string(),
+                revisions: vec![
+                    HelmReleaseRevisionInfo {
+                        revision: 7,
+                        updated: "2026-03-25 10:15:00 +0700".to_string(),
+                        status: "deployed".to_string(),
+                        chart: "web-1.4.0".to_string(),
+                        app_version: "2.1.0".to_string(),
+                        description: "Upgrade complete".to_string(),
+                    },
+                    HelmReleaseRevisionInfo {
+                        revision: 6,
+                        updated: "2026-03-24 10:12:00 +0700".to_string(),
+                        status: "superseded".to_string(),
+                        chart: "web-1.3.0".to_string(),
+                        app_version: "2.0.0".to_string(),
+                        description: "Rollback complete".to_string(),
+                    },
+                ],
+            }),
+            None,
+            None,
+        );
+
+        let snapshot = ClusterSnapshot::default();
+        let rendered = render_to_string(&app, &snapshot);
+        assert!(rendered.contains("Helm"));
+        assert!(rendered.contains("rev   7"));
     }
 
     /// Verifies services view renders without panic for mixed service types.

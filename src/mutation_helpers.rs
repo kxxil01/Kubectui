@@ -122,6 +122,7 @@ pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
     match action {
         DetailAction::ViewYaml => AppAction::OpenResourceYaml,
         DetailAction::ViewConfigDrift => AppAction::OpenResourceDiff,
+        DetailAction::ViewHelmHistory => AppAction::OpenHelmHistory,
         DetailAction::ViewDecodedSecret => AppAction::OpenDecodedSecret,
         DetailAction::ToggleBookmark => AppAction::ToggleBookmark,
         DetailAction::ViewEvents => AppAction::OpenResourceEvents,

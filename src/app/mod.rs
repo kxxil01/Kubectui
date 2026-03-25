@@ -81,6 +81,8 @@ pub enum AppAction {
     LogsViewerSearchPrev,
     OpenResourceYaml,
     OpenResourceDiff,
+    OpenHelmHistory,
+    OpenHelmValuesDiff,
     OpenDecodedSecret,
     OpenResourceEvents,
     OpenActionHistory,
@@ -143,10 +145,12 @@ pub enum AppAction {
     OpenNetworkPolicyView,
     OpenNetworkConnectivity,
     ConfirmDrainNode,
+    ConfirmHelmRollback,
     CordonNode,
     UncordonNode,
     DrainNode,
     ForceDrainNode,
+    ExecuteHelmRollback,
     ToggleDetailMetadata,
 }
 

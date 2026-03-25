@@ -129,6 +129,101 @@ impl AppState {
                     _ => AppAction::None,
                 }
             }
+            WorkbenchTabState::HelmHistory(tab) => {
+                if tab.rollback_pending {
+                    return AppAction::None;
+                }
+
+                if tab.confirm_rollback_revision.is_some() {
+                    return match key.code {
+                        KeyCode::Esc => {
+                            tab.cancel_rollback_confirm();
+                            AppAction::None
+                        }
+                        KeyCode::Char('R') | KeyCode::Char('y') | KeyCode::Enter => {
+                            AppAction::ExecuteHelmRollback
+                        }
+                        _ => AppAction::None,
+                    };
+                }
+
+                if let Some(diff) = tab.diff.as_mut() {
+                    let max_scroll = diff.lines.len().saturating_sub(1);
+                    return match key.code {
+                        KeyCode::Esc => {
+                            tab.close_diff();
+                            AppAction::None
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            diff.scroll = diff.scroll.saturating_add(1).min(max_scroll);
+                            AppAction::None
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            diff.scroll = diff.scroll.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Char('g') => {
+                            diff.scroll = 0;
+                            AppAction::None
+                        }
+                        KeyCode::Char('G') => {
+                            diff.scroll = max_scroll;
+                            AppAction::None
+                        }
+                        KeyCode::PageDown => {
+                            diff.scroll = diff.scroll.saturating_add(10).min(max_scroll);
+                            AppAction::None
+                        }
+                        KeyCode::PageUp => {
+                            diff.scroll = diff.scroll.saturating_sub(10);
+                            AppAction::None
+                        }
+                        KeyCode::Char('R') if tab.selected_target_revision().is_some() => {
+                            AppAction::ConfirmHelmRollback
+                        }
+                        _ => AppAction::None,
+                    };
+                }
+
+                match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        tab.select_next();
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.select_previous();
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.select_top();
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        tab.select_bottom();
+                        AppAction::None
+                    }
+                    KeyCode::PageDown => {
+                        for _ in 0..10 {
+                            tab.select_next();
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::PageUp => {
+                        for _ in 0..10 {
+                            tab.select_previous();
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::Enter if tab.selected_target_revision().is_some() => {
+                        AppAction::OpenHelmValuesDiff
+                    }
+                    KeyCode::Char('R') if tab.selected_target_revision().is_some() => {
+                        AppAction::ConfirmHelmRollback
+                    }
+                    _ => AppAction::None,
+                }
+            }
             WorkbenchTabState::DecodedSecret(tab) => {
                 if tab.editing {
                     match key.code {
@@ -818,6 +913,9 @@ impl AppState {
             }
             WorkbenchTabState::WorkloadLogs(tab) => !tab.editing_text_filter,
             WorkbenchTabState::DecodedSecret(_) => false,
+            WorkbenchTabState::HelmHistory(tab) => {
+                !tab.rollback_pending && tab.confirm_rollback_revision.is_none()
+            }
             WorkbenchTabState::Exec(_) | WorkbenchTabState::PortForward(_) => false,
         };
 
@@ -1081,6 +1179,16 @@ impl AppState {
                 }) =>
             {
                 AppAction::OpenResourceDiff
+            }
+            KeyCode::Char('h')
+                if self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::ViewHelmHistory)
+                        && !detail.has_confirmation_dialog()
+                }) || (self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && self.view == AppView::HelmReleases) =>
+            {
+                AppAction::OpenHelmHistory
             }
             KeyCode::Char('N')
                 if self.detail_view.as_ref().is_some_and(|detail| {

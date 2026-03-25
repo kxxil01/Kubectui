@@ -237,6 +237,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         AppAction::LogsViewerToggleTimestamps => true,
         AppAction::OpenResourceYaml => true,
         AppAction::OpenResourceDiff => true,
+        AppAction::OpenHelmHistory => true,
+        AppAction::OpenHelmValuesDiff => true,
         AppAction::OpenDecodedSecret => true,
         AppAction::OpenResourceEvents => true,
         AppAction::ToggleBookmark => true,
@@ -446,6 +448,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             }
             true
         }
+        AppAction::ConfirmHelmRollback | AppAction::ExecuteHelmRollback => true,
         AppAction::CordonNode | AppAction::UncordonNode => {
             // Handled in main.rs (needs async K8s call)
             true
