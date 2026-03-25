@@ -224,6 +224,67 @@ impl AppState {
                     _ => AppAction::None,
                 }
             }
+            WorkbenchTabState::Rollout(tab) => {
+                if tab.mutation_pending.is_some() {
+                    return AppAction::None;
+                }
+
+                if tab.confirm_undo_revision.is_some() {
+                    return match key.code {
+                        KeyCode::Esc => {
+                            tab.cancel_undo_confirm();
+                            AppAction::None
+                        }
+                        KeyCode::Char('U') | KeyCode::Char('y') | KeyCode::Enter => {
+                            AppAction::ExecuteRolloutUndo
+                        }
+                        _ => AppAction::None,
+                    };
+                }
+
+                match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        tab.select_next();
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.select_previous();
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.select_top();
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        tab.select_bottom();
+                        AppAction::None
+                    }
+                    KeyCode::PageDown => {
+                        for _ in 0..10 {
+                            tab.select_next();
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::PageUp => {
+                        for _ in 0..10 {
+                            tab.select_previous();
+                        }
+                        AppAction::None
+                    }
+                    KeyCode::Char('R') => AppAction::RolloutRestart,
+                    KeyCode::Char('P')
+                        if tab.kind
+                            == Some(crate::k8s::rollout::RolloutWorkloadKind::Deployment) =>
+                    {
+                        AppAction::ToggleRolloutPauseResume
+                    }
+                    KeyCode::Char('U') if tab.selected_undo_revision().is_some() => {
+                        AppAction::ConfirmRolloutUndo
+                    }
+                    _ => AppAction::None,
+                }
+            }
             WorkbenchTabState::DecodedSecret(tab) => {
                 if tab.editing {
                     match key.code {
@@ -900,6 +961,11 @@ impl AppState {
             WorkbenchTabState::ActionHistory(_)
             | WorkbenchTabState::ResourceYaml(_)
             | WorkbenchTabState::ResourceDiff(_)
+            | WorkbenchTabState::Rollout(crate::workbench::RolloutTabState {
+                confirm_undo_revision: None,
+                mutation_pending: None,
+                ..
+            })
             | WorkbenchTabState::DecodedSecret(crate::workbench::DecodedSecretTabState {
                 editing: false,
                 ..
@@ -916,6 +982,7 @@ impl AppState {
             WorkbenchTabState::HelmHistory(tab) => {
                 !tab.rollback_pending && tab.confirm_rollback_revision.is_none()
             }
+            WorkbenchTabState::Rollout(_) => false,
             WorkbenchTabState::Exec(_) | WorkbenchTabState::PortForward(_) => false,
         };
 
@@ -1179,6 +1246,14 @@ impl AppState {
                 }) =>
             {
                 AppAction::OpenResourceDiff
+            }
+            KeyCode::Char('O')
+                if self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::ViewRollout)
+                        && !detail.has_confirmation_dialog()
+                }) =>
+            {
+                AppAction::OpenRollout
             }
             KeyCode::Char('h')
                 if self.detail_view.as_ref().is_some_and(|detail| {

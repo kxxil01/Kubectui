@@ -134,6 +134,9 @@ pub(crate) async fn run_app_inner(
     let (resource_diff_tx, mut resource_diff_rx) =
         tokio::sync::mpsc::channel::<ResourceDiffAsyncResult>(16);
     let mut resource_diff_request_seq: u64 = 0;
+    let (rollout_inspection_tx, mut rollout_inspection_rx) =
+        tokio::sync::mpsc::channel::<RolloutInspectionAsyncResult>(16);
+    let mut rollout_inspection_request_seq: u64 = 0;
     let (helm_history_tx, mut helm_history_rx) =
         tokio::sync::mpsc::channel::<HelmHistoryAsyncResult>(16);
     let mut helm_history_request_seq: u64 = 0;
@@ -151,7 +154,7 @@ pub(crate) async fn run_app_inner(
     let (deferred_refresh_tx, mut deferred_refresh_rx) =
         tokio::sync::mpsc::channel::<DeferredRefreshTrigger>(32);
     let (scale_tx, mut scale_rx) = tokio::sync::mpsc::channel::<ScaleAsyncResult>(16);
-    let (rollout_tx, mut rollout_rx) = tokio::sync::mpsc::channel::<RolloutRestartAsyncResult>(16);
+    let (rollout_tx, mut rollout_rx) = tokio::sync::mpsc::channel::<RolloutMutationAsyncResult>(16);
     let (flux_reconcile_tx, mut flux_reconcile_rx) =
         tokio::sync::mpsc::channel::<FluxReconcileAsyncResult>(16);
     let (trigger_cronjob_tx, mut trigger_cronjob_rx) =
@@ -451,6 +454,43 @@ pub(crate) async fn run_app_inner(
                                 &err,
                             );
                         }
+                    }
+                }
+            }
+
+            result = rollout_inspection_rx.recv() => {
+                if let Some(result) = result {
+                    let RolloutInspectionAsyncResult {
+                        request_id,
+                        resource,
+                        result,
+                    } = result;
+                    let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
+                        matches!(
+                            &tab.state,
+                            WorkbenchTabState::Rollout(rollout_tab)
+                                if rollout_tab.resource == resource
+                                    && rollout_tab.pending_request_id == Some(request_id)
+                        )
+                    });
+                    if !workbench_waiting_for_this {
+                        continue;
+                    }
+
+                    needs_redraw = true;
+                    match result {
+                        Ok(inspection) => apply_rollout_inspection_result_to_workbench(
+                            &mut app,
+                            request_id,
+                            &resource,
+                            inspection,
+                        ),
+                        Err(err) => apply_rollout_inspection_error_to_workbench(
+                            &mut app,
+                            request_id,
+                            &resource,
+                            &err,
+                        ),
                     }
                 }
             }
@@ -969,10 +1009,17 @@ pub(crate) async fn run_app_inner(
             result = rollout_rx.recv() => {
                 if let Some(result) = result {
                     if result.context_generation != refresh_state.context_generation {
+                        if let Some(tab) = app
+                            .workbench_mut()
+                            .find_tab_mut(&WorkbenchTabKey::Rollout(result.resource.clone()))
+                            && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+                        {
+                            rollout_tab.mutation_pending = None;
+                        }
                         app.complete_action_history(
                             result.action_history_id,
                             ActionStatus::Failed,
-                            "Restart verification was cancelled because the active context changed.",
+                            "Rollout mutation verification was cancelled because the active context changed.",
                             true,
                         );
                         continue;
@@ -980,11 +1027,51 @@ pub(crate) async fn run_app_inner(
                     needs_redraw = true;
                     match result.result {
                         Ok(()) => {
+                            let (success_message, refresh_message) = match result.kind {
+                                RolloutMutationKind::Restart => (
+                                    format!("Restart requested for {}.", result.resource_label),
+                                    format!(
+                                        "Restart requested for {}. Refreshing view...",
+                                        result.resource_label
+                                    ),
+                                ),
+                                RolloutMutationKind::Pause => (
+                                    format!("Paused rollout for {}.", result.resource_label),
+                                    format!(
+                                        "Paused rollout for {}. Refreshing view...",
+                                        result.resource_label
+                                    ),
+                                ),
+                                RolloutMutationKind::Resume => (
+                                    format!("Resumed rollout for {}.", result.resource_label),
+                                    format!(
+                                        "Resumed rollout for {}. Refreshing view...",
+                                        result.resource_label
+                                    ),
+                                ),
+                                RolloutMutationKind::Undo(revision) => (
+                                    format!(
+                                        "Rolled back {} to revision {}.",
+                                        result.resource_label, revision
+                                    ),
+                                    format!(
+                                        "Rolled back {} to revision {}. Refreshing view...",
+                                        result.resource_label, revision
+                                    ),
+                                ),
+                            };
                             app.complete_action_history(
                                 result.action_history_id,
                                 ActionStatus::Succeeded,
-                                format!("Restart requested for {}.", result.resource_label),
+                                success_message,
                                 true,
+                            );
+                            action::rollout::refresh_rollout_tab(
+                                &mut app,
+                                &client,
+                                &rollout_inspection_tx,
+                                &mut rollout_inspection_request_seq,
+                                result.resource.clone(),
                             );
                             apply_mutation_success(
                                 &mut app,
@@ -999,23 +1086,35 @@ pub(crate) async fn run_app_inner(
                                     status_message_clear_at: &mut status_message_clear_at,
                                 },
                                 result.origin_view,
-                                format!(
-                                    "Restart requested for {}. Refreshing view...",
-                                    result.resource_label
-                                ),
+                                refresh_message,
                                 false,
                                 MUTATION_REFRESH_DELAYS_SECS,
                             );
                         }
                         Err(err) => {
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::Rollout(result.resource.clone()))
+                                && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+                            {
+                                rollout_tab.mutation_pending = None;
+                            }
+                            let failure_message = match result.kind {
+                                RolloutMutationKind::Restart => format!("Restart failed: {err}"),
+                                RolloutMutationKind::Pause => format!("Pause failed: {err}"),
+                                RolloutMutationKind::Resume => format!("Resume failed: {err}"),
+                                RolloutMutationKind::Undo(_) => {
+                                    format!("Rollout undo failed: {err}")
+                                }
+                            };
                             app.complete_action_history(
                                 result.action_history_id,
                                 ActionStatus::Failed,
-                                format!("Restart failed: {err}"),
+                                failure_message.clone(),
                                 true,
                             );
                             status_message_clear_at = None;
-                            app.set_error(format!("Restart failed: {err}"));
+                            app.set_error(failure_message);
                         }
                     }
                 }
@@ -2352,6 +2451,19 @@ pub(crate) async fn run_app_inner(
                         continue;
                     }
                 }
+                AppAction::OpenRollout => {
+                    if action::rollout::handle_open_rollout(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                        &rollout_inspection_tx,
+                        &mut rollout_inspection_request_seq,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
                 AppAction::OpenHelmHistory => {
                     if action::helm::handle_open_helm_history(
                         &mut app,
@@ -3050,85 +3162,16 @@ pub(crate) async fn run_app_inner(
                     }
                 }
                 AppAction::RolloutRestart => {
-                    if !app
-                        .detail_view
-                        .as_ref()
-                        .is_some_and(|detail| detail.supports_action(DetailAction::Restart))
+                    if action::rollout::handle_rollout_restart(
+                        &mut app,
+                        &client,
+                        &rollout_tx,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
                     {
-                        app.set_error(
-                            "Restart is unavailable for the selected resource.".to_string(),
-                        );
                         continue;
-                    }
-                    let restart_info = app.detail_view.as_ref().and_then(|d| {
-                        d.resource.as_ref().and_then(|r| match r {
-                            ResourceRef::Deployment(name, ns) => {
-                                Some(("deployment".to_string(), name.clone(), ns.clone()))
-                            }
-                            ResourceRef::StatefulSet(name, ns) => {
-                                Some(("statefulset".to_string(), name.clone(), ns.clone()))
-                            }
-                            ResourceRef::DaemonSet(name, ns) => {
-                                Some(("daemonset".to_string(), name.clone(), ns.clone()))
-                            }
-                            _ => None,
-                        })
-                    });
-                    if let Some((kind, name, namespace)) = restart_info {
-                        let resource = match kind.as_str() {
-                            "deployment" => {
-                                ResourceRef::Deployment(name.clone(), namespace.clone())
-                            }
-                            "statefulset" => {
-                                ResourceRef::StatefulSet(name.clone(), namespace.clone())
-                            }
-                            "daemonset" => ResourceRef::DaemonSet(name.clone(), namespace.clone()),
-                            _ => unreachable!("validated restartable resource"),
-                        };
-                        if let Some(message) = detail_action_block_message(
-                            &app,
-                            &client,
-                            &resource,
-                            DetailAction::Restart,
-                        )
-                        .await
-                        {
-                            app.set_error(message);
-                            continue;
-                        }
-                        let resource_label =
-                            format!("{} '{}' in namespace '{}'", kind, name, namespace);
-                        let origin_view = app.view();
-                        let action_history_id = app.record_action_pending(
-                            ActionKind::Restart,
-                            origin_view,
-                            Some(resource),
-                            resource_label.clone(),
-                            format!("Requesting restart for {resource_label}..."),
-                        );
-                        begin_detail_mutation(
-                            &mut app,
-                            &mut status_message_clear_at,
-                            format!("Requesting restart for {resource_label}..."),
-                        );
-                        let tx = rollout_tx.clone();
-                        let c = client.clone();
-                        let context_generation = refresh_state.context_generation;
-                        tokio::spawn(async move {
-                            let result = c
-                                .rollout_restart(&kind, &name, &namespace)
-                                .await
-                                .map_err(|e| format!("{e:#}"));
-                            let _ = tx
-                                .send(RolloutRestartAsyncResult {
-                                    action_history_id,
-                                    context_generation,
-                                    origin_view,
-                                    resource_label,
-                                    result,
-                                })
-                                .await;
-                        });
                     }
                 }
                 AppAction::DeleteResource => {
@@ -3194,6 +3237,11 @@ pub(crate) async fn run_app_inner(
                 AppAction::ConfirmDrainNode => {
                     action::node_ops::handle_confirm_drain_node(&mut app);
                 }
+                AppAction::ConfirmRolloutUndo => {
+                    if action::rollout::handle_confirm_rollout_undo(&mut app) {
+                        continue;
+                    }
+                }
                 AppAction::ConfirmHelmRollback => {
                     if action::helm::handle_confirm_helm_rollback(&mut app) {
                         continue;
@@ -3255,6 +3303,32 @@ pub(crate) async fn run_app_inner(
                         refresh_state.context_generation,
                         &mut status_message_clear_at,
                     ) {
+                        continue;
+                    }
+                }
+                AppAction::ToggleRolloutPauseResume => {
+                    if action::rollout::handle_toggle_rollout_pause_resume(
+                        &mut app,
+                        &client,
+                        &rollout_tx,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
+                AppAction::ExecuteRolloutUndo => {
+                    if action::rollout::handle_execute_rollout_undo(
+                        &mut app,
+                        &client,
+                        &rollout_tx,
+                        refresh_state.context_generation,
+                        &mut status_message_clear_at,
+                    )
+                    .await
+                    {
                         continue;
                     }
                 }

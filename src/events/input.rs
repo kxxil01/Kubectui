@@ -237,6 +237,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         AppAction::LogsViewerToggleTimestamps => true,
         AppAction::OpenResourceYaml => true,
         AppAction::OpenResourceDiff => true,
+        AppAction::OpenRollout => true,
         AppAction::OpenHelmHistory => true,
         AppAction::OpenHelmValuesDiff => true,
         AppAction::OpenDecodedSecret => true,
@@ -308,6 +309,12 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::RolloutRestart => {
+            // Handled in main.rs event loop (needs async K8s call)
+            true
+        }
+        AppAction::ToggleRolloutPauseResume
+        | AppAction::ConfirmRolloutUndo
+        | AppAction::ExecuteRolloutUndo => {
             // Handled in main.rs event loop (needs async K8s call)
             true
         }
