@@ -285,9 +285,7 @@ mod tests {
     #[tokio::test]
     async fn test_coordinator_creation() {
         let (tx, _rx) = mpsc::channel(4096);
-        let client = K8sClient::connect()
-            .await
-            .expect("Failed to connect to K8s cluster");
+        let client = K8sClient::dummy();
 
         let coordinator = UpdateCoordinator::new(client, tx);
 

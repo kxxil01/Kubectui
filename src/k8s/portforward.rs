@@ -296,18 +296,14 @@ async fn proxy_connection(
 mod tests {
     use super::*;
 
-    async fn service() -> PortForwarderService {
-        let client = Arc::new(
-            crate::k8s::client::K8sClient::connect()
-                .await
-                .expect("kind cluster should be available for tests"),
-        );
+    fn service() -> PortForwarderService {
+        let client = Arc::new(crate::k8s::client::K8sClient::dummy());
         PortForwarderService::new(client)
     }
 
     #[tokio::test]
     async fn start_forward_binds_ephemeral_port() {
-        let svc = service().await;
+        let svc = service();
         let target = PortForwardTarget::new("default", "pod-a", 8080);
 
         let tunnel = svc
@@ -322,7 +318,7 @@ mod tests {
 
     #[tokio::test]
     async fn start_forward_rejects_duplicate_id() {
-        let svc = service().await;
+        let svc = service();
         let target = PortForwardTarget::new("default", "pod-b", 9090);
 
         svc.start_forward(target.clone(), PortForwardConfig::default())
@@ -339,7 +335,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_list_and_stop_tunnel_round_trip() {
-        let svc = service().await;
+        let svc = service();
         let target = PortForwardTarget::new("default", "pod-c", 7070);
 
         let tunnel = svc
@@ -364,7 +360,7 @@ mod tests {
 
     #[tokio::test]
     async fn stop_all_clears_multiple_tunnels() {
-        let svc = service().await;
+        let svc = service();
 
         for (pod, port) in [("pod-d", 8081), ("pod-e", 8082), ("pod-f", 8083)] {
             svc.start_forward(
@@ -381,8 +377,14 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore = "requires a live Kubernetes cluster"]
     async fn create_tunnel_async_returns_pod_not_found_for_missing_pod() {
-        let svc = service().await;
+        let client = Arc::new(
+            crate::k8s::client::K8sClient::connect()
+                .await
+                .expect("kind cluster should be available for tests"),
+        );
+        let svc = PortForwarderService::new(client);
         let target = PortForwardTarget::new("default", "pod-that-does-not-exist", 8080);
 
         let err = svc

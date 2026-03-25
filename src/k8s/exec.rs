@@ -515,6 +515,21 @@ async fn wait_for_debug_container_ready(
                 return Ok(());
             }
 
+            if container_status
+                .state
+                .as_ref()
+                .is_some_and(container_state_is_terminated)
+            {
+                let reason = container_status
+                    .state
+                    .as_ref()
+                    .and_then(describe_debug_container_state)
+                    .unwrap_or_else(|| "unknown reason".to_string());
+                return Err(anyhow!(
+                    "Debug container '{container_name}' terminated before becoming ready: {reason}"
+                ));
+            }
+
             last_state = container_status
                 .state
                 .as_ref()
@@ -536,6 +551,10 @@ async fn wait_for_debug_container_ready(
 
 fn container_state_is_running(state: &ContainerState) -> bool {
     state.running.is_some()
+}
+
+fn container_state_is_terminated(state: &ContainerState) -> bool {
+    state.terminated.is_some()
 }
 
 fn describe_debug_container_state(state: &ContainerState) -> Option<String> {
