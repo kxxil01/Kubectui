@@ -42,6 +42,7 @@ impl Default for AppState {
             cluster_preferences: None,
             current_context_name: None,
             needs_config_save: false,
+            pending_workspace_restore: None,
             workbench: WorkbenchState::default(),
             spinner_tick: 0,
             toasts: Vec::new(),

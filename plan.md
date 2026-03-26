@@ -43,7 +43,7 @@ Current milestone status:
 - Milestone 25: completed
 - Milestone 26: completed
 - Milestone 27: completed
-- Milestone 28: not started
+- Milestone 28: completed
 - Milestone 29: not started
 - Milestone 30: not started
 - Milestone 31: not started
@@ -83,6 +83,7 @@ Completion notes:
 - Milestone 25 shipped: snapshot-only NetworkPolicy analysis for Pods, Namespaces, and NetworkPolicies, dedicated NetPol workbench tab with resolved ingress/egress rule trees, namespace isolation summaries, and a Pod reachability query (`C`) that evaluates source egress plus destination ingress intent in one canonical workbench flow. The connectivity surface reuses the relationship-tree renderer, stays API-free beyond the existing snapshot, explicitly frames output as policy intent rather than CNI enforcement, and caps broad peer expansions so large selectors do not explode the tree/render path.
 - Milestone 26 shipped (PR #59): workbench-hosted Rollout Control Center for Deployments, StatefulSets, and DaemonSets with revision-aware rollout inspection, workload-condition summaries, in-tab restart, Deployment pause/resume, revision undo with confirmation, action history coverage, palette/help/detail-view `O` integration, and API-native mutation/fetch paths without shelling out to `kubectl rollout`. The rollout tab dedupes per workload, preserves selected revision across refreshes, refreshes inspection after successful mutations, and shipped with regression coverage plus a positive render-path median check.
 - Milestone 27 shipped (PR #60): advanced investigation on the canonical pod/workload logs path with saved presets, regex/text mode, bounded time-window filters, exact RFC3339 jump-to-time, structured JSON summaries, severity/request-id badges, cross-pod correlation by request token or pod label, and filtered copy/export behavior that follows the active investigation view rather than raw buffers. Workload target refresh now rebuilds label/pod/container filter inventories as the single source of truth so presets and filters stay correct across retargets.
+- Milestone 28 shipped (PR #61): saved workspaces, lightweight cluster/view banks, typed configurable hotkeys for views/actions/workspaces/banks, palette/help integration, authoritative workspace restore across context and namespace switches, stable persisted workspace keys for AppView/NavGroup, and runtime cleanup for non-persisted port-forward/log/exec state during restore.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
 - 2026-03-18 kube 3.1 metadata watch adoption: namespace discovery and the Namespaces view now use metadata-only `Namespace` payloads end-to-end. The canonical watch path uses `metadata_watcher()` for cluster-scoped namespace updates, polling uses `list_metadata()` for namespace fetches, and namespace status is derived consistently from metadata (`Active` vs `Terminating`) so the picker and namespace view stay live with lower API payload cost.
@@ -118,6 +119,7 @@ Verification status for completed milestones:
 - Latest M20 verification on 2026-03-25: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Helm history, computed-values diff, and rollback on the canonical workbench/action-history path.
 - Latest M26 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping the Rollout Control Center. The clean 5-run render median comparison vs pre-M26 `HEAD` was positive (`261.326ms -> 257.281ms`, `-4.045ms`, `-1.55%`). GitHub PR checks for PR #59 also passed: `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)`.
 - Latest M27 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping advanced log investigation. The final local review also fixed a single-pod all-containers build regression and hardened workload target refresh so stale pod/container/label filters cannot survive retargets.
+- Latest M28 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping workspaces, banks, and typed hotkeys. The clean 5-run render-profile comparison vs clean `HEAD` was positive (`render` `254.102ms -> 249.561ms`, `-4.541ms`; `sidebar` `20.106ms -> 19.792ms`; `header` `14.428ms -> 14.354ms`).
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -1954,21 +1956,17 @@ This is the execution order.
 
 ## P5 (Next)
 
-- Milestone 28: Hotkeys / Workspaces / Cluster Banks
 - Milestone 29: Security / Vulnerability Center
+- Milestone 30: Resource Create / Apply Templates
 
 ## P6
 
-- Milestone 30: Resource Create / Apply Templates
 - Milestone 31: Service / Traffic Debugging
+- Milestone 32: Node Shell / Node Debug
 
 ## P7
 
 - Milestone 23: Extension System & AI Assistant Hooks
-
-## P8 (Later)
-
-- Milestone 32: Node Shell / Node Debug
 
 ## Continuous
 
@@ -1978,13 +1976,13 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M27 are complete. The next highest-priority unstarted milestones are the direct operator workflow wins, with M23 intentionally deferred behind them.
+M0-M28 are complete. The next highest-priority unstarted milestones are the direct operator workflow wins, with M23 intentionally deferred behind them.
 
 Recommended near-term order:
 
-- M28: Hotkeys / Workspaces / Cluster Banks
 - M29: Security / Vulnerability Center
 - M30: Resource Create / Apply Templates
+- M31: Service / Traffic Debugging
 
 Do not start next with:
 
@@ -2001,22 +1999,20 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 ### Big Win Priority Order
 
-1. M28: Hotkeys / Workspaces / Cluster Banks
-2. M29: Security / Vulnerability Center
-3. M30: Resource Create / Apply Templates
-4. M31: Service / Traffic Debugging
+1. M29: Security / Vulnerability Center
+2. M30: Resource Create / Apply Templates
+3. M31: Service / Traffic Debugging
+4. M32: Node Shell / Node Debug
 5. M23: Extension System & AI Assistant Hooks
-6. M32: Node Shell / Node Debug
 
 ### Why this order
 
-- M26 and M27 are shipped and validated; they remain the reference for the kind of high-leverage workflow-compression milestone that should come first.
-- M28 now becomes the next amplifier milestone after logs by reducing repetitive navigation and making high-value workflows one keystroke away.
-- M29 is high value but depends on either external scanners/operators or a careful local integration model, so it should follow the workflow-compression milestones first.
-- M30 is useful, but creation/apply flows are less central than investigation/recovery flows for KubecTUI's current positioning.
-- M31 is valuable but overlaps with M25 and existing relationship tooling, so it should come after the higher-leverage operational surfaces.
-- M23 is still strategically useful, but it is an extensibility platform rather than a direct operator workflow win; it should follow the bigger day-to-day and incident-response gains first.
-- M32 is powerful but riskier, more privilege-sensitive, and easier to get wrong operationally, so it belongs later.
+- M28 is now shipped and validated; it amplifies the rest of the operator workflow surface by making repeat layouts and jumps cheap.
+- M29 is next because it extends the already-shipped Health Report / Issue Center path with the highest remaining operator-security payoff.
+- M30 follows because safe create/apply templates are valuable but still secondary to investigation and remediation surfaces.
+- M31 remains valuable, but it overlaps with M25 and existing relationship tooling, so it should follow the higher-leverage operational surfaces.
+- M32 is powerful but riskier, more privilege-sensitive, and easier to get wrong operationally, so it should remain behind the safer service/debugging flows.
+- M23 is still strategically useful, but it is an extensibility platform rather than a direct operator workflow win; it stays last among the remaining roadmap items.
 
 ### Candidate Milestones
 
@@ -2072,6 +2068,7 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 #### M28: Hotkeys / Workspaces / Cluster Banks
 
+- Status: Completed (PR #61)
 - Big win: high
 - Why:
   - compresses repetitive operator workflows
@@ -2085,6 +2082,13 @@ These are the highest-value remaining roadmap candidates. They are intentionally
   - stable persisted format
   - explicit context boundaries
   - no hidden state mutations when switching contexts
+- Shipped scope:
+  - persisted saved workspaces capturing context, namespace, view, collapsed nav groups, and action-history/workbench layout
+  - lightweight workspace banks for direct cluster/view jumps without pretending to restore full resource-session state
+  - typed configurable hotkeys for views, global actions, saved workspaces, and banks
+  - command-palette and help-overlay integration for saving/applying workspaces and activating banks
+  - authoritative restore behavior across direct apply, namespace switch, and context switch, including cleanup of log/exec/port-forward runtime state that is not represented in the snapshot
+  - stable persisted string keys for `AppView` and `NavGroup`, with backward-compatible deserialization for legacy enum spellings
 
 #### M29: Security / Vulnerability Center
 

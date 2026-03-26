@@ -28,3 +28,4 @@ pub mod time;
 pub mod timeline;
 pub mod ui;
 pub mod workbench;
+pub mod workspaces;

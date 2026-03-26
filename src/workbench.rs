@@ -1606,6 +1606,23 @@ impl WorkbenchState {
         self.tabs.iter().any(|tab| tab.state.key() == *key)
     }
 
+    pub fn close_tab_by_key(&mut self, key: &WorkbenchTabKey) -> bool {
+        let Some(index) = self.tabs.iter().position(|tab| tab.state.key() == *key) else {
+            return false;
+        };
+        self.tabs.remove(index);
+        if self.tabs.is_empty() {
+            self.open = false;
+            self.maximized = false;
+            self.active_tab = 0;
+        } else if self.active_tab >= self.tabs.len() {
+            self.active_tab = self.tabs.len() - 1;
+        } else if index <= self.active_tab && self.active_tab > 0 {
+            self.active_tab -= 1;
+        }
+        true
+    }
+
     /// Remove all resource-bound tabs (YAML, Drift, Events, Logs, Exec) that become
     /// stale after a context or namespace switch.  ActionHistory and PortForward
     /// are retained since they are not resource-scoped.
@@ -1616,6 +1633,22 @@ impl WorkbenchState {
                 WorkbenchTabKind::ActionHistory | WorkbenchTabKind::PortForward
             )
         });
+        if self.tabs.is_empty() {
+            self.open = false;
+            self.maximized = false;
+            self.active_tab = 0;
+        } else {
+            self.active_tab = self.active_tab.min(self.tabs.len().saturating_sub(1));
+        }
+    }
+
+    /// Reset workbench state to the subset represented in saved workspace snapshots.
+    ///
+    /// Saved workspaces do not persist live resource sessions or port-forward tabs, so
+    /// workspace restore must clear them authoritatively before applying the snapshot.
+    pub fn close_tabs_for_workspace_restore(&mut self) {
+        self.tabs
+            .retain(|tab| matches!(tab.state.kind(), WorkbenchTabKind::ActionHistory));
         if self.tabs.is_empty() {
             self.open = false;
             self.maximized = false;
@@ -2041,6 +2074,26 @@ mod tests {
         state.close_resource_tabs();
         assert!(!state.maximized);
         assert!(!state.open);
+    }
+
+    #[test]
+    fn close_tabs_for_workspace_restore_drops_port_forward() {
+        let mut state = WorkbenchState::default();
+        state.open_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
+        state.open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
+            None,
+            PortForwardDialog::new(),
+        )));
+        state.maximized = true;
+
+        state.close_tabs_for_workspace_restore();
+
+        assert!(state.has_tab(&WorkbenchTabKey::ActionHistory));
+        assert!(!state.has_tab(&WorkbenchTabKey::PortForward));
+        assert_eq!(state.tabs.len(), 1);
+        assert!(state.maximized);
     }
 
     #[test]

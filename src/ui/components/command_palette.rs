@@ -12,6 +12,7 @@ use std::cell::RefCell;
 
 use crate::app::{AppView, ResourceRef};
 use crate::policy::{DetailAction, ResourceActionContext};
+use crate::workspaces::display_hotkey;
 
 /// Actions emitted by the command palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,6 +21,9 @@ pub enum CommandPaletteAction {
     Navigate(AppView),
     Execute(DetailAction, ResourceRef),
     ToggleColumn(String),
+    SaveWorkspace,
+    ApplyWorkspace(String),
+    ActivateWorkspaceBank(String),
     Close,
 }
 
@@ -27,6 +31,12 @@ pub enum CommandPaletteAction {
 pub enum PaletteEntry {
     Navigate(AppView),
     Action(DetailAction),
+    SaveWorkspace,
+    Workspace(String),
+    WorkspaceBank {
+        name: String,
+        hotkey: Option<String>,
+    },
     ColumnToggle {
         id: String,
         label: String,
@@ -320,6 +330,8 @@ pub struct CommandPalette {
     resource_context: Option<ResourceActionContext>,
     /// Column toggle info for current view: (id, label, currently_visible).
     columns_info: Option<Vec<(String, String, bool)>>,
+    saved_workspaces: Vec<String>,
+    workspace_banks: Vec<(String, Option<String>)>,
 }
 
 impl CommandPalette {
@@ -343,6 +355,16 @@ impl CommandPalette {
 
     pub fn set_columns_info(&mut self, info: Option<Vec<(String, String, bool)>>) {
         self.columns_info = info;
+        self.cached_filtered.borrow_mut().take();
+    }
+
+    pub fn set_workspace_info(
+        &mut self,
+        saved_workspaces: Vec<String>,
+        workspace_banks: Vec<(String, Option<String>)>,
+    ) {
+        self.saved_workspaces = saved_workspaces;
+        self.workspace_banks = workspace_banks;
         self.cached_filtered.borrow_mut().take();
     }
 
@@ -372,6 +394,13 @@ impl CommandPalette {
                             } else {
                                 CommandPaletteAction::None
                             }
+                        }
+                        PaletteEntry::SaveWorkspace => CommandPaletteAction::SaveWorkspace,
+                        PaletteEntry::Workspace(name) => {
+                            CommandPaletteAction::ApplyWorkspace(name.clone())
+                        }
+                        PaletteEntry::WorkspaceBank { name, .. } => {
+                            CommandPaletteAction::ActivateWorkspaceBank(name.clone())
                         }
                         PaletteEntry::ColumnToggle { id, .. } => {
                             CommandPaletteAction::ToggleColumn(id.clone())
@@ -439,9 +468,42 @@ impl CommandPalette {
             }
         }
 
+        let q_lower = self.query.to_ascii_lowercase();
+
+        if self.query.is_empty()
+            || fuzzy_match("workspace", &q_lower)
+            || fuzzy_match("save workspace", &q_lower)
+            || fuzzy_match("layout", &q_lower)
+        {
+            result.push(PaletteEntry::SaveWorkspace);
+        }
+
+        for name in &self.saved_workspaces {
+            let lower = name.to_ascii_lowercase();
+            if self.query.is_empty()
+                || fuzzy_match(&lower, &q_lower)
+                || fuzzy_match("workspace", &q_lower)
+            {
+                result.push(PaletteEntry::Workspace(name.clone()));
+            }
+        }
+
+        for (name, hotkey) in &self.workspace_banks {
+            let lower = name.to_ascii_lowercase();
+            if self.query.is_empty()
+                || fuzzy_match(&lower, &q_lower)
+                || fuzzy_match("bank", &q_lower)
+                || fuzzy_match("workspace bank", &q_lower)
+            {
+                result.push(PaletteEntry::WorkspaceBank {
+                    name: name.clone(),
+                    hotkey: hotkey.clone(),
+                });
+            }
+        }
+
         // Column toggles (when query matches "columns", "toggle", or a column label)
         if let Some(cols) = &self.columns_info {
-            let q_lower = self.query.to_ascii_lowercase();
             for (id, label, visible) in cols {
                 let label_lower = label.to_ascii_lowercase();
                 if q_lower.is_empty()
@@ -564,6 +626,8 @@ impl CommandPalette {
             ))));
         } else {
             let mut seen_action = false;
+            let mut seen_workspace = false;
+            let mut seen_bank = false;
             let mut seen_column = false;
             let mut seen_nav = false;
 
@@ -580,6 +644,20 @@ impl CommandPalette {
                         seen_column = true;
                         items.push(ListItem::new(Line::from(Span::styled(
                             " ── Columns ──",
+                            theme.muted_style(),
+                        ))));
+                    }
+                    PaletteEntry::SaveWorkspace | PaletteEntry::Workspace(_) if !seen_workspace => {
+                        seen_workspace = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Workspaces ──",
+                            theme.muted_style(),
+                        ))));
+                    }
+                    PaletteEntry::WorkspaceBank { .. } if !seen_bank => {
+                        seen_bank = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Banks ──",
                             theme.muted_style(),
                         ))));
                     }
@@ -622,9 +700,22 @@ impl CommandPalette {
 
                 let (name, right_label) = match entry {
                     PaletteEntry::Navigate(view) => {
-                        (view.label(), view.group().label().to_string())
+                        (view.label().to_string(), view.group().label().to_string())
                     }
-                    PaletteEntry::Action(action) => (action.label(), action.key_hint().to_string()),
+                    PaletteEntry::Action(action) => {
+                        (action.label().to_string(), action.key_hint().to_string())
+                    }
+                    PaletteEntry::SaveWorkspace => {
+                        ("Save current workspace".to_string(), "[W]".to_string())
+                    }
+                    PaletteEntry::Workspace(name) => (name.clone(), "Workspace".to_string()),
+                    PaletteEntry::WorkspaceBank { name, hotkey } => (
+                        name.clone(),
+                        hotkey
+                            .as_deref()
+                            .map(display_hotkey)
+                            .unwrap_or_else(|| "Bank".to_string()),
+                    ),
                     PaletteEntry::ColumnToggle { .. } => unreachable!(),
                 };
 
@@ -718,7 +809,7 @@ mod tests {
     #[test]
     fn filtered_empty_query_returns_all() {
         let p = CommandPalette::default();
-        assert_eq!(p.filtered().len(), COMMANDS.len());
+        assert_eq!(p.filtered().len(), COMMANDS.len() + 1);
     }
 
     #[test]
@@ -771,7 +862,7 @@ mod tests {
         let mut p = CommandPalette::default();
         p.open();
         p.handle_key(KeyEvent::from(KeyCode::Up));
-        assert_eq!(p.selected_index, COMMANDS.len() - 1);
+        assert_eq!(p.selected_index, p.filtered().len() - 1);
     }
 
     #[test]
@@ -1062,7 +1153,7 @@ mod tests {
         assert!(
             entries
                 .iter()
-                .all(|e| matches!(e, PaletteEntry::Navigate(_)))
+                .all(|e| matches!(e, PaletteEntry::Navigate(_) | PaletteEntry::SaveWorkspace))
         );
     }
 
@@ -1102,6 +1193,39 @@ mod tests {
         assert!(
             entries.len() > COMMANDS.len(),
             "Should have more entries than navigation alone"
+        );
+    }
+
+    #[test]
+    fn palette_includes_workspace_entries() {
+        let mut palette = CommandPalette::default();
+        palette.set_workspace_info(
+            vec!["prod pods".into()],
+            vec![("prod bank".into(), Some("alt+1".into()))],
+        );
+        palette.open();
+
+        let entries = palette.filtered();
+        assert!(entries.contains(&PaletteEntry::SaveWorkspace));
+        assert!(entries.contains(&PaletteEntry::Workspace("prod pods".into())));
+        assert!(entries.contains(&PaletteEntry::WorkspaceBank {
+            name: "prod bank".into(),
+            hotkey: Some("alt+1".into()),
+        }));
+    }
+
+    #[test]
+    fn palette_enter_can_apply_workspace() {
+        let mut palette = CommandPalette::default();
+        palette.set_workspace_info(vec!["incident".into()], Vec::new());
+        palette.open();
+        for c in "incident".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        assert_eq!(
+            palette.handle_key(KeyEvent::from(KeyCode::Enter)),
+            CommandPaletteAction::ApplyWorkspace("incident".into())
         );
     }
 }

@@ -202,6 +202,64 @@ fn tilde_opens_namespace_picker_action() {
 }
 
 #[test]
+fn workspace_shortcuts_emit_actions() {
+    let mut app = AppState::default();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('W'))),
+        AppAction::SaveWorkspace
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('{'))),
+        AppAction::ApplyPreviousWorkspace
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('}'))),
+        AppAction::ApplyNextWorkspace
+    );
+}
+
+#[test]
+fn configured_workspace_hotkey_routes_before_main_navigation() {
+    let mut app = AppState::default();
+    let prefs = app.preferences.get_or_insert_with(Default::default);
+    prefs
+        .workspaces
+        .hotkeys
+        .push(crate::workspaces::HotkeyBinding {
+            key: "alt+1".into(),
+            target: crate::workspaces::HotkeyTarget::View {
+                view: AppView::Pods,
+            },
+        });
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::ALT)),
+        AppAction::NavigateTo(AppView::Pods)
+    );
+}
+
+#[test]
+fn configured_workspace_action_hotkey_routes_to_global_action() {
+    let mut app = AppState::default();
+    let prefs = app.preferences.get_or_insert_with(Default::default);
+    prefs
+        .workspaces
+        .hotkeys
+        .push(crate::workspaces::HotkeyBinding {
+            key: "alt+r".into(),
+            target: crate::workspaces::HotkeyTarget::Action {
+                action: crate::workspaces::HotkeyAction::RefreshData,
+            },
+        });
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('r'), KeyModifiers::ALT)),
+        AppAction::RefreshData
+    );
+}
+
+#[test]
 fn pods_sort_keybindings_toggle_and_clear() {
     let mut app = AppState::default();
     app.view = AppView::Pods;
@@ -1612,6 +1670,10 @@ fn config_round_trip_with_preferences() {
         icons::IconMode,
         log_investigation::{LogQueryMode, PodLogPreset},
         preferences::{ClusterPreferences, LogPresetPreferences, UserPreferences, ViewPreferences},
+        workspaces::{
+            HotkeyAction, HotkeyBinding, HotkeyTarget, SavedWorkspace, WorkspaceBank,
+            WorkspacePreferences, WorkspaceSnapshot,
+        },
     };
     let path = std::env::temp_dir().join("kubectui_test_config_prefs.json");
 
@@ -1636,6 +1698,34 @@ fn config_round_trip_with_preferences() {
             structured_view: false,
         }],
         workload_logs: Vec::new(),
+    };
+    app.preferences.as_mut().unwrap().workspaces = WorkspacePreferences {
+        saved: vec![SavedWorkspace {
+            name: "prod pods".into(),
+            snapshot: WorkspaceSnapshot {
+                context: Some("prod".into()),
+                namespace: "payments".into(),
+                view: AppView::Pods,
+                collapsed_groups: vec![NavGroup::FluxCD],
+                workbench_open: true,
+                workbench_height: 15,
+                workbench_maximized: false,
+                action_history_tab: true,
+            },
+        }],
+        banks: vec![WorkspaceBank {
+            name: "ops services".into(),
+            context: Some("staging".into()),
+            namespace: "ops".into(),
+            view: AppView::Services,
+            hotkey: Some("alt+2".into()),
+        }],
+        hotkeys: vec![HotkeyBinding {
+            key: "alt+r".into(),
+            target: HotkeyTarget::Action {
+                action: HotkeyAction::RefreshData,
+            },
+        }],
     };
 
     let mut cluster_prefs = ClusterPreferences::default();
@@ -1670,6 +1760,25 @@ fn config_round_trip_with_preferences() {
     assert_eq!(pod_prefs.hidden_columns, vec!["namespace"]);
     assert_eq!(prefs.log_presets.pod_logs.len(), 1);
     assert_eq!(prefs.log_presets.pod_logs[0].query, "error");
+    assert_eq!(prefs.workspaces.saved.len(), 1);
+    assert_eq!(prefs.workspaces.saved[0].name, "prod pods");
+    assert_eq!(
+        prefs.workspaces.saved[0].snapshot.context.as_deref(),
+        Some("prod")
+    );
+    assert_eq!(prefs.workspaces.saved[0].snapshot.namespace, "payments");
+    assert_eq!(prefs.workspaces.saved[0].snapshot.view, AppView::Pods);
+    assert_eq!(prefs.workspaces.banks.len(), 1);
+    assert_eq!(prefs.workspaces.banks[0].name, "ops services");
+    assert_eq!(prefs.workspaces.banks[0].hotkey.as_deref(), Some("alt+2"));
+    assert_eq!(prefs.workspaces.hotkeys.len(), 1);
+    assert_eq!(prefs.workspaces.hotkeys[0].key, "alt+r");
+    assert!(matches!(
+        prefs.workspaces.hotkeys[0].target,
+        HotkeyTarget::Action {
+            action: HotkeyAction::RefreshData
+        }
+    ));
 
     let clusters = loaded.cluster_preferences.as_ref().unwrap();
     let prod = clusters.get("prod").unwrap();
@@ -1838,6 +1947,7 @@ fn pod_log_preset_cycle_wraps_to_last_saved_entry() {
             ],
             workload_logs: Vec::new(),
         },
+        workspaces: Default::default(),
     });
     app.workbench_mut()
         .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(

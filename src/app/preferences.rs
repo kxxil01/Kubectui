@@ -64,6 +64,13 @@ impl AppState {
             .log_presets
     }
 
+    fn workspace_prefs_mut(&mut self) -> &mut crate::workspaces::WorkspacePreferences {
+        &mut self
+            .preferences
+            .get_or_insert_with(Default::default)
+            .workspaces
+    }
+
     pub fn bookmarks(&self) -> &[BookmarkEntry] {
         self.current_context_name
             .as_deref()
@@ -161,6 +168,20 @@ impl AppState {
         } else {
             self.command_palette.set_columns_info(None);
         }
+    }
+
+    pub fn refresh_palette_workspaces(&mut self) {
+        let saved = self
+            .saved_workspaces()
+            .iter()
+            .map(|workspace| workspace.name.clone())
+            .collect();
+        let banks = self
+            .workspace_banks()
+            .iter()
+            .map(|bank| (bank.name.clone(), bank.hotkey.clone()))
+            .collect();
+        self.command_palette.set_workspace_info(saved, banks);
     }
 
     pub fn apply_sort_from_preferences(&mut self, view_key: &str) {
@@ -342,20 +363,173 @@ impl AppState {
             }
         }
     }
+
+    pub fn saved_workspaces(&self) -> &[crate::workspaces::SavedWorkspace] {
+        self.preferences
+            .as_ref()
+            .map(|prefs| prefs.workspaces.saved.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn workspace_banks(&self) -> &[crate::workspaces::WorkspaceBank] {
+        self.preferences
+            .as_ref()
+            .map(|prefs| prefs.workspaces.banks.as_slice())
+            .unwrap_or(&[])
+    }
+
+    pub fn current_workspace_snapshot(&self) -> crate::workspaces::WorkspaceSnapshot {
+        crate::workspaces::WorkspaceSnapshot {
+            context: self.current_context_name.clone(),
+            namespace: self.current_namespace.clone(),
+            view: self.view,
+            collapsed_groups: crate::app::sidebar::all_groups()
+                .filter(|group| self.collapsed_groups.contains(group))
+                .collect(),
+            workbench_open: self.workbench.open,
+            workbench_height: self.workbench.height,
+            workbench_maximized: self.workbench.maximized,
+            action_history_tab: self
+                .workbench
+                .has_tab(&crate::workbench::WorkbenchTabKey::ActionHistory),
+        }
+    }
+
+    pub fn save_current_workspace(&mut self) -> String {
+        let snapshot = self.current_workspace_snapshot();
+        let saved_name = {
+            let workspaces = &mut self.workspace_prefs_mut().saved;
+            save_named_workspace(workspaces, snapshot)
+        };
+        self.needs_config_save = true;
+        self.refresh_palette_workspaces();
+        self.set_status(format!("Saved workspace: {saved_name}"));
+        saved_name
+    }
+
+    pub fn cycle_saved_workspace_name(&self, forward: bool) -> Result<String, String> {
+        let current = self.current_workspace_snapshot();
+        cycle_named_workspace(self.saved_workspaces(), &current, forward)
+            .map(|workspace| workspace.name)
+            .ok_or_else(|| "No saved workspaces yet.".to_string())
+    }
+
+    pub fn saved_workspace_snapshot(
+        &self,
+        name: &str,
+    ) -> Option<crate::workspaces::WorkspaceSnapshot> {
+        self.saved_workspaces()
+            .iter()
+            .find(|workspace| workspace.name == name)
+            .map(|workspace| workspace.snapshot.clone())
+    }
+
+    pub fn workspace_bank_snapshot(
+        &self,
+        name: &str,
+    ) -> Option<crate::workspaces::WorkspaceSnapshot> {
+        self.workspace_banks()
+            .iter()
+            .find(|bank| bank.name == name)
+            .map(crate::workspaces::WorkspaceBank::to_snapshot)
+    }
+
+    pub fn matching_workspace_hotkey_action(
+        &self,
+        key: crossterm::event::KeyEvent,
+    ) -> Option<AppAction> {
+        if let Some(binding) = self
+            .preferences
+            .as_ref()
+            .map(|prefs| prefs.workspaces.hotkeys.iter())
+            .into_iter()
+            .flatten()
+            .find(|binding| crate::workspaces::hotkey_matches(&binding.key, key))
+        {
+            return Some(match &binding.target {
+                crate::workspaces::HotkeyTarget::View { view } => AppAction::NavigateTo(*view),
+                crate::workspaces::HotkeyTarget::Action { action } => match action {
+                    crate::workspaces::HotkeyAction::OpenCommandPalette => {
+                        AppAction::OpenCommandPalette
+                    }
+                    crate::workspaces::HotkeyAction::RefreshData => AppAction::RefreshData,
+                    crate::workspaces::HotkeyAction::OpenActionHistory => {
+                        AppAction::OpenActionHistory
+                    }
+                    crate::workspaces::HotkeyAction::OpenNamespacePicker => {
+                        AppAction::OpenNamespacePicker
+                    }
+                    crate::workspaces::HotkeyAction::OpenContextPicker => {
+                        AppAction::OpenContextPicker
+                    }
+                    crate::workspaces::HotkeyAction::SaveWorkspace => AppAction::SaveWorkspace,
+                    crate::workspaces::HotkeyAction::ApplyPreviousWorkspace => {
+                        AppAction::ApplyPreviousWorkspace
+                    }
+                    crate::workspaces::HotkeyAction::ApplyNextWorkspace => {
+                        AppAction::ApplyNextWorkspace
+                    }
+                },
+                crate::workspaces::HotkeyTarget::Workspace { name } => {
+                    AppAction::ApplyWorkspace(name.clone())
+                }
+                crate::workspaces::HotkeyTarget::Bank { name } => {
+                    AppAction::ActivateWorkspaceBank(name.clone())
+                }
+            });
+        }
+
+        self.workspace_banks()
+            .iter()
+            .find(|bank| {
+                bank.hotkey
+                    .as_deref()
+                    .is_some_and(|spec| crate::workspaces::hotkey_matches(spec, key))
+            })
+            .map(|bank| AppAction::ActivateWorkspaceBank(bank.name.clone()))
+    }
+
+    pub fn apply_workspace_snapshot(&mut self, snapshot: &crate::workspaces::WorkspaceSnapshot) {
+        self.detail_view = None;
+        self.search_query.clear();
+        self.is_search_mode = false;
+        self.selected_idx = 0;
+        self.extension_in_instances = false;
+        self.current_namespace = snapshot.namespace.clone();
+        self.view = snapshot.view;
+        self.collapsed_groups = snapshot.collapsed_groups.iter().copied().collect();
+        self.sync_collapsed_to_active_view();
+        self.apply_sort_from_preferences(crate::columns::view_key(self.view));
+        self.workbench.close_tabs_for_workspace_restore();
+        self.workbench
+            .set_open_and_height(snapshot.workbench_open, snapshot.workbench_height);
+        self.workbench.maximized = snapshot.workbench_open && snapshot.workbench_maximized;
+        if snapshot.action_history_tab {
+            self.open_action_history_tab(snapshot.workbench_open);
+        } else {
+            self.workbench
+                .close_tab_by_key(&crate::workbench::WorkbenchTabKey::ActionHistory);
+        }
+        self.focus = Focus::Content;
+        self.sync_workbench_focus();
+        self.needs_config_save = true;
+    }
 }
 
 const MAX_SAVED_LOG_PRESETS: usize = 12;
+const MAX_SAVED_WORKSPACES: usize = 16;
 
 fn save_named_pod_preset(
     presets: &mut Vec<crate::log_investigation::PodLogPreset>,
     mut preset: crate::log_investigation::PodLogPreset,
 ) -> String {
     let base_name = suggested_pod_preset_name(&preset);
-    preset.name = unique_preset_name(
+    preset.name = unique_name_with_limit(
         base_name,
         presets.iter().enumerate().filter_map(|(index, existing)| {
             (!same_pod_preset(existing, &preset)).then_some((index, existing.name.as_str()))
         }),
+        MAX_SAVED_LOG_PRESETS,
     );
     upsert_pod_preset(presets, preset.clone());
     preset.name
@@ -366,11 +540,12 @@ fn save_named_workload_preset(
     mut preset: crate::log_investigation::WorkloadLogPreset,
 ) -> String {
     let base_name = suggested_workload_preset_name(&preset);
-    preset.name = unique_preset_name(
+    preset.name = unique_name_with_limit(
         base_name,
         presets.iter().enumerate().filter_map(|(index, existing)| {
             (!same_workload_preset(existing, &preset)).then_some((index, existing.name.as_str()))
         }),
+        MAX_SAVED_LOG_PRESETS,
     );
     upsert_workload_preset(presets, preset.clone());
     preset.name
@@ -408,6 +583,53 @@ fn upsert_workload_preset(
         let drain = presets.len() - MAX_SAVED_LOG_PRESETS;
         presets.drain(..drain);
     }
+}
+
+fn save_named_workspace(
+    workspaces: &mut Vec<crate::workspaces::SavedWorkspace>,
+    snapshot: crate::workspaces::WorkspaceSnapshot,
+) -> String {
+    let mut workspace = crate::workspaces::SavedWorkspace {
+        name: suggested_workspace_name(&snapshot),
+        snapshot,
+    };
+    workspace.name = unique_name_with_limit(
+        workspace.name,
+        workspaces
+            .iter()
+            .enumerate()
+            .filter_map(|(index, existing)| {
+                (existing.snapshot != workspace.snapshot).then_some((index, existing.name.as_str()))
+            }),
+        MAX_SAVED_WORKSPACES,
+    );
+    if let Some(index) = workspaces
+        .iter()
+        .position(|existing| existing.snapshot == workspace.snapshot)
+    {
+        workspaces.remove(index);
+    }
+    workspaces.push(workspace.clone());
+    if workspaces.len() > MAX_SAVED_WORKSPACES {
+        let drain = workspaces.len() - MAX_SAVED_WORKSPACES;
+        workspaces.drain(..drain);
+    }
+    workspace.name
+}
+
+fn cycle_named_workspace(
+    workspaces: &[crate::workspaces::SavedWorkspace],
+    current: &crate::workspaces::WorkspaceSnapshot,
+    forward: bool,
+) -> Option<crate::workspaces::SavedWorkspace> {
+    cycle_named_preset_index(
+        workspaces.len(),
+        workspaces
+            .iter()
+            .position(|workspace| &workspace.snapshot == current),
+        forward,
+    )
+    .and_then(|index| workspaces.get(index).cloned())
 }
 
 fn cycle_named_pod_preset(
@@ -456,9 +678,10 @@ fn cycle_named_preset_index(
     })
 }
 
-fn unique_preset_name<'a>(
+fn unique_name_with_limit<'a>(
     base_name: String,
     existing_names: impl Iterator<Item = (usize, &'a str)>,
+    max_suffix_seed: usize,
 ) -> String {
     let existing = existing_names
         .map(|(_, name)| name.to_string())
@@ -467,7 +690,7 @@ fn unique_preset_name<'a>(
         return base_name;
     }
 
-    for suffix in 2..=MAX_SAVED_LOG_PRESETS + 1 {
+    for suffix in 2..=max_suffix_seed + 1 {
         let candidate = format!("{base_name} ({suffix})");
         if !existing.contains(&candidate) {
             return candidate;
@@ -566,5 +789,14 @@ fn append_window_label(label: String, window: crate::log_investigation::LogTimeW
         label
     } else {
         format!("{label} {}", window.label())
+    }
+}
+
+fn suggested_workspace_name(snapshot: &crate::workspaces::WorkspaceSnapshot) -> String {
+    let context = snapshot.context.as_deref().unwrap_or("current");
+    if snapshot.namespace == "all" {
+        format!("{context} {}", snapshot.view.label())
+    } else {
+        format!("{context} {} {}", snapshot.namespace, snapshot.view.label())
     }
 }
