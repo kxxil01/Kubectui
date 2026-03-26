@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use kubectui::{
     app::ResourceRef,
-    extensions::{AiProviderConfig, AiProviderKind},
+    extensions::{AiProviderConfig, AiProviderKind, AiWorkflowKind},
 };
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
@@ -18,12 +18,28 @@ Analyze the provided resource context conservatively. Do not invent facts. Use o
 Return strict JSON with keys summary, likely_causes, next_steps, and uncertainty. \
 summary must be a short paragraph. likely_causes, next_steps, and uncertainty must be arrays of short strings. \
 If context is incomplete, say so in uncertainty instead of guessing.";
+const FAILURE_SYSTEM_PROMPT: &str = "You are an expert Kubernetes failure investigator embedded in KubecTUI. \
+Focus on the most likely failure chain for the selected resource. Prioritize concrete failure signals from issues, events, probes, and logs. \
+Do not invent facts. Use only the supplied context. Return strict JSON with keys summary, likely_causes, next_steps, and uncertainty. \
+Keep likely_causes ordered from most likely to least likely.";
+const ROLLOUT_SYSTEM_PROMPT: &str = "You are an expert Kubernetes rollout reviewer embedded in KubecTUI. \
+Assess rollout safety and likely blockers for the selected workload. Prioritize revision health, rollout summary, and current error signals. \
+Do not invent facts. Use only the supplied context. Return strict JSON with keys summary, likely_causes, next_steps, and uncertainty. \
+Call out rollback signals explicitly when the context justifies them.";
+const NETWORK_SYSTEM_PROMPT: &str = "You are an expert Kubernetes network-policy and traffic investigator embedded in KubecTUI. \
+Explain the current connectivity or policy verdict conservatively. Distinguish policy intent from runtime enforcement when the context says so. \
+Do not invent facts. Use only the supplied context. Return strict JSON with keys summary, likely_causes, next_steps, and uncertainty.";
+const TRIAGE_SYSTEM_PROMPT: &str = "You are an expert Kubernetes incident triage assistant embedded in KubecTUI. \
+Prioritize the supplied findings by impact and fastest validation path. Focus on what the operator should check first. \
+Do not invent facts. Use only the supplied context. Return strict JSON with keys summary, likely_causes, next_steps, and uncertainty.";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AiAnalysisContext {
     pub resource: ResourceRef,
     pub cluster_context: Option<String>,
     pub metadata_lines: Vec<String>,
+    pub workflow_title: Option<String>,
+    pub workflow_lines: Vec<String>,
     pub issue_lines: Vec<String>,
     pub event_lines: Vec<String>,
     pub probe_lines: Vec<String>,
@@ -45,6 +61,12 @@ impl AiAnalysisContext {
             self.cluster_context.as_deref().unwrap_or("-"),
         ));
         sections.push(render_list_section("Metadata", &self.metadata_lines));
+        if !self.workflow_lines.is_empty() {
+            sections.push(render_list_section(
+                self.workflow_title.as_deref().unwrap_or("Workflow Context"),
+                &self.workflow_lines,
+            ));
+        }
         sections.push(render_list_section("Issues", &self.issue_lines));
         sections.push(render_list_section("Events", &self.event_lines));
         sections.push(render_list_section("Probes", &self.probe_lines));
@@ -54,6 +76,16 @@ impl AiAnalysisContext {
             None => "YAML Excerpt\n- unavailable".to_string(),
         });
         sections.join("\n\n")
+    }
+}
+
+pub const fn default_system_prompt_for_workflow(workflow: AiWorkflowKind) -> &'static str {
+    match workflow {
+        AiWorkflowKind::ResourceAnalysis => DEFAULT_SYSTEM_PROMPT,
+        AiWorkflowKind::ExplainFailure => FAILURE_SYSTEM_PROMPT,
+        AiWorkflowKind::RolloutRisk => ROLLOUT_SYSTEM_PROMPT,
+        AiWorkflowKind::NetworkVerdict => NETWORK_SYSTEM_PROMPT,
+        AiWorkflowKind::TriageFindings => TRIAGE_SYSTEM_PROMPT,
     }
 }
 
@@ -96,7 +128,9 @@ pub fn run_ai_analysis(
 
     let system_prompt = prompt_override
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or(DEFAULT_SYSTEM_PROMPT);
+        .unwrap_or(default_system_prompt_for_workflow(
+            AiWorkflowKind::ResourceAnalysis,
+        ));
     let user_prompt = context.render_prompt();
     let raw_json = match provider.provider {
         AiProviderKind::OpenAi => {
@@ -353,6 +387,8 @@ mod tests {
             resource: ResourceRef::Pod("api-0".into(), "prod".into()),
             cluster_context: Some("staging".into()),
             metadata_lines: vec!["status: CrashLoopBackOff".into()],
+            workflow_title: Some("Failure Focus".into()),
+            workflow_lines: vec!["Prioritize probe failures".into()],
             issue_lines: vec!["runtime: CrashLoopBackOff".into()],
             event_lines: vec!["Warning BackOff: restarting".into()],
             probe_lines: vec!["api: readiness failure".into()],
@@ -362,7 +398,18 @@ mod tests {
         .render_prompt();
 
         assert!(prompt.contains("Resource"));
+        assert!(prompt.contains("Failure Focus"));
         assert!(prompt.contains("Logs"));
         assert!(prompt.contains("kind: Pod"));
+    }
+
+    #[test]
+    fn workflow_prompts_are_available_for_specialized_actions() {
+        assert!(
+            default_system_prompt_for_workflow(AiWorkflowKind::ExplainFailure).contains("failure")
+        );
+        assert!(
+            default_system_prompt_for_workflow(AiWorkflowKind::RolloutRisk).contains("rollout")
+        );
     }
 }

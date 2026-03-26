@@ -38,7 +38,7 @@ Current milestone status:
 - Milestone 20: completed
 - Milestone 21: completed
 - Milestone 22: completed (v1)
-- Milestone 23: in progress (Phase 1 complete)
+- Milestone 23: completed
 - Milestone 24: completed
 - Milestone 25: completed
 - Milestone 26: completed
@@ -79,6 +79,7 @@ Completion notes:
 - Milestone 20 shipped (PR #58): workbench-hosted Helm history and rollback flow with release-deduped Helm tab, revision list, current-vs-target computed values diff, in-tab rollback confirmation on `R`, action palette/help integration, action-history tracking, Helm 3+ enforcement, selected-kube-context CLI execution, and regression coverage across parsing, routing, workbench state, and render smoke behavior.
 - Milestone 21 shipped (PR #18): comprehensive resource utilization dashboard — ClusterResourceSummary with cluster-wide CPU/memory utilization and overcommitment percentages, 5-gauge dashboard row (Nodes Ready, Pods Running, Workload Ready, Cluster CPU, Cluster Mem), Overcommit & Governance panel (commitment ratios, missing request/limit counts), Top Pod Consumers panel (top-5 CPU and memory), enhanced Namespace Utilization table with %CPU/R and %MEM/R columns, 10 new hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), enriched node CPU/Memory columns with used/alloc/pct% format and threshold coloring, pod_metrics pipeline integration via metrics.k8s.io with graceful degradation, compact dashboard layout for small terminals, 20+ new tests, 3 criterion benchmarks.
 - Milestone 22 shipped (v1): workbench-hosted Drift tab, action palette integration, detail-view `D` shortcut, last-applied baseline extraction from `kubectl.kubernetes.io/last-applied-configuration`, full-fidelity manifest fetch for diffing (no truncation / no RBAC placeholder parsing), deterministic normalized unified diff rendering, explicit no-baseline / unavailable-manifest states, SSA-aware fallback messaging when only `managedFields` ownership exists, and regression coverage for normalization, ordering, and keybinding behavior. Current scope still does not invent a historical SSA baseline from `managedFields`.
+- Milestone 23 shipped: config-defined extension foundation plus provider-backed AI analysis on the canonical extension/action/workbench path. Phase 2 added OpenAI/Anthropic provider loading, async AI execution, dedicated AI workbench tabs, strict structured output parsing, prompt redaction/capping, and safe default resource scoping. Phase 3 added built-in specialized workflows (`Explain Failure`, `Summarize Rollout Risk`, `Explain Network Verdict`, `Triage Findings`) as first-class AI actions on the same substrate, with workflow-specific prompts and targeted context enrichment from rollout/network/issue surfaces rather than a second AI subsystem.
 - Milestone 24 shipped: snapshot-only sanitizer findings integrated into the canonical diagnostics path, dedicated Health Report sidebar view, Issue Center source tagging (`Runtime` vs `Sanitizer`), annotation-based rule suppression via `kubectui.io/ignore`, and high-confidence checks for requests/limits, probes, security context, risky image tags, host namespace usage, missing PDB coverage, naked pods, service target mismatches, and unused ConfigMaps/Secrets. Findings stay cached by `snapshot_version`, use workload-template references to avoid false positives on scaled-to-zero or not-yet-started workloads, remain capped to the Issue Center ceiling, and are covered by regression tests.
 - Milestone 25 shipped: snapshot-only NetworkPolicy analysis for Pods, Namespaces, and NetworkPolicies, dedicated NetPol workbench tab with resolved ingress/egress rule trees, namespace isolation summaries, and a Pod reachability query (`C`) that evaluates source egress plus destination ingress intent in one canonical workbench flow. The connectivity surface reuses the relationship-tree renderer, stays API-free beyond the existing snapshot, explicitly frames output as policy intent rather than CNI enforcement, and caps broad peer expansions so large selectors do not explode the tree/render path.
 - Milestone 26 shipped (PR #59): workbench-hosted Rollout Control Center for Deployments, StatefulSets, and DaemonSets with revision-aware rollout inspection, workload-condition summaries, in-tab restart, Deployment pause/resume, revision undo with confirmation, action history coverage, palette/help/detail-view `O` integration, and API-native mutation/fetch paths without shelling out to `kubectl rollout`. The rollout tab dedupes per workload, preserves selected revision across refreshes, refreshes inspection after successful mutations, and shipped with regression coverage plus a positive render-path median check.
@@ -127,6 +128,7 @@ Verification status for completed milestones:
 - Latest M30 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Resource Create / Apply Templates. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `247.930ms -> 247.124ms`, `-0.806ms`; `sidebar` `20.532ms -> 20.497ms`; `header` `14.130ms -> 14.143ms`).
 - Latest M31 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Service / Traffic Debugging. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `249.650ms -> 239.788ms`, `-9.862ms`; `sidebar` `21.075ms -> 20.036ms`; `header` `14.183ms -> 14.035ms`). GitHub PR checks for PR #64 also passed: `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)`.
 - Latest M32 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Node Shell / Node Debug. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `254.084ms -> 248.616ms`, `-5.468ms`; `sidebar` `21.536ms -> 20.920ms`; `header` `15.319ms -> 14.470ms`).
+- Latest M23 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping both AI assistant hooks and specialized AI workflows. The final clean 5-run render-profile comparison for Phase 3 vs clean `origin/main` stayed positive on the required medians (`render` `252.801ms -> 251.295ms`, `-1.506ms`; `sidebar` `21.438ms -> 21.220ms`; `header` `14.600ms -> 14.608ms`).
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -1993,17 +1995,15 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M32 are complete. The only remaining milestone is M23.
+M0-M32 are complete.
 
 Recommended near-term order:
 
-- M23 Phase 1: extension foundation
-- M23 Phase 2: AI assistant hooks
-- M23 Phase 3: specialized AI workflows
+- No remaining planned milestones.
 
 Do not start next with:
 
-- autonomous/general AI features outside the M23 extension path
+- autonomous/general AI features outside the shipped M23 extension path
 - visual graph experiments that don't fit TUI constraints
 - desktop-style interaction patterns
 
@@ -2011,11 +2011,11 @@ Do not start next with:
 
 ## Remaining Backlog Priority Order
 
-These are the highest-value remaining roadmap candidates. They are intentionally ordered by operator leverage first, implementation risk second, and fit with KubecTUI's performance constraints third.
+The planned milestone roadmap is complete. Any follow-up work from here should be treated as new roadmap expansion, not unfinished milestone carryover.
 
 ### Big Win Priority Order
 
-1. M23: Extension System & AI Assistant Hooks
+- No remaining planned milestones.
 
 ### Why this order
 
@@ -2023,7 +2023,7 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 - M29 is now shipped on the canonical diagnostics path, using cluster-side Trivy Operator reports rather than embedding a local scanner.
 - M30 is now shipped on the canonical editor/apply path and keeps resource creation out of the hot render/refresh loop.
 - M31 and M32 are now shipped and validated on the canonical workbench/action/history paths.
-- M23 is the only remaining roadmap milestone; the main priority question is sequencing inside M23, not milestone order.
+- M23 is now shipped end-to-end, so future prioritization is about new roadmap expansion rather than unfinished milestone sequencing.
 
 ### Candidate Milestones
 
@@ -2152,18 +2152,20 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 #### M23: Extension System & AI Assistant Hooks
 
-- Big win: strategic, but deferred
+- Status: Completed (PR #69 + this PR)
+- Big win: strategic
 - Why:
-  - still valuable as a platform for customization and optional AI-assisted diagnosis
-  - lower immediate operator payoff than rollout/logs/workspace improvements
-  - should be built after the bigger first-order workflow wins are already shipped
-- Scope:
-  - keep the milestone definition above
-  - preserve the phased order inside M23 itself: extension foundation, then AI hooks, then specialized AI workflows
+  - turned KubecTUI into an extensible operator workspace instead of a fixed action set
+  - added on-demand AI diagnosis without violating the existing performance model
+  - reused the same extension/action/workbench path rather than creating an AI side-system
 - Guardrails:
   - do not build AI outside the canonical extension/action/workbench path
   - keep all provider/network work off render/input hot paths
-  - treat this as a later platform investment, not the immediate next milestone
+  - keep prompt context bounded and redact obvious sensitive material before provider calls
+- Shipped scope:
+  - Phase 1: config-defined extension actions with substitution, palette/workbench/action-history integration, background/foreground/silent execution, and file-watcher reload
+  - Phase 2: provider-backed AI hooks for OpenAI and Anthropic, dedicated AI workbench tabs, strict structured output handling, prompt redaction/capping, and safe default resource scoping
+  - Phase 3: built-in specialized AI workflows for failure explanation, rollout risk review, network-verdict explanation, and finding triage, all using the same loaded extension action/runtime path with workflow-specific prompts and targeted context enrichment
 
 #### M32: Node Shell / Node Debug
 
@@ -2189,9 +2191,7 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 ### Recommended Remaining Order
 
-- M23 Phase 1: extension foundation
-- M23 Phase 2: AI assistant hooks
-- M23 Phase 3: specialized AI workflows
+- All roadmap milestones are complete.
 
 ### Research Basis
 

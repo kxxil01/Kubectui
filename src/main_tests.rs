@@ -15,13 +15,14 @@ use kubectui::{
     action_history::ActionKind,
     app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
     bookmarks::BookmarkEntry,
+    extensions::AiWorkflowKind,
     k8s::dtos::{
         ConfigMapInfo, CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo,
     },
     policy::DetailAction,
     state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
     time::{AppTimestamp, now},
-    workbench::{PodLogsTabState, WorkbenchTabState},
+    workbench::{PodLogsTabState, RolloutTabState, WorkbenchTabState},
 };
 use std::time::{Duration, Instant};
 
@@ -83,6 +84,42 @@ fn sanitize_ai_yaml_excerpt_omits_secret_manifests() {
     .expect("redacted secret excerpt");
 
     assert!(excerpt.contains("Secret manifests are not sent to AI"));
+}
+
+#[test]
+fn rollout_ai_context_uses_rollout_summary_when_available() {
+    let resource = ResourceRef::Deployment("api".to_string(), "prod".to_string());
+    let mut app = AppState::default();
+    let mut rollout = RolloutTabState::new(resource.clone());
+    rollout.summary_lines = vec!["Progressing: 1 unavailable replica remains".to_string()];
+    rollout.conditions = vec![kubectui::k8s::rollout::RolloutConditionInfo {
+        type_: "Progressing".to_string(),
+        status: "True".to_string(),
+        reason: Some("ReplicaSetUpdated".to_string()),
+        message: Some("updating".to_string()),
+    }];
+    app.workbench.open_tab(WorkbenchTabState::Rollout(rollout));
+
+    let context = super::build_ai_analysis_context(
+        &app,
+        &ClusterSnapshot::default(),
+        &resource,
+        AiWorkflowKind::RolloutRisk,
+    );
+
+    assert_eq!(context.workflow_title.as_deref(), Some("Rollout Context"));
+    assert!(
+        context
+            .workflow_lines
+            .iter()
+            .any(|line| line.contains("1 unavailable replica"))
+    );
+    assert!(
+        context
+            .workflow_lines
+            .iter()
+            .any(|line| line.contains("Progressing=True"))
+    );
 }
 
 #[test]

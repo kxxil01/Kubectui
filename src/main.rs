@@ -48,7 +48,7 @@ use kubectui::{
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
     extensions::{
-        ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
+        AiWorkflowKind, ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
         LoadedExtensionActionKind, PreparedExtensionCommand, load_extensions_registry,
         prepare_command,
     },
@@ -74,7 +74,7 @@ use kubectui::{
 
 use terminal::{pick_context_at_startup, restore_terminal, setup_terminal};
 
-use crate::ai::{AiAnalysisContext, run_ai_analysis};
+use crate::ai::{AiAnalysisContext, default_system_prompt_for_workflow, run_ai_analysis};
 
 type AllContainerLogsInfo = (
     String,
@@ -519,12 +519,135 @@ fn sanitize_ai_yaml_excerpt(resource: &ResourceRef, yaml: &str) -> Option<String
     Some(truncate_ai_block(rendered.trim_end(), AI_YAML_MAX_CHARS))
 }
 
+fn build_ai_workflow_context(
+    app: &kubectui::app::AppState,
+    snapshot: &kubectui::state::ClusterSnapshot,
+    resource: &ResourceRef,
+    workflow: AiWorkflowKind,
+    issue_lines: &[String],
+) -> (Option<String>, Vec<String>) {
+    let lines = match workflow {
+        AiWorkflowKind::ResourceAnalysis => Vec::new(),
+        AiWorkflowKind::ExplainFailure => {
+            let mut lines = Vec::new();
+            if issue_lines.is_empty() {
+                lines.push(
+                    "No precomputed issues were attached to this resource; rely on events, probes, and logs."
+                        .to_string(),
+                );
+            } else {
+                lines.push(format!(
+                    "Prioritize the top {} issue signal(s) before secondary hypotheses.",
+                    issue_lines.len().min(3)
+                ));
+            }
+            lines
+        }
+        AiWorkflowKind::RolloutRisk => {
+            let mut lines = Vec::new();
+            for tab in &app.workbench().tabs {
+                if let WorkbenchTabState::Rollout(rollout_tab) = &tab.state
+                    && &rollout_tab.resource == resource
+                {
+                    lines.extend(rollout_tab.summary_lines.iter().cloned());
+                    lines.extend(rollout_tab.conditions.iter().take(6).map(|condition| {
+                        format!(
+                            "condition {}={} ({})",
+                            condition.type_,
+                            condition.status,
+                            truncate_ai_block(condition.message.as_deref().unwrap_or("-"), 120)
+                        )
+                    }));
+                    break;
+                }
+            }
+            if lines.is_empty() {
+                lines.push(
+                    "No rollout tab summary was open; infer risk from the selected workload state only."
+                        .to_string(),
+                );
+            }
+            lines
+        }
+        AiWorkflowKind::NetworkVerdict => {
+            let mut lines = Vec::new();
+            for tab in &app.workbench().tabs {
+                match &tab.state {
+                    WorkbenchTabState::Connectivity(connectivity_tab)
+                        if &connectivity_tab.source == resource
+                            || connectivity_tab.current_target.as_ref() == Some(resource) =>
+                    {
+                        lines.extend(connectivity_tab.summary_lines.iter().cloned());
+                        break;
+                    }
+                    WorkbenchTabState::NetworkPolicy(network_tab)
+                        if &network_tab.resource == resource =>
+                    {
+                        lines.extend(network_tab.summary_lines.iter().cloned());
+                        break;
+                    }
+                    WorkbenchTabState::TrafficDebug(traffic_tab)
+                        if &traffic_tab.resource == resource =>
+                    {
+                        lines.extend(traffic_tab.summary_lines.iter().cloned());
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            if lines.is_empty() {
+                lines.push(
+                    "No live connectivity or policy analysis tab was open; use current resource context conservatively."
+                        .to_string(),
+                );
+            }
+            lines
+        }
+        AiWorkflowKind::TriageFindings => {
+            let mut lines = kubectui::state::issues::compute_issues(snapshot)
+                .iter()
+                .filter(|issue| &issue.resource_ref == resource)
+                .take(8)
+                .map(|issue| {
+                    let severity = match issue.severity {
+                        kubectui::k8s::dtos::AlertSeverity::Error => "error",
+                        kubectui::k8s::dtos::AlertSeverity::Warning => "warning",
+                        kubectui::k8s::dtos::AlertSeverity::Info => "info",
+                    };
+                    format!(
+                        "{} [{}]: {}",
+                        issue.category.label(),
+                        severity,
+                        truncate_ai_block(&issue.message, 140)
+                    )
+                })
+                .collect::<Vec<_>>();
+            if lines.is_empty() {
+                lines.push(
+                    "No explicit findings were attached to this resource; prioritize any runtime symptoms that remain."
+                        .to_string(),
+                );
+            }
+            lines
+        }
+    };
+    let title = match workflow {
+        AiWorkflowKind::ResourceAnalysis => None,
+        AiWorkflowKind::ExplainFailure => Some("Failure Focus".to_string()),
+        AiWorkflowKind::RolloutRisk => Some("Rollout Context".to_string()),
+        AiWorkflowKind::NetworkVerdict => Some("Network Context".to_string()),
+        AiWorkflowKind::TriageFindings => Some("Triage Context".to_string()),
+    };
+    (title, cap_ai_lines(lines, 12, 1_600))
+}
+
 #[cold]
 #[inline(never)]
 fn build_ai_analysis_context(
     app: &kubectui::app::AppState,
     snapshot: &kubectui::state::ClusterSnapshot,
     resource: &ResourceRef,
+    workflow: AiWorkflowKind,
 ) -> AiAnalysisContext {
     let detail = app
         .detail_view
@@ -580,6 +703,8 @@ fn build_ai_analysis_context(
         AI_ISSUE_MAX_LINES,
         AI_ISSUE_MAX_CHARS,
     );
+    let (workflow_title, workflow_lines) =
+        build_ai_workflow_context(app, snapshot, resource, workflow, &issue_lines);
     let event_match = format!("{}/{}", resource.kind(), resource.name());
     let event_lines = cap_ai_lines(
         if let Some(detail) = detail {
@@ -701,6 +826,8 @@ fn build_ai_analysis_context(
         resource: resource.clone(),
         cluster_context: app.current_context_name.clone(),
         metadata_lines,
+        workflow_title,
+        workflow_lines,
         issue_lines,
         event_lines,
         probe_lines,
@@ -3513,12 +3640,17 @@ pub(crate) async fn run_app_inner(
                         }
                         LoadedExtensionActionKind::AiAnalysis {
                             provider,
+                            workflow,
                             system_prompt,
                         } => {
                             let execution_id = next_ai_execution_id;
                             next_ai_execution_id = next_ai_execution_id.wrapping_add(1).max(1);
-                            let context =
-                                build_ai_analysis_context(&app, &cached_snapshot, &resource);
+                            let context = build_ai_analysis_context(
+                                &app,
+                                &cached_snapshot,
+                                &resource,
+                                workflow,
+                            );
                             app.detail_view = None;
                             app.open_ai_analysis_tab(
                                 execution_id,
@@ -3529,10 +3661,16 @@ pub(crate) async fn run_app_inner(
                             let title = action.title.clone();
                             tokio::spawn(async move {
                                 let provider = provider.clone();
-                                let system_prompt = system_prompt.clone();
+                                let system_prompt = system_prompt.clone().unwrap_or_else(|| {
+                                    default_system_prompt_for_workflow(workflow).to_string()
+                                });
                                 let context = context.clone();
                                 let result = match tokio::task::spawn_blocking(move || {
-                                    run_ai_analysis(&provider, system_prompt.as_deref(), &context)
+                                    run_ai_analysis(
+                                        &provider,
+                                        Some(system_prompt.as_str()),
+                                        &context,
+                                    )
                                 })
                                 .await
                                 {
