@@ -100,6 +100,7 @@ pub struct ServiceInfo {
     pub namespace: String,
     pub type_: String,
     pub cluster_ip: Option<String>,
+    pub external_name: Option<String>,
     pub ports: Vec<String>,
     pub selector: std::collections::BTreeMap<String, String>,
     pub port_mappings: Vec<ServicePortInfo>,
@@ -627,6 +628,14 @@ pub struct EndpointInfo {
     pub created_at: Option<AppTimestamp>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct IngressRouteInfo {
+    pub host: Option<String>,
+    pub path: Option<String>,
+    pub service_name: String,
+    pub service_port: String,
+}
+
 /// Lightweight Ingress view.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct IngressInfo {
@@ -637,6 +646,7 @@ pub struct IngressInfo {
     pub address: Option<String>,
     pub ports: Vec<String>,
     pub backend_services: Vec<(String, String)>,
+    pub routes: Vec<IngressRouteInfo>,
     pub age: Option<Duration>,
     pub created_at: Option<AppTimestamp>,
 }

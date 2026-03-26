@@ -22,6 +22,7 @@ use crate::{
     },
     secret::DecodedSecretEntry,
     timeline::{TimelineEntry, build_timeline},
+    traffic_debug::TrafficDebugAnalysis,
     ui::components::{input_field::InputFieldWidget, port_forward_dialog::PortForwardDialog},
 };
 
@@ -48,6 +49,7 @@ pub enum WorkbenchTabKind {
     Relations,
     NetworkPolicy,
     Connectivity,
+    TrafficDebug,
 }
 
 impl WorkbenchTabKind {
@@ -67,6 +69,7 @@ impl WorkbenchTabKind {
             WorkbenchTabKind::Relations => "Relations",
             WorkbenchTabKind::NetworkPolicy => "NetPol",
             WorkbenchTabKind::Connectivity => "Reach",
+            WorkbenchTabKind::TrafficDebug => "Traffic",
         }
     }
 }
@@ -87,6 +90,7 @@ pub enum WorkbenchTabKey {
     Relations(ResourceRef),
     NetworkPolicy(ResourceRef),
     Connectivity(ResourceRef),
+    TrafficDebug(ResourceRef),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1292,6 +1296,51 @@ impl ConnectivityTabState {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct TrafficDebugTabState {
+    pub resource: ResourceRef,
+    pub summary_lines: Vec<String>,
+    pub tree: Vec<crate::k8s::relationships::RelationNode>,
+    pub cursor: usize,
+    pub expanded: std::collections::HashSet<usize>,
+    pub error: Option<String>,
+}
+
+impl TrafficDebugTabState {
+    pub fn new(resource: ResourceRef) -> Self {
+        Self {
+            resource,
+            summary_lines: Vec::new(),
+            tree: Vec::new(),
+            cursor: 0,
+            expanded: std::collections::HashSet::new(),
+            error: None,
+        }
+    }
+
+    pub fn apply_analysis(&mut self, analysis: TrafficDebugAnalysis) {
+        let mut expanded = std::collections::HashSet::new();
+        let mut counter = 0usize;
+        for section in &analysis.tree {
+            expanded.insert(counter);
+            counter += 1;
+            for child in &section.children {
+                expanded.insert(counter);
+                counter += 1;
+                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
+            }
+        }
+        self.summary_lines = analysis.summary_lines;
+        self.tree = analysis.tree;
+        self.expanded = expanded;
+        let flat = crate::k8s::relationships::flatten_tree(&self.tree, &self.expanded);
+        if self.cursor >= flat.len() {
+            self.cursor = flat.len().saturating_sub(1);
+        }
+        self.error = None;
+    }
+}
+
 impl RelationsTabState {
     pub fn new(resource: ResourceRef) -> Self {
         Self {
@@ -1345,6 +1394,7 @@ pub enum WorkbenchTabState {
     Relations(RelationsTabState),
     NetworkPolicy(NetworkPolicyTabState),
     Connectivity(ConnectivityTabState),
+    TrafficDebug(TrafficDebugTabState),
 }
 
 impl WorkbenchTabState {
@@ -1364,6 +1414,7 @@ impl WorkbenchTabState {
             Self::Relations(_) => WorkbenchTabKind::Relations,
             Self::NetworkPolicy(_) => WorkbenchTabKind::NetworkPolicy,
             Self::Connectivity(_) => WorkbenchTabKind::Connectivity,
+            Self::TrafficDebug(_) => WorkbenchTabKind::TrafficDebug,
         }
     }
 
@@ -1383,6 +1434,7 @@ impl WorkbenchTabState {
             Self::Relations(tab) => WorkbenchTabKey::Relations(tab.resource.clone()),
             Self::NetworkPolicy(tab) => WorkbenchTabKey::NetworkPolicy(tab.resource.clone()),
             Self::Connectivity(tab) => WorkbenchTabKey::Connectivity(tab.source.clone()),
+            Self::TrafficDebug(tab) => WorkbenchTabKey::TrafficDebug(tab.resource.clone()),
         }
     }
 
@@ -1428,6 +1480,9 @@ impl WorkbenchTabState {
             }
             Self::Connectivity(tab) => {
                 format!("{icon}{kind_label} {}", resource_title(&tab.source))
+            }
+            Self::TrafficDebug(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
             }
         }
     }
@@ -1911,6 +1966,21 @@ mod tests {
         let second = state.open_tab(WorkbenchTabState::Connectivity(ConnectivityTabState::new(
             pod("pod-0"),
             Vec::new(),
+        )));
+
+        assert_eq!(first, second);
+        assert_eq!(state.tabs.len(), 1);
+        assert!(state.open);
+    }
+
+    #[test]
+    fn traffic_debug_tab_deduplicates_by_resource() {
+        let mut state = WorkbenchState::default();
+        let first = state.open_tab(WorkbenchTabState::TrafficDebug(TrafficDebugTabState::new(
+            pod("pod-0"),
+        )));
+        let second = state.open_tab(WorkbenchTabState::TrafficDebug(TrafficDebugTabState::new(
+            pod("pod-0"),
         )));
 
         assert_eq!(first, second);

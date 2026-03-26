@@ -167,6 +167,7 @@ pub enum AppAction {
     OpenRelationships,
     OpenNetworkPolicyView,
     OpenNetworkConnectivity,
+    OpenTrafficDebug,
     ConfirmDrainNode,
     ConfirmHelmRollback,
     CordonNode,

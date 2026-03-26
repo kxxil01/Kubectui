@@ -142,6 +142,7 @@ pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
         DetailAction::ResumeCronJob => AppAction::ConfirmCronJobSuspend(false),
         DetailAction::ViewNetworkPolicies => AppAction::OpenNetworkPolicyView,
         DetailAction::CheckNetworkConnectivity => AppAction::OpenNetworkConnectivity,
+        DetailAction::ViewTrafficDebug => AppAction::OpenTrafficDebug,
         DetailAction::ViewRelationships => AppAction::OpenRelationships,
         DetailAction::Cordon => AppAction::CordonNode,
         DetailAction::Uncordon => AppAction::UncordonNode,

@@ -591,6 +591,17 @@ fn palette_connectivity_maps_to_query_open() {
 }
 
 #[test]
+fn palette_traffic_debug_maps_to_open_action() {
+    assert_eq!(
+        map_palette_detail_action(DetailAction::ViewTrafficDebug),
+        AppAction::OpenTrafficDebug
+    );
+    assert!(!palette_action_requires_loaded_detail(
+        &AppAction::OpenTrafficDebug
+    ));
+}
+
+#[test]
 fn palette_cronjob_suspend_maps_to_confirmation_action() {
     assert_eq!(
         map_palette_detail_action(DetailAction::SuspendCronJob),

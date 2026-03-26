@@ -1222,6 +1222,29 @@ fn uppercase_c_opens_connectivity_for_pod_detail() {
 }
 
 #[test]
+fn t_key_opens_traffic_debug_for_service_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Service("api".to_string(), "ns".to_string())),
+        yaml: Some("kind: Service".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::OpenTrafficDebug);
+}
+
+#[test]
+fn t_key_opens_traffic_debug_from_services_view() {
+    let mut app = AppState::default();
+    app.view = AppView::Services;
+    app.focus = Focus::Content;
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('t'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::OpenTrafficDebug);
+}
+
+#[test]
 fn h_key_opens_helm_history_for_helm_release_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {

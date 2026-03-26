@@ -8,6 +8,7 @@ use kubectui::{
     policy::DetailAction,
     secret::decode_secret_yaml,
     state::ClusterSnapshot,
+    traffic_debug,
     workbench::{ConnectivityTargetOption, WorkbenchTabKey, WorkbenchTabState},
 };
 
@@ -427,6 +428,38 @@ pub async fn handle_open_network_connectivity(
 
     app.detail_view = None;
     app.open_connectivity_tab(resource, targets);
+    false
+}
+
+/// Handles `AppAction::OpenTrafficDebug`.
+pub async fn handle_open_traffic_debug(
+    app: &mut AppState,
+    client: &K8sClient,
+    snapshot: &ClusterSnapshot,
+) -> bool {
+    let resource = app
+        .detail_view
+        .as_ref()
+        .and_then(|detail| detail.resource.clone())
+        .or_else(|| selected_resource(app, snapshot));
+    let Some(resource) = resource else {
+        app.set_error("No resource selected for traffic debugging.".to_string());
+        return true;
+    };
+    if let Some(message) =
+        detail_action_block_message(app, client, &resource, DetailAction::ViewTrafficDebug).await
+    {
+        app.set_error(message);
+        return true;
+    }
+
+    match traffic_debug::analyze_resource(&resource, snapshot, &app.tunnel_registry) {
+        Ok(analysis) => {
+            app.detail_view = None;
+            app.open_traffic_debug_tab(resource, Some(analysis), None);
+        }
+        Err(err) => app.set_error(err),
+    }
     false
 }
 
