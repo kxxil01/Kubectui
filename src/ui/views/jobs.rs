@@ -20,7 +20,8 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_small_int, render_resource_table, sort_header_cell, striped_row_style,
+        format_age, format_small_int, name_cell_with_bookmark, render_resource_table,
+        sort_header_cell, striped_row_style,
         views::filtering::filtered_job_indices,
         workload_sort_suffix,
     },
@@ -130,20 +131,29 @@ pub fn render_jobs(
                     };
 
                     Row::new(vec![
-                        bookmarked_name_cell(
-                            &ResourceRef::Job(job.name.clone(), job.namespace.clone()),
-                            bookmarks,
-                            job.name.as_str(),
-                            Style::default().fg(theme.fg),
-                            theme,
-                        ),
+                        if bookmarks.is_empty() {
+                            name_cell_with_bookmark(
+                                false,
+                                job.name.as_str(),
+                                Style::default().fg(theme.fg),
+                                theme,
+                            )
+                        } else {
+                            bookmarked_name_cell(
+                                || ResourceRef::Job(job.name.clone(), job.namespace.clone()),
+                                bookmarks,
+                                job.name.as_str(),
+                                Style::default().fg(theme.fg),
+                                theme,
+                            )
+                        },
                         Cell::from(Span::styled(
-                            job.namespace.clone(),
+                            job.namespace.as_str(),
                             Style::default().fg(theme.fg_dim),
                         )),
-                        Cell::from(Span::styled(job.status.clone(), st)),
+                        Cell::from(Span::styled(job.status.as_str(), st)),
                         Cell::from(Span::styled(
-                            job.completions.clone(),
+                            job.completions.as_str(),
                             Style::default().fg(theme.fg_dim),
                         )),
                         Cell::from(Span::styled(duration, Style::default().fg(theme.fg_dim))),

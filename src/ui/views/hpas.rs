@@ -151,7 +151,7 @@ pub fn render_hpas(
                         };
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::Hpa(hpa.name.clone(), hpa.namespace.clone()),
+                            || ResourceRef::Hpa(hpa.name.clone(), hpa.namespace.clone()),
                             bookmarks,
                             hpa.name.as_str(),
                             Style::default().fg(theme.fg),

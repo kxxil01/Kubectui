@@ -179,16 +179,12 @@ pub(crate) fn utilization_bar_labeled(label: &str, pct: u64, theme: &Theme) -> L
     Line::from(spans)
 }
 
-pub(crate) fn bookmarked_name_cell<'a>(
-    resource: &ResourceRef,
-    bookmarks: &[BookmarkEntry],
+pub(crate) fn name_cell_with_bookmark<'a>(
+    bookmarked: bool,
     name: impl Into<Cow<'a, str>>,
     name_style: Style,
     theme: &Theme,
 ) -> Cell<'a> {
-    let bookmarked = bookmarks
-        .iter()
-        .any(|bookmark| bookmark.resource == *resource);
     let marker = if bookmarked { "★ " } else { "  " };
     let name = name.into();
     let marker_style = if bookmarked {
@@ -200,6 +196,25 @@ pub(crate) fn bookmarked_name_cell<'a>(
         Span::styled(marker, marker_style),
         Span::styled(name, name_style),
     ]))
+}
+
+pub(crate) fn bookmarked_name_cell<'a, F>(
+    resource: F,
+    bookmarks: &[BookmarkEntry],
+    name: impl Into<Cow<'a, str>>,
+    name_style: Style,
+    theme: &Theme,
+) -> Cell<'a>
+where
+    F: FnOnce() -> ResourceRef,
+{
+    let bookmarked = !bookmarks.is_empty() && {
+        let resource = resource();
+        bookmarks
+            .iter()
+            .any(|bookmark| bookmark.resource == resource)
+    };
+    name_cell_with_bookmark(bookmarked, name, name_style, theme)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -623,6 +638,25 @@ fn cached_pod_derived(
     })
 }
 
+fn resolve_visible_columns(app: &AppState) -> Cow<'static, [crate::columns::ColumnDef]> {
+    if let Some(registry) = crate::columns::columns_for_view(app.view()) {
+        if app.preferences.is_none() && app.cluster_preferences.is_none() {
+            Cow::Borrowed(registry)
+        } else {
+            let view_key = crate::columns::view_key(app.view());
+            let prefs = crate::preferences::resolve_view_preferences(
+                view_key,
+                &app.preferences,
+                &app.cluster_preferences,
+                app.current_context_name.as_deref(),
+            );
+            Cow::Owned(crate::columns::resolve_columns(registry, &prefs))
+        }
+    } else {
+        Cow::Borrowed(&[])
+    }
+}
+
 fn truncate_error(msg: &str, max_len: usize) -> &str {
     if msg.len() <= max_len {
         return msg;
@@ -767,22 +801,6 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         );
     }
 
-    // Resolve visible columns for current view
-    let visible_columns: Vec<crate::columns::ColumnDef> = {
-        let view_key = crate::columns::view_key(app.view());
-        let prefs = crate::preferences::resolve_view_preferences(
-            view_key,
-            &app.preferences,
-            &app.cluster_preferences,
-            app.current_context_name.as_deref(),
-        );
-        if let Some(registry) = crate::columns::columns_for_view(app.view()) {
-            crate::columns::resolve_columns(registry, &prefs)
-        } else {
-            Vec::new()
-        }
-    };
-
     let content_focused = app.focus == Focus::Content;
 
     {
@@ -799,10 +817,11 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
-                &visible_columns,
+                resolve_visible_columns(app).as_ref(),
                 content_focused,
             ),
             AppView::Pods => {
+                let visible_columns = resolve_visible_columns(app);
                 render_pods_widget(
                     frame,
                     content,
@@ -811,7 +830,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     app.selected_idx(),
                     app.search_query(),
                     app.pod_sort(),
-                    &visible_columns,
+                    visible_columns.as_ref(),
                     content_focused,
                 );
             }
@@ -1053,7 +1072,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
-                &visible_columns,
+                resolve_visible_columns(app).as_ref(),
                 content_focused,
             ),
             AppView::StatefulSets => views::statefulsets::render_statefulsets(
@@ -1479,6 +1498,12 @@ fn render_pods_widget(
 
     let name_style = ratatui::prelude::Style::default().fg(theme.fg);
     let dim_style = ratatui::prelude::Style::default().fg(theme.fg_dim);
+    let even_row_style = ratatui::prelude::Style::default().bg(theme.bg);
+    let odd_row_style = theme.row_alt_style();
+    let age_style = theme.inactive_style();
+    let zero_restart_style = theme.inactive_style();
+    let warning_restart_style = theme.badge_warning_style();
+    let error_restart_style = theme.badge_error_style();
     let now_unix = now_unix_seconds();
     let derived = cached_pod_derived(cluster, query, indices.as_ref(), now_unix, cache_variant);
 
@@ -1516,32 +1541,37 @@ fn render_pods_widget(
         let status = pod.status.as_str();
         let status_style = theme.get_status_style(status);
         let restart_style = if pod.restarts > 5 {
-            theme.badge_error_style()
+            error_restart_style
         } else if pod.restarts > 0 {
-            theme.badge_warning_style()
+            warning_restart_style
         } else {
-            theme.inactive_style()
+            zero_restart_style
         };
         let row_style = if idx.is_multiple_of(2) {
-            ratatui::prelude::Style::default().bg(theme.bg)
+            even_row_style
         } else {
-            theme.row_alt_style()
+            odd_row_style
         };
         let age = derived
             .get(idx)
             .map(|cell| cell.age.as_str())
             .unwrap_or("-");
-
         let cells: Vec<Cell> = visible_columns
             .iter()
             .map(|col| match col.id {
-                "name" => bookmarked_name_cell(
-                    &ResourceRef::Pod(pod.name.clone(), pod.namespace.clone()),
-                    bookmarks,
-                    pod.name.as_str(),
-                    name_style,
-                    &theme,
-                ),
+                "name" => {
+                    if bookmarks.is_empty() {
+                        name_cell_with_bookmark(false, pod.name.as_str(), name_style, &theme)
+                    } else {
+                        bookmarked_name_cell(
+                            || ResourceRef::Pod(pod.name.clone(), pod.namespace.clone()),
+                            bookmarks,
+                            pod.name.as_str(),
+                            name_style,
+                            &theme,
+                        )
+                    }
+                }
                 "namespace" => Cell::from(Span::styled(pod.namespace.as_str(), dim_style)),
                 "ip" => Cell::from(Span::styled(
                     pod.pod_ip.as_deref().unwrap_or("-"),
@@ -1556,7 +1586,7 @@ fn render_pods_widget(
                     format_small_int(i64::from(pod.restarts)),
                     restart_style,
                 )),
-                "age" => Cell::from(Span::styled(age, theme.inactive_style())),
+                "age" => Cell::from(Span::styled(age, age_style)),
                 "cpu_usage" | "mem_usage" => {
                     match pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str())) {
                         Some(&(cpu_m, mem_mib)) => {
@@ -1585,7 +1615,7 @@ fn render_pods_widget(
                                         dim_style
                                     }
                                 }
-                                None => dim_style,
+                                _ => dim_style,
                             };
                             Cell::from(Span::styled(formatted, style))
                         }
@@ -1880,7 +1910,7 @@ mod tests {
         let bookmarked = format!(
             "{:?}",
             bookmarked_name_cell(
-                &resource,
+                || resource.clone(),
                 &bookmarks,
                 "prod",
                 Style::default().fg(theme.fg),
@@ -1890,7 +1920,7 @@ mod tests {
         let plain = format!(
             "{:?}",
             bookmarked_name_cell(
-                &resource,
+                || resource.clone(),
                 &[],
                 "prod",
                 Style::default().fg(theme.fg),

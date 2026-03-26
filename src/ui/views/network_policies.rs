@@ -123,10 +123,12 @@ pub fn render_network_policies(
                     };
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::NetworkPolicy(
-                                policy.name.clone(),
-                                policy.namespace.clone(),
-                            ),
+                            || {
+                                ResourceRef::NetworkPolicy(
+                                    policy.name.clone(),
+                                    policy.namespace.clone(),
+                                )
+                            },
                             bookmarks,
                             policy.name.as_str(),
                             Style::default().fg(theme.fg),

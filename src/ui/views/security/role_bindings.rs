@@ -193,7 +193,7 @@ pub fn render_role_bindings(
                 };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone()),
+                    || ResourceRef::RoleBinding(rb.name.clone(), rb.namespace.clone()),
                     bookmarks,
                     rb.name.as_str(),
                     name_style,

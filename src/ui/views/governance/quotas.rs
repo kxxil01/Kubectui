@@ -182,7 +182,7 @@ pub fn render_resource_quotas(
                     let pct_style = usage_style(max_pct, theme);
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone()),
+                            || ResourceRef::ResourceQuota(rq.name.clone(), rq.namespace.clone()),
                             bookmarks,
                             rq.name.as_str(),
                             Style::default().fg(theme.fg),

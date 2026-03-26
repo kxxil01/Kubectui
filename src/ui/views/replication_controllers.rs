@@ -129,10 +129,12 @@ pub fn render_replication_controllers(
                 rows.push(
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::ReplicationController(
-                                rc.name.clone(),
-                                rc.namespace.clone(),
-                            ),
+                            || {
+                                ResourceRef::ReplicationController(
+                                    rc.name.clone(),
+                                    rc.namespace.clone(),
+                                )
+                            },
                             bookmarks,
                             rc.name.as_str(),
                             name_style,

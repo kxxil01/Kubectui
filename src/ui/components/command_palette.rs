@@ -11,6 +11,7 @@ use ratatui::{
 use std::cell::RefCell;
 
 use crate::app::{AppView, ResourceRef};
+use crate::extensions::{ExtensionExecutionMode, LoadedExtensionAction};
 use crate::policy::{DetailAction, ResourceActionContext};
 use crate::resource_templates::ResourceTemplateKind;
 use crate::workspaces::display_hotkey;
@@ -24,6 +25,7 @@ pub enum CommandPaletteAction {
     None,
     Navigate(AppView),
     Execute(DetailAction, ResourceRef),
+    ExecuteExtension(String, ResourceRef),
     ToggleColumn(String),
     SaveWorkspace,
     ApplyWorkspace(String),
@@ -36,6 +38,7 @@ pub enum CommandPaletteAction {
 pub enum PaletteEntry {
     Navigate(AppView),
     Action(DetailAction),
+    ExtensionAction(PaletteExtensionAction),
     SaveWorkspace,
     Template(ResourceTemplateKind),
     Workspace(String),
@@ -48,6 +51,15 @@ pub enum PaletteEntry {
         label: String,
         visible: bool,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteExtensionAction {
+    pub id: String,
+    pub title: String,
+    pub aliases: Vec<String>,
+    pub shortcut: Option<String>,
+    pub mode: ExtensionExecutionMode,
 }
 
 #[derive(Debug, Clone)]
@@ -367,6 +379,7 @@ pub struct CommandPalette {
     resource_context: Option<ResourceActionContext>,
     /// Column toggle info for current view: (id, label, currently_visible).
     columns_info: Option<Vec<(String, String, bool)>>,
+    extension_actions: Vec<PaletteExtensionAction>,
     saved_workspaces: Vec<String>,
     workspace_banks: Vec<(String, Option<String>)>,
 }
@@ -388,10 +401,25 @@ impl CommandPalette {
         self.is_open = false;
         self.resource_context = None;
         self.columns_info = None;
+        self.extension_actions.clear();
     }
 
     pub fn set_columns_info(&mut self, info: Option<Vec<(String, String, bool)>>) {
         self.columns_info = info;
+        self.cached_filtered.borrow_mut().take();
+    }
+
+    pub fn set_extension_actions(&mut self, actions: Vec<LoadedExtensionAction>) {
+        self.extension_actions = actions
+            .into_iter()
+            .map(|action| PaletteExtensionAction {
+                id: action.id,
+                title: action.title,
+                aliases: action.aliases,
+                shortcut: action.shortcut,
+                mode: action.mode,
+            })
+            .collect();
         self.cached_filtered.borrow_mut().take();
     }
 
@@ -428,6 +456,16 @@ impl CommandPalette {
                         PaletteEntry::Action(action) => {
                             if let Some(resource) = &self.resource_context {
                                 CommandPaletteAction::Execute(*action, resource.resource.clone())
+                            } else {
+                                CommandPaletteAction::None
+                            }
+                        }
+                        PaletteEntry::ExtensionAction(action) => {
+                            if let Some(resource) = &self.resource_context {
+                                CommandPaletteAction::ExecuteExtension(
+                                    action.id.clone(),
+                                    resource.resource.clone(),
+                                )
                             } else {
                                 CommandPaletteAction::None
                             }
@@ -504,6 +542,16 @@ impl CommandPalette {
                         .any(|alias| fuzzy_match(alias, &self.query))
                 {
                     result.push(PaletteEntry::Action(entry.action));
+                }
+            }
+            for action in &self.extension_actions {
+                if self.query.is_empty()
+                    || action
+                        .aliases
+                        .iter()
+                        .any(|alias| fuzzy_match(alias, &self.query))
+                {
+                    result.push(PaletteEntry::ExtensionAction(action.clone()));
                 }
             }
         }
@@ -678,6 +726,7 @@ impl CommandPalette {
             ))));
         } else {
             let mut seen_action = false;
+            let mut seen_extension = false;
             let mut seen_workspace = false;
             let mut seen_template = false;
             let mut seen_bank = false;
@@ -690,6 +739,13 @@ impl CommandPalette {
                         seen_action = true;
                         items.push(ListItem::new(Line::from(Span::styled(
                             " ── Actions ──",
+                            theme.muted_style(),
+                        ))));
+                    }
+                    PaletteEntry::ExtensionAction(_) if !seen_extension => {
+                        seen_extension = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Extensions ──",
                             theme.muted_style(),
                         ))));
                     }
@@ -765,6 +821,14 @@ impl CommandPalette {
                     PaletteEntry::Action(action) => {
                         (action.label().to_string(), action.key_hint().to_string())
                     }
+                    PaletteEntry::ExtensionAction(action) => (
+                        action.title.clone(),
+                        action
+                            .shortcut
+                            .as_deref()
+                            .map(display_hotkey)
+                            .unwrap_or_else(|| action.mode.label().to_string()),
+                    ),
                     PaletteEntry::SaveWorkspace => {
                         ("Save current workspace".to_string(), "[W]".to_string())
                     }
@@ -1322,6 +1386,36 @@ mod tests {
         assert_eq!(
             palette.handle_key(KeyEvent::from(KeyCode::Enter)),
             CommandPaletteAction::ApplyWorkspace("incident".into())
+        );
+    }
+
+    #[test]
+    fn palette_enter_can_execute_extension() {
+        let resource = ResourceRef::Pod("api".into(), "default".into());
+        let mut palette = CommandPalette::default();
+        palette.open_with_context(Some(ctx(resource.clone(), None)));
+        palette.set_extension_actions(vec![LoadedExtensionAction {
+            id: "describe".into(),
+            title: "Describe Pod".into(),
+            description: None,
+            aliases: vec!["describe pod".into(), "diag".into()],
+            resource_kinds: vec!["Pod".into()],
+            shortcut: Some("gp".into()),
+            mode: ExtensionExecutionMode::Background,
+            command: crate::extensions::ExtensionCommandConfig {
+                program: "kubectl".into(),
+                args: vec!["describe".into(), "pod".into()],
+                cwd: None,
+                env: Default::default(),
+            },
+        }]);
+        for c in "diag".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        assert_eq!(
+            palette.handle_key(KeyEvent::from(KeyCode::Enter)),
+            CommandPaletteAction::ExecuteExtension("describe".into(), resource)
         );
     }
 }

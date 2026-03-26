@@ -162,6 +162,10 @@ pub enum AppAction {
     SubmitResourceTemplateDialog,
     ToggleBookmark,
     SaveDecodedSecret,
+    ExecuteExtension {
+        id: String,
+        resource: ResourceRef,
+    },
     PaletteAction {
         action: crate::policy::DetailAction,
         resource: ResourceRef,

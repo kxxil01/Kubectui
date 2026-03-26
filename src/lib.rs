@@ -13,6 +13,7 @@ pub mod cronjob;
 pub mod detail_sections;
 pub mod events;
 pub mod export;
+pub mod extensions;
 pub mod icons;
 pub mod k8s;
 pub mod log_investigation;

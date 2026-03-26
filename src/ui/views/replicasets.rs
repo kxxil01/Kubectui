@@ -126,7 +126,7 @@ pub fn render_replicasets(
                 rows.push(
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone()),
+                            || ResourceRef::ReplicaSet(rs.name.clone(), rs.namespace.clone()),
                             bookmarks,
                             rs.name.as_str(),
                             name_style,

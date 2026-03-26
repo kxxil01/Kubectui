@@ -172,7 +172,7 @@ pub fn render_roles(
                 };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::Role(role.name.clone(), role.namespace.clone()),
+                    || ResourceRef::Role(role.name.clone(), role.namespace.clone()),
                     bookmarks,
                     role.name.as_str(),
                     name_style,
