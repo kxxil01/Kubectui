@@ -64,6 +64,86 @@ impl AiProviderKind {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiWorkflowKind {
+    ResourceAnalysis,
+    ExplainFailure,
+    RolloutRisk,
+    NetworkVerdict,
+    TriageFindings,
+}
+
+impl AiWorkflowKind {
+    pub const fn default_id(self) -> &'static str {
+        match self {
+            Self::ResourceAnalysis => DEFAULT_AI_ACTION_ID,
+            Self::ExplainFailure => "ai_explain_failure",
+            Self::RolloutRisk => "ai_rollout_risk",
+            Self::NetworkVerdict => "ai_network_verdict",
+            Self::TriageFindings => "ai_triage_findings",
+        }
+    }
+
+    pub const fn default_title(self) -> &'static str {
+        match self {
+            Self::ResourceAnalysis => DEFAULT_AI_ACTION_TITLE,
+            Self::ExplainFailure => "Explain Failure",
+            Self::RolloutRisk => "Summarize Rollout Risk",
+            Self::NetworkVerdict => "Explain Network Verdict",
+            Self::TriageFindings => "Triage Findings",
+        }
+    }
+
+    pub fn default_aliases(self) -> Vec<String> {
+        match self {
+            Self::ResourceAnalysis => vec!["ask ai".into(), "ai".into(), "diagnose".into()],
+            Self::ExplainFailure => vec![
+                "explain failure".into(),
+                "why failing".into(),
+                "failure diagnosis".into(),
+            ],
+            Self::RolloutRisk => vec![
+                "rollout risk".into(),
+                "release risk".into(),
+                "deployment risk".into(),
+            ],
+            Self::NetworkVerdict => vec![
+                "network verdict".into(),
+                "explain connectivity".into(),
+                "policy verdict".into(),
+            ],
+            Self::TriageFindings => vec![
+                "triage findings".into(),
+                "triage issues".into(),
+                "prioritize issues".into(),
+            ],
+        }
+    }
+
+    pub fn default_resource_kinds(self) -> Vec<String> {
+        match self {
+            Self::ResourceAnalysis | Self::TriageFindings => DEFAULT_AI_RESOURCE_KINDS
+                .iter()
+                .map(|kind| (*kind).to_string())
+                .collect(),
+            Self::ExplainFailure => vec!["Pod".into(), "Job".into(), "CronJob".into()],
+            Self::RolloutRisk => vec![
+                "Deployment".into(),
+                "StatefulSet".into(),
+                "DaemonSet".into(),
+                "HelmRelease".into(),
+            ],
+            Self::NetworkVerdict => vec![
+                "Pod".into(),
+                "Service".into(),
+                "Ingress".into(),
+                "NetworkPolicy".into(),
+            ],
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AiActionConfig {
     #[serde(default = "default_ai_action_id")]
@@ -142,6 +222,7 @@ pub enum LoadedExtensionActionKind {
     },
     AiAnalysis {
         provider: AiProviderConfig,
+        workflow: AiWorkflowKind,
         system_prompt: Option<String>,
     },
 }
@@ -425,8 +506,26 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
     }
 
     if let Some(ai) = config.ai {
+        let ai_for_workflows = ai.clone();
         match validate_ai_extension(ai, &mut seen_ids) {
-            Ok(action) => actions.push(action),
+            Ok(action) => {
+                actions.push(action);
+                for workflow in [
+                    AiWorkflowKind::ExplainFailure,
+                    AiWorkflowKind::RolloutRisk,
+                    AiWorkflowKind::NetworkVerdict,
+                    AiWorkflowKind::TriageFindings,
+                ] {
+                    match build_default_ai_workflow_action(
+                        ai_for_workflows.clone(),
+                        workflow,
+                        &mut seen_ids,
+                    ) {
+                        Ok(action) => actions.push(action),
+                        Err(warning) => warnings.push(warning),
+                    }
+                }
+            }
             Err(warning) => warnings.push(warning),
         }
     }
@@ -436,6 +535,54 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
         warnings,
         path,
     }
+}
+
+fn build_default_ai_workflow_action(
+    ai: AiProviderConfig,
+    workflow: AiWorkflowKind,
+    seen_ids: &mut BTreeSet<String>,
+) -> Result<LoadedExtensionAction, String> {
+    let id = workflow.default_id();
+    if !seen_ids.insert(id.to_string()) {
+        return Err(format!("skipping duplicate extension id '{id}'"));
+    }
+
+    let model = ai.model.trim();
+    let api_key_env = ai.api_key_env.trim();
+    if model.is_empty() {
+        return Err(format!("skipping AI workflow '{id}' with empty model"));
+    }
+    if api_key_env.is_empty() {
+        return Err(format!(
+            "skipping AI workflow '{id}' with empty api_key_env"
+        ));
+    }
+
+    Ok(LoadedExtensionAction {
+        id: id.to_string(),
+        title: workflow.default_title().to_string(),
+        description: Some(format!(
+            "{} with the configured AI provider",
+            workflow.default_title()
+        )),
+        aliases: workflow.default_aliases(),
+        resource_kinds: workflow.default_resource_kinds(),
+        shortcut: None,
+        kind: LoadedExtensionActionKind::AiAnalysis {
+            provider: AiProviderConfig {
+                provider: ai.provider,
+                model: model.to_string(),
+                api_key_env: api_key_env.to_string(),
+                endpoint: ai.endpoint.filter(|value| !value.trim().is_empty()),
+                timeout_secs: ai.timeout_secs.max(1),
+                max_output_tokens: ai.max_output_tokens.max(64),
+                temperature: ai.temperature,
+                action: None,
+            },
+            workflow,
+            system_prompt: None,
+        },
+    })
 }
 
 fn validate_ai_extension(
@@ -521,6 +668,7 @@ fn validate_ai_extension(
                 temperature: ai.temperature,
                 action: None,
             },
+            workflow: AiWorkflowKind::ResourceAnalysis,
             system_prompt: action
                 .system_prompt
                 .filter(|value| !value.trim().is_empty()),
@@ -710,9 +858,13 @@ mod tests {
             PathBuf::from("/tmp/extensions.yaml"),
         );
 
-        assert_eq!(result.registry.actions().len(), 1);
+        assert_eq!(result.registry.actions().len(), 5);
         assert_eq!(result.registry.actions()[0].id, "ask_ai");
         assert_eq!(result.registry.actions()[0].badge_label(), "Claude");
+        assert!(result.registry.get("ai_explain_failure").is_some());
+        assert!(result.registry.get("ai_rollout_risk").is_some());
+        assert!(result.registry.get("ai_network_verdict").is_some());
+        assert!(result.registry.get("ai_triage_findings").is_some());
         assert!(
             !result.registry.actions()[0]
                 .matches_resource(&ResourceRef::Secret("app-secret".into(), "prod".into(),))
