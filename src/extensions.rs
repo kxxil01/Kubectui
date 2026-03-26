@@ -12,6 +12,23 @@ use crate::app::ResourceRef;
 
 const EXTENSIONS_FILE_NAME: &str = "extensions.yaml";
 const LABEL_SEPARATOR: &str = ",";
+const DEFAULT_AI_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_AI_MAX_OUTPUT_TOKENS: u32 = 800;
+const DEFAULT_AI_ACTION_ID: &str = "ask_ai";
+const DEFAULT_AI_ACTION_TITLE: &str = "Ask AI";
+const DEFAULT_AI_RESOURCE_KINDS: &[&str] = &[
+    "Pod",
+    "Node",
+    "Deployment",
+    "StatefulSet",
+    "DaemonSet",
+    "Job",
+    "CronJob",
+    "Service",
+    "Ingress",
+    "NetworkPolicy",
+    "HelmRelease",
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -29,6 +46,57 @@ impl ExtensionExecutionMode {
             Self::Silent => "Run",
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProviderKind {
+    OpenAi,
+    Anthropic,
+}
+
+impl AiProviderKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::OpenAi => "AI",
+            Self::Anthropic => "Claude",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiActionConfig {
+    #[serde(default = "default_ai_action_id")]
+    pub id: String,
+    #[serde(default = "default_ai_action_title")]
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub resource_kinds: Vec<String>,
+    #[serde(default)]
+    pub shortcut: Option<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AiProviderConfig {
+    pub provider: AiProviderKind,
+    pub model: String,
+    pub api_key_env: String,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default = "default_ai_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_ai_max_output_tokens")]
+    pub max_output_tokens: u32,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub action: Option<AiActionConfig>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -58,13 +126,27 @@ pub struct ExtensionActionConfig {
     pub command: ExtensionCommandConfig,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct ExtensionsConfig {
     #[serde(default)]
     pub actions: Vec<ExtensionActionConfig>,
+    #[serde(default)]
+    pub ai: Option<AiProviderConfig>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
+pub enum LoadedExtensionActionKind {
+    Command {
+        mode: ExtensionExecutionMode,
+        command: ExtensionCommandConfig,
+    },
+    AiAnalysis {
+        provider: AiProviderConfig,
+        system_prompt: Option<String>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct LoadedExtensionAction {
     pub id: String,
     pub title: String,
@@ -72,8 +154,7 @@ pub struct LoadedExtensionAction {
     pub aliases: Vec<String>,
     pub resource_kinds: Vec<String>,
     pub shortcut: Option<String>,
-    pub mode: ExtensionExecutionMode,
-    pub command: ExtensionCommandConfig,
+    pub kind: LoadedExtensionActionKind,
 }
 
 impl LoadedExtensionAction {
@@ -84,9 +165,18 @@ impl LoadedExtensionAction {
                 .iter()
                 .any(|kind| kind == "*" || kind.eq_ignore_ascii_case(resource.kind()))
     }
+
+    pub fn badge_label(&self) -> String {
+        match &self.kind {
+            LoadedExtensionActionKind::Command { mode, .. } => mode.label().to_string(),
+            LoadedExtensionActionKind::AiAnalysis { provider, .. } => {
+                provider.provider.label().to_string()
+            }
+        }
+    }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExtensionRegistry {
     actions: Vec<LoadedExtensionAction>,
 }
@@ -109,7 +199,7 @@ impl ExtensionRegistry {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct ExtensionLoadResult {
     pub registry: ExtensionRegistry,
     pub warnings: Vec<String>,
@@ -159,6 +249,22 @@ pub struct PreparedExtensionCommand {
     pub cwd: Option<PathBuf>,
     pub env: BTreeMap<String, String>,
     pub preview: String,
+}
+
+fn default_ai_timeout_secs() -> u64 {
+    DEFAULT_AI_TIMEOUT_SECS
+}
+
+fn default_ai_max_output_tokens() -> u32 {
+    DEFAULT_AI_MAX_OUTPUT_TOKENS
+}
+
+fn default_ai_action_id() -> String {
+    DEFAULT_AI_ACTION_ID.to_string()
+}
+
+fn default_ai_action_title() -> String {
+    DEFAULT_AI_ACTION_TITLE.to_string()
 }
 
 pub fn extensions_config_path() -> PathBuf {
@@ -216,33 +322,28 @@ pub fn load_extensions_registry() -> ExtensionLoadResult {
 }
 
 pub fn prepare_command(
-    action: &LoadedExtensionAction,
+    title: &str,
+    command: &ExtensionCommandConfig,
     context: &ExtensionSubstitutionContext,
 ) -> Result<PreparedExtensionCommand, String> {
-    let program = substitute_template(&action.command.program, context);
-    let args = action
-        .command
+    let program = substitute_template(&command.program, context);
+    let args = command
         .args
         .iter()
         .map(|arg| substitute_template(arg, context))
         .collect::<Vec<_>>();
-    let cwd = action
-        .command
+    let cwd = command
         .cwd
         .as_ref()
         .map(|cwd| PathBuf::from(substitute_template(cwd, context)));
-    let env = action
-        .command
+    let env = command
         .env
         .iter()
         .map(|(key, value)| (key.clone(), substitute_template(value, context)))
         .collect::<BTreeMap<_, _>>();
 
     if program.trim().is_empty() {
-        return Err(format!(
-            "extension '{}' resolved to an empty program",
-            action.title
-        ));
+        return Err(format!("extension '{title}' resolved to an empty program"));
     }
 
     Ok(PreparedExtensionCommand {
@@ -311,14 +412,23 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
             aliases,
             resource_kinds,
             shortcut: action.shortcut.filter(|value| !value.trim().is_empty()),
-            mode: action.mode,
-            command: ExtensionCommandConfig {
-                program: program.to_string(),
-                args: action.command.args,
-                cwd: action.command.cwd.filter(|value| !value.trim().is_empty()),
-                env: action.command.env,
+            kind: LoadedExtensionActionKind::Command {
+                mode: action.mode,
+                command: ExtensionCommandConfig {
+                    program: program.to_string(),
+                    args: action.command.args,
+                    cwd: action.command.cwd.filter(|value| !value.trim().is_empty()),
+                    env: action.command.env,
+                },
             },
         });
+    }
+
+    if let Some(ai) = config.ai {
+        match validate_ai_extension(ai, &mut seen_ids) {
+            Ok(action) => actions.push(action),
+            Err(warning) => warnings.push(warning),
+        }
     }
 
     ExtensionLoadResult {
@@ -326,6 +436,96 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
         warnings,
         path,
     }
+}
+
+fn validate_ai_extension(
+    ai: AiProviderConfig,
+    seen_ids: &mut BTreeSet<String>,
+) -> Result<LoadedExtensionAction, String> {
+    let model = ai.model.trim();
+    let api_key_env = ai.api_key_env.trim();
+    if model.is_empty() {
+        return Err("skipping AI action with empty model".to_string());
+    }
+    if api_key_env.is_empty() {
+        return Err("skipping AI action with empty api_key_env".to_string());
+    }
+    let action = ai.action.unwrap_or(AiActionConfig {
+        id: default_ai_action_id(),
+        title: default_ai_action_title(),
+        description: Some("Ask the configured AI provider to analyze this resource".into()),
+        aliases: vec!["ask ai".into(), "ai".into(), "diagnose".into()],
+        resource_kinds: DEFAULT_AI_RESOURCE_KINDS
+            .iter()
+            .map(|kind| (*kind).to_string())
+            .collect(),
+        shortcut: None,
+        system_prompt: None,
+    });
+    let id = action.id.trim();
+    let title = action.title.trim();
+    if id.is_empty() {
+        return Err("skipping AI action with empty id".to_string());
+    }
+    if !seen_ids.insert(id.to_string()) {
+        return Err(format!("skipping duplicate extension id '{id}'"));
+    }
+    if title.is_empty() {
+        return Err(format!("skipping AI action '{id}' with empty title"));
+    }
+    let mut aliases = action
+        .aliases
+        .into_iter()
+        .map(|alias| alias.trim().to_ascii_lowercase())
+        .filter(|alias| !alias.is_empty())
+        .collect::<Vec<_>>();
+    if !aliases
+        .iter()
+        .any(|alias| alias == &title.to_ascii_lowercase())
+    {
+        aliases.push(title.to_ascii_lowercase());
+    }
+    aliases.sort();
+    aliases.dedup();
+    let mut resource_kinds = action
+        .resource_kinds
+        .into_iter()
+        .map(|kind| kind.trim().to_string())
+        .filter(|kind| !kind.is_empty())
+        .collect::<Vec<_>>();
+    if resource_kinds.is_empty() {
+        resource_kinds.extend(
+            DEFAULT_AI_RESOURCE_KINDS
+                .iter()
+                .map(|kind| (*kind).to_string()),
+        );
+    }
+    resource_kinds.sort();
+    resource_kinds.dedup();
+
+    Ok(LoadedExtensionAction {
+        id: id.to_string(),
+        title: title.to_string(),
+        description: action.description.filter(|value| !value.trim().is_empty()),
+        aliases,
+        resource_kinds,
+        shortcut: action.shortcut.filter(|value| !value.trim().is_empty()),
+        kind: LoadedExtensionActionKind::AiAnalysis {
+            provider: AiProviderConfig {
+                provider: ai.provider,
+                model: model.to_string(),
+                api_key_env: api_key_env.to_string(),
+                endpoint: ai.endpoint.filter(|value| !value.trim().is_empty()),
+                timeout_secs: ai.timeout_secs.max(1),
+                max_output_tokens: ai.max_output_tokens.max(64),
+                temperature: ai.temperature,
+                action: None,
+            },
+            system_prompt: action
+                .system_prompt
+                .filter(|value| !value.trim().is_empty()),
+        },
+    })
 }
 
 fn substitute_template(value: &str, context: &ExtensionSubstitutionContext) -> String {
@@ -407,6 +607,7 @@ mod tests {
                         },
                     },
                 ],
+                ai: None,
             },
             PathBuf::from("/tmp/extensions.yaml"),
         );
@@ -425,12 +626,14 @@ mod tests {
             aliases: vec!["grafana".into()],
             resource_kinds: vec!["deployment".into(), "StatefulSet".into()],
             shortcut: None,
-            mode: ExtensionExecutionMode::Foreground,
-            command: ExtensionCommandConfig {
-                program: "open".into(),
-                args: Vec::new(),
-                cwd: None,
-                env: BTreeMap::new(),
+            kind: LoadedExtensionActionKind::Command {
+                mode: ExtensionExecutionMode::Foreground,
+                command: ExtensionCommandConfig {
+                    program: "open".into(),
+                    args: Vec::new(),
+                    cwd: None,
+                    env: BTreeMap::new(),
+                },
             },
         };
 
@@ -448,22 +651,29 @@ mod tests {
             aliases: vec!["describe".into()],
             resource_kinds: vec!["Pod".into()],
             shortcut: None,
-            mode: ExtensionExecutionMode::Background,
-            command: ExtensionCommandConfig {
-                program: "kubectl".into(),
-                args: vec![
-                    "describe".into(),
-                    "$KIND/$NAME".into(),
-                    "-n".into(),
-                    "$NAMESPACE".into(),
-                    "--labels=$LABELS".into(),
-                ],
-                cwd: Some("/tmp/$CONTEXT".into()),
-                env: BTreeMap::from([("CTX".into(), "$CONTEXT".into())]),
+            kind: LoadedExtensionActionKind::Command {
+                mode: ExtensionExecutionMode::Background,
+                command: ExtensionCommandConfig {
+                    program: "kubectl".into(),
+                    args: vec![
+                        "describe".into(),
+                        "$KIND/$NAME".into(),
+                        "-n".into(),
+                        "$NAMESPACE".into(),
+                        "--labels=$LABELS".into(),
+                    ],
+                    cwd: Some("/tmp/$CONTEXT".into()),
+                    env: BTreeMap::from([("CTX".into(), "$CONTEXT".into())]),
+                },
             },
         };
+        let command = match &action.kind {
+            LoadedExtensionActionKind::Command { command, .. } => command,
+            LoadedExtensionActionKind::AiAnalysis { .. } => panic!("expected command action"),
+        };
         let prepared = prepare_command(
-            &action,
+            &action.title,
+            command,
             &ExtensionSubstitutionContext::from_resource(
                 &ResourceRef::Pod("api-0".into(), "prod".into()),
                 Some("staging"),
@@ -479,5 +689,37 @@ mod tests {
         assert_eq!(prepared.cwd, Some(PathBuf::from("/tmp/staging")));
         assert_eq!(prepared.env.get("CTX").map(String::as_str), Some("staging"));
         assert!(prepared.preview.contains("kubectl"));
+    }
+
+    #[test]
+    fn validate_registry_adds_ai_action_when_configured() {
+        let result = validate_extensions(
+            ExtensionsConfig {
+                actions: Vec::new(),
+                ai: Some(AiProviderConfig {
+                    provider: AiProviderKind::Anthropic,
+                    model: "claude-sonnet".into(),
+                    api_key_env: "ANTHROPIC_API_KEY".into(),
+                    endpoint: None,
+                    timeout_secs: 15,
+                    max_output_tokens: 512,
+                    temperature: Some(0.1),
+                    action: None,
+                }),
+            },
+            PathBuf::from("/tmp/extensions.yaml"),
+        );
+
+        assert_eq!(result.registry.actions().len(), 1);
+        assert_eq!(result.registry.actions()[0].id, "ask_ai");
+        assert_eq!(result.registry.actions()[0].badge_label(), "Claude");
+        assert!(
+            !result.registry.actions()[0]
+                .matches_resource(&ResourceRef::Secret("app-secret".into(), "prod".into(),))
+        );
+        assert!(
+            result.registry.actions()[0]
+                .matches_resource(&ResourceRef::Pod("api-0".into(), "prod".into(),))
+        );
     }
 }
