@@ -126,10 +126,12 @@ pub fn render_endpoints(
                     };
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::Endpoint(
-                                endpoint.name.clone(),
-                                endpoint.namespace.clone(),
-                            ),
+                            || {
+                                ResourceRef::Endpoint(
+                                    endpoint.name.clone(),
+                                    endpoint.namespace.clone(),
+                                )
+                            },
                             bookmarks,
                             endpoint.name.as_str(),
                             Style::default().fg(theme.fg),

@@ -378,7 +378,7 @@ pub fn render_flux_resources(
             };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::CustomResource {
+                    || ResourceRef::CustomResource {
                         name: raw_resource.name.clone(),
                         namespace: raw_resource.namespace.clone(),
                         group: raw_resource.group.clone(),

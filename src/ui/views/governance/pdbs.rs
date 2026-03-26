@@ -172,10 +172,12 @@ pub fn render_pdbs(
                     };
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::PodDisruptionBudget(
-                                pdb.name.clone(),
-                                pdb.namespace.clone(),
-                            ),
+                            || {
+                                ResourceRef::PodDisruptionBudget(
+                                    pdb.name.clone(),
+                                    pdb.namespace.clone(),
+                                )
+                            },
                             bookmarks,
                             pdb.name.as_str(),
                             Style::default().fg(theme.fg),

@@ -150,7 +150,7 @@ pub fn render_config_maps(
             };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::ConfigMap(cm.name.clone(), cm.namespace.clone()),
+                    || ResourceRef::ConfigMap(cm.name.clone(), cm.namespace.clone()),
                     bookmarks,
                     cm.name.as_str(),
                     Style::default().fg(theme.fg),
@@ -321,7 +321,7 @@ pub fn render_secrets(
             };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::Secret(secret.name.clone(), secret.namespace.clone()),
+                    || ResourceRef::Secret(secret.name.clone(), secret.namespace.clone()),
                     bookmarks,
                     secret.name.as_str(),
                     Style::default().fg(theme.fg),

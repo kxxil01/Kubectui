@@ -163,6 +163,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, cluster: 
         }
         WorkbenchTabState::WorkloadLogs(tab) => render_workload_logs_tab(frame, inner, tab),
         WorkbenchTabState::Exec(tab) => render_exec_tab(frame, inner, tab),
+        WorkbenchTabState::ExtensionOutput(tab) => render_extension_output_tab(frame, inner, tab),
         WorkbenchTabState::PortForward(tab) => tab.dialog.render_embedded(frame, inner),
         WorkbenchTabState::Relations(tab) => {
             crate::ui::views::relations::render_relations_tab(frame, inner, tab, &theme)
@@ -2320,6 +2321,93 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
         ])),
         sections[2],
     );
+}
+
+fn render_extension_output_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab: &crate::workbench::ExtensionOutputTabState,
+) {
+    let theme = default_theme();
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .split(area);
+
+    let status_badge = if tab.loading {
+        Span::styled(" running ", theme.badge_warning_style())
+    } else if tab.success == Some(true) {
+        Span::styled(" success ", theme.badge_success_style())
+    } else {
+        Span::styled(" failed ", theme.badge_error_style())
+    };
+    let mode_badge = Span::styled(format!(" {} ", tab.mode_label), theme.badge_warning_style());
+    let summary = if let Some(code) = tab.exit_code {
+        format!("{}  exit:{code}", tab.command_preview)
+    } else {
+        tab.command_preview.clone()
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                status_badge,
+                Span::raw(" "),
+                mode_badge,
+                Span::raw(" "),
+                Span::styled(summary, Style::default().fg(theme.fg)),
+            ]),
+            Line::from(Span::styled(
+                "[j/k] scroll  [Esc] back",
+                theme.keybind_desc_style(),
+            )),
+        ]),
+        sections[0],
+    );
+
+    if tab.loading {
+        frame.render_widget(
+            Paragraph::new(Span::styled(
+                " Running extension command...",
+                theme.inactive_style(),
+            )),
+            sections[1],
+        );
+        return;
+    }
+
+    if tab.lines.is_empty() {
+        let message = tab
+            .error
+            .as_deref()
+            .map(|error| format!(" Error: {error}"))
+            .unwrap_or_else(|| " Command completed without output.".to_string());
+        let style = if tab.error.is_some() {
+            theme.badge_error_style()
+        } else {
+            theme.inactive_style()
+        };
+        frame.render_widget(Paragraph::new(Span::styled(message, style)), sections[1]);
+        return;
+    }
+
+    let total = tab.lines.len();
+    let window = scroll_window(total, tab.scroll, sections[1].height.max(1) as usize);
+    let lines = tab.lines[window.start..window.end]
+        .iter()
+        .map(|line| {
+            let style = if line.starts_with("stderr:") {
+                Style::default().fg(theme.warning)
+            } else {
+                Style::default().fg(theme.fg)
+            };
+            Line::from(Span::styled(line.clone(), style))
+        })
+        .collect::<Vec<_>>();
+    frame.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        sections[1],
+    );
+    render_scrollbar(frame, sections[1], total, window.start);
 }
 
 fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize) {

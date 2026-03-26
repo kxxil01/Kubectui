@@ -164,7 +164,7 @@ pub fn render_priority_classes(
                         };
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::PriorityClass(priority_class.name.clone()),
+                            || ResourceRef::PriorityClass(priority_class.name.clone()),
                             bookmarks,
                             priority_class.name.as_str(),
                             Style::default().fg(theme.fg),

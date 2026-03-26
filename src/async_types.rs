@@ -212,6 +212,23 @@ pub struct ExtensionFetchResult {
 }
 
 #[derive(Debug)]
+pub struct ExtensionCommandRunResult {
+    pub lines: Vec<String>,
+    pub success: bool,
+    pub exit_code: Option<i32>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug)]
+pub struct ExtensionCommandAsyncResult {
+    pub action_history_id: u64,
+    pub resource: ResourceRef,
+    pub execution_id: Option<u64>,
+    pub title: String,
+    pub result: ExtensionCommandRunResult,
+}
+
+#[derive(Debug)]
 pub struct DetailAsyncResult {
     pub request_id: u64,
     pub resource: ResourceRef,

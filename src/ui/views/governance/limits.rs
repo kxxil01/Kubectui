@@ -178,7 +178,7 @@ pub fn render_limit_ranges(
                     };
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone()),
+                            || ResourceRef::LimitRange(lr.name.clone(), lr.namespace.clone()),
                             bookmarks,
                             lr.name.as_str(),
                             Style::default().fg(theme.fg),

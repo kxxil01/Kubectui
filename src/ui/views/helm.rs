@@ -196,7 +196,7 @@ pub fn render_helm_releases(
 
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::HelmRelease(release.name.clone(), release.namespace.clone()),
+                    || ResourceRef::HelmRelease(release.name.clone(), release.namespace.clone()),
                     bookmarks,
                     release.name.as_str(),
                     Style::default().fg(theme.fg),

@@ -673,6 +673,10 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 true
             }
         },
+        AppAction::ExecuteExtension { .. } => {
+            app_state.command_palette.close();
+            true
+        }
         AppAction::PaletteAction { .. } => {
             app_state.command_palette.close();
             true

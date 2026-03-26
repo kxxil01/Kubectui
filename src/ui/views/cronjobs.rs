@@ -21,7 +21,8 @@ use crate::{
         ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
-        format_age, format_small_int, render_resource_table, sort_header_cell, striped_row_style,
+        format_age, format_small_int, name_cell_with_bookmark, render_resource_table,
+        sort_header_cell, striped_row_style,
         views::filtering::filtered_cronjob_indices,
         workload_sort_suffix,
     },
@@ -144,13 +145,17 @@ pub fn render_cronjobs(
 
                 rows.push(
                     Row::new(vec![
-                        bookmarked_name_cell(
-                            &ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone()),
-                            bookmarks,
-                            cj.name.as_str(),
-                            name_style,
-                            theme,
-                        ),
+                        if bookmarks.is_empty() {
+                            name_cell_with_bookmark(false, cj.name.as_str(), name_style, theme)
+                        } else {
+                            bookmarked_name_cell(
+                                || ResourceRef::CronJob(cj.name.clone(), cj.namespace.clone()),
+                                bookmarks,
+                                cj.name.as_str(),
+                                name_style,
+                                theme,
+                            )
+                        },
                         Cell::from(Span::styled(cj.namespace.as_str(), dim_style)),
                         Cell::from(Span::styled(cj.schedule.as_str(), accent_style)),
                         Cell::from(Span::styled(last_run, dim_style)),
