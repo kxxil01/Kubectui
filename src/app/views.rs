@@ -102,6 +102,7 @@ pub enum AppView {
     Dashboard,
     Bookmarks,
     HealthReport,
+    Vulnerabilities,
     Nodes,
     // Workloads
     Pods,
@@ -166,6 +167,7 @@ impl AppView {
             AppView::Dashboard => "dashboard",
             AppView::Bookmarks => "bookmarks",
             AppView::HealthReport => "health_report",
+            AppView::Vulnerabilities => "vulnerabilities",
             AppView::Nodes => "nodes",
             AppView::Pods => "pods",
             AppView::Deployments => "deployments",
@@ -220,6 +222,9 @@ impl AppView {
             "dashboard" | "Dashboard" => Some(AppView::Dashboard),
             "bookmarks" | "Bookmarks" => Some(AppView::Bookmarks),
             "health_report" | "HealthReport" => Some(AppView::HealthReport),
+            "vulnerabilities" | "Vulnerabilities" | "SecurityCenter" => {
+                Some(AppView::Vulnerabilities)
+            }
             "nodes" | "Nodes" => Some(AppView::Nodes),
             "pods" | "Pods" => Some(AppView::Pods),
             "deployments" | "Deployments" => Some(AppView::Deployments),
@@ -282,12 +287,13 @@ impl AppView {
         }
     }
 
-    const ORDER: [AppView; 49] = [
+    const ORDER: [AppView; 50] = [
         // Overview
         AppView::Dashboard,
         AppView::Bookmarks,
         AppView::Issues,
         AppView::HealthReport,
+        AppView::Vulnerabilities,
         AppView::Nodes,
         AppView::Namespaces,
         AppView::Events,
@@ -351,6 +357,7 @@ impl AppView {
             AppView::Dashboard => "Dashboard",
             AppView::Bookmarks => "Bookmarks",
             AppView::HealthReport => "Health Report",
+            AppView::Vulnerabilities => "Vulnerabilities",
             AppView::Nodes => "Nodes",
             AppView::Pods => "Pods",
             AppView::Deployments => "Deployments",
@@ -417,6 +424,7 @@ impl AppView {
             AppView::Dashboard => "view.dashboard",
             AppView::Bookmarks => "view.bookmarks",
             AppView::HealthReport => "view.health_report",
+            AppView::Vulnerabilities => "view.vulnerabilities",
             AppView::Nodes => "view.nodes",
             AppView::Pods => "view.pods",
             AppView::Deployments => "view.deployments",
@@ -473,6 +481,7 @@ impl AppView {
             | AppView::Bookmarks
             | AppView::Issues
             | AppView::HealthReport
+            | AppView::Vulnerabilities
             | AppView::Nodes => NavGroup::Overview,
             AppView::Pods
             | AppView::Deployments

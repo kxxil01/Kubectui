@@ -19,7 +19,7 @@ use kubectui::{
         ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo, DaemonSetInfo, DeploymentInfo,
         JobInfo, LimitRangeInfo, LimitSpec, NodeInfo, PodDisruptionBudgetInfo, PodInfo,
         ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
-        ServiceAccountInfo, ServiceInfo, StatefulSetInfo,
+        ServiceAccountInfo, ServiceInfo, StatefulSetInfo, VulnerabilityReportInfo,
     },
     state::{
         ClusterDataSource, ClusterSnapshot, GlobalState, RefreshOptions, RefreshScope,
@@ -368,6 +368,15 @@ impl ClusterDataSource for PerfMockDataSource {
         self.bump();
         self.maybe_delay().await;
         Ok(vec![ClusterRoleBindingInfo::default()])
+    }
+
+    async fn fetch_vulnerability_reports(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<VulnerabilityReportInfo>> {
+        self.bump();
+        self.maybe_delay().await;
+        Ok(Vec::new())
     }
 
     async fn fetch_custom_resource_definitions(

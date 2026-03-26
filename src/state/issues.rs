@@ -9,6 +9,7 @@ use std::sync::{Arc, LazyLock, Mutex};
 use crate::app::ResourceRef;
 use crate::k8s::dtos::AlertSeverity;
 use crate::k8s::selectors::{selector_is_empty, selector_matches_map};
+use crate::state::vulnerabilities::compute_vulnerability_findings;
 use crate::state::{ClusterSnapshot, RefreshScope};
 use crate::time::{age_seconds_since, now_unix_seconds};
 use crate::ui::contains_ci;
@@ -46,6 +47,7 @@ pub enum IssueCategory {
     ServicePortMismatch,
     UnusedConfigMap,
     UnusedSecret,
+    VulnerabilityExposure,
 }
 
 impl IssueCategory {
@@ -71,6 +73,7 @@ impl IssueCategory {
             Self::ServicePortMismatch => "Service Port Mismatch",
             Self::UnusedConfigMap => "Unused ConfigMap",
             Self::UnusedSecret => "Unused Secret",
+            Self::VulnerabilityExposure => "Vulnerability Exposure",
         }
     }
 }
@@ -79,6 +82,7 @@ impl IssueCategory {
 pub enum ClusterIssueSource {
     Runtime,
     Sanitizer,
+    Security,
 }
 
 impl ClusterIssueSource {
@@ -86,6 +90,7 @@ impl ClusterIssueSource {
         match self {
             Self::Runtime => "Runtime",
             Self::Sanitizer => "Sanitizer",
+            Self::Security => "Security",
         }
     }
 }
@@ -143,13 +148,35 @@ fn rule_ignored(annotations: &[(String, String)], rule_name: &str) -> bool {
 /// Returns filtered issue indices matching the search query.
 /// Used by both the render path and the `selected_resource` action path.
 pub fn filtered_issue_indices(issues: &[ClusterIssue], query: &str) -> Vec<usize> {
+    filtered_issue_indices_by_source(issues, query, None)
+}
+
+pub fn filtered_issue_indices_by_source(
+    issues: &[ClusterIssue],
+    query: &str,
+    source: Option<ClusterIssueSource>,
+) -> Vec<usize> {
     if query.is_empty() {
-        (0..issues.len()).collect()
+        issues
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, issue)| {
+                source
+                    .map(|expected| issue.source == expected)
+                    .unwrap_or(true)
+                    .then_some(idx)
+            })
+            .collect()
     } else {
         issues
             .iter()
             .enumerate()
-            .filter_map(|(idx, issue)| issue.matches_query(query).then_some(idx))
+            .filter_map(|(idx, issue)| {
+                let source_matches = source
+                    .map(|expected| issue.source == expected)
+                    .unwrap_or(true);
+                (source_matches && issue.matches_query(query)).then_some(idx)
+            })
             .collect()
     }
 }
@@ -520,6 +547,7 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
     }
 
     detect_sanitizer_findings(snapshot, &mut issues);
+    detect_vulnerability_findings(snapshot, &mut issues);
 
     // Sort: severity rank (Error first), then source, then category, then name.
     issues.sort_unstable_by(|a, b| {
@@ -540,6 +568,89 @@ fn detect_sanitizer_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<Cluste
     detect_service_port_mismatches(snapshot, issues);
     detect_unused_config_maps(snapshot, issues);
     detect_unused_secrets(snapshot, issues);
+}
+
+fn detect_vulnerability_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
+    let findings = compute_vulnerability_findings(snapshot);
+    for finding in findings.iter() {
+        let Some(resource_ref) = finding.resource_ref.clone() else {
+            continue;
+        };
+        if finding.counts.total() == 0 {
+            continue;
+        }
+        let message = if finding.fixable_count > 0 {
+            format!(
+                "{} total vulnerabilities (critical {}, high {}, medium {}, low {}, unknown {}), {} fixable",
+                finding.counts.total(),
+                finding.counts.critical,
+                finding.counts.high,
+                finding.counts.medium,
+                finding.counts.low,
+                finding.counts.unknown,
+                finding.fixable_count,
+            )
+        } else {
+            format!(
+                "{} total vulnerabilities (critical {}, high {}, medium {}, low {}, unknown {})",
+                finding.counts.total(),
+                finding.counts.critical,
+                finding.counts.high,
+                finding.counts.medium,
+                finding.counts.low,
+                finding.counts.unknown,
+            )
+        };
+        let resource_kind = issue_resource_kind(&resource_ref);
+        issues.push(ClusterIssue {
+            source: ClusterIssueSource::Security,
+            severity: finding.severity,
+            category: IssueCategory::VulnerabilityExposure,
+            resource_kind,
+            resource_name: finding.resource_name.clone(),
+            namespace: finding.namespace.clone(),
+            message,
+            resource_ref,
+        });
+    }
+}
+
+fn issue_resource_kind(resource_ref: &ResourceRef) -> &'static str {
+    match resource_ref {
+        ResourceRef::Node(_) => "Node",
+        ResourceRef::Pod(_, _) => "Pod",
+        ResourceRef::Service(_, _) => "Service",
+        ResourceRef::Deployment(_, _) => "Deployment",
+        ResourceRef::StatefulSet(_, _) => "StatefulSet",
+        ResourceRef::DaemonSet(_, _) => "DaemonSet",
+        ResourceRef::ReplicaSet(_, _) => "ReplicaSet",
+        ResourceRef::ReplicationController(_, _) => "ReplicationController",
+        ResourceRef::Job(_, _) => "Job",
+        ResourceRef::CronJob(_, _) => "CronJob",
+        ResourceRef::ResourceQuota(_, _) => "ResourceQuota",
+        ResourceRef::LimitRange(_, _) => "LimitRange",
+        ResourceRef::PodDisruptionBudget(_, _) => "PodDisruptionBudget",
+        ResourceRef::Endpoint(_, _) => "Endpoints",
+        ResourceRef::Ingress(_, _) => "Ingress",
+        ResourceRef::IngressClass(_) => "IngressClass",
+        ResourceRef::NetworkPolicy(_, _) => "NetworkPolicy",
+        ResourceRef::ConfigMap(_, _) => "ConfigMap",
+        ResourceRef::Secret(_, _) => "Secret",
+        ResourceRef::Hpa(_, _) => "HorizontalPodAutoscaler",
+        ResourceRef::PriorityClass(_) => "PriorityClass",
+        ResourceRef::Pvc(_, _) => "PersistentVolumeClaim",
+        ResourceRef::Pv(_) => "PersistentVolume",
+        ResourceRef::StorageClass(_) => "StorageClass",
+        ResourceRef::Namespace(_) => "Namespace",
+        ResourceRef::Event(_, _) => "Event",
+        ResourceRef::ServiceAccount(_, _) => "ServiceAccount",
+        ResourceRef::Role(_, _) => "Role",
+        ResourceRef::RoleBinding(_, _) => "RoleBinding",
+        ResourceRef::ClusterRole(_) => "ClusterRole",
+        ResourceRef::ClusterRoleBinding(_) => "ClusterRoleBinding",
+        ResourceRef::HelmRelease(_, _) => "HelmRelease",
+        ResourceRef::CustomResource { .. } => "CustomResource",
+    }
 }
 
 fn detect_pod_sanitizer_findings(snapshot: &ClusterSnapshot, issues: &mut Vec<ClusterIssue>) {
@@ -1800,6 +1911,40 @@ mod tests {
                 .iter()
                 .any(|issue| issue.category == IssueCategory::UnusedSecret)
         );
+    }
+
+    #[test]
+    fn security_issues_include_workload_vulnerability_findings() {
+        let mut snap = empty_snapshot();
+        snap.snapshot_version = 7;
+        snap.vulnerability_reports.push(VulnerabilityReportInfo {
+            name: "api-web".into(),
+            namespace: "default".into(),
+            resource_kind: "Deployment".into(),
+            resource_name: "api".into(),
+            resource_namespace: "default".into(),
+            container_name: Some("web".into()),
+            counts: VulnerabilitySummaryCounts {
+                critical: 1,
+                high: 2,
+                medium: 0,
+                low: 0,
+                unknown: 0,
+            },
+            fixable_count: 2,
+            ..VulnerabilityReportInfo::default()
+        });
+
+        let issues = detect_issues(&snap);
+        let issue = issues
+            .iter()
+            .find(|issue| issue.category == IssueCategory::VulnerabilityExposure)
+            .expect("vulnerability issue should exist");
+        assert_eq!(issue.source, ClusterIssueSource::Security);
+        assert_eq!(issue.resource_kind, "Deployment");
+        assert_eq!(issue.resource_name, "api");
+        assert_eq!(issue.namespace, "default");
+        assert!(issue.message.contains("3 total vulnerabilities"));
     }
 
     #[test]

@@ -15,6 +15,7 @@ use crate::{
     state::{
         ClusterSnapshot,
         issues::{compute_issues, filtered_issue_indices},
+        vulnerabilities::{compute_vulnerability_findings, filtered_vulnerability_indices},
     },
     time::{AppTimestamp, age_seconds_since, now_unix_seconds},
     ui::contains_ci,
@@ -518,6 +519,10 @@ pub fn filtered_indices_for_view(
     match view {
         AppView::Dashboard | AppView::Bookmarks | AppView::PortForwarding | AppView::Extensions => {
             Vec::new()
+        }
+        AppView::Vulnerabilities => {
+            let findings = compute_vulnerability_findings(snapshot);
+            filtered_vulnerability_indices(&findings, query)
         }
         AppView::Issues | AppView::HealthReport => {
             let issues = compute_issues(snapshot);

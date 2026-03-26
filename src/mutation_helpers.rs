@@ -264,8 +264,12 @@ pub fn refresh_options_for_view(
             RefreshScope::CORE_OVERVIEW,
             RefreshScope::CORE_OVERVIEW
                 .union(RefreshScope::LEGACY_SECONDARY)
+                .union(RefreshScope::SECURITY)
                 .union(RefreshScope::FLUX),
         ),
+        AppView::Vulnerabilities => {
+            RefreshDispatch::new(RefreshScope::SECURITY, RefreshScope::SECURITY)
+        }
         AppView::Events => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
         AppView::Endpoints
         | AppView::Ingresses

@@ -299,6 +299,7 @@ impl AppView {
             | AppView::Issues
             | AppView::HealthReport => PERSISTENCE_NONE,
             AppView::Pods
+            | AppView::Vulnerabilities
             | AppView::Nodes
             | AppView::Services
             | AppView::Deployments

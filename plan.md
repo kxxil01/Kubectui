@@ -44,7 +44,7 @@ Current milestone status:
 - Milestone 26: completed
 - Milestone 27: completed
 - Milestone 28: completed
-- Milestone 29: not started
+- Milestone 29: completed
 - Milestone 30: not started
 - Milestone 31: not started
 - Milestone 32: not started
@@ -120,6 +120,7 @@ Verification status for completed milestones:
 - Latest M26 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping the Rollout Control Center. The clean 5-run render median comparison vs pre-M26 `HEAD` was positive (`261.326ms -> 257.281ms`, `-4.045ms`, `-1.55%`). GitHub PR checks for PR #59 also passed: `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)`.
 - Latest M27 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping advanced log investigation. The final local review also fixed a single-pod all-containers build regression and hardened workload target refresh so stale pod/container/label filters cannot survive retargets.
 - Latest M28 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping workspaces, banks, and typed hotkeys. The clean 5-run render-profile comparison vs clean `HEAD` was positive (`render` `254.102ms -> 249.561ms`, `-4.541ms`; `sidebar` `20.106ms -> 19.792ms`; `header` `14.428ms -> 14.354ms`).
+- Latest M29 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping the Security / Vulnerability Center. The clean 5-run render sweep now includes one additional top-level view (`2000` frames vs `1960` on pre-M29 `HEAD`), so raw `render` totals are not directly comparable across the two trees; normalized per-frame render time still improved (`245.747ms / 1960 = 0.1254ms` vs `249.282ms / 2000 = 0.1246ms`), and no hot view regressed materially in the final profile.
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -1956,16 +1957,12 @@ This is the execution order.
 
 ## P5 (Next)
 
-- Milestone 29: Security / Vulnerability Center
 - Milestone 30: Resource Create / Apply Templates
+- Milestone 31: Service / Traffic Debugging
 
 ## P6
 
-- Milestone 31: Service / Traffic Debugging
 - Milestone 32: Node Shell / Node Debug
-
-## P7
-
 - Milestone 23: Extension System & AI Assistant Hooks
 
 ## Continuous
@@ -1976,13 +1973,13 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M28 are complete. The next highest-priority unstarted milestones are the direct operator workflow wins, with M23 intentionally deferred behind them.
+M0-M29 are complete. The next highest-priority unstarted milestones are the direct operator workflow wins, with M23 intentionally deferred behind them.
 
 Recommended near-term order:
 
-- M29: Security / Vulnerability Center
 - M30: Resource Create / Apply Templates
 - M31: Service / Traffic Debugging
+- M32: Node Shell / Node Debug
 
 Do not start next with:
 
@@ -1999,18 +1996,17 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 ### Big Win Priority Order
 
-1. M29: Security / Vulnerability Center
-2. M30: Resource Create / Apply Templates
-3. M31: Service / Traffic Debugging
-4. M32: Node Shell / Node Debug
-5. M23: Extension System & AI Assistant Hooks
+1. M30: Resource Create / Apply Templates
+2. M31: Service / Traffic Debugging
+3. M32: Node Shell / Node Debug
+4. M23: Extension System & AI Assistant Hooks
 
 ### Why this order
 
 - M28 is now shipped and validated; it amplifies the rest of the operator workflow surface by making repeat layouts and jumps cheap.
-- M29 is next because it extends the already-shipped Health Report / Issue Center path with the highest remaining operator-security payoff.
-- M30 follows because safe create/apply templates are valuable but still secondary to investigation and remediation surfaces.
-- M31 remains valuable, but it overlaps with M25 and existing relationship tooling, so it should follow the higher-leverage operational surfaces.
+- M29 is now shipped on the canonical diagnostics path, using cluster-side Trivy Operator reports rather than embedding a local scanner.
+- M30 is next because safe create/apply templates are the highest-leverage remaining workflow addition that does not increase steady-state background cost.
+- M31 remains valuable, but it overlaps with M25 and existing relationship tooling, so it should follow the higher-leverage create/apply surface.
 - M32 is powerful but riskier, more privilege-sensitive, and easier to get wrong operationally, so it should remain behind the safer service/debugging flows.
 - M23 is still strategically useful, but it is an extensibility platform rather than a direct operator workflow win; it stays last among the remaining roadmap items.
 
@@ -2092,18 +2088,16 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 #### M29: Security / Vulnerability Center
 
-- Big win: medium-high
-- Why:
-  - natural extension of M24 sanitizer/health reporting
-  - strong value for operator/security collaboration
-- Scope:
-  - vulnerability summaries from cluster-integrated scanners/operators
-  - severity rollups by workload/namespace
-  - drill-down from issue center / health report
-- Guardrails:
-  - prefer direct integrations with established cluster-side tools
-  - do not embed a separate scanning engine in KubecTUI
-  - keep data fetches bounded and explicit
+- Status: Completed
+- Shipped scope:
+  - direct Trivy Operator `VulnerabilityReport` / `ClusterVulnerabilityReport` ingestion on the security refresh path
+  - workload-level vulnerability aggregation with severity and fixable-count rollups
+  - Issue Center integration for security findings on the same canonical diagnostics path
+  - dedicated Vulnerabilities view with search and selection routing
+- Guardrails kept:
+  - no embedded scanner in KubecTUI
+  - graceful empty-state fallback when Trivy CRDs are missing or RBAC denies access
+  - no steady-state background work beyond the existing explicit security refresh scope
 
 #### M30: Resource Create / Apply Templates
 

@@ -13,6 +13,7 @@ fn tab_cycles_all_views_forward() {
         AppView::Bookmarks,
         AppView::Issues,
         AppView::HealthReport,
+        AppView::Vulnerabilities,
         AppView::Nodes,
         AppView::Namespaces,
         AppView::Events,

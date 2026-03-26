@@ -16,6 +16,7 @@ use kubectui::{
         PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo,
         ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
         SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
+        VulnerabilityReportInfo,
     },
     state::ClusterDataSource,
 };
@@ -83,6 +84,7 @@ pub struct MockDataSource {
     pub role_bindings: Vec<RoleBindingInfo>,
     pub cluster_roles: Vec<ClusterRoleInfo>,
     pub cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
+    pub vulnerability_reports: Vec<VulnerabilityReportInfo>,
     pub custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
     pub flux_resources: Vec<FluxResourceInfo>,
     pub fail: bool,
@@ -137,6 +139,7 @@ impl Default for MockDataSource {
             role_bindings: vec![],
             cluster_roles: vec![],
             cluster_role_bindings: vec![],
+            vulnerability_reports: vec![],
             custom_resource_definitions: vec![],
             flux_resources: vec![],
             fail: false,
@@ -317,6 +320,17 @@ impl ClusterDataSource for MockDataSource {
             return Err(anyhow!("mock clusterrolebindings error"));
         }
         Ok(self.cluster_role_bindings.clone())
+    }
+
+    async fn fetch_vulnerability_reports(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<VulnerabilityReportInfo>> {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail {
+            return Err(anyhow!("mock vulnerabilityreports error"));
+        }
+        Ok(self.vulnerability_reports.clone())
     }
 
     async fn fetch_custom_resource_definitions(&self) -> Result<Vec<CustomResourceDefinitionInfo>> {

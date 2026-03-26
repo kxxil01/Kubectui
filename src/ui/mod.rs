@@ -16,7 +16,11 @@ use ratatui::{
         Table, TableState,
     },
 };
-use std::{borrow::Cow, collections::HashMap, sync::LazyLock};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::{Arc, LazyLock, Mutex},
+};
 
 use crate::{
     app::{
@@ -40,6 +44,66 @@ use filter_cache::{
     DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
     cached_filter_indices_with_variant, data_fingerprint,
 };
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SidebarCountsCacheKey {
+    snapshot_version: u64,
+    collapsed_mask: u16,
+    bookmark_count: usize,
+}
+
+type SidebarCountsCacheValue = Arc<Vec<(AppView, Option<usize>)>>;
+
+static SIDEBAR_COUNTS_CACHE: LazyLock<
+    Mutex<Option<(SidebarCountsCacheKey, SidebarCountsCacheValue, u64)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
+fn cached_sidebar_counts(
+    app: &AppState,
+    cluster: &ClusterSnapshot,
+) -> (SidebarCountsCacheValue, u64) {
+    use crate::app::SidebarItem;
+
+    let key = SidebarCountsCacheKey {
+        snapshot_version: cluster.snapshot_version,
+        collapsed_mask: crate::app::sidebar::collapsed_mask(&app.collapsed_groups),
+        bookmark_count: app.bookmark_count(),
+    };
+
+    if let Ok(cache) = SIDEBAR_COUNTS_CACHE.lock()
+        && let Some((cached_key, counts, counts_hash)) = cache.as_ref()
+        && *cached_key == key
+    {
+        return (Arc::clone(counts), *counts_hash);
+    }
+
+    let counts = Arc::new(
+        crate::app::sidebar_rows(&app.collapsed_groups)
+            .iter()
+            .filter_map(|item| match item {
+                SidebarItem::View(view) if *view == AppView::Bookmarks => {
+                    Some((*view, Some(key.bookmark_count)))
+                }
+                SidebarItem::View(view) => Some((*view, cluster.resource_count(*view))),
+                SidebarItem::Group(_) => None,
+            })
+            .collect::<Vec<_>>(),
+    );
+    let counts_hash = counts
+        .iter()
+        .fold(0xcbf29ce484222325_u64, |hash, (view, count)| {
+            let count_bits = count.map_or(u64::MAX, |value| value as u64);
+            hash.wrapping_mul(0x100000001b3)
+                ^ (((*view as u64) + 1).wrapping_mul(0x9e3779b97f4a7c15)
+                    ^ count_bits.rotate_left(17))
+        });
+
+    if let Ok(mut cache) = SIDEBAR_COUNTS_CACHE.lock() {
+        *cache = Some((key, Arc::clone(&counts), counts_hash));
+    }
+
+    (counts, counts_hash)
+}
 
 /// Case-insensitive substring match without allocating a new lowercase string.
 #[inline]
@@ -633,32 +697,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .split(body_root[0])
     };
 
-    let (sidebar_counts, sidebar_counts_hash): (Vec<(AppView, Option<usize>)>, u64) = {
-        use crate::app::SidebarItem;
-        let counts = crate::app::sidebar_rows(&app.collapsed_groups)
-            .iter()
-            .filter_map(|item| {
-                if let SidebarItem::View(view) = item {
-                    if *view == AppView::Bookmarks {
-                        Some((*view, Some(app.bookmark_count())))
-                    } else {
-                        Some((*view, cluster.resource_count(*view)))
-                    }
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-        let counts_hash = counts
-            .iter()
-            .fold(0xcbf29ce484222325_u64, |hash, (view, count)| {
-                let count_bits = count.map_or(u64::MAX, |value| value as u64);
-                hash.wrapping_mul(0x100000001b3)
-                    ^ (((*view as u64) + 1).wrapping_mul(0x9e3779b97f4a7c15)
-                        ^ count_bits.rotate_left(17))
-            });
-        (counts, counts_hash)
-    };
+    let (sidebar_counts, sidebar_counts_hash) = cached_sidebar_counts(app, cluster);
 
     {
         let _sidebar_scope = profiling::span_scope("sidebar");
@@ -666,7 +705,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             collapsed: &app.collapsed_groups,
             focus: app.focus,
             counts_hash: sidebar_counts_hash,
-            counts: &sidebar_counts,
+            counts: sidebar_counts.as_ref(),
         };
         components::render_sidebar(
             frame,
@@ -972,6 +1011,14 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 content_focused,
             ),
             AppView::HealthReport => views::issue_center::render_health_report(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+                content_focused,
+            ),
+            AppView::Vulnerabilities => views::vulnerabilities::render_vulnerabilities(
                 frame,
                 content,
                 cluster,
@@ -2047,6 +2094,42 @@ mod tests {
         let text = render_to_string(&app_with_view(AppView::HealthReport), &snapshot);
         assert!(text.contains("unused-config"));
         assert!(!text.contains("Node Not Ready"));
+    }
+
+    #[test]
+    fn render_vulnerabilities_view_smoke() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 11,
+            loaded_scope: crate::state::RefreshScope::SECURITY,
+            ..ClusterSnapshot::default()
+        };
+        snapshot
+            .vulnerability_reports
+            .push(crate::k8s::dtos::VulnerabilityReportInfo {
+                name: "api-web".to_string(),
+                namespace: "default".to_string(),
+                resource_kind: "Deployment".to_string(),
+                resource_name: "api".to_string(),
+                resource_namespace: "default".to_string(),
+                container_name: Some("web".to_string()),
+                artifact_repository: Some("ghcr.io/demo/api".to_string()),
+                artifact_tag: Some("1.2.3".to_string()),
+                counts: crate::k8s::dtos::VulnerabilitySummaryCounts {
+                    critical: 1,
+                    high: 2,
+                    medium: 0,
+                    low: 0,
+                    unknown: 0,
+                },
+                fixable_count: 2,
+                ..crate::k8s::dtos::VulnerabilityReportInfo::default()
+            });
+
+        let text = render_to_string(&app_with_view(AppView::Vulnerabilities), &snapshot);
+        assert!(text.contains("Vulnerabilities"));
+        assert!(text.contains("api"));
+        assert!(text.contains("default"));
+        assert!(text.contains(" 1 "));
     }
 
     /// Verifies nodes view renders without panic for multiple list sizes.

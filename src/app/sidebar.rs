@@ -20,6 +20,7 @@ const SIDEBAR_GROUPS: &[(NavGroup, &[AppView])] = &[
             AppView::Bookmarks,
             AppView::Issues,
             AppView::HealthReport,
+            AppView::Vulnerabilities,
             AppView::Nodes,
             AppView::Namespaces,
             AppView::Events,
@@ -115,7 +116,7 @@ const fn nav_group_bit(group: NavGroup) -> u16 {
     }
 }
 
-fn collapsed_mask(collapsed: &HashSet<NavGroup>) -> u16 {
+pub(crate) fn collapsed_mask(collapsed: &HashSet<NavGroup>) -> u16 {
     collapsed
         .iter()
         .fold(0u16, |mask, group| mask | nav_group_bit(*group))
