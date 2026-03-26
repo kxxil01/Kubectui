@@ -27,6 +27,7 @@ pub mod secret;
 pub mod state;
 pub mod time;
 pub mod timeline;
+pub mod traffic_debug;
 pub mod ui;
 pub mod workbench;
 pub mod workspaces;

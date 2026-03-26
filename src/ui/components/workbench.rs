@@ -168,6 +168,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, cluster: 
             crate::ui::views::relations::render_relations_tab(frame, inner, tab, &theme)
         }
         WorkbenchTabState::NetworkPolicy(tab) => render_network_policy_tab(frame, inner, tab),
+        WorkbenchTabState::TrafficDebug(tab) => render_traffic_debug_tab(frame, inner, tab),
         WorkbenchTabState::Connectivity(tab) => render_connectivity_tab(frame, inner, tab),
     }
 }
@@ -183,7 +184,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             Line::from(""),
             Line::from("  Open a resource tab with:"),
             Line::from(
-                "  [y] YAML  [D] Drift  [O] Rollout  [o] Decoded  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward",
+                "  [y] YAML  [D] Drift  [O] Rollout  [t] Traffic  [o] Decoded  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward",
             ),
             Line::from(""),
             Line::from("  [H] opens action history."),
@@ -443,6 +444,51 @@ fn render_connectivity_tab(
             error: tab.error.as_deref(),
             loading_message: "Evaluating connectivity...",
             empty_message: "Run a connectivity check to inspect policy intent.",
+        },
+        &theme,
+    );
+}
+
+fn render_traffic_debug_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab: &crate::workbench::TrafficDebugTabState,
+) {
+    let theme = default_theme();
+    let summary_height = tab.summary_lines.len().min(5) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(summary_height), Constraint::Min(0)])
+        .split(area);
+
+    if summary_height > 0 {
+        let lines = tab
+            .summary_lines
+            .iter()
+            .map(|line| {
+                Line::from(Span::styled(
+                    line.clone(),
+                    Style::default().fg(theme.fg_dim),
+                ))
+            })
+            .collect::<Vec<_>>();
+        frame.render_widget(
+            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            sections[0],
+        );
+    }
+
+    crate::ui::views::relations::render_relation_tree(
+        frame,
+        sections[1],
+        crate::ui::views::relations::RelationTreeView {
+            tree: &tab.tree,
+            expanded: &tab.expanded,
+            cursor: tab.cursor,
+            loading: false,
+            error: tab.error.as_deref(),
+            loading_message: "Loading traffic diagnostics...",
+            empty_message: "No traffic diagnostics available for this resource.",
         },
         &theme,
     );

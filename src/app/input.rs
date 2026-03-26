@@ -839,6 +839,73 @@ impl AppState {
                 KeyCode::Esc => AppAction::EscapePressed,
                 _ => AppAction::None,
             },
+            WorkbenchTabState::TrafficDebug(tab) => match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if !flat.is_empty() {
+                        tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
+                    }
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.cursor = tab.cursor.saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.cursor = 0;
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    tab.cursor = flat.len().saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('l') | KeyCode::Right => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if let Some(node) = flat.get(tab.cursor)
+                        && node.has_children
+                        && !node.expanded
+                    {
+                        tab.expanded.insert(node.tree_index);
+                        let flat =
+                            crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                        tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
+                    }
+                    AppAction::None
+                }
+                KeyCode::Char('h') | KeyCode::Left => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if let Some(node) = flat.get(tab.cursor) {
+                        if node.expanded {
+                            tab.expanded.remove(&node.tree_index);
+                            let flat =
+                                crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                            tab.cursor = tab.cursor.min(flat.len().saturating_sub(1));
+                        } else if tab.cursor > 0 {
+                            for i in (0..tab.cursor).rev() {
+                                if flat[i].depth < node.depth {
+                                    tab.cursor = i;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    AppAction::None
+                }
+                KeyCode::Enter => {
+                    let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+                    if let Some(node) = flat.get(tab.cursor)
+                        && let Some(resource) = &node.resource
+                        && !node.not_found
+                        && node.relation != crate::k8s::relationships::RelationKind::SectionHeader
+                    {
+                        return AppAction::OpenDetail(resource.clone());
+                    }
+                    AppAction::None
+                }
+                KeyCode::Esc => AppAction::EscapePressed,
+                _ => AppAction::None,
+            },
             WorkbenchTabState::Connectivity(tab) => match tab.focus {
                 ConnectivityTabFocus::Filter => match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
@@ -1043,7 +1110,8 @@ impl AppState {
             })
             | WorkbenchTabState::ResourceEvents(_)
             | WorkbenchTabState::Relations(_)
-            | WorkbenchTabState::NetworkPolicy(_) => true,
+            | WorkbenchTabState::NetworkPolicy(_)
+            | WorkbenchTabState::TrafficDebug(_) => true,
             WorkbenchTabState::Connectivity(tab) => tab.focus != ConnectivityTabFocus::Filter,
             WorkbenchTabState::PodLogs(tab) => {
                 !tab.viewer.searching
@@ -1414,6 +1482,22 @@ impl AppState {
                     .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::OpenNetworkConnectivity
+            }
+            KeyCode::Char('t')
+                if (self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::ViewTrafficDebug)
+                }) || (self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && matches!(
+                        self.view,
+                        AppView::Services | AppView::Endpoints | AppView::Ingresses | AppView::Pods
+                    )))
+                    && !self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(DetailViewState::has_confirmation_dialog) =>
+            {
+                AppAction::OpenTrafficDebug
             }
             KeyCode::Char('o')
                 if self.detail_view.as_ref().is_some_and(|detail| {

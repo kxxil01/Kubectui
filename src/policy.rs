@@ -60,6 +60,7 @@ pub enum DetailAction {
     ResumeCronJob,
     ViewNetworkPolicies,
     CheckNetworkConnectivity,
+    ViewTrafficDebug,
     ViewRelationships,
     Cordon,
     Uncordon,
@@ -76,7 +77,7 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 26] = [
+    pub const ORDER: [DetailAction; 27] = [
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
         DetailAction::ViewRollout,
@@ -99,6 +100,7 @@ impl DetailAction {
         DetailAction::ResumeCronJob,
         DetailAction::ViewNetworkPolicies,
         DetailAction::CheckNetworkConnectivity,
+        DetailAction::ViewTrafficDebug,
         DetailAction::ViewRelationships,
         DetailAction::Cordon,
         DetailAction::Uncordon,
@@ -127,6 +129,7 @@ impl DetailAction {
             DetailAction::SuspendCronJob | DetailAction::ResumeCronJob => "[S]",
             DetailAction::ViewNetworkPolicies => "[N]",
             DetailAction::CheckNetworkConnectivity => "[C]",
+            DetailAction::ViewTrafficDebug => "[t]",
             DetailAction::ViewRelationships => "[w]",
             DetailAction::Cordon => "[c]",
             DetailAction::Uncordon => "[u]",
@@ -158,6 +161,7 @@ impl DetailAction {
             DetailAction::ResumeCronJob => "Resume",
             DetailAction::ViewNetworkPolicies => "NetPol",
             DetailAction::CheckNetworkConnectivity => "Reach",
+            DetailAction::ViewTrafficDebug => "Traffic",
             DetailAction::ViewRelationships => "Relations",
             DetailAction::Cordon => "Cordon",
             DetailAction::Uncordon => "Uncordon",
@@ -483,6 +487,13 @@ impl ResourceRef {
                     | ResourceRef::NetworkPolicy(_, _)
             ),
             DetailAction::CheckNetworkConnectivity => matches!(self, ResourceRef::Pod(_, _)),
+            DetailAction::ViewTrafficDebug => matches!(
+                self,
+                ResourceRef::Pod(_, _)
+                    | ResourceRef::Service(_, _)
+                    | ResourceRef::Endpoint(_, _)
+                    | ResourceRef::Ingress(_, _)
+            ),
             DetailAction::ViewRelationships => {
                 crate::k8s::relationships::resource_has_relationships(self)
             }
@@ -591,6 +602,7 @@ impl DetailViewState {
                 | DetailAction::ResumeCronJob
                 | DetailAction::ViewNetworkPolicies
                 | DetailAction::CheckNetworkConnectivity
+                | DetailAction::ViewTrafficDebug
                 | DetailAction::ViewRelationships
                 | DetailAction::Cordon
                 | DetailAction::Uncordon
@@ -830,6 +842,32 @@ mod tests {
         assert!(
             !ResourceRef::Node("node-0".to_string()).supports_detail_action(
                 DetailAction::ViewNetworkPolicies,
+                None,
+                None,
+            )
+        );
+        assert!(
+            !ResourceRef::Service("svc".to_string(), "ns".to_string()).supports_detail_action(
+                DetailAction::ViewNetworkPolicies,
+                None,
+                None,
+            )
+        );
+    }
+
+    #[test]
+    fn traffic_debug_action_is_available_for_service_ingress_endpoint_and_pod() {
+        for resource in [
+            ResourceRef::Pod("pod-0".to_string(), "ns".to_string()),
+            ResourceRef::Service("svc".to_string(), "ns".to_string()),
+            ResourceRef::Endpoint("svc".to_string(), "ns".to_string()),
+            ResourceRef::Ingress("edge".to_string(), "ns".to_string()),
+        ] {
+            assert!(resource.supports_detail_action(DetailAction::ViewTrafficDebug, None, None));
+        }
+        assert!(
+            !ResourceRef::Node("node-0".to_string()).supports_detail_action(
+                DetailAction::ViewTrafficDebug,
                 None,
                 None,
             )

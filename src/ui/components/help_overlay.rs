@@ -331,6 +331,9 @@ fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'sta
     if detail.is_some_and(|detail| detail.supports_action(DetailAction::CheckNetworkConnectivity)) {
         bindings.push(("C", "Check pod reachability (policy intent)"));
     }
+    if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewTrafficDebug)) {
+        bindings.push(("t", "Open traffic debug (service / ingress / DNS path)"));
+    }
     bindings.extend_from_slice(DETAIL_BASE_BINDINGS);
     bindings
 }
@@ -387,6 +390,7 @@ mod tests {
         assert!(!bindings.contains(&("O", "View rollout control center")));
         assert!(bindings.contains(&("g", "Launch debug container")));
         assert!(bindings.contains(&("C", "Check pod reachability (policy intent)")));
+        assert!(bindings.contains(&("t", "Open traffic debug (service / ingress / DNS path)")));
     }
 
     #[test]
@@ -428,5 +432,20 @@ mod tests {
 
         let bindings = detail_bindings(Some(&detail));
         assert!(bindings.contains(&("O", "View rollout control center")));
+    }
+
+    #[test]
+    fn detail_bindings_show_traffic_debug_for_service_detail() {
+        let detail = DetailViewState {
+            resource: Some(ResourceRef::Service(
+                "api".to_string(),
+                "default".to_string(),
+            )),
+            ..DetailViewState::default()
+        };
+
+        let bindings = detail_bindings(Some(&detail));
+        assert!(bindings.contains(&("t", "Open traffic debug (service / ingress / DNS path)")));
+        assert!(!bindings.contains(&("C", "Check pod reachability (policy intent)")));
     }
 }
