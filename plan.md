@@ -47,7 +47,7 @@ Current milestone status:
 - Milestone 29: completed
 - Milestone 30: completed
 - Milestone 31: completed
-- Milestone 32: not started
+- Milestone 32: completed
 - Phase 8 (Watch-Backed Caches): completed
 
 Completion notes:
@@ -86,6 +86,7 @@ Completion notes:
 - Milestone 28 shipped (PR #61): saved workspaces, lightweight cluster/view banks, typed configurable hotkeys for views/actions/workspaces/banks, palette/help integration, authoritative workspace restore across context and namespace switches, stable persisted workspace keys for AppView/NavGroup, and runtime cleanup for non-persisted port-forward/log/exec state during restore.
 - Milestone 30 shipped (PR #63): bounded resource creation on the canonical editor/apply path with built-in Deployment, Deployment + Service, and ConfigMap templates, upfront validated inputs, command-palette template discovery, external-editor handoff, multi-document server-side apply, conservative manifest discovery fallback, and regression coverage for dialog routing, palette behavior, validation, and editor-command parsing.
 - Milestone 31 shipped (PR #64): canonical traffic debugging on the detail/workbench path for Pods, Services, Endpoints, and Ingresses with service endpoint audits, ingress backend trace summaries, DNS guidance, selectorless/manual endpoint handling, port-forward tunnel diagnostics, palette/help/detail-view `t` integration, and regression coverage for routing, rendering, and service-to-backend correctness.
+- Milestone 32 shipped (PR #66): guarded node debug shell flow on the canonical detail/exec path with namespace + profile selection, API-native debug pod launch on the target node, explicit host-namespace and privilege warnings, automatic pod cleanup on close/restore/context switch/shutdown, and action-history coverage that now records success only after shell attach is established. The final hardening pass also fixed orphan cleanup on failed launch readiness, stopped defaulting to a nonexistent `default` namespace when the cluster does not have one, and aligned attach-failure semantics for both node debug and Pod debug shells.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
 - 2026-03-18 kube 3.1 metadata watch adoption: namespace discovery and the Namespaces view now use metadata-only `Namespace` payloads end-to-end. The canonical watch path uses `metadata_watcher()` for cluster-scoped namespace updates, polling uses `list_metadata()` for namespace fetches, and namespace status is derived consistently from metadata (`Active` vs `Terminating`) so the picker and namespace view stay live with lower API payload cost.
@@ -125,6 +126,7 @@ Verification status for completed milestones:
 - Latest M29 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping the Security / Vulnerability Center. The clean 5-run render sweep now includes one additional top-level view (`2000` frames vs `1960` on pre-M29 `HEAD`), so raw `render` totals are not directly comparable across the two trees; normalized per-frame render time still improved (`245.747ms / 1960 = 0.1254ms` vs `249.282ms / 2000 = 0.1246ms`), and no hot view regressed materially in the final profile.
 - Latest M30 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Resource Create / Apply Templates. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `247.930ms -> 247.124ms`, `-0.806ms`; `sidebar` `20.532ms -> 20.497ms`; `header` `14.130ms -> 14.143ms`).
 - Latest M31 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Service / Traffic Debugging. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `249.650ms -> 239.788ms`, `-9.862ms`; `sidebar` `21.075ms -> 20.036ms`; `header` `14.183ms -> 14.035ms`). GitHub PR checks for PR #64 also passed: `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)`.
+- Latest M32 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Node Shell / Node Debug. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `254.084ms -> 248.616ms`, `-5.468ms`; `sidebar` `21.536ms -> 20.920ms`; `header` `15.319ms -> 14.470ms`).
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -1961,11 +1963,6 @@ This is the execution order.
 
 ## P5 (Next)
 
-- Milestone 31: Service / Traffic Debugging
-- Milestone 32: Node Shell / Node Debug
-
-## P6
-
 - Milestone 23: Extension System & AI Assistant Hooks
 
 ## Continuous
@@ -1976,16 +1973,16 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M30 are complete. The next highest-priority unstarted milestones are the direct operator workflow wins, with M23 intentionally deferred behind them.
+M0-M32 are complete. The only remaining milestone is M23.
 
 Recommended near-term order:
 
-- M31: Service / Traffic Debugging
-- M32: Node Shell / Node Debug
+- M23 Phase 1: extension foundation
+- M23 Phase 2: AI assistant hooks
+- M23 Phase 3: specialized AI workflows
 
 Do not start next with:
 
-- M23 before the higher-leverage workflow wins above
 - autonomous/general AI features outside the M23 extension path
 - visual graph experiments that don't fit TUI constraints
 - desktop-style interaction patterns
@@ -1998,18 +1995,15 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 ### Big Win Priority Order
 
-1. M31: Service / Traffic Debugging
-2. M32: Node Shell / Node Debug
-3. M23: Extension System & AI Assistant Hooks
+1. M23: Extension System & AI Assistant Hooks
 
 ### Why this order
 
 - M28 is now shipped and validated; it amplifies the rest of the operator workflow surface by making repeat layouts and jumps cheap.
 - M29 is now shipped on the canonical diagnostics path, using cluster-side Trivy Operator reports rather than embedding a local scanner.
 - M30 is now shipped on the canonical editor/apply path and keeps resource creation out of the hot render/refresh loop.
-- M31 is next because it closes the remaining day-2 “why is traffic broken?” workflow gap without adding always-on background cost.
-- M32 is powerful but riskier, more privilege-sensitive, and easier to get wrong operationally, so it should remain behind the safer service/debugging flows.
-- M23 is still strategically useful, but it is an extensibility platform rather than a direct operator workflow win; it stays last among the remaining roadmap items.
+- M31 and M32 are now shipped and validated on the canonical workbench/action/history paths.
+- M23 is the only remaining roadmap milestone; the main priority question is sequencing inside M23, not milestone order.
 
 ### Candidate Milestones
 
@@ -2153,6 +2147,7 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 #### M32: Node Shell / Node Debug
 
+- Status: Completed (PR #66)
 - Big win: specialized
 - Why:
   - valuable for cluster/SRE operators
@@ -2165,10 +2160,15 @@ These are the highest-value remaining roadmap candidates. They are intentionally
   - strict authz/confirmation flow
   - no silent privilege expansion
   - keep it later than workload-focused investigation features
+- Shipped scope:
+  - guarded node detail `g` flow opening a dedicated node debug dialog with image preset/custom image, namespace selection, and General vs Sysadmin profile selection
+  - API-native debug Pod launch pinned to the target node with host PID/network/IPC and `/host` mount, plus automatic cleanup when the shell closes or the app tears down the session
+  - workbench exec reuse rather than a second shell surface, with startup banners for host-shell guidance and explicit action-history tracking
+  - strict namespace-scoped preflight checks for Pod create/get/delete and `pods/exec`, fail-closed on unknown RBAC, and regression coverage for dialog routing/help behavior
+  - final lifecycle hardening so launch failures clean up orphaned debug Pods, context switches do not leave dialogs stuck pending, and shell-attach success/failure semantics match the actual operator outcome
 
 ### Recommended Remaining Order
 
-- M32: Node Shell / Node Debug
 - M23 Phase 1: extension foundation
 - M23 Phase 2: AI assistant hooks
 - M23 Phase 3: specialized AI workflows
