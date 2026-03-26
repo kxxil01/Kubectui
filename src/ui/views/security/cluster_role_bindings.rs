@@ -203,7 +203,7 @@ pub fn render_cluster_role_bindings(
                 };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::ClusterRoleBinding(rb.name.clone()),
+                    || ResourceRef::ClusterRoleBinding(rb.name.clone()),
                     bookmarks,
                     rb.name.as_str(),
                     name_style,

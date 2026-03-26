@@ -129,6 +129,37 @@ impl AppState {
                     _ => AppAction::None,
                 }
             }
+            WorkbenchTabState::ExtensionOutput(tab) => {
+                let max_scroll = tab.lines.len().saturating_sub(1);
+                match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.scroll = tab.scroll.saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.scroll = 0;
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        tab.scroll = max_scroll;
+                        AppAction::None
+                    }
+                    KeyCode::PageDown => {
+                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::PageUp => {
+                        tab.scroll = tab.scroll.saturating_sub(10);
+                        AppAction::None
+                    }
+                    _ => AppAction::None,
+                }
+            }
             WorkbenchTabState::HelmHistory(tab) => {
                 if tab.rollback_pending {
                     return AppAction::None;
@@ -1126,7 +1157,9 @@ impl AppState {
                 !tab.rollback_pending && tab.confirm_rollback_revision.is_none()
             }
             WorkbenchTabState::Rollout(_) => false,
-            WorkbenchTabState::Exec(_) | WorkbenchTabState::PortForward(_) => false,
+            WorkbenchTabState::Exec(_)
+            | WorkbenchTabState::ExtensionOutput(_)
+            | WorkbenchTabState::PortForward(_) => false,
         };
 
         match key.code {
@@ -1207,6 +1240,9 @@ impl AppState {
                 CommandPaletteAction::Navigate(view) => AppAction::NavigateTo(view),
                 CommandPaletteAction::Execute(action, resource) => {
                     AppAction::PaletteAction { action, resource }
+                }
+                CommandPaletteAction::ExecuteExtension(id, resource) => {
+                    AppAction::ExecuteExtension { id, resource }
                 }
                 CommandPaletteAction::ToggleColumn(column_id) => {
                     self.toggle_column_visibility(&column_id);

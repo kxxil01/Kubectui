@@ -38,7 +38,7 @@ Current milestone status:
 - Milestone 20: completed
 - Milestone 21: completed
 - Milestone 22: completed (v1)
-- Milestone 23: not started
+- Milestone 23: in progress (Phase 1 complete)
 - Milestone 24: completed
 - Milestone 25: completed
 - Milestone 26: completed
@@ -1651,7 +1651,7 @@ Configuration drift is a top-3 operational concern. When something breaks, the f
 
 ### Status
 
-Not started
+In progress (Phase 1 complete)
 
 ### Goal
 
@@ -1670,6 +1670,26 @@ The original plugin/custom action system remains one of the highest-leverage ext
 - optional AI-backed analysis action for the selected resource
 - workbench-hosted output for both command and AI results
 - custom keyboard shortcuts (optional)
+
+### Implemented
+
+- Phase 1 extension foundation on the canonical palette/action/workbench path
+- YAML-configured extension registry with validation and hot reload via `notify`
+- resource-kind filtering and palette exposure for matching resources only
+- variable substitution for `$NAME`, `$NAMESPACE`, `$KIND`, `$CONTEXT`, and `$LABELS`
+- execution modes:
+  - `background`: runs off the main thread, captures bounded output in a dedicated workbench tab
+  - `foreground`: hands terminal control to the command, then restores the TUI
+  - `silent`: executes in the background and reports completion in action history / status
+- extension output workbench tab with scroll support and bounded retained output
+- action-history integration for extension executions
+- command-palette refresh on extension config reload
+- render-path hardening accompanying Phase 1 so the milestone clears the required perf gate
+
+### Remaining
+
+- Phase 2: AI provider config and first-class AI analysis action
+- Phase 3: specialized AI workflows built on top of the extension substrate
 
 ### Delivery order
 

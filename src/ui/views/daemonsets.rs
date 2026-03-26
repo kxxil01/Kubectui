@@ -20,8 +20,8 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_image, format_small_int, render_resource_table, sort_header_cell,
-        striped_row_style,
+        format_age, format_image, format_small_int, name_cell_with_bookmark, render_resource_table,
+        sort_header_cell, striped_row_style,
         views::filtering::filtered_daemonset_indices,
         workload_sort_suffix,
     },
@@ -125,15 +125,24 @@ pub fn render_daemonsets(
                     let unavail_style = unavailable_style(ds.unavailable_count, theme);
 
                     Row::new(vec![
-                        bookmarked_name_cell(
-                            &ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone()),
-                            bookmarks,
-                            ds.name.as_str(),
-                            Style::default().fg(theme.fg),
-                            theme,
-                        ),
+                        if bookmarks.is_empty() {
+                            name_cell_with_bookmark(
+                                false,
+                                ds.name.as_str(),
+                                Style::default().fg(theme.fg),
+                                theme,
+                            )
+                        } else {
+                            bookmarked_name_cell(
+                                || ResourceRef::DaemonSet(ds.name.clone(), ds.namespace.clone()),
+                                bookmarks,
+                                ds.name.as_str(),
+                                Style::default().fg(theme.fg),
+                                theme,
+                            )
+                        },
                         Cell::from(Span::styled(
-                            ds.namespace.clone(),
+                            ds.namespace.as_str(),
                             Style::default().fg(theme.fg_dim),
                         )),
                         Cell::from(Span::styled(

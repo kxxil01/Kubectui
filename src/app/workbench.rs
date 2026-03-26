@@ -8,8 +8,9 @@ use crate::{
     traffic_debug::TrafficDebugAnalysis,
     ui::components::scale_dialog::ScaleTargetKind,
     workbench::{
-        ConnectivityTabState, ConnectivityTargetOption, HelmHistoryTabState, NetworkPolicyTabState,
-        ResourceDiffTabState, RolloutTabState, TrafficDebugTabState,
+        ConnectivityTabState, ConnectivityTargetOption, ExtensionOutputTabState,
+        HelmHistoryTabState, NetworkPolicyTabState, ResourceDiffTabState, RolloutTabState,
+        TrafficDebugTabState,
     },
 };
 
@@ -317,6 +318,26 @@ impl AppState {
             .open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
                 resource, dialog,
             )));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_extension_output_tab(
+        &mut self,
+        execution_id: u64,
+        title: impl Into<String>,
+        resource: Option<ResourceRef>,
+        mode_label: impl Into<String>,
+        command_preview: impl Into<String>,
+    ) {
+        self.workbench.open_tab(WorkbenchTabState::ExtensionOutput(
+            ExtensionOutputTabState::new(
+                execution_id,
+                title,
+                resource,
+                mode_label,
+                command_preview,
+            ),
+        ));
         self.focus = Focus::Workbench;
     }
 

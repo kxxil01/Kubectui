@@ -20,7 +20,8 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, render_resource_table, sort_header_cell, striped_row_style,
+        format_age, name_cell_with_bookmark, render_resource_table, sort_header_cell,
+        striped_row_style,
         views::filtering::filtered_service_indices,
         workload_sort_suffix,
     },
@@ -127,18 +128,27 @@ pub fn render_services(
                     let type_style = service_type_style(&svc.type_, theme);
 
                     Row::new(vec![
-                        bookmarked_name_cell(
-                            &ResourceRef::Service(svc.name.clone(), svc.namespace.clone()),
-                            bookmarks,
-                            svc.name.as_str(),
-                            Style::default().fg(theme.fg),
-                            theme,
-                        ),
+                        if bookmarks.is_empty() {
+                            name_cell_with_bookmark(
+                                false,
+                                svc.name.as_str(),
+                                Style::default().fg(theme.fg),
+                                theme,
+                            )
+                        } else {
+                            bookmarked_name_cell(
+                                || ResourceRef::Service(svc.name.clone(), svc.namespace.clone()),
+                                bookmarks,
+                                svc.name.as_str(),
+                                Style::default().fg(theme.fg),
+                                theme,
+                            )
+                        },
                         Cell::from(Span::styled(
-                            svc.namespace.clone(),
+                            svc.namespace.as_str(),
                             Style::default().fg(theme.fg_dim),
                         )),
-                        Cell::from(Span::styled(svc.type_.clone(), type_style)),
+                        Cell::from(Span::styled(svc.type_.as_str(), type_style)),
                         Cell::from(Span::styled(cluster_ip, Style::default().fg(theme.fg_dim))),
                         Cell::from(Span::styled(ports, Style::default().fg(theme.accent2))),
                         Cell::from(Span::styled(age, theme.inactive_style())),

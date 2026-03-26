@@ -20,7 +20,8 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_image, render_resource_table, sort_header_cell, striped_row_style,
+        format_age, format_image, name_cell_with_bookmark, render_resource_table, sort_header_cell,
+        striped_row_style,
         views::filtering::filtered_statefulset_indices,
         workload_sort_suffix,
     },
@@ -125,20 +126,29 @@ pub fn render_statefulsets(
                         readiness_style(ss.ready_replicas, ss.desired_replicas, theme);
 
                     Row::new(vec![
-                        bookmarked_name_cell(
-                            &ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone()),
-                            bookmarks,
-                            ss.name.as_str(),
-                            Style::default().fg(theme.fg),
-                            theme,
-                        ),
+                        if bookmarks.is_empty() {
+                            name_cell_with_bookmark(
+                                false,
+                                ss.name.as_str(),
+                                Style::default().fg(theme.fg),
+                                theme,
+                            )
+                        } else {
+                            bookmarked_name_cell(
+                                || ResourceRef::StatefulSet(ss.name.clone(), ss.namespace.clone()),
+                                bookmarks,
+                                ss.name.as_str(),
+                                Style::default().fg(theme.fg),
+                                theme,
+                            )
+                        },
                         Cell::from(Span::styled(
-                            ss.namespace.clone(),
+                            ss.namespace.as_str(),
                             Style::default().fg(theme.fg_dim),
                         )),
                         Cell::from(Span::styled(ready, ready_style)),
                         Cell::from(Span::styled(
-                            ss.service_name.clone(),
+                            ss.service_name.as_str(),
                             Style::default().fg(theme.info),
                         )),
                         Cell::from(Span::styled(image, Style::default().fg(theme.muted))),

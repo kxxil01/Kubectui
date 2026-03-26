@@ -31,6 +31,7 @@ pub const MIN_WORKBENCH_HEIGHT: u16 = 8;
 pub const MAX_WORKBENCH_HEIGHT: u16 = 40;
 pub const MAX_WORKLOAD_LOG_LINES: usize = 5_000;
 pub const MAX_EXEC_OUTPUT_LINES: usize = 5_000;
+pub const MAX_EXTENSION_OUTPUT_LINES: usize = 5_000;
 pub const MAX_TIMELINE_EVENTS: usize = 200;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -45,6 +46,7 @@ pub enum WorkbenchTabKind {
     PodLogs,
     WorkloadLogs,
     Exec,
+    Extension,
     PortForward,
     Relations,
     NetworkPolicy,
@@ -65,6 +67,7 @@ impl WorkbenchTabKind {
             WorkbenchTabKind::PodLogs => "Logs",
             WorkbenchTabKind::WorkloadLogs => "Workload Logs",
             WorkbenchTabKind::Exec => "Exec",
+            WorkbenchTabKind::Extension => "Extension",
             WorkbenchTabKind::PortForward => "Port-Forward",
             WorkbenchTabKind::Relations => "Relations",
             WorkbenchTabKind::NetworkPolicy => "NetPol",
@@ -86,6 +89,7 @@ pub enum WorkbenchTabKey {
     PodLogs(ResourceRef),
     WorkloadLogs(ResourceRef),
     Exec(ResourceRef),
+    ExtensionOutput(u64),
     PortForward,
     Relations(ResourceRef),
     NetworkPolicy(ResourceRef),
@@ -1020,6 +1024,60 @@ pub struct ExecTabState {
     pub pending_fragment: String,
 }
 
+#[derive(Debug, Clone)]
+pub struct ExtensionOutputTabState {
+    pub execution_id: u64,
+    pub title: String,
+    pub resource: Option<ResourceRef>,
+    pub command_preview: String,
+    pub mode_label: String,
+    pub lines: Vec<String>,
+    pub scroll: usize,
+    pub loading: bool,
+    pub success: Option<bool>,
+    pub exit_code: Option<i32>,
+    pub error: Option<String>,
+}
+
+impl ExtensionOutputTabState {
+    pub fn new(
+        execution_id: u64,
+        title: impl Into<String>,
+        resource: Option<ResourceRef>,
+        mode_label: impl Into<String>,
+        command_preview: impl Into<String>,
+    ) -> Self {
+        Self {
+            execution_id,
+            title: title.into(),
+            resource,
+            command_preview: command_preview.into(),
+            mode_label: mode_label.into(),
+            lines: Vec::new(),
+            scroll: 0,
+            loading: true,
+            success: None,
+            exit_code: None,
+            error: None,
+        }
+    }
+
+    pub fn apply_output(
+        &mut self,
+        lines: Vec<String>,
+        success: bool,
+        exit_code: Option<i32>,
+        error: Option<String>,
+    ) {
+        self.lines = truncate_extension_lines(lines);
+        self.scroll = 0;
+        self.loading = false;
+        self.success = Some(success);
+        self.exit_code = exit_code;
+        self.error = error;
+    }
+}
+
 impl ExecTabState {
     pub fn new(
         resource: ResourceRef,
@@ -1113,6 +1171,15 @@ impl ExecTabState {
             self.scroll = max;
         }
     }
+}
+
+fn truncate_extension_lines(mut lines: Vec<String>) -> Vec<String> {
+    if lines.len() > MAX_EXTENSION_OUTPUT_LINES {
+        let omitted = lines.len() - MAX_EXTENSION_OUTPUT_LINES;
+        lines.truncate(MAX_EXTENSION_OUTPUT_LINES);
+        lines.push(format!("... truncated {omitted} additional lines"));
+    }
+    lines
 }
 
 #[derive(Debug, Clone)]
@@ -1399,6 +1466,7 @@ pub enum WorkbenchTabState {
     PodLogs(PodLogsTabState),
     WorkloadLogs(WorkloadLogsTabState),
     Exec(ExecTabState),
+    ExtensionOutput(ExtensionOutputTabState),
     PortForward(PortForwardTabState),
     Relations(RelationsTabState),
     NetworkPolicy(NetworkPolicyTabState),
@@ -1419,6 +1487,7 @@ impl WorkbenchTabState {
             Self::PodLogs(_) => WorkbenchTabKind::PodLogs,
             Self::WorkloadLogs(_) => WorkbenchTabKind::WorkloadLogs,
             Self::Exec(_) => WorkbenchTabKind::Exec,
+            Self::ExtensionOutput(_) => WorkbenchTabKind::Extension,
             Self::PortForward(_) => WorkbenchTabKind::PortForward,
             Self::Relations(_) => WorkbenchTabKind::Relations,
             Self::NetworkPolicy(_) => WorkbenchTabKind::NetworkPolicy,
@@ -1439,6 +1508,7 @@ impl WorkbenchTabState {
             Self::PodLogs(tab) => WorkbenchTabKey::PodLogs(tab.resource.clone()),
             Self::WorkloadLogs(tab) => WorkbenchTabKey::WorkloadLogs(tab.resource.clone()),
             Self::Exec(tab) => WorkbenchTabKey::Exec(tab.resource.clone()),
+            Self::ExtensionOutput(tab) => WorkbenchTabKey::ExtensionOutput(tab.execution_id),
             Self::PortForward(_) => WorkbenchTabKey::PortForward,
             Self::Relations(tab) => WorkbenchTabKey::Relations(tab.resource.clone()),
             Self::NetworkPolicy(tab) => WorkbenchTabKey::NetworkPolicy(tab.resource.clone()),
@@ -1475,6 +1545,10 @@ impl WorkbenchTabState {
             Self::Exec(tab) => {
                 format!("{icon}{kind_label} {}", resource_title(&tab.resource))
             }
+            Self::ExtensionOutput(tab) => match &tab.resource {
+                Some(resource) => format!("{icon}Ext {} {}", tab.title, resource_title(resource)),
+                None => format!("{icon}Ext {}", tab.title),
+            },
             Self::PortForward(tab) => match &tab.target {
                 Some(resource) => {
                     format!("{icon}{kind_label} {}", resource_title(resource))
@@ -1819,6 +1893,28 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(state.tabs.len(), 1);
         assert!(state.open);
+    }
+
+    #[test]
+    fn extension_output_tab_keeps_last_lines_bounded() {
+        let mut tab = ExtensionOutputTabState::new(
+            7,
+            "Describe Pod",
+            Some(pod("pod-0")),
+            "BG",
+            "kubectl get pod",
+        );
+        let lines = (0..(MAX_EXTENSION_OUTPUT_LINES + 2))
+            .map(|idx| format!("line-{idx}"))
+            .collect::<Vec<_>>();
+
+        tab.apply_output(lines, true, Some(0), None);
+
+        assert_eq!(tab.lines.len(), MAX_EXTENSION_OUTPUT_LINES + 1);
+        assert_eq!(
+            tab.lines.last().map(String::as_str),
+            Some("... truncated 2 additional lines")
+        );
     }
 
     #[test]

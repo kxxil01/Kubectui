@@ -18,7 +18,8 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_small_int, render_resource_table, sort_header_cell, striped_row_style,
+        format_age, format_small_int, name_cell_with_bookmark, render_resource_table,
+        sort_header_cell,
         views::filtering::filtered_service_account_indices,
         workload_sort_suffix,
     },
@@ -61,6 +62,9 @@ pub fn render_service_accounts(
     let derived = cached_service_account_derived(cluster, query, indices.as_ref(), cache_variant);
     let name_style = Style::default().fg(theme.fg);
     let dim_style = Style::default().fg(theme.fg_dim);
+    let even_row_style = Style::default().bg(theme.bg);
+    let odd_row_style = theme.row_alt_style();
+    let age_style = theme.inactive_style();
     let widths = [
         Constraint::Length(26),
         Constraint::Length(18),
@@ -122,16 +126,25 @@ pub fn render_service_accounts(
                     let automount_style = match sa.automount_service_account_token {
                         Some(true) => theme.badge_success_style(),
                         Some(false) => theme.badge_warning_style(),
-                        None => theme.inactive_style(),
+                        None => age_style,
                     };
                     Row::new(vec![
-                        bookmarked_name_cell(
-                            &ResourceRef::ServiceAccount(sa.name.clone(), sa.namespace.clone()),
-                            bookmarks,
-                            sa.name.as_str(),
-                            name_style,
-                            theme,
-                        ),
+                        if bookmarks.is_empty() {
+                            name_cell_with_bookmark(false, sa.name.as_str(), name_style, theme)
+                        } else {
+                            bookmarked_name_cell(
+                                || {
+                                    ResourceRef::ServiceAccount(
+                                        sa.name.clone(),
+                                        sa.namespace.clone(),
+                                    )
+                                },
+                                bookmarks,
+                                sa.name.as_str(),
+                                name_style,
+                                theme,
+                            )
+                        },
                         Cell::from(Span::styled(sa.namespace.as_str(), dim_style)),
                         Cell::from(Span::styled(
                             format_small_int(sa.secrets_count as i64),
@@ -142,9 +155,13 @@ pub fn render_service_accounts(
                             dim_style,
                         )),
                         Cell::from(Span::styled(automount_text, automount_style)),
-                        Cell::from(Span::styled(age_text, theme.inactive_style())),
+                        Cell::from(Span::styled(age_text, age_style)),
                     ])
-                    .style(striped_row_style(idx, theme))
+                    .style(if idx.is_multiple_of(2) {
+                        even_row_style
+                    } else {
+                        odd_row_style
+                    })
                 })
                 .collect()
         },

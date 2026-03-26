@@ -160,6 +160,11 @@ pub fn render_cluster_roles(
     .style(theme.header_style());
 
     let derived = cached_cluster_role_derived(cluster, query, &indices, cache_variant);
+    let even_row_style = Style::default().bg(theme.bg);
+    let odd_row_style = theme.row_alt_style();
+    let name_style = Style::default().fg(theme.fg);
+    let rules_style = Style::default().fg(theme.accent2);
+    let age_style = theme.inactive_style();
 
     let rows: Vec<Row> = indices[window.start..window.end]
         .iter()
@@ -167,11 +172,10 @@ pub fn render_cluster_roles(
         .map(|(local_idx, &role_idx)| {
             let idx = window.start + local_idx;
             let role = &cluster.cluster_roles[role_idx];
-            let name_style = Style::default().fg(theme.fg);
             let row_style = if idx.is_multiple_of(2) {
-                Style::default().bg(theme.bg)
+                even_row_style
             } else {
-                theme.row_alt_style()
+                odd_row_style
             };
             let (rules_count, age): (Cow<'_, str>, Cow<'_, str>) =
                 if let Some(cell) = derived.get(idx) {
@@ -187,17 +191,14 @@ pub fn render_cluster_roles(
                 };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::ClusterRole(role.name.clone()),
+                    || ResourceRef::ClusterRole(role.name.clone()),
                     bookmarks,
                     role.name.as_str(),
                     name_style,
                     &theme,
                 ),
-                Cell::from(Span::styled(
-                    rules_count,
-                    Style::default().fg(theme.accent2),
-                )),
-                Cell::from(Span::styled(age, theme.inactive_style())),
+                Cell::from(Span::styled(rules_count, rules_style)),
+                Cell::from(Span::styled(age, age_style)),
             ])
             .style(row_style)
         })

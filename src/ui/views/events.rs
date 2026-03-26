@@ -180,7 +180,7 @@ pub fn render_events(
             };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::Event(ev.name.clone(), ev.namespace.clone()),
+                    || ResourceRef::Event(ev.name.clone(), ev.namespace.clone()),
                     bookmarks,
                     ev.type_.as_str(),
                     type_style,

@@ -168,7 +168,7 @@ pub fn render_pvcs(
 
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone()),
+                    || ResourceRef::Pvc(pvc.name.clone(), pvc.namespace.clone()),
                     bookmarks,
                     pvc.name.as_str(),
                     Style::default().fg(theme.fg),
@@ -365,7 +365,7 @@ pub fn render_pvs(
 
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::Pv(pv.name.clone()),
+                    || ResourceRef::Pv(pv.name.clone()),
                     bookmarks,
                     pv.name.as_str(),
                     Style::default().fg(theme.fg),
@@ -577,7 +577,7 @@ pub fn render_storage_classes(
             };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::StorageClass(storage_class.name.clone()),
+                    || ResourceRef::StorageClass(storage_class.name.clone()),
                     bookmarks,
                     display_name,
                     Style::default().fg(theme.fg),

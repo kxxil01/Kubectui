@@ -21,8 +21,8 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        format_age, format_image, format_small_int, render_resource_table, sort_header_cell,
-        striped_row_style,
+        format_age, format_image, format_small_int, name_cell_with_bookmark, render_resource_table,
+        sort_header_cell, striped_row_style,
         views::filtering::filtered_deployment_indices,
         workload_sort_suffix,
     },
@@ -127,13 +127,29 @@ pub fn render_deployments(
                 let cells: Vec<Cell> = visible_columns
                     .iter()
                     .map(|col| match col.id {
-                        "name" => bookmarked_name_cell(
-                            &ResourceRef::Deployment(deploy.name.clone(), deploy.namespace.clone()),
-                            bookmarks,
-                            deploy.name.as_str(),
-                            name_style,
-                            theme,
-                        ),
+                        "name" => {
+                            if bookmarks.is_empty() {
+                                name_cell_with_bookmark(
+                                    false,
+                                    deploy.name.as_str(),
+                                    name_style,
+                                    theme,
+                                )
+                            } else {
+                                bookmarked_name_cell(
+                                    || {
+                                        ResourceRef::Deployment(
+                                            deploy.name.clone(),
+                                            deploy.namespace.clone(),
+                                        )
+                                    },
+                                    bookmarks,
+                                    deploy.name.as_str(),
+                                    name_style,
+                                    theme,
+                                )
+                            }
+                        }
                         "namespace" => {
                             Cell::from(Span::styled(deploy.namespace.as_str(), dim_style))
                         }

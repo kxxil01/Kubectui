@@ -80,7 +80,7 @@ pub fn render_namespaces(
                     };
                     Row::new(vec![
                         bookmarked_name_cell(
-                            &ResourceRef::Namespace(namespace.name.clone()),
+                            || ResourceRef::Namespace(namespace.name.clone()),
                             bookmarks,
                             namespace.name.as_str(),
                             Style::default().fg(theme.fg),

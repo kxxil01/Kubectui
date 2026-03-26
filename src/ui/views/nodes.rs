@@ -176,7 +176,7 @@ pub fn render_nodes(
             .iter()
             .map(|col| match col.id {
                 "name" => bookmarked_name_cell(
-                    &ResourceRef::Node(node.name.clone()),
+                    || ResourceRef::Node(node.name.clone()),
                     bookmarks,
                     node.name.as_str(),
                     name_style,

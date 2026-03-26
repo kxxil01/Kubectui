@@ -178,7 +178,7 @@ pub fn render_ingresses(
             };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::Ingress(ingress.name.clone(), ingress.namespace.clone()),
+                    || ResourceRef::Ingress(ingress.name.clone(), ingress.namespace.clone()),
                     bookmarks,
                     ingress.name.as_str(),
                     Style::default().fg(theme.fg),
@@ -290,7 +290,7 @@ pub fn render_ingress_classes(
             let default_label = if ingress_class.is_default { "✓" } else { "" };
             Row::new(vec![
                 bookmarked_name_cell(
-                    &ResourceRef::IngressClass(ingress_class.name.clone()),
+                    || ResourceRef::IngressClass(ingress_class.name.clone()),
                     bookmarks,
                     ingress_class.name.as_str(),
                     Style::default().fg(theme.fg),
