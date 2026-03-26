@@ -1144,6 +1144,11 @@ impl AppState {
                     self.toggle_column_visibility(&column_id);
                     AppAction::None
                 }
+                CommandPaletteAction::SaveWorkspace => AppAction::SaveWorkspace,
+                CommandPaletteAction::ApplyWorkspace(name) => AppAction::ApplyWorkspace(name),
+                CommandPaletteAction::ActivateWorkspaceBank(name) => {
+                    AppAction::ActivateWorkspaceBank(name)
+                }
                 CommandPaletteAction::Close => AppAction::CloseCommandPalette,
             };
         }
@@ -1169,6 +1174,14 @@ impl AppState {
         }
 
         if let Some(action) = self.workbench_refresh_action(key) {
+            return action;
+        }
+
+        if self.detail_view.is_none()
+            && !self.confirm_quit
+            && self.focus != Focus::Workbench
+            && let Some(action) = self.matching_workspace_hotkey_action(key)
+        {
             return action;
         }
 
@@ -1689,6 +1702,9 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('~') => AppAction::OpenNamespacePicker,
+            KeyCode::Char('W') if self.detail_view.is_none() => AppAction::SaveWorkspace,
+            KeyCode::Char('{') if self.detail_view.is_none() => AppAction::ApplyPreviousWorkspace,
+            KeyCode::Char('}') if self.detail_view.is_none() => AppAction::ApplyNextWorkspace,
             KeyCode::Char('b') if self.detail_view.is_none() => AppAction::ToggleWorkbench,
             KeyCode::Char('[') if self.detail_view.is_none() && self.workbench.open => {
                 AppAction::WorkbenchPreviousTab
