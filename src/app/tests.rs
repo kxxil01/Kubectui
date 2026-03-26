@@ -474,6 +474,144 @@ fn workload_logs_filter_mode_supports_ctrl_u_clear() {
 }
 
 #[test]
+fn pod_logs_shortcuts_toggle_regex_and_structured_view() {
+    use crate::events::input::apply_action;
+    use crate::log_investigation::LogQueryMode;
+
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('r'))),
+        AppAction::RefreshData
+    );
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('R')));
+    assert_eq!(action, AppAction::ToggleLogRegexMode);
+    assert!(apply_action(action, &mut app));
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('W')));
+    assert_eq!(action, AppAction::ToggleLogTimeWindow);
+    assert!(apply_action(action, &mut app));
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('T')));
+    assert_eq!(action, AppAction::OpenLogTimeJump);
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('C')));
+    assert_eq!(action, AppAction::ToggleLogCorrelation);
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('J')));
+    assert_eq!(action, AppAction::ToggleStructuredLogView);
+    assert!(apply_action(action, &mut app));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(logs_tab.viewer.search_mode, LogQueryMode::Regex);
+    assert_eq!(
+        logs_tab.viewer.time_window,
+        crate::log_investigation::LogTimeWindow::Last5Minutes
+    );
+    assert!(!logs_tab.viewer.structured_view);
+}
+
+#[test]
+fn workload_logs_shortcuts_toggle_regex_and_structured_view() {
+    use crate::events::input::apply_action;
+    use crate::log_investigation::LogQueryMode;
+
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+        )));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('r'))),
+        AppAction::RefreshData
+    );
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('R')));
+    assert_eq!(action, AppAction::ToggleLogRegexMode);
+    assert!(apply_action(action, &mut app));
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('W')));
+    assert_eq!(action, AppAction::ToggleLogTimeWindow);
+    assert!(apply_action(action, &mut app));
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('T')));
+    assert_eq!(action, AppAction::OpenLogTimeJump);
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('L')));
+    assert_eq!(action, AppAction::CycleWorkloadLogLabelFilter);
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('C')));
+    assert_eq!(action, AppAction::ToggleLogCorrelation);
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('J')));
+    assert_eq!(action, AppAction::ToggleStructuredLogView);
+    assert!(apply_action(action, &mut app));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(logs_tab) = &tab.state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(logs_tab.text_filter_mode, LogQueryMode::Regex);
+    assert_eq!(
+        logs_tab.time_window,
+        crate::log_investigation::LogTimeWindow::Last5Minutes
+    );
+    assert!(!logs_tab.structured_view);
+}
+
+#[test]
+fn pod_logs_shortcuts_route_saved_preset_actions() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('M'))),
+        AppAction::SaveLogPreset
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+        AppAction::ApplyPreviousLogPreset
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(']'))),
+        AppAction::ApplyNextLogPreset
+    );
+}
+
+#[test]
+fn workload_logs_shortcuts_route_saved_preset_actions() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+        )));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('M'))),
+        AppAction::SaveLogPreset
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+        AppAction::ApplyPreviousLogPreset
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(']'))),
+        AppAction::ApplyNextLogPreset
+    );
+}
+
+#[test]
 fn filtered_pod_indices_apply_restarts_sort_with_stable_tie_breakers() {
     let mut pods = vec![
         PodInfo {
@@ -1472,7 +1610,8 @@ fn toggle_default_hidden_column_uses_shown_columns() {
 fn config_round_trip_with_preferences() {
     use crate::{
         icons::IconMode,
-        preferences::{ClusterPreferences, UserPreferences, ViewPreferences},
+        log_investigation::{LogQueryMode, PodLogPreset},
+        preferences::{ClusterPreferences, LogPresetPreferences, UserPreferences, ViewPreferences},
     };
     let path = std::env::temp_dir().join("kubectui_test_config_prefs.json");
 
@@ -1488,6 +1627,16 @@ fn config_round_trip_with_preferences() {
         },
     );
     app.preferences = Some(global);
+    app.preferences.as_mut().unwrap().log_presets = LogPresetPreferences {
+        pod_logs: vec![PodLogPreset {
+            name: "errors".into(),
+            query: "error".into(),
+            mode: LogQueryMode::Regex,
+            time_window: crate::log_investigation::LogTimeWindow::Last15Minutes,
+            structured_view: false,
+        }],
+        workload_logs: Vec::new(),
+    };
 
     let mut cluster_prefs = ClusterPreferences::default();
     cluster_prefs.views.insert(
@@ -1519,6 +1668,8 @@ fn config_round_trip_with_preferences() {
     assert_eq!(pod_prefs.sort_column.as_deref(), Some("restarts"));
     assert!(!pod_prefs.sort_ascending);
     assert_eq!(pod_prefs.hidden_columns, vec!["namespace"]);
+    assert_eq!(prefs.log_presets.pod_logs.len(), 1);
+    assert_eq!(prefs.log_presets.pod_logs[0].query, "error");
 
     let clusters = loaded.cluster_preferences.as_ref().unwrap();
     let prod = clusters.get("prod").unwrap();
@@ -1550,6 +1701,161 @@ fn config_backward_compat_no_prefs() {
     // All groups collapsed except Overview (default view's group).
     assert!(!loaded.collapsed_groups.contains(&NavGroup::Overview));
     assert!(loaded.collapsed_groups.contains(&NavGroup::Workloads));
+}
+
+#[test]
+fn save_and_cycle_pod_log_presets_round_trip() {
+    use crate::events::input::apply_action;
+    use crate::log_investigation::{LogEntry, LogQueryMode};
+
+    let mut app = AppState::default();
+    let mut tab = PodLogsTabState::new(ResourceRef::Pod("pod-0".into(), "default".into()));
+    tab.viewer.lines = vec![
+        LogEntry::from_raw("boot"),
+        LogEntry::from_raw(r#"{"level":"error","message":"request failed"}"#),
+    ];
+    tab.viewer.search_query = "request".into();
+    tab.viewer.search_mode = LogQueryMode::Regex;
+    tab.viewer.compiled_search =
+        crate::log_investigation::compile_query("request", LogQueryMode::Regex)
+            .expect("compile query");
+    tab.viewer.structured_view = false;
+    app.workbench_mut()
+        .open_tab(WorkbenchTabState::PodLogs(tab));
+
+    assert!(apply_action(AppAction::SaveLogPreset, &mut app));
+    let saved = &app
+        .preferences
+        .as_ref()
+        .expect("preferences")
+        .log_presets
+        .pod_logs;
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].query, "request");
+
+    let Some(active_tab) = app.workbench_mut().active_tab_mut() else {
+        panic!("expected active tab");
+    };
+    let WorkbenchTabState::PodLogs(tab) = &mut active_tab.state else {
+        panic!("expected pod logs tab");
+    };
+    tab.viewer.search_query.clear();
+    tab.viewer.search_input.clear();
+    tab.viewer.search_mode = LogQueryMode::Substring;
+    tab.viewer.compiled_search = None;
+    tab.viewer.structured_view = true;
+
+    assert!(apply_action(AppAction::ApplyNextLogPreset, &mut app));
+
+    let WorkbenchTabState::PodLogs(tab) = &app.workbench().active_tab().unwrap().state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(tab.viewer.search_query, "request");
+    assert_eq!(tab.viewer.search_mode, LogQueryMode::Regex);
+    assert!(!tab.viewer.structured_view);
+}
+
+#[test]
+fn save_and_cycle_workload_log_presets_preserve_filters() {
+    use crate::events::input::apply_action;
+    use crate::log_investigation::LogQueryMode;
+
+    let mut app = AppState::default();
+    let mut tab =
+        WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "default".into()), 7);
+    tab.available_pods = vec!["api-0".into(), "api-1".into()];
+    tab.available_containers = vec!["main".into(), "sidecar".into()];
+    tab.text_filter = "warn".into();
+    tab.text_filter_mode = LogQueryMode::Regex;
+    tab.compiled_text_filter = crate::log_investigation::compile_query("warn", LogQueryMode::Regex)
+        .expect("compile filter");
+    tab.structured_view = false;
+    tab.pod_filter = Some("api-1".into());
+    tab.container_filter = Some("main".into());
+    app.workbench_mut()
+        .open_tab(WorkbenchTabState::WorkloadLogs(tab));
+
+    assert!(apply_action(AppAction::SaveLogPreset, &mut app));
+    let saved = &app
+        .preferences
+        .as_ref()
+        .expect("preferences")
+        .log_presets
+        .workload_logs;
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].pod_filter.as_deref(), Some("api-1"));
+
+    let Some(active_tab) = app.workbench_mut().active_tab_mut() else {
+        panic!("expected active tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(tab) = &mut active_tab.state else {
+        panic!("expected workload logs tab");
+    };
+    tab.text_filter.clear();
+    tab.text_filter_mode = LogQueryMode::Substring;
+    tab.compiled_text_filter = None;
+    tab.structured_view = true;
+    tab.pod_filter = None;
+    tab.container_filter = None;
+
+    assert!(apply_action(AppAction::ApplyPreviousLogPreset, &mut app));
+
+    let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench().active_tab().unwrap().state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(tab.text_filter, "warn");
+    assert_eq!(tab.text_filter_mode, LogQueryMode::Regex);
+    assert_eq!(tab.pod_filter.as_deref(), Some("api-1"));
+    assert_eq!(tab.container_filter.as_deref(), Some("main"));
+    assert!(!tab.structured_view);
+}
+
+#[test]
+fn pod_log_preset_cycle_wraps_to_last_saved_entry() {
+    use crate::events::input::apply_action;
+    use crate::log_investigation::{LogQueryMode, PodLogPreset};
+    use crate::preferences::{LogPresetPreferences, UserPreferences};
+
+    let mut app = AppState::default();
+    app.preferences = Some(UserPreferences {
+        views: HashMap::new(),
+        log_presets: LogPresetPreferences {
+            pod_logs: vec![
+                PodLogPreset {
+                    name: "errors".into(),
+                    query: "error".into(),
+                    mode: LogQueryMode::Substring,
+                    time_window: crate::log_investigation::LogTimeWindow::All,
+                    structured_view: true,
+                },
+                PodLogPreset {
+                    name: "requests".into(),
+                    query: "req=".into(),
+                    mode: LogQueryMode::Regex,
+                    time_window: crate::log_investigation::LogTimeWindow::Last1Hour,
+                    structured_view: false,
+                },
+            ],
+            workload_logs: Vec::new(),
+        },
+    });
+    app.workbench_mut()
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-0".into(), "default".into()),
+        )));
+
+    assert!(apply_action(AppAction::ApplyPreviousLogPreset, &mut app));
+
+    let WorkbenchTabState::PodLogs(tab) = &app.workbench().active_tab().unwrap().state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(tab.viewer.search_query, "req=");
+    assert_eq!(tab.viewer.search_mode, LogQueryMode::Regex);
+    assert_eq!(
+        tab.viewer.time_window,
+        crate::log_investigation::LogTimeWindow::Last1Hour
+    );
+    assert!(!tab.viewer.structured_view);
 }
 
 #[test]

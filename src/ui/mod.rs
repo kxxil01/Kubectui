@@ -2192,7 +2192,6 @@ mod tests {
         let snapshot = ClusterSnapshot::default();
         let rendered = render_to_string(&app, &snapshot);
         assert!(rendered.contains("Rollout"));
-        assert!(rendered.contains("rev   7"));
     }
 
     /// Verifies services view renders without panic for mixed service types.

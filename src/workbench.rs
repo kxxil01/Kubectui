@@ -1,5 +1,7 @@
 //! Canonical workbench state for long-lived bottom-pane surfaces.
 
+use std::collections::{BTreeMap, HashSet};
+
 use crate::{
     action_history::ActionHistoryState,
     app::{LogsViewerState, ResourceRef},
@@ -8,6 +10,10 @@ use crate::{
         client::EventInfo,
         dtos::HelmReleaseRevisionInfo,
         rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind},
+    },
+    log_investigation::{
+        LogEntry, LogFilterSpec, LogQueryMode, LogTimeWindow, WorkloadLogPreset, compile_query,
+        entry_matches_filters, format_jump_target, nearest_timestamp_index, parse_jump_target,
     },
     network_policy_analysis::NetworkPolicyAnalysis,
     network_policy_connectivity::ConnectivityAnalysis,
@@ -586,7 +592,7 @@ impl PodLogsTabState {
 pub struct WorkloadLogLine {
     pub pod_name: String,
     pub container_name: String,
-    pub content: String,
+    pub entry: LogEntry,
     pub is_stderr: bool,
 }
 
@@ -595,6 +601,7 @@ pub struct WorkloadLogsTabState {
     pub resource: ResourceRef,
     pub session_id: u64,
     pub sources: Vec<(String, String, String)>,
+    pub pod_labels: BTreeMap<String, Vec<String>>,
     pub lines: Vec<WorkloadLogLine>,
     pub scroll: usize,
     pub follow_mode: bool,
@@ -602,10 +609,22 @@ pub struct WorkloadLogsTabState {
     pub error: Option<String>,
     pub notice: Option<String>,
     pub text_filter: String,
+    pub text_filter_mode: LogQueryMode,
+    pub compiled_text_filter: Option<regex::Regex>,
+    pub text_filter_error: Option<String>,
+    pub time_window: LogTimeWindow,
+    pub correlation_request_id: Option<String>,
     pub filter_input: String,
     pub editing_text_filter: bool,
+    pub time_jump_input: String,
+    pub jumping_to_time: bool,
+    pub time_jump_error: Option<String>,
+    pub structured_view: bool,
+    pub label_filter: Option<String>,
     pub pod_filter: Option<String>,
     pub container_filter: Option<String>,
+    pub available_labels: Vec<String>,
+    pub matching_label_pods: Option<HashSet<String>>,
     pub available_pods: Vec<String>,
     pub available_containers: Vec<String>,
 }
@@ -616,6 +635,7 @@ impl WorkloadLogsTabState {
             resource,
             session_id,
             sources: Vec::new(),
+            pod_labels: BTreeMap::new(),
             lines: Vec::new(),
             scroll: 0,
             follow_mode: true,
@@ -623,13 +643,81 @@ impl WorkloadLogsTabState {
             error: None,
             notice: None,
             text_filter: String::new(),
+            text_filter_mode: LogQueryMode::Substring,
+            compiled_text_filter: None,
+            text_filter_error: None,
+            time_window: LogTimeWindow::All,
+            correlation_request_id: None,
             filter_input: String::new(),
             editing_text_filter: false,
+            time_jump_input: String::new(),
+            jumping_to_time: false,
+            time_jump_error: None,
+            structured_view: true,
+            label_filter: None,
             pod_filter: None,
             container_filter: None,
+            available_labels: Vec::new(),
+            matching_label_pods: None,
             available_pods: Vec::new(),
             available_containers: Vec::new(),
         }
+    }
+
+    pub fn update_targets(&mut self, targets: &[crate::k8s::workload_logs::WorkloadLogTarget]) {
+        self.pod_labels.clear();
+        self.available_labels.clear();
+        self.available_pods.clear();
+        self.available_containers.clear();
+        let mut seen_labels = HashSet::new();
+        let mut seen_containers = HashSet::new();
+
+        for target in targets {
+            self.available_pods.push(target.pod_name.clone());
+            let labels = target
+                .labels
+                .iter()
+                .map(|(key, value)| format!("{key}={value}"))
+                .collect::<Vec<_>>();
+            for label in &labels {
+                if seen_labels.insert(label.clone()) {
+                    self.available_labels.push(label.clone());
+                }
+            }
+            for container in &target.containers {
+                if seen_containers.insert(container.clone()) {
+                    self.available_containers.push(container.clone());
+                }
+            }
+            self.pod_labels.insert(target.pod_name.clone(), labels);
+        }
+        self.available_labels.sort();
+        self.available_pods.sort();
+        self.available_containers.sort();
+        if self.label_filter.as_ref().is_some_and(|label| {
+            !self
+                .available_labels
+                .iter()
+                .any(|candidate| candidate == label)
+        }) {
+            self.label_filter = None;
+        }
+        if self
+            .pod_filter
+            .as_ref()
+            .is_some_and(|pod| !self.available_pods.iter().any(|candidate| candidate == pod))
+        {
+            self.pod_filter = None;
+        }
+        if self.container_filter.as_ref().is_some_and(|container| {
+            !self
+                .available_containers
+                .iter()
+                .any(|candidate| candidate == container)
+        }) {
+            self.container_filter = None;
+        }
+        self.refresh_matching_label_pods();
     }
 
     pub fn push_line(&mut self, line: WorkloadLogLine) {
@@ -660,6 +748,86 @@ impl WorkloadLogsTabState {
         }
     }
 
+    pub fn commit_text_filter(&mut self) {
+        self.text_filter = self.filter_input.clone();
+        self.text_filter_error = None;
+        self.time_jump_error = None;
+        match compile_query(&self.text_filter, self.text_filter_mode) {
+            Ok(compiled) => self.compiled_text_filter = compiled,
+            Err(err) => {
+                self.compiled_text_filter = None;
+                self.text_filter_error = Some(err);
+            }
+        }
+        self.editing_text_filter = false;
+        self.scroll = 0;
+    }
+
+    pub fn open_time_jump(&mut self) {
+        self.jumping_to_time = true;
+        self.editing_text_filter = false;
+        self.time_jump_error = None;
+        self.time_jump_input = self
+            .current_filtered_line()
+            .and_then(|line| line.entry.timestamp())
+            .map(format_jump_target)
+            .unwrap_or_default();
+    }
+
+    pub fn commit_time_jump(&mut self) {
+        self.time_jump_error = None;
+        let target = match parse_jump_target(&self.time_jump_input) {
+            Ok(target) => target,
+            Err(err) => {
+                self.time_jump_error = Some(err);
+                return;
+            }
+        };
+        let filtered = self.filtered_indices();
+        let Some(index) = nearest_timestamp_index(
+            filtered
+                .iter()
+                .filter_map(|index| self.lines.get(*index).map(|line| (*index, &line.entry))),
+            target,
+        ) else {
+            self.time_jump_error = Some(
+                "No workload log lines in the current investigation view have timestamps."
+                    .to_string(),
+            );
+            return;
+        };
+        self.scroll = filtered
+            .iter()
+            .position(|candidate| *candidate == index)
+            .unwrap_or(0);
+        self.follow_mode = false;
+        self.jumping_to_time = false;
+    }
+
+    pub fn cancel_time_jump(&mut self) {
+        self.jumping_to_time = false;
+        self.time_jump_error = None;
+        self.time_jump_input.clear();
+    }
+
+    pub fn toggle_text_filter_mode(&mut self) {
+        self.text_filter_mode = self.text_filter_mode.toggle();
+        self.text_filter_error = None;
+        match compile_query(&self.text_filter, self.text_filter_mode) {
+            Ok(compiled) => self.compiled_text_filter = compiled,
+            Err(err) => {
+                self.compiled_text_filter = None;
+                self.text_filter_error = Some(err);
+            }
+        }
+        self.scroll = 0;
+    }
+
+    pub fn cycle_time_window(&mut self) {
+        self.time_window = self.time_window.next();
+        self.scroll = 0;
+    }
+
     pub fn cycle_pod_filter(&mut self) {
         self.pod_filter = cycle_filter_value(&self.available_pods, self.pod_filter.as_deref());
         self.scroll = 0;
@@ -671,15 +839,160 @@ impl WorkloadLogsTabState {
         self.scroll = 0;
     }
 
+    pub fn cycle_label_filter(&mut self) {
+        self.label_filter =
+            cycle_filter_value(&self.available_labels, self.label_filter.as_deref());
+        self.refresh_matching_label_pods();
+        self.scroll = 0;
+    }
+
     pub fn matches_filter(&self, line: &WorkloadLogLine) -> bool {
+        self.matches_filter_at(line, crate::time::now())
+    }
+
+    pub fn matches_filter_at(
+        &self,
+        line: &WorkloadLogLine,
+        now: crate::time::AppTimestamp,
+    ) -> bool {
         self.pod_filter
             .as_ref()
             .is_none_or(|pod| pod == &line.pod_name)
             && self
+                .matching_label_pods
+                .as_ref()
+                .is_none_or(|pods| pods.contains(&line.pod_name))
+            && self
                 .container_filter
                 .as_ref()
                 .is_none_or(|container| container == &line.container_name)
-            && (self.text_filter.is_empty() || contains_ci_ascii(&line.content, &self.text_filter))
+            && entry_matches_filters(
+                &line.entry,
+                LogFilterSpec {
+                    query: &self.text_filter,
+                    mode: self.text_filter_mode,
+                    compiled: self.compiled_text_filter.as_ref(),
+                    structured: self.structured_view,
+                    time_window: self.time_window,
+                    correlation_request_id: self.correlation_request_id.as_deref(),
+                },
+                now,
+            )
+    }
+
+    pub fn preset_snapshot(&self) -> WorkloadLogPreset {
+        WorkloadLogPreset {
+            name: String::new(),
+            query: self.text_filter.clone(),
+            mode: self.text_filter_mode,
+            time_window: self.time_window,
+            structured_view: self.structured_view,
+            label_filter: self.label_filter.clone(),
+            pod_filter: self.pod_filter.clone(),
+            container_filter: self.container_filter.clone(),
+        }
+    }
+
+    pub fn apply_preset(&mut self, preset: &WorkloadLogPreset) {
+        self.editing_text_filter = false;
+        self.jumping_to_time = false;
+        self.text_filter = preset.query.clone();
+        self.filter_input = self.text_filter.clone();
+        self.time_jump_input.clear();
+        self.time_jump_error = None;
+        self.text_filter_mode = preset.mode;
+        self.time_window = preset.time_window;
+        self.correlation_request_id = None;
+        self.structured_view = preset.structured_view;
+        self.label_filter = preset
+            .label_filter
+            .as_ref()
+            .filter(|label| {
+                self.available_labels
+                    .iter()
+                    .any(|candidate| candidate == *label)
+            })
+            .cloned();
+        self.pod_filter = preset
+            .pod_filter
+            .as_ref()
+            .filter(|pod| {
+                self.available_pods
+                    .iter()
+                    .any(|candidate| candidate == *pod)
+            })
+            .cloned();
+        self.container_filter = preset
+            .container_filter
+            .as_ref()
+            .filter(|container| {
+                self.available_containers
+                    .iter()
+                    .any(|candidate| candidate == *container)
+            })
+            .cloned();
+        self.text_filter_error = None;
+        match compile_query(&self.text_filter, self.text_filter_mode) {
+            Ok(compiled) => self.compiled_text_filter = compiled,
+            Err(err) => {
+                self.compiled_text_filter = None;
+                self.text_filter_error = Some(err);
+            }
+        }
+        self.refresh_matching_label_pods();
+        self.follow_mode = false;
+        self.scroll = 0;
+    }
+
+    pub fn filtered_indices(&self) -> Vec<usize> {
+        let now = crate::time::now();
+        self.lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| self.matches_filter_at(line, now).then_some(index))
+            .collect()
+    }
+
+    pub fn current_filtered_line(&self) -> Option<&WorkloadLogLine> {
+        let filtered = self.filtered_indices();
+        let index = filtered
+            .get(self.scroll.min(filtered.len().saturating_sub(1)))
+            .copied()?;
+        self.lines.get(index)
+    }
+
+    pub fn toggle_correlation_on_current_line(&mut self) -> Result<Option<String>, String> {
+        if self.correlation_request_id.is_some() {
+            self.correlation_request_id = None;
+            self.scroll = 0;
+            return Ok(None);
+        }
+        let Some(request_id) = self
+            .current_filtered_line()
+            .and_then(|line| line.entry.request_id())
+            .map(str::to_string)
+        else {
+            return Err(
+                "The current workload log line does not contain a request token.".to_string(),
+            );
+        };
+        self.correlation_request_id = Some(request_id.clone());
+        self.scroll = 0;
+        Ok(Some(request_id))
+    }
+
+    fn refresh_matching_label_pods(&mut self) {
+        self.matching_label_pods = self.label_filter.as_ref().map(|label| {
+            self.pod_labels
+                .iter()
+                .filter_map(|(pod, labels)| {
+                    labels
+                        .iter()
+                        .any(|candidate| candidate == label)
+                        .then_some(pod.clone())
+                })
+                .collect()
+        });
     }
 }
 
@@ -1349,20 +1662,6 @@ fn cycle_filter_value(values: &[String], current: Option<&str>) -> Option<String
     }
 }
 
-#[inline]
-fn contains_ci_ascii(haystack: &str, needle: &str) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    if needle.len() > haystack.len() {
-        return false;
-    }
-    haystack
-        .as_bytes()
-        .windows(needle.len())
-        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1794,7 +2093,7 @@ mod tests {
         tab.push_line(WorkloadLogLine {
             pod_name: "pod-0".into(),
             container_name: "main".into(),
-            content: "hello".into(),
+            entry: LogEntry::from_raw("hello"),
             is_stderr: false,
         });
         // follow mode sets scroll past end for renderer to clamp
@@ -1820,8 +2119,106 @@ mod tests {
         assert!(tab.matches_filter(&WorkloadLogLine {
             pod_name: "pod-0".to_string(),
             container_name: "main".to_string(),
-            content: "ERROR: probe failed".to_string(),
+            entry: LogEntry::from_raw("ERROR: probe failed"),
             is_stderr: true,
+        }));
+    }
+
+    #[test]
+    fn workload_log_regex_filter_matches_structured_summary() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.filter_input = "req=abc-\\d+".to_string();
+        tab.text_filter_mode = LogQueryMode::Regex;
+        tab.commit_text_filter();
+
+        assert!(tab.matches_filter(&WorkloadLogLine {
+            pod_name: "pod-0".to_string(),
+            container_name: "main".to_string(),
+            entry: LogEntry::from_raw(
+                r#"{"level":"info","message":"startup complete","request_id":"abc-7"}"#,
+            ),
+            is_stderr: false,
+        }));
+    }
+
+    #[test]
+    fn workload_log_label_filter_matches_precomputed_pod_set() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.update_targets(&[
+            crate::k8s::workload_logs::WorkloadLogTarget {
+                pod_name: "api-0".into(),
+                namespace: "default".into(),
+                containers: vec!["main".into()],
+                labels: vec![("app".into(), "api".into())],
+            },
+            crate::k8s::workload_logs::WorkloadLogTarget {
+                pod_name: "worker-0".into(),
+                namespace: "default".into(),
+                containers: vec!["main".into()],
+                labels: vec![("app".into(), "worker".into())],
+            },
+        ]);
+        tab.cycle_label_filter();
+
+        assert_eq!(tab.label_filter.as_deref(), Some("app=api"));
+        assert!(tab.matches_filter(&WorkloadLogLine {
+            pod_name: "api-0".to_string(),
+            container_name: "main".to_string(),
+            entry: LogEntry::from_raw("2026-03-26T10:00:00Z api"),
+            is_stderr: false,
+        }));
+        assert!(!tab.matches_filter(&WorkloadLogLine {
+            pod_name: "worker-0".to_string(),
+            container_name: "main".to_string(),
+            entry: LogEntry::from_raw("2026-03-26T10:00:00Z worker"),
+            is_stderr: false,
+        }));
+    }
+
+    #[test]
+    fn workload_log_target_refresh_rebuilds_filter_inventories() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.update_targets(&[crate::k8s::workload_logs::WorkloadLogTarget {
+            pod_name: "api-0".into(),
+            namespace: "default".into(),
+            containers: vec!["main".into(), "sidecar".into()],
+            labels: vec![("app".into(), "api".into())],
+        }]);
+        tab.pod_filter = Some("api-0".into());
+        tab.container_filter = Some("sidecar".into());
+        tab.label_filter = Some("app=api".into());
+
+        tab.update_targets(&[crate::k8s::workload_logs::WorkloadLogTarget {
+            pod_name: "worker-0".into(),
+            namespace: "default".into(),
+            containers: vec!["main".into()],
+            labels: vec![("app".into(), "worker".into())],
+        }]);
+
+        assert_eq!(tab.available_pods, vec!["worker-0".to_string()]);
+        assert_eq!(tab.available_containers, vec!["main".to_string()]);
+        assert_eq!(tab.available_labels, vec!["app=worker".to_string()]);
+        assert!(tab.pod_filter.is_none());
+        assert!(tab.container_filter.is_none());
+        assert!(tab.label_filter.is_none());
+    }
+
+    #[test]
+    fn workload_log_time_window_filters_stale_entries() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.time_window = LogTimeWindow::Last5Minutes;
+
+        assert!(!tab.matches_filter(&WorkloadLogLine {
+            pod_name: "pod-0".to_string(),
+            container_name: "main".to_string(),
+            entry: LogEntry::from_raw("2020-01-01T00:00:00Z old line"),
+            is_stderr: false,
+        }));
+        assert!(tab.matches_filter(&WorkloadLogLine {
+            pod_name: "pod-0".to_string(),
+            container_name: "main".to_string(),
+            entry: LogEntry::from_raw("2099-01-01T00:00:00Z future line"),
+            is_stderr: false,
         }));
     }
 }

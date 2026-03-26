@@ -57,6 +57,13 @@ impl AppState {
         Some(clusters.entry(context).or_default())
     }
 
+    fn log_prefs_mut(&mut self) -> &mut crate::preferences::LogPresetPreferences {
+        &mut self
+            .preferences
+            .get_or_insert_with(Default::default)
+            .log_presets
+    }
+
     pub fn bookmarks(&self) -> &[BookmarkEntry] {
         self.current_context_name
             .as_deref()
@@ -239,5 +246,325 @@ impl AppState {
             }
         }
         self.needs_config_save = true;
+    }
+
+    pub fn save_active_log_preset(&mut self) -> Result<String, String> {
+        enum PresetSnapshot {
+            Pod(crate::log_investigation::PodLogPreset),
+            Workload(crate::log_investigation::WorkloadLogPreset),
+        }
+
+        let snapshot = match self.workbench.active_tab().map(|tab| &tab.state) {
+            Some(WorkbenchTabState::PodLogs(tab)) => {
+                PresetSnapshot::Pod(tab.viewer.preset_snapshot())
+            }
+            Some(WorkbenchTabState::WorkloadLogs(tab)) => {
+                PresetSnapshot::Workload(tab.preset_snapshot())
+            }
+            _ => return Err("Saved log presets are only available from log tabs.".to_string()),
+        };
+
+        let saved_name = match snapshot {
+            PresetSnapshot::Pod(preset) => {
+                let presets = &mut self.log_prefs_mut().pod_logs;
+                save_named_pod_preset(presets, preset)
+            }
+            PresetSnapshot::Workload(preset) => {
+                let presets = &mut self.log_prefs_mut().workload_logs;
+                save_named_workload_preset(presets, preset)
+            }
+        };
+        self.needs_config_save = true;
+        self.set_status(format!("Saved log preset: {saved_name}"));
+        Ok(saved_name)
+    }
+
+    pub fn cycle_active_log_preset(&mut self, forward: bool) -> Result<String, String> {
+        enum PresetCycle {
+            Pod {
+                current: crate::log_investigation::PodLogPreset,
+                presets: Vec<crate::log_investigation::PodLogPreset>,
+            },
+            Workload {
+                current: crate::log_investigation::WorkloadLogPreset,
+                presets: Vec<crate::log_investigation::WorkloadLogPreset>,
+            },
+        }
+
+        let cycle = match self.workbench.active_tab().map(|tab| &tab.state) {
+            Some(WorkbenchTabState::PodLogs(tab)) => PresetCycle::Pod {
+                current: tab.viewer.preset_snapshot(),
+                presets: self
+                    .preferences
+                    .as_ref()
+                    .map(|prefs| prefs.log_presets.pod_logs.clone())
+                    .unwrap_or_default(),
+            },
+            Some(WorkbenchTabState::WorkloadLogs(tab)) => PresetCycle::Workload {
+                current: tab.preset_snapshot(),
+                presets: self
+                    .preferences
+                    .as_ref()
+                    .map(|prefs| prefs.log_presets.workload_logs.clone())
+                    .unwrap_or_default(),
+            },
+            _ => return Err("Saved log presets are only available from log tabs.".to_string()),
+        };
+
+        match cycle {
+            PresetCycle::Pod { current, presets } => {
+                let preset = cycle_named_pod_preset(&presets, &current, forward)
+                    .ok_or_else(|| "No saved pod log presets yet.".to_string())?;
+                let Some(active_tab) = self.workbench.active_tab_mut() else {
+                    return Err("No active workbench tab.".to_string());
+                };
+                let WorkbenchTabState::PodLogs(tab) = &mut active_tab.state else {
+                    return Err("Pod log preset target is no longer active.".to_string());
+                };
+                tab.viewer.apply_preset(&preset);
+                let label = preset.summary_label();
+                self.set_status(format!("Applied pod log preset: {label}"));
+                Ok(label)
+            }
+            PresetCycle::Workload { current, presets } => {
+                let preset = cycle_named_workload_preset(&presets, &current, forward)
+                    .ok_or_else(|| "No saved workload log presets yet.".to_string())?;
+                let Some(active_tab) = self.workbench.active_tab_mut() else {
+                    return Err("No active workbench tab.".to_string());
+                };
+                let WorkbenchTabState::WorkloadLogs(tab) = &mut active_tab.state else {
+                    return Err("Workload log preset target is no longer active.".to_string());
+                };
+                tab.apply_preset(&preset);
+                let label = preset.summary_label();
+                self.set_status(format!("Applied workload log preset: {label}"));
+                Ok(label)
+            }
+        }
+    }
+}
+
+const MAX_SAVED_LOG_PRESETS: usize = 12;
+
+fn save_named_pod_preset(
+    presets: &mut Vec<crate::log_investigation::PodLogPreset>,
+    mut preset: crate::log_investigation::PodLogPreset,
+) -> String {
+    let base_name = suggested_pod_preset_name(&preset);
+    preset.name = unique_preset_name(
+        base_name,
+        presets.iter().enumerate().filter_map(|(index, existing)| {
+            (!same_pod_preset(existing, &preset)).then_some((index, existing.name.as_str()))
+        }),
+    );
+    upsert_pod_preset(presets, preset.clone());
+    preset.name
+}
+
+fn save_named_workload_preset(
+    presets: &mut Vec<crate::log_investigation::WorkloadLogPreset>,
+    mut preset: crate::log_investigation::WorkloadLogPreset,
+) -> String {
+    let base_name = suggested_workload_preset_name(&preset);
+    preset.name = unique_preset_name(
+        base_name,
+        presets.iter().enumerate().filter_map(|(index, existing)| {
+            (!same_workload_preset(existing, &preset)).then_some((index, existing.name.as_str()))
+        }),
+    );
+    upsert_workload_preset(presets, preset.clone());
+    preset.name
+}
+
+fn upsert_pod_preset(
+    presets: &mut Vec<crate::log_investigation::PodLogPreset>,
+    preset: crate::log_investigation::PodLogPreset,
+) {
+    if let Some(index) = presets
+        .iter()
+        .position(|existing| same_pod_preset(existing, &preset))
+    {
+        presets.remove(index);
+    }
+    presets.push(preset);
+    if presets.len() > MAX_SAVED_LOG_PRESETS {
+        let drain = presets.len() - MAX_SAVED_LOG_PRESETS;
+        presets.drain(..drain);
+    }
+}
+
+fn upsert_workload_preset(
+    presets: &mut Vec<crate::log_investigation::WorkloadLogPreset>,
+    preset: crate::log_investigation::WorkloadLogPreset,
+) {
+    if let Some(index) = presets
+        .iter()
+        .position(|existing| same_workload_preset(existing, &preset))
+    {
+        presets.remove(index);
+    }
+    presets.push(preset);
+    if presets.len() > MAX_SAVED_LOG_PRESETS {
+        let drain = presets.len() - MAX_SAVED_LOG_PRESETS;
+        presets.drain(..drain);
+    }
+}
+
+fn cycle_named_pod_preset(
+    presets: &[crate::log_investigation::PodLogPreset],
+    current: &crate::log_investigation::PodLogPreset,
+    forward: bool,
+) -> Option<crate::log_investigation::PodLogPreset> {
+    cycle_named_preset_index(
+        presets.len(),
+        presets
+            .iter()
+            .position(|preset| same_pod_preset(preset, current)),
+        forward,
+    )
+    .and_then(|index| presets.get(index).cloned())
+}
+
+fn cycle_named_workload_preset(
+    presets: &[crate::log_investigation::WorkloadLogPreset],
+    current: &crate::log_investigation::WorkloadLogPreset,
+    forward: bool,
+) -> Option<crate::log_investigation::WorkloadLogPreset> {
+    cycle_named_preset_index(
+        presets.len(),
+        presets
+            .iter()
+            .position(|preset| same_workload_preset(preset, current)),
+        forward,
+    )
+    .and_then(|index| presets.get(index).cloned())
+}
+
+fn cycle_named_preset_index(
+    len: usize,
+    current_index: Option<usize>,
+    forward: bool,
+) -> Option<usize> {
+    if len == 0 {
+        return None;
+    }
+    Some(match (current_index, forward) {
+        (Some(index), true) => (index + 1) % len,
+        (Some(index), false) => index.checked_sub(1).unwrap_or(len - 1),
+        (None, true) => 0,
+        (None, false) => len - 1,
+    })
+}
+
+fn unique_preset_name<'a>(
+    base_name: String,
+    existing_names: impl Iterator<Item = (usize, &'a str)>,
+) -> String {
+    let existing = existing_names
+        .map(|(_, name)| name.to_string())
+        .collect::<std::collections::HashSet<_>>();
+    if !existing.contains(&base_name) {
+        return base_name;
+    }
+
+    for suffix in 2..=MAX_SAVED_LOG_PRESETS + 1 {
+        let candidate = format!("{base_name} ({suffix})");
+        if !existing.contains(&candidate) {
+            return candidate;
+        }
+    }
+    format!("{base_name} ({})", existing.len() + 1)
+}
+
+fn suggested_pod_preset_name(preset: &crate::log_investigation::PodLogPreset) -> String {
+    let base = if preset.query.trim().is_empty() {
+        "pod logs".to_string()
+    } else {
+        format!(
+            "{} {}",
+            if matches!(preset.mode, crate::log_investigation::LogQueryMode::Regex) {
+                "regex"
+            } else {
+                "text"
+            },
+            summarize_query(&preset.query)
+        )
+    };
+    if preset.structured_view {
+        append_window_label(base, preset.time_window)
+    } else {
+        append_window_label(format!("{base} raw"), preset.time_window)
+    }
+}
+
+fn suggested_workload_preset_name(preset: &crate::log_investigation::WorkloadLogPreset) -> String {
+    let mut parts = Vec::with_capacity(3);
+    if preset.query.trim().is_empty() {
+        parts.push("workload logs".to_string());
+    } else {
+        parts.push(format!(
+            "{} {}",
+            if matches!(preset.mode, crate::log_investigation::LogQueryMode::Regex) {
+                "regex"
+            } else {
+                "text"
+            },
+            summarize_query(&preset.query)
+        ));
+    }
+    if let Some(pod) = preset.pod_filter.as_deref() {
+        parts.push(format!("pod={pod}"));
+    }
+    if let Some(container) = preset.container_filter.as_deref() {
+        parts.push(format!("ctr={container}"));
+    }
+    if let Some(label) = preset.label_filter.as_deref() {
+        parts.push(format!("label={label}"));
+    }
+    let mut label = parts.join(" ");
+    if !preset.structured_view {
+        label.push_str(" raw");
+    }
+    append_window_label(label, preset.time_window)
+}
+
+fn summarize_query(query: &str) -> String {
+    let trimmed = query.trim();
+    let compact = trimmed.chars().take(24).collect::<String>();
+    if trimmed.chars().count() > 24 {
+        format!("{compact}…")
+    } else {
+        compact
+    }
+}
+
+fn same_pod_preset(
+    left: &crate::log_investigation::PodLogPreset,
+    right: &crate::log_investigation::PodLogPreset,
+) -> bool {
+    left.query == right.query
+        && left.mode == right.mode
+        && left.time_window == right.time_window
+        && left.structured_view == right.structured_view
+}
+
+fn same_workload_preset(
+    left: &crate::log_investigation::WorkloadLogPreset,
+    right: &crate::log_investigation::WorkloadLogPreset,
+) -> bool {
+    left.query == right.query
+        && left.mode == right.mode
+        && left.time_window == right.time_window
+        && left.structured_view == right.structured_view
+        && left.label_filter == right.label_filter
+        && left.pod_filter == right.pod_filter
+        && left.container_filter == right.container_filter
+}
+
+fn append_window_label(label: String, window: crate::log_investigation::LogTimeWindow) -> String {
+    if matches!(window, crate::log_investigation::LogTimeWindow::All) {
+        label
+    } else {
+        format!("{label} {}", window.label())
     }
 }

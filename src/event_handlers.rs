@@ -66,7 +66,9 @@ pub(crate) fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
                             logs_tab.push_line(kubectui::workbench::WorkloadLogLine {
                                 pod_name: pod_name.clone(),
                                 container_name: container_name.clone(),
-                                content: line.clone(),
+                                entry: kubectui::log_investigation::LogEntry::from_raw(
+                                    line.clone(),
+                                ),
                                 is_stderr: false,
                             });
                         }
