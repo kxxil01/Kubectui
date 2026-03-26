@@ -1149,7 +1149,49 @@ impl AppState {
                 CommandPaletteAction::ActivateWorkspaceBank(name) => {
                     AppAction::ActivateWorkspaceBank(name)
                 }
+                CommandPaletteAction::OpenTemplateDialog(kind) => {
+                    AppAction::OpenResourceTemplateDialog(kind)
+                }
                 CommandPaletteAction::Close => AppAction::CloseCommandPalette,
+            };
+        }
+
+        if let Some(dialog) = &mut self.resource_template_dialog {
+            return match key.code {
+                KeyCode::Esc => {
+                    self.resource_template_dialog = None;
+                    AppAction::None
+                }
+                KeyCode::Enter
+                    if dialog.focus_field
+                        == crate::ui::components::ResourceTemplateField::CreateBtn =>
+                {
+                    AppAction::SubmitResourceTemplateDialog
+                }
+                KeyCode::Enter
+                    if dialog.focus_field
+                        == crate::ui::components::ResourceTemplateField::CancelBtn =>
+                {
+                    self.resource_template_dialog = None;
+                    AppAction::None
+                }
+                KeyCode::Tab | KeyCode::Down => {
+                    dialog.next_field();
+                    AppAction::None
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    dialog.prev_field();
+                    AppAction::None
+                }
+                KeyCode::Backspace => {
+                    dialog.backspace();
+                    AppAction::None
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    dialog.add_char(c);
+                    AppAction::None
+                }
+                _ => AppAction::None,
             };
         }
 

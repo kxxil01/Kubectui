@@ -12,6 +12,7 @@ pub mod input_field;
 pub mod namespace_picker;
 pub mod port_forward_dialog;
 pub mod probe_panel;
+pub mod resource_template_dialog;
 pub mod scale_dialog;
 pub mod workbench;
 
@@ -25,6 +26,9 @@ pub use input_field::InputFieldWidget;
 pub use namespace_picker::{NamespacePicker, NamespacePickerAction};
 pub use port_forward_dialog::{FormField, PortForwardAction, PortForwardDialog, PortForwardMode};
 pub use probe_panel::ProbePanelState;
+pub use resource_template_dialog::{
+    ResourceTemplateDialogState, ResourceTemplateField, render_resource_template_dialog,
+};
 pub use scale_dialog::{
     ScaleAction, ScaleDialogState, ScaleField, ScaleTargetKind, render_scale_dialog,
 };

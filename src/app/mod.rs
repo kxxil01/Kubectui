@@ -156,6 +156,8 @@ pub enum AppAction {
     ApplyNextWorkspace,
     ApplyWorkspace(String),
     ActivateWorkspaceBank(String),
+    OpenResourceTemplateDialog(crate::resource_templates::ResourceTemplateKind),
+    SubmitResourceTemplateDialog,
     ToggleBookmark,
     SaveDecodedSecret,
     PaletteAction {
@@ -283,6 +285,7 @@ pub struct AppState {
     pub current_context_name: Option<String>,
     /// When true, config should be saved at next convenient point.
     pub needs_config_save: bool,
+    pub resource_template_dialog: Option<crate::ui::components::ResourceTemplateDialogState>,
     /// Snapshot queued for completion after an async context switch.
     pub pending_workspace_restore: Option<WorkspaceSnapshot>,
     /// Persistent bottom workbench state.
