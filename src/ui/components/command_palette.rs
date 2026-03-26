@@ -12,7 +12,11 @@ use std::cell::RefCell;
 
 use crate::app::{AppView, ResourceRef};
 use crate::policy::{DetailAction, ResourceActionContext};
+use crate::resource_templates::ResourceTemplateKind;
 use crate::workspaces::display_hotkey;
+
+const TEMPLATE_INTENT_ALIASES: &[&str] =
+    &["create", "new", "template", "scaffold", "apply", "manifest"];
 
 /// Actions emitted by the command palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +28,7 @@ pub enum CommandPaletteAction {
     SaveWorkspace,
     ApplyWorkspace(String),
     ActivateWorkspaceBank(String),
+    OpenTemplateDialog(ResourceTemplateKind),
     Close,
 }
 
@@ -32,6 +37,7 @@ pub enum PaletteEntry {
     Navigate(AppView),
     Action(DetailAction),
     SaveWorkspace,
+    Template(ResourceTemplateKind),
     Workspace(String),
     WorkspaceBank {
         name: String,
@@ -406,6 +412,9 @@ impl CommandPalette {
                             }
                         }
                         PaletteEntry::SaveWorkspace => CommandPaletteAction::SaveWorkspace,
+                        PaletteEntry::Template(kind) => {
+                            CommandPaletteAction::OpenTemplateDialog(*kind)
+                        }
                         PaletteEntry::Workspace(name) => {
                             CommandPaletteAction::ApplyWorkspace(name.clone())
                         }
@@ -486,6 +495,18 @@ impl CommandPalette {
             || fuzzy_match("layout", &q_lower)
         {
             result.push(PaletteEntry::SaveWorkspace);
+        }
+
+        if query_indicates_template_intent(&q_lower) {
+            for kind in ResourceTemplateKind::ALL {
+                if kind
+                    .aliases()
+                    .iter()
+                    .any(|alias| fuzzy_match(alias, &self.query))
+                {
+                    result.push(PaletteEntry::Template(kind));
+                }
+            }
         }
 
         for name in &self.saved_workspaces {
@@ -637,6 +658,7 @@ impl CommandPalette {
         } else {
             let mut seen_action = false;
             let mut seen_workspace = false;
+            let mut seen_template = false;
             let mut seen_bank = false;
             let mut seen_column = false;
             let mut seen_nav = false;
@@ -661,6 +683,13 @@ impl CommandPalette {
                         seen_workspace = true;
                         items.push(ListItem::new(Line::from(Span::styled(
                             " ── Workspaces ──",
+                            theme.muted_style(),
+                        ))));
+                    }
+                    PaletteEntry::Template(_) if !seen_template => {
+                        seen_template = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Templates ──",
                             theme.muted_style(),
                         ))));
                     }
@@ -717,6 +746,9 @@ impl CommandPalette {
                     }
                     PaletteEntry::SaveWorkspace => {
                         ("Save current workspace".to_string(), "[W]".to_string())
+                    }
+                    PaletteEntry::Template(kind) => {
+                        (format!("Create {}", kind.label()), "Template".to_string())
                     }
                     PaletteEntry::Workspace(name) => (name.clone(), "Workspace".to_string()),
                     PaletteEntry::WorkspaceBank { name, hotkey } => (
@@ -778,6 +810,13 @@ impl CommandPalette {
             .style(Style::default().bg(theme.statusbar_bg));
         frame.render_widget(Paragraph::new(footer).block(footer_block), chunks[3]);
     }
+}
+
+fn query_indicates_template_intent(query: &str) -> bool {
+    !query.is_empty()
+        && TEMPLATE_INTENT_ALIASES
+            .iter()
+            .any(|alias| fuzzy_match(query, alias))
 }
 
 #[cfg(test)]
@@ -1165,6 +1204,18 @@ mod tests {
                 .iter()
                 .all(|e| matches!(e, PaletteEntry::Navigate(_) | PaletteEntry::SaveWorkspace))
         );
+    }
+
+    #[test]
+    fn create_query_exposes_template_entry() {
+        let mut palette = CommandPalette::default();
+        palette.open();
+        for c in "create deployment".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        let entries = palette.filtered();
+        assert!(entries.contains(&PaletteEntry::Template(ResourceTemplateKind::Deployment)));
     }
 
     #[test]

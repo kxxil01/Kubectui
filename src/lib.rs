@@ -22,6 +22,7 @@ pub mod network_policy_semantics;
 pub mod policy;
 pub mod preferences;
 pub mod resource_diff;
+pub mod resource_templates;
 pub mod secret;
 pub mod state;
 pub mod time;

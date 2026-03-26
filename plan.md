@@ -45,7 +45,7 @@ Current milestone status:
 - Milestone 27: completed
 - Milestone 28: completed
 - Milestone 29: completed
-- Milestone 30: not started
+- Milestone 30: completed
 - Milestone 31: not started
 - Milestone 32: not started
 - Phase 8 (Watch-Backed Caches): completed
@@ -84,6 +84,7 @@ Completion notes:
 - Milestone 26 shipped (PR #59): workbench-hosted Rollout Control Center for Deployments, StatefulSets, and DaemonSets with revision-aware rollout inspection, workload-condition summaries, in-tab restart, Deployment pause/resume, revision undo with confirmation, action history coverage, palette/help/detail-view `O` integration, and API-native mutation/fetch paths without shelling out to `kubectl rollout`. The rollout tab dedupes per workload, preserves selected revision across refreshes, refreshes inspection after successful mutations, and shipped with regression coverage plus a positive render-path median check.
 - Milestone 27 shipped (PR #60): advanced investigation on the canonical pod/workload logs path with saved presets, regex/text mode, bounded time-window filters, exact RFC3339 jump-to-time, structured JSON summaries, severity/request-id badges, cross-pod correlation by request token or pod label, and filtered copy/export behavior that follows the active investigation view rather than raw buffers. Workload target refresh now rebuilds label/pod/container filter inventories as the single source of truth so presets and filters stay correct across retargets.
 - Milestone 28 shipped (PR #61): saved workspaces, lightweight cluster/view banks, typed configurable hotkeys for views/actions/workspaces/banks, palette/help integration, authoritative workspace restore across context and namespace switches, stable persisted workspace keys for AppView/NavGroup, and runtime cleanup for non-persisted port-forward/log/exec state during restore.
+- Milestone 30 shipped (PR #63): bounded resource creation on the canonical editor/apply path with built-in Deployment, Deployment + Service, and ConfigMap templates, upfront validated inputs, command-palette template discovery, external-editor handoff, multi-document server-side apply, conservative manifest discovery fallback, and regression coverage for dialog routing, palette behavior, validation, and editor-command parsing.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
 - 2026-03-18 kube 3.1 metadata watch adoption: namespace discovery and the Namespaces view now use metadata-only `Namespace` payloads end-to-end. The canonical watch path uses `metadata_watcher()` for cluster-scoped namespace updates, polling uses `list_metadata()` for namespace fetches, and namespace status is derived consistently from metadata (`Active` vs `Terminating`) so the picker and namespace view stay live with lower API payload cost.
@@ -121,6 +122,7 @@ Verification status for completed milestones:
 - Latest M27 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping advanced log investigation. The final local review also fixed a single-pod all-containers build regression and hardened workload target refresh so stale pod/container/label filters cannot survive retargets.
 - Latest M28 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping workspaces, banks, and typed hotkeys. The clean 5-run render-profile comparison vs clean `HEAD` was positive (`render` `254.102ms -> 249.561ms`, `-4.541ms`; `sidebar` `20.106ms -> 19.792ms`; `header` `14.428ms -> 14.354ms`).
 - Latest M29 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping the Security / Vulnerability Center. The clean 5-run render sweep now includes one additional top-level view (`2000` frames vs `1960` on pre-M29 `HEAD`), so raw `render` totals are not directly comparable across the two trees; normalized per-frame render time still improved (`245.747ms / 1960 = 0.1254ms` vs `249.282ms / 2000 = 0.1246ms`), and no hot view regressed materially in the final profile.
+- Latest M30 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Resource Create / Apply Templates. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `247.930ms -> 247.124ms`, `-0.806ms`; `sidebar` `20.532ms -> 20.497ms`; `header` `14.130ms -> 14.143ms`).
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -1957,12 +1959,11 @@ This is the execution order.
 
 ## P5 (Next)
 
-- Milestone 30: Resource Create / Apply Templates
 - Milestone 31: Service / Traffic Debugging
+- Milestone 32: Node Shell / Node Debug
 
 ## P6
 
-- Milestone 32: Node Shell / Node Debug
 - Milestone 23: Extension System & AI Assistant Hooks
 
 ## Continuous
@@ -1973,11 +1974,10 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M29 are complete. The next highest-priority unstarted milestones are the direct operator workflow wins, with M23 intentionally deferred behind them.
+M0-M30 are complete. The next highest-priority unstarted milestones are the direct operator workflow wins, with M23 intentionally deferred behind them.
 
 Recommended near-term order:
 
-- M30: Resource Create / Apply Templates
 - M31: Service / Traffic Debugging
 - M32: Node Shell / Node Debug
 
@@ -1996,17 +1996,16 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 ### Big Win Priority Order
 
-1. M30: Resource Create / Apply Templates
-2. M31: Service / Traffic Debugging
-3. M32: Node Shell / Node Debug
-4. M23: Extension System & AI Assistant Hooks
+1. M31: Service / Traffic Debugging
+2. M32: Node Shell / Node Debug
+3. M23: Extension System & AI Assistant Hooks
 
 ### Why this order
 
 - M28 is now shipped and validated; it amplifies the rest of the operator workflow surface by making repeat layouts and jumps cheap.
 - M29 is now shipped on the canonical diagnostics path, using cluster-side Trivy Operator reports rather than embedding a local scanner.
-- M30 is next because safe create/apply templates are the highest-leverage remaining workflow addition that does not increase steady-state background cost.
-- M31 remains valuable, but it overlaps with M25 and existing relationship tooling, so it should follow the higher-leverage create/apply surface.
+- M30 is now shipped on the canonical editor/apply path and keeps resource creation out of the hot render/refresh loop.
+- M31 is next because it closes the remaining day-2 “why is traffic broken?” workflow gap without adding always-on background cost.
 - M32 is powerful but riskier, more privilege-sensitive, and easier to get wrong operationally, so it should remain behind the safer service/debugging flows.
 - M23 is still strategically useful, but it is an extensibility platform rather than a direct operator workflow win; it stays last among the remaining roadmap items.
 
@@ -2101,18 +2100,17 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 #### M30: Resource Create / Apply Templates
 
-- Big win: medium
-- Why:
-  - useful for resource bootstrapping and repetitive apply flows
-  - complements workbench/editor flows
-- Scope:
-  - create/apply from built-in templates
-  - variableized snippets for common workload/service patterns
-  - namespace-scoped resource templates
-- Guardrails:
-  - validate inputs up front
-  - no hidden resource creation without explicit confirmation
-  - avoid turning KubecTUI into a generic IDE/editor
+- Status: Completed (PR #63)
+- Shipped scope:
+  - built-in Deployment, Deployment + Service, and ConfigMap templates exposed through the command palette with explicit create/template intent matching
+  - bounded template dialog with upfront validation for names, namespaces, ports, replica counts, and ConfigMap keys
+  - external-editor handoff reused as the single canonical editing surface before apply
+  - multi-document server-side apply on the canonical YAML mutation path
+  - conservative manifest kind resolution: live discovery first, bounded fallback second, fail-fast on unknowns instead of guessing scope
+- Guardrails kept:
+  - no hidden creation without explicit dialog submit and editor confirmation
+  - no second in-app YAML editor
+  - no steady-state background cost
 
 #### M31: Service / Traffic Debugging
 

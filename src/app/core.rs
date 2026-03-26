@@ -42,6 +42,7 @@ impl Default for AppState {
             cluster_preferences: None,
             current_context_name: None,
             needs_config_save: false,
+            resource_template_dialog: None,
             pending_workspace_restore: None,
             workbench: WorkbenchState::default(),
             spinner_tick: 0,

@@ -7,9 +7,9 @@ use super::{
     ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
     apply_extension_fetch_result, fail_context_switch, map_palette_detail_action,
     mutation_refresh_options, normalize_recent_events, palette_action_requires_loaded_detail,
-    prepare_bookmark_target, queued_refresh_requires_two_phase, refresh_options_for_view,
-    selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
-    workbench_follow_streams_to_stop,
+    parse_editor_command, prepare_bookmark_target, queued_refresh_requires_two_phase,
+    refresh_options_for_view, selected_extension_crd, selected_flux_reconcile_resource,
+    selected_resource, workbench_follow_streams_to_stop,
 };
 use kubectui::{
     action_history::ActionKind,
@@ -128,6 +128,27 @@ fn failed_context_switch_clears_pending_workspace_restore() {
     assert!(snapshot_dirty);
     assert!(needs_redraw);
     assert_eq!(app.error_message(), Some("context failed"));
+}
+
+#[test]
+fn parse_editor_command_supports_args_and_quotes() {
+    let args =
+        parse_editor_command("code -w --reuse-window \"My Editor\"").expect("quoted editor args");
+    assert_eq!(
+        args,
+        vec![
+            "code".to_string(),
+            "-w".to_string(),
+            "--reuse-window".to_string(),
+            "My Editor".to_string()
+        ]
+    );
+}
+
+#[test]
+fn parse_editor_command_rejects_unmatched_quotes() {
+    let err = parse_editor_command("code \"unterminated").expect_err("must reject");
+    assert!(err.to_string().contains("unmatched quote"));
 }
 
 #[test]
