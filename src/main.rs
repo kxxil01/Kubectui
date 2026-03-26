@@ -50,7 +50,9 @@ use kubectui::{
         logs::{LogsClient, PodRef},
         portforward::PortForwarderService,
         probes::extract_probes_from_pod,
-        workload_logs::{MAX_WORKLOAD_LOG_STREAMS, resolve_workload_log_targets},
+        workload_logs::{
+            MAX_WORKLOAD_LOG_STREAMS, WorkloadLogTarget, resolve_workload_log_targets,
+        },
     },
     policy::DetailAction,
     secret::{decode_secret_yaml, encode_secret_yaml},
@@ -63,6 +65,14 @@ use kubectui::{
 };
 
 use terminal::{pick_context_at_startup, restore_terminal, setup_terminal};
+
+type AllContainerLogsInfo = (
+    String,
+    String,
+    Vec<String>,
+    Vec<(String, String)>,
+    ResourceRef,
+);
 
 /// Main asynchronous runtime entrypoint.
 #[tokio::main]
@@ -648,7 +658,11 @@ pub(crate) async fn run_app_inner(
                                         viewer.loading = false;
                                         match &result {
                                             Ok(lines) => {
-                                                viewer.lines = lines.clone();
+                                                viewer.lines = lines
+                                                    .iter()
+                                                    .cloned()
+                                                    .map(kubectui::log_investigation::LogEntry::from_raw)
+                                                    .collect();
                                                 viewer.error = None;
                                             }
                                             Err(err) => {
@@ -1712,6 +1726,7 @@ pub(crate) async fn run_app_inner(
                     {
                         match result.result {
                             Ok(targets) => {
+                                logs_tab.update_targets(&targets);
                                 let mut sources = Vec::new();
                                 for target in targets {
                                     for container in target.containers {
@@ -2860,14 +2875,23 @@ pub(crate) async fn run_app_inner(
                 AppAction::LogsViewerSelectAllContainers => {
                     // Gather pod info from the current PodLogs tab, then replace
                     // it with a WorkloadLogs tab streaming all containers.
-                    let all_info: Option<(String, String, Vec<String>, ResourceRef)> =
+                    let all_info: Option<AllContainerLogsInfo> =
                         app.workbench().active_tab().and_then(|tab| {
                             if let WorkbenchTabState::PodLogs(logs_tab) = &tab.state {
                                 let v = &logs_tab.viewer;
+                                let labels = cached_snapshot
+                                    .pods
+                                    .iter()
+                                    .find(|pod| {
+                                        pod.name == v.pod_name && pod.namespace == v.pod_namespace
+                                    })
+                                    .map(|pod| pod.labels.clone())
+                                    .unwrap_or_default();
                                 Some((
                                     v.pod_name.clone(),
                                     v.pod_namespace.clone(),
                                     v.containers.clone(),
+                                    labels,
                                     logs_tab.resource.clone(),
                                 ))
                             } else {
@@ -2875,7 +2899,7 @@ pub(crate) async fn run_app_inner(
                             }
                         });
 
-                    if let Some((pod_name, pod_ns, containers, resource)) = all_info {
+                    if let Some((pod_name, pod_ns, containers, labels, resource)) = all_info {
                         // Close the single-container PodLogs tab
                         app.workbench.close_active_tab();
 
@@ -2896,6 +2920,12 @@ pub(crate) async fn run_app_inner(
                             && let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state
                             && logs_tab.session_id == session_id
                         {
+                            logs_tab.update_targets(&[WorkloadLogTarget {
+                                pod_name: pod_name.clone(),
+                                namespace: pod_ns.clone(),
+                                containers: containers.clone(),
+                                labels,
+                            }]);
                             logs_tab.sources = sources.clone();
                             logs_tab.loading = false;
                             workload_log_sessions.insert(session_id, sources.clone());

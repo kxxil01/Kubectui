@@ -15,6 +15,7 @@ pub mod events;
 pub mod export;
 pub mod icons;
 pub mod k8s;
+pub mod log_investigation;
 pub mod network_policy_analysis;
 pub mod network_policy_connectivity;
 pub mod network_policy_semantics;

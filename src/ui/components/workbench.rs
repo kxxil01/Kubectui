@@ -12,6 +12,7 @@ use ratatui::{
 use crate::{
     action_history::{ActionHistoryEntry, ActionStatus},
     app::{AppState, Focus},
+    log_investigation::{LogQueryMode, LogSeverity, highlight_ranges},
     resource_diff::{ResourceDiffBaselineKind, ResourceDiffLineKind},
     secret::DecodedSecretValue,
     state::ClusterSnapshot,
@@ -24,6 +25,14 @@ use crate::{
 struct VisibleWindow {
     start: usize,
     end: usize,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct LogHighlightOptions<'a> {
+    enabled: bool,
+    query: &'a str,
+    mode: LogQueryMode,
+    compiled: Option<&'a regex::Regex>,
 }
 
 #[inline]
@@ -1556,7 +1565,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
     render_scrollbar(frame, area, total, window.start);
 }
 
-fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: usize) {
+fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: usize) {
     let theme = default_theme();
     let WorkbenchTabState::PodLogs(tab_state) = &tab.state else {
         return;
@@ -1565,7 +1574,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
 
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(area);
 
     let status = if viewer.loading {
@@ -1597,26 +1606,94 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
             theme.keybind_desc_style(),
         ));
     }
+    if viewer.structured_view {
+        status_spans.push(Span::styled(
+            "  [json summary ON]",
+            theme.keybind_desc_style(),
+        ));
+    }
+    if let Some(request_id) = viewer.correlation_request_id.as_deref() {
+        status_spans.push(Span::styled(
+            format!("  [corr {}]", compact_request_id(request_id)),
+            theme.badge_success_style(),
+        ));
+    }
+    status_spans.push(Span::styled(
+        format!("  [window {}]", viewer.time_window.label()),
+        theme.keybind_desc_style(),
+    ));
     status_spans.push(Span::raw("  "));
     let hint = if viewer.searching {
         "[Enter] apply  [Esc] cancel  [Ctrl+U] clear"
+    } else if viewer.jumping_to_time {
+        "[Enter] jump  [Esc] cancel  [Ctrl+U] clear"
     } else {
-        "[Esc] back  [f] follow  [P] previous  [t] timestamps  [/] search  [n/N] next/prev  [S] save"
+        "[Esc] back  [f] follow  [P] previous  [t] timestamps  [/] search  [R] regex/text  [W] window  [T] jump-to-time  [C] correlate  [J] json  [ / ] presets  [M] save preset  [n/N] next/prev  [S] save"
     };
     status_spans.push(Span::styled(hint, theme.keybind_desc_style()));
+    let mut header_lines = vec![Line::from(status_spans)];
+    if viewer.searching {
+        header_lines.push(Line::from(vec![
+            Span::styled(" Search mode: ", theme.keybind_desc_style()),
+            Span::styled(
+                viewer.search_mode.label(),
+                query_mode_style(&theme, viewer.search_mode),
+            ),
+        ]));
+    } else if viewer.jumping_to_time {
+        let mut spans = vec![
+            Span::styled(" Jump to time: ", theme.keybind_desc_style()),
+            Span::styled(
+                "nearest visible timestamp (RFC3339)",
+                theme.keybind_desc_style(),
+            ),
+        ];
+        if let Some(error) = &viewer.time_jump_error {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(error, theme.badge_error_style()));
+        }
+        header_lines.push(Line::from(spans));
+    } else {
+        let search_value = if viewer.search_query.is_empty() {
+            "off"
+        } else {
+            viewer.search_query.as_str()
+        };
+        let mut spans = vec![
+            Span::styled(" Search: ", theme.keybind_desc_style()),
+            Span::styled(
+                format!(
+                    "{} ({}, {})",
+                    search_value,
+                    viewer.search_mode.label(),
+                    viewer.time_window.label()
+                ),
+                theme.keybind_desc_style(),
+            ),
+        ];
+        if let Some(error) = &viewer.search_error {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(error, theme.badge_error_style()));
+        }
+        header_lines.push(Line::from(spans));
+    }
+    frame.render_widget(Paragraph::new(header_lines), sections[0]);
 
-    frame.render_widget(Paragraph::new(Line::from(status_spans)), sections[0]);
-
-    // If searching, render search input bar and reduce log area
-    let log_area = if viewer.searching {
+    // If searching or jumping to time, render input bar and reduce log area
+    let log_area = if viewer.searching || viewer.jumping_to_time {
         let search_split = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(1)])
             .split(sections[1]);
+        let (prefix, value) = if viewer.searching {
+            (" /", viewer.search_input.as_str())
+        } else {
+            (" T", viewer.time_jump_input.as_str())
+        };
         frame.render_widget(
             Paragraph::new(Line::from(vec![
-                Span::styled(" /", theme.section_title_style()),
-                Span::styled(viewer.search_input.as_str(), Style::default().fg(theme.fg)),
+                Span::styled(prefix, theme.section_title_style()),
+                Span::styled(value, Style::default().fg(theme.fg)),
                 Span::styled("_", Style::default().fg(theme.accent)),
             ])),
             search_split[1],
@@ -1678,36 +1755,64 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, scroll: us
         return;
     }
 
-    let total = viewer.lines.len();
-    let window = scroll_window(total, scroll, log_area.height.saturating_sub(1) as usize);
-    let lines: Vec<Line> = viewer.lines[window.start..window.end]
+    let filtered = viewer.filtered_indices();
+    if filtered.is_empty() {
+        let message = if viewer.correlation_request_id.is_some() {
+            " No log lines match the current correlation/time window"
+        } else {
+            " No log lines match the current time window"
+        };
+        frame.render_widget(
+            Paragraph::new(Span::styled(message, theme.inactive_style())),
+            log_area,
+        );
+        return;
+    }
+
+    let total = filtered.len();
+    let cursor = viewer.filtered_cursor(&filtered);
+    let window = scroll_window(total, cursor, log_area.height.saturating_sub(1) as usize);
+    let lines: Vec<Line> = filtered[window.start..window.end]
         .iter()
+        .map(|index| &viewer.lines[*index])
         .map(|line| {
-            if !viewer.search_query.is_empty() {
-                highlight_search(line, &viewer.search_query, &theme)
-            } else {
-                Line::from(line.clone())
-            }
+            render_log_message_line(
+                line.display_text(viewer.structured_view),
+                line.severity(),
+                line.request_id(),
+                LogHighlightOptions {
+                    enabled: !viewer.search_query.is_empty(),
+                    query: &viewer.search_query,
+                    mode: viewer.search_mode,
+                    compiled: viewer.compiled_search.as_ref(),
+                },
+                &theme,
+            )
         })
         .collect();
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
     render_scrollbar(frame, log_area, total, window.start);
 }
 
-fn highlight_search<'a>(line: &str, query: &str, theme: &crate::ui::theme::Theme) -> Line<'a> {
-    let lower_line = line.to_ascii_lowercase();
-    let lower_query = query.to_ascii_lowercase();
+fn highlight_search<'a>(
+    line: &str,
+    query: &str,
+    mode: LogQueryMode,
+    compiled: Option<&regex::Regex>,
+    theme: &crate::ui::theme::Theme,
+) -> Line<'a> {
+    let ranges = highlight_ranges(line, query, mode, compiled);
     let mut spans = Vec::new();
     let mut last = 0;
-    for (start, _) in lower_line.match_indices(&lower_query) {
+    for (start, end) in ranges {
         if start > last {
             spans.push(Span::raw(line[last..start].to_string()));
         }
         spans.push(Span::styled(
-            line[start..start + query.len()].to_string(),
+            line[start..end].to_string(),
             Style::default().bg(theme.accent).fg(theme.bg),
         ));
-        last = start + query.len();
+        last = end;
     }
     if last < line.len() {
         spans.push(Span::raw(line[last..].to_string()));
@@ -1719,18 +1824,149 @@ fn highlight_search<'a>(line: &str, query: &str, theme: &crate::ui::theme::Theme
     }
 }
 
+fn render_log_message_line<'a>(
+    text: &str,
+    severity: Option<LogSeverity>,
+    request_id: Option<&str>,
+    highlight: LogHighlightOptions<'_>,
+    theme: &crate::ui::theme::Theme,
+) -> Line<'a> {
+    let mut spans = Vec::new();
+    if let Some(severity) = severity {
+        spans.push(Span::styled(
+            format!(" {} ", severity.badge_label()),
+            severity_badge_style(theme, severity, false),
+        ));
+        spans.push(Span::raw(" "));
+    }
+    if let Some(request_id) = request_id {
+        spans.push(Span::styled(
+            format!(" {} ", compact_request_id(request_id)),
+            theme.keybind_desc_style(),
+        ));
+        spans.push(Span::raw(" "));
+    }
+
+    if highlight.enabled {
+        spans.extend(
+            highlight_search(
+                text,
+                highlight.query,
+                highlight.mode,
+                highlight.compiled,
+                theme,
+            )
+            .spans,
+        );
+    } else {
+        spans.push(Span::styled(
+            text.to_string(),
+            Style::default().fg(theme.fg_dim),
+        ));
+    }
+
+    Line::from(spans)
+}
+
+fn query_mode_style(theme: &crate::ui::theme::Theme, mode: LogQueryMode) -> Style {
+    match mode {
+        LogQueryMode::Substring => theme.badge_success_style(),
+        LogQueryMode::Regex => theme.badge_warning_style(),
+    }
+}
+
+fn severity_badge_style(
+    theme: &crate::ui::theme::Theme,
+    severity: LogSeverity,
+    is_stderr: bool,
+) -> Style {
+    if is_stderr || matches!(severity, LogSeverity::Error) {
+        theme.badge_error_style()
+    } else if matches!(severity, LogSeverity::Warn) {
+        theme.badge_warning_style()
+    } else {
+        theme.badge_success_style()
+    }
+}
+
+fn compact_request_id(request_id: &str) -> String {
+    const MAX_REQUEST_ID_CHARS: usize = 18;
+    let truncated = request_id
+        .chars()
+        .take(MAX_REQUEST_ID_CHARS)
+        .collect::<String>();
+    if request_id.chars().count() > MAX_REQUEST_ID_CHARS {
+        format!("req={truncated}…")
+    } else {
+        format!("req={truncated}")
+    }
+}
+
+#[derive(Debug, Default)]
+struct WorkloadLogFilterSummary {
+    total: usize,
+    correlated_pods: Vec<String>,
+}
+
+fn summarize_workload_log_filters(
+    tab: &crate::workbench::WorkloadLogsTabState,
+    now: crate::time::AppTimestamp,
+) -> WorkloadLogFilterSummary {
+    let mut summary = WorkloadLogFilterSummary::default();
+    let track_pods = tab.correlation_request_id.is_some();
+
+    for line in &tab.lines {
+        if !tab.matches_filter_at(line, now) {
+            continue;
+        }
+        summary.total += 1;
+        if track_pods
+            && !summary
+                .correlated_pods
+                .iter()
+                .any(|pod| pod == &line.pod_name)
+            && summary.correlated_pods.len() < 4
+        {
+            summary.correlated_pods.push(line.pod_name.clone());
+        }
+    }
+
+    summary
+}
+
+fn workload_correlation_summary(summary: &WorkloadLogFilterSummary) -> Option<String> {
+    if summary.total == 0 {
+        return None;
+    }
+    match summary.correlated_pods.as_slice() {
+        [] => None,
+        [pod] => Some(format!(" Correlated request spans 1 pod: {pod}")),
+        [first, second] => Some(format!(
+            " Correlated request spans 2 pods: {first}, {second}"
+        )),
+        [first, second, third] => Some(format!(
+            " Correlated request spans 3 pods: {first}, {second}, {third}"
+        )),
+        [first, second, third, ..] => Some(format!(
+            " Correlated request spans 4+ pods: {first}, {second}, {third}, +more"
+        )),
+    }
+}
+
 fn render_workload_logs_tab(
     frame: &mut Frame,
     area: Rect,
     tab: &crate::workbench::WorkloadLogsTabState,
 ) {
     let theme = default_theme();
+    let now = crate::time::now();
+    let filter_summary = summarize_workload_log_filters(tab, now);
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Length(3), Constraint::Min(0)])
         .split(area);
 
-    let header = Line::from(vec![
+    let mut header_spans = vec![
         Span::styled(
             format!(
                 " {} ",
@@ -1747,33 +1983,92 @@ fn render_workload_logs_tab(
         Span::raw(" "),
         Span::styled(
             format!(
-                "pod:{}  container:{}  text:{}",
+                "pod:{}  container:{}  {}:{}  window:{}",
                 tab.pod_filter.as_deref().unwrap_or("all"),
                 tab.container_filter.as_deref().unwrap_or("all"),
+                tab.text_filter_mode.label(),
                 if tab.text_filter.is_empty() {
                     "all"
                 } else {
                     tab.text_filter.as_str()
-                }
+                },
+                tab.time_window.label()
             ),
             theme.keybind_desc_style(),
         ),
-    ]);
+    ];
+    if let Some(label) = tab.label_filter.as_deref() {
+        header_spans.push(Span::raw("  "));
+        header_spans.push(Span::styled(
+            format!("label:{label}"),
+            theme.badge_warning_style(),
+        ));
+    }
+    if let Some(request_id) = tab.correlation_request_id.as_deref() {
+        header_spans.push(Span::raw("  "));
+        header_spans.push(Span::styled(
+            format!("corr {}", compact_request_id(request_id)),
+            theme.badge_success_style(),
+        ));
+    }
+
     let hint = if tab.editing_text_filter {
         Line::from(Span::styled(
             format!(
-                " Editing text filter: {}  [Enter] apply  [Esc] cancel  [Ctrl+U] clear",
-                tab.filter_input
+                " Editing {} filter: {}  [Enter] apply  [Esc] cancel  [Ctrl+U] clear",
+                tab.text_filter_mode.label(),
+                tab.filter_input,
+            ),
+            theme.keybind_desc_style(),
+        ))
+    } else if tab.jumping_to_time {
+        Line::from(Span::styled(
+            format!(
+                " Jump to time: {}  [Enter] jump  [Esc] cancel  [Ctrl+U] clear",
+                tab.time_jump_input,
             ),
             theme.keybind_desc_style(),
         ))
     } else {
         Line::from(Span::styled(
-            "[/] text  [p] pod  [c] container  [f] follow  [S] save  [Esc] back",
+            "[/] text  [R] regex/text  [W] window  [T] jump-to-time  [L] label  [C] correlate  [J] json  [p] pod  [c] container  [ / ] presets  [M] save preset  [f] follow  [S] save  [Esc] back",
             theme.keybind_desc_style(),
         ))
     };
-    frame.render_widget(Paragraph::new(vec![header, hint]), sections[0]);
+
+    let mut info_spans = Vec::new();
+    if tab.structured_view {
+        info_spans.push(Span::styled(
+            " Structured JSON summary enabled",
+            theme.keybind_desc_style(),
+        ));
+    }
+    if let Some(error) = &tab.text_filter_error {
+        if !info_spans.is_empty() {
+            info_spans.push(Span::raw("  "));
+        }
+        info_spans.push(Span::styled(error, theme.badge_error_style()));
+    }
+    if let Some(error) = &tab.time_jump_error {
+        if !info_spans.is_empty() {
+            info_spans.push(Span::raw("  "));
+        }
+        info_spans.push(Span::styled(error, theme.badge_error_style()));
+    }
+    if let Some(summary) = workload_correlation_summary(&filter_summary) {
+        if !info_spans.is_empty() {
+            info_spans.push(Span::raw("  "));
+        }
+        info_spans.push(Span::styled(summary, theme.keybind_desc_style()));
+    }
+
+    let mut header_lines = vec![Line::from(header_spans), hint];
+    header_lines.push(if info_spans.is_empty() {
+        Line::default()
+    } else {
+        Line::from(info_spans)
+    });
+    frame.render_widget(Paragraph::new(header_lines), sections[0]);
 
     if let Some(error) = &tab.error {
         frame.render_widget(
@@ -1786,14 +2081,12 @@ fn render_workload_logs_tab(
         return;
     }
 
-    let total = tab
-        .lines
-        .iter()
-        .filter(|line| tab.matches_filter(line))
-        .count();
+    let total = filter_summary.total;
     if total == 0 {
         let message = tab.notice.as_deref().unwrap_or(if tab.loading {
             " Loading workload logs..."
+        } else if tab.correlation_request_id.is_some() {
+            " No workload log lines match the current correlation/filter set"
         } else {
             " No workload log lines match the current filters"
         });
@@ -1812,7 +2105,7 @@ fn render_workload_logs_tab(
     let lines: Vec<Line> = tab
         .lines
         .iter()
-        .filter(|line| tab.matches_filter(line))
+        .filter(|line| tab.matches_filter_at(line, now))
         .skip(window.start)
         .take(window.end.saturating_sub(window.start))
         .map(|line| {
@@ -1821,13 +2114,36 @@ fn render_workload_logs_tab(
             } else {
                 theme.badge_success_style()
             };
-            Line::from(vec![
-                Span::styled(
-                    format!(" {}:{} ", line.pod_name, line.container_name),
-                    badge,
-                ),
-                Span::styled(line.content.clone(), Style::default().fg(theme.fg_dim)),
-            ])
+            let mut spans = vec![Span::styled(
+                format!(" {}:{} ", line.pod_name, line.container_name),
+                badge,
+            )];
+            if let Some(severity) = line.entry.severity() {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    format!(" {} ", severity.badge_label()),
+                    severity_badge_style(&theme, severity, line.is_stderr),
+                ));
+            }
+            if let Some(request_id) = line.entry.request_id() {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    format!(" {} ", compact_request_id(request_id)),
+                    theme.keybind_desc_style(),
+                ));
+            }
+            spans.push(Span::raw(" "));
+            spans.extend(
+                highlight_search(
+                    line.entry.display_text(tab.structured_view),
+                    &tab.text_filter,
+                    tab.text_filter_mode,
+                    tab.compiled_text_filter.as_ref(),
+                    &theme,
+                )
+                .spans,
+            );
+            Line::from(spans)
         })
         .collect();
     frame.render_widget(
@@ -2063,6 +2379,33 @@ mod tests {
         assert_eq!(
             centered_window(10, 8, 3),
             VisibleWindow { start: 7, end: 10 }
+        );
+    }
+
+    #[test]
+    fn workload_correlation_summary_uses_exact_small_counts() {
+        assert_eq!(
+            super::workload_correlation_summary(&super::WorkloadLogFilterSummary {
+                total: 3,
+                correlated_pods: vec!["api-0".into(), "api-1".into()],
+            }),
+            Some(" Correlated request spans 2 pods: api-0, api-1".to_string())
+        );
+    }
+
+    #[test]
+    fn workload_correlation_summary_caps_large_pod_sets() {
+        assert_eq!(
+            super::workload_correlation_summary(&super::WorkloadLogFilterSummary {
+                total: 8,
+                correlated_pods: vec![
+                    "api-0".into(),
+                    "api-1".into(),
+                    "worker-0".into(),
+                    "worker-1".into(),
+                ],
+            }),
+            Some(" Correlated request spans 4+ pods: api-0, api-1, worker-0, +more".to_string())
         );
     }
 }

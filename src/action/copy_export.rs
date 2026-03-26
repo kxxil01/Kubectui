@@ -51,30 +51,7 @@ pub fn copy_log_content(app: &mut AppState) {
     let content = app
         .workbench()
         .active_tab()
-        .and_then(|tab| match &tab.state {
-            WorkbenchTabState::PodLogs(logs_tab) => {
-                if logs_tab.viewer.lines.is_empty() {
-                    None
-                } else {
-                    Some(logs_tab.viewer.lines.join("\n"))
-                }
-            }
-            WorkbenchTabState::WorkloadLogs(wl_tab) => {
-                if wl_tab.lines.is_empty() {
-                    None
-                } else {
-                    Some(
-                        wl_tab
-                            .lines
-                            .iter()
-                            .map(|l| format!("{}:{} {}", l.pod_name, l.container_name, l.content))
-                            .collect::<Vec<_>>()
-                            .join("\n"),
-                    )
-                }
-            }
-            _ => None,
-        });
+        .and_then(active_log_copy_content);
     if let Some(content) = content {
         let line_count = content.lines().count();
         if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
@@ -87,37 +64,7 @@ pub fn copy_log_content(app: &mut AppState) {
 
 /// Exports the active log tab content to a file.
 pub fn export_logs(app: &mut AppState) {
-    let export_data = app
-        .workbench()
-        .active_tab()
-        .and_then(|tab| match &tab.state {
-            WorkbenchTabState::PodLogs(logs_tab) => {
-                if logs_tab.viewer.lines.is_empty() {
-                    None
-                } else {
-                    let label = format!(
-                        "{}-{}",
-                        logs_tab.viewer.pod_name, logs_tab.viewer.container_name,
-                    );
-                    Some((label, logs_tab.viewer.lines.join("\n")))
-                }
-            }
-            WorkbenchTabState::WorkloadLogs(wl_tab) => {
-                if wl_tab.lines.is_empty() {
-                    None
-                } else {
-                    let label = tab.state.title().replace(' ', "-");
-                    let content = wl_tab
-                        .lines
-                        .iter()
-                        .map(|l| format!("{}:{} {}", l.pod_name, l.container_name, l.content))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    Some((label, content))
-                }
-            }
-            _ => None,
-        });
+    let export_data = app.workbench().active_tab().and_then(active_log_export);
     if let Some((label, content)) = export_data {
         match kubectui::export::save_logs_to_file(&label, &content) {
             Ok(path) => {
@@ -127,5 +74,154 @@ pub fn export_logs(app: &mut AppState) {
                 app.set_error(format!("Export error: {e}"));
             }
         }
+    }
+}
+
+fn active_log_copy_content(tab: &kubectui::workbench::WorkbenchTab) -> Option<String> {
+    match &tab.state {
+        WorkbenchTabState::PodLogs(logs_tab) => {
+            let filtered = logs_tab.viewer.filtered_indices();
+            (!filtered.is_empty()).then(|| {
+                filtered
+                    .iter()
+                    .filter_map(|index| logs_tab.viewer.lines.get(*index))
+                    .map(|line| {
+                        line.display_text(logs_tab.viewer.structured_view)
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        }
+        WorkbenchTabState::WorkloadLogs(wl_tab) => {
+            let content = wl_tab
+                .lines
+                .iter()
+                .filter(|line| wl_tab.matches_filter(line))
+                .map(|line| {
+                    format!(
+                        "{}:{} {}",
+                        line.pod_name,
+                        line.container_name,
+                        line.entry.display_text(wl_tab.structured_view)
+                    )
+                })
+                .collect::<Vec<_>>();
+            (!content.is_empty()).then(|| content.join("\n"))
+        }
+        _ => None,
+    }
+}
+
+fn active_log_export(tab: &kubectui::workbench::WorkbenchTab) -> Option<(String, String)> {
+    match &tab.state {
+        WorkbenchTabState::PodLogs(logs_tab) => {
+            let label = format!(
+                "{}-{}",
+                logs_tab.viewer.pod_name, logs_tab.viewer.container_name,
+            );
+            let filtered = logs_tab.viewer.filtered_indices();
+            (!filtered.is_empty()).then(|| {
+                let content = filtered
+                    .iter()
+                    .filter_map(|index| logs_tab.viewer.lines.get(*index))
+                    .map(|line| {
+                        line.display_text(logs_tab.viewer.structured_view)
+                            .to_string()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (label, content)
+            })
+        }
+        WorkbenchTabState::WorkloadLogs(_) => active_log_copy_content(tab)
+            .map(|content| (tab.state.title().replace(' ', "-"), content)),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kubectui::{
+        app::{LogsViewerState, ResourceRef},
+        log_investigation::{LogEntry, LogQueryMode, LogTimeWindow, compile_query},
+        workbench::{PodLogsTabState, WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState},
+    };
+
+    #[test]
+    fn workload_copy_uses_filtered_structured_lines() {
+        let mut tab = WorkloadLogsTabState::new(ResourceRef::Pod("pod-0".into(), "ns".into()), 1);
+        tab.lines.push(WorkloadLogLine {
+            pod_name: "pod-0".into(),
+            container_name: "main".into(),
+            entry: LogEntry::from_raw(r#"{"level":"info","message":"boot","request_id":"abc"}"#),
+            is_stderr: false,
+        });
+        tab.lines.push(WorkloadLogLine {
+            pod_name: "pod-1".into(),
+            container_name: "main".into(),
+            entry: LogEntry::from_raw("plain line"),
+            is_stderr: false,
+        });
+        tab.text_filter = "req=abc".into();
+        tab.text_filter_mode = LogQueryMode::Regex;
+        tab.compiled_text_filter =
+            compile_query(&tab.text_filter, tab.text_filter_mode).expect("compiled");
+
+        let content = active_log_copy_content(&kubectui::workbench::WorkbenchTab {
+            id: 1,
+            state: WorkbenchTabState::WorkloadLogs(tab),
+        })
+        .expect("copy content");
+
+        assert_eq!(content, "pod-0:main INFO req=abc boot");
+    }
+
+    #[test]
+    fn pod_export_uses_structured_view() {
+        let mut viewer = LogsViewerState {
+            pod_name: "pod-0".into(),
+            container_name: "main".into(),
+            ..LogsViewerState::default()
+        };
+        viewer
+            .lines
+            .push(LogEntry::from_raw(r#"{"level":"warn","message":"retry"}"#));
+
+        let export = active_log_export(&kubectui::workbench::WorkbenchTab {
+            id: 1,
+            state: WorkbenchTabState::PodLogs(PodLogsTabState {
+                resource: ResourceRef::Pod("pod-0".into(), "ns".into()),
+                viewer,
+            }),
+        })
+        .expect("export data");
+
+        assert_eq!(export.0, "pod-0-main");
+        assert_eq!(export.1, "WARN retry");
+    }
+
+    #[test]
+    fn pod_copy_respects_time_window_filter() {
+        let mut viewer = LogsViewerState {
+            pod_name: "pod-0".into(),
+            container_name: "main".into(),
+            time_window: LogTimeWindow::Last5Minutes,
+            ..LogsViewerState::default()
+        };
+        viewer
+            .lines
+            .push(LogEntry::from_raw("2020-01-01T00:00:00Z stale line"));
+
+        let content = active_log_copy_content(&kubectui::workbench::WorkbenchTab {
+            id: 1,
+            state: WorkbenchTabState::PodLogs(PodLogsTabState {
+                resource: ResourceRef::Pod("pod-0".into(), "ns".into()),
+                viewer,
+            }),
+        });
+
+        assert!(content.is_none());
     }
 }
