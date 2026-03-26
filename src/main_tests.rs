@@ -26,6 +26,66 @@ use kubectui::{
 use std::time::{Duration, Instant};
 
 #[test]
+fn truncate_ai_block_respects_character_limit() {
+    let truncated = super::truncate_ai_block("abcdef", 1);
+    assert_eq!(truncated, "a…");
+
+    let multibyte = super::truncate_ai_block("éclair", 2);
+    assert_eq!(multibyte, "éc…");
+}
+
+#[test]
+fn sanitize_ai_annotation_redacts_sensitive_keys() {
+    assert_eq!(
+        super::sanitize_ai_annotation("authorization", "Bearer top-secret"),
+        "[redacted]"
+    );
+    assert_eq!(
+        super::sanitize_ai_annotation("team", "payments"),
+        "payments"
+    );
+}
+
+#[test]
+fn sanitize_ai_yaml_excerpt_redacts_secret_values() {
+    let excerpt = super::sanitize_ai_yaml_excerpt(
+        &ResourceRef::Deployment("api".to_string(), "prod".to_string()),
+        r#"
+apiVersion: v1
+kind: Pod
+metadata:
+  name: api
+spec:
+  token: super-secret
+  containers:
+    - name: api
+      env:
+        - name: API_TOKEN
+          value: literal-secret
+  stringData:
+    password: hidden
+"#,
+    )
+    .expect("sanitized excerpt");
+
+    assert!(excerpt.contains("token: <redacted>"));
+    assert!(excerpt.contains("stringData: <redacted>"));
+    assert!(!excerpt.contains("super-secret"));
+    assert!(!excerpt.contains("literal-secret"));
+}
+
+#[test]
+fn sanitize_ai_yaml_excerpt_omits_secret_manifests() {
+    let excerpt = super::sanitize_ai_yaml_excerpt(
+        &ResourceRef::Secret("app".to_string(), "prod".to_string()),
+        "kind: Secret\ndata:\n  token: aGVsbG8=\n",
+    )
+    .expect("redacted secret excerpt");
+
+    assert!(excerpt.contains("Secret manifests are not sent to AI"));
+}
+
+#[test]
 fn selected_flux_reconcile_resource_rejects_suspended_flux_objects() {
     let mut app = AppState::default();
     app.view = AppView::FluxCDKustomizations;

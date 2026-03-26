@@ -11,7 +11,7 @@ use ratatui::{
 use std::cell::RefCell;
 
 use crate::app::{AppView, ResourceRef};
-use crate::extensions::{ExtensionExecutionMode, LoadedExtensionAction};
+use crate::extensions::LoadedExtensionAction;
 use crate::policy::{DetailAction, ResourceActionContext};
 use crate::resource_templates::ResourceTemplateKind;
 use crate::workspaces::display_hotkey;
@@ -59,7 +59,7 @@ pub struct PaletteExtensionAction {
     pub title: String,
     pub aliases: Vec<String>,
     pub shortcut: Option<String>,
-    pub mode: ExtensionExecutionMode,
+    pub badge_label: String,
 }
 
 #[derive(Debug, Clone)]
@@ -412,12 +412,15 @@ impl CommandPalette {
     pub fn set_extension_actions(&mut self, actions: Vec<LoadedExtensionAction>) {
         self.extension_actions = actions
             .into_iter()
-            .map(|action| PaletteExtensionAction {
-                id: action.id,
-                title: action.title,
-                aliases: action.aliases,
-                shortcut: action.shortcut,
-                mode: action.mode,
+            .map(|action| {
+                let badge_label = action.badge_label();
+                PaletteExtensionAction {
+                    id: action.id,
+                    title: action.title,
+                    aliases: action.aliases,
+                    shortcut: action.shortcut,
+                    badge_label,
+                }
             })
             .collect();
         self.cached_filtered.borrow_mut().take();
@@ -827,7 +830,7 @@ impl CommandPalette {
                             .shortcut
                             .as_deref()
                             .map(display_hotkey)
-                            .unwrap_or_else(|| action.mode.label().to_string()),
+                            .unwrap_or_else(|| action.badge_label.clone()),
                     ),
                     PaletteEntry::SaveWorkspace => {
                         ("Save current workspace".to_string(), "[W]".to_string())
@@ -1401,12 +1404,14 @@ mod tests {
             aliases: vec!["describe pod".into(), "diag".into()],
             resource_kinds: vec!["Pod".into()],
             shortcut: Some("gp".into()),
-            mode: ExtensionExecutionMode::Background,
-            command: crate::extensions::ExtensionCommandConfig {
-                program: "kubectl".into(),
-                args: vec!["describe".into(), "pod".into()],
-                cwd: None,
-                env: Default::default(),
+            kind: crate::extensions::LoadedExtensionActionKind::Command {
+                mode: crate::extensions::ExtensionExecutionMode::Background,
+                command: crate::extensions::ExtensionCommandConfig {
+                    program: "kubectl".into(),
+                    args: vec!["describe".into(), "pod".into()],
+                    cwd: None,
+                    env: Default::default(),
+                },
             },
         }]);
         for c in "diag".chars() {

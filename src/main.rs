@@ -6,6 +6,7 @@
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 
 mod action;
+mod ai;
 mod async_types;
 mod detail_fetch;
 mod event_handlers;
@@ -48,7 +49,8 @@ use kubectui::{
     events::apply_action,
     extensions::{
         ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
-        PreparedExtensionCommand, load_extensions_registry, prepare_command,
+        LoadedExtensionActionKind, PreparedExtensionCommand, load_extensions_registry,
+        prepare_command,
     },
     k8s::{
         client::K8sClient,
@@ -71,6 +73,8 @@ use kubectui::{
 };
 
 use terminal::{pick_context_at_startup, restore_terminal, setup_terminal};
+
+use crate::ai::{AiAnalysisContext, run_ai_analysis};
 
 type AllContainerLogsInfo = (
     String,
@@ -384,6 +388,329 @@ fn refresh_palette_extensions(
     app.command_palette.set_extension_actions(actions);
 }
 
+fn truncate_ai_block(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_string();
+    }
+    let end = value
+        .char_indices()
+        .nth(max_chars)
+        .map(|(idx, _)| idx)
+        .unwrap_or(value.len());
+    format!("{}…", &value[..end])
+}
+
+const AI_METADATA_MAX_LINES: usize = 12;
+const AI_METADATA_MAX_CHARS: usize = 1_400;
+const AI_ISSUE_MAX_LINES: usize = 8;
+const AI_ISSUE_MAX_CHARS: usize = 1_400;
+const AI_EVENT_MAX_LINES: usize = 8;
+const AI_EVENT_MAX_CHARS: usize = 1_400;
+const AI_PROBE_MAX_LINES: usize = 12;
+const AI_PROBE_MAX_CHARS: usize = 1_800;
+const AI_LOG_MAX_LINES: usize = 20;
+const AI_LOG_MAX_CHARS: usize = 2_800;
+const AI_YAML_MAX_CHARS: usize = 2_000;
+
+fn cap_ai_lines(lines: Vec<String>, max_items: usize, max_total_chars: usize) -> Vec<String> {
+    let mut result = Vec::new();
+    let mut total_chars = 0usize;
+    for line in lines.into_iter().take(max_items) {
+        let line_chars = line.chars().count();
+        if !result.is_empty() && total_chars + line_chars > max_total_chars {
+            break;
+        }
+        total_chars += line_chars;
+        result.push(line);
+    }
+    result
+}
+
+fn normalize_ai_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn ai_key_is_sensitive(key: &str) -> bool {
+    let normalized = normalize_ai_key(key);
+    if normalized.is_empty() {
+        return false;
+    }
+    if matches!(
+        normalized.as_str(),
+        "data"
+            | "stringdata"
+            | "token"
+            | "password"
+            | "passwd"
+            | "authorization"
+            | "apikey"
+            | "accesskey"
+            | "secretaccesskey"
+            | "privatekey"
+            | "clientsecret"
+            | "certificate"
+            | "cacrt"
+            | "tlscrt"
+            | "tlskey"
+    ) {
+        return true;
+    }
+    if normalized.ends_with("name") || normalized.ends_with("ref") || normalized.ends_with("refs") {
+        return false;
+    }
+    normalized.contains("token")
+        || normalized.contains("password")
+        || normalized.contains("secret")
+        || normalized.contains("apikey")
+        || normalized.contains("accesskey")
+        || normalized.contains("privatekey")
+        || normalized.contains("certificate")
+}
+
+fn redact_ai_yaml_value(value: &mut serde_yaml::Value) {
+    match value {
+        serde_yaml::Value::Mapping(map) => {
+            let env_name_is_sensitive = map
+                .get(serde_yaml::Value::String("name".to_string()))
+                .and_then(serde_yaml::Value::as_str)
+                .is_some_and(ai_key_is_sensitive);
+            if env_name_is_sensitive
+                && let Some(entry) = map.get_mut(serde_yaml::Value::String("value".to_string()))
+            {
+                *entry = serde_yaml::Value::String("<redacted>".to_string());
+            }
+            for (key, nested) in map.iter_mut() {
+                if key.as_str().is_some_and(ai_key_is_sensitive) {
+                    *nested = serde_yaml::Value::String("<redacted>".to_string());
+                } else {
+                    redact_ai_yaml_value(nested);
+                }
+            }
+        }
+        serde_yaml::Value::Sequence(items) => {
+            for item in items {
+                redact_ai_yaml_value(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn sanitize_ai_annotation(key: &str, value: &str) -> String {
+    if ai_key_is_sensitive(key) {
+        "[redacted]".to_string()
+    } else {
+        truncate_ai_block(value, 120)
+    }
+}
+
+fn sanitize_ai_yaml_excerpt(resource: &ResourceRef, yaml: &str) -> Option<String> {
+    if resource.kind().eq_ignore_ascii_case("secret") {
+        return Some("# redacted: Secret manifests are not sent to AI".to_string());
+    }
+
+    let mut value = serde_yaml::from_str::<serde_yaml::Value>(yaml).ok()?;
+    redact_ai_yaml_value(&mut value);
+    let rendered = serde_yaml::to_string(&value).ok()?;
+    Some(truncate_ai_block(rendered.trim_end(), AI_YAML_MAX_CHARS))
+}
+
+#[cold]
+#[inline(never)]
+fn build_ai_analysis_context(
+    app: &kubectui::app::AppState,
+    snapshot: &kubectui::state::ClusterSnapshot,
+    resource: &ResourceRef,
+) -> AiAnalysisContext {
+    let detail = app
+        .detail_view
+        .as_ref()
+        .filter(|detail| detail.resource.as_ref() == Some(resource));
+    let metadata = detail
+        .map(|detail| detail.metadata.clone())
+        .unwrap_or_else(|| kubectui::detail_sections::metadata_for_resource(snapshot, resource));
+    let metadata_lines = cap_ai_lines(
+        {
+            let mut lines = Vec::new();
+            if let Some(status) = metadata.status.filter(|value| !value.is_empty()) {
+                lines.push(format!("status: {status}"));
+            }
+            if let Some(node) = metadata.node.filter(|value| !value.is_empty()) {
+                lines.push(format!("node: {node}"));
+            }
+            if let Some(ip) = metadata.ip.filter(|value| !value.is_empty()) {
+                lines.push(format!("ip: {ip}"));
+            }
+            lines.extend(
+                metadata
+                    .labels
+                    .into_iter()
+                    .take(8)
+                    .map(|(key, value)| format!("label {key}={value}")),
+            );
+            lines.extend(
+                metadata
+                    .annotations
+                    .into_iter()
+                    .take(6)
+                    .map(|(key, value)| {
+                        format!("annotation {key}={}", sanitize_ai_annotation(&key, &value))
+                    }),
+            );
+            lines
+        },
+        AI_METADATA_MAX_LINES,
+        AI_METADATA_MAX_CHARS,
+    );
+    let issue_lines = cap_ai_lines(
+        kubectui::state::issues::compute_issues(snapshot)
+            .iter()
+            .filter(|issue| &issue.resource_ref == resource)
+            .map(|issue| {
+                truncate_ai_block(
+                    &format!("{}: {}", issue.category.label(), issue.message),
+                    180,
+                )
+            })
+            .collect::<Vec<_>>(),
+        AI_ISSUE_MAX_LINES,
+        AI_ISSUE_MAX_CHARS,
+    );
+    let event_match = format!("{}/{}", resource.kind(), resource.name());
+    let event_lines = cap_ai_lines(
+        if let Some(detail) = detail {
+            detail
+                .events
+                .iter()
+                .map(|event| {
+                    truncate_ai_block(
+                        &format!("{} {}: {}", event.event_type, event.reason, event.message),
+                        180,
+                    )
+                })
+                .collect::<Vec<_>>()
+        } else {
+            snapshot
+                .events
+                .iter()
+                .filter(|event| {
+                    event.involved_object == event_match
+                        && resource
+                            .namespace()
+                            .is_none_or(|namespace| namespace == event.namespace.as_str())
+                })
+                .map(|event| {
+                    truncate_ai_block(
+                        &format!("{} {}: {}", event.type_, event.reason, event.message),
+                        180,
+                    )
+                })
+                .collect::<Vec<_>>()
+        },
+        AI_EVENT_MAX_LINES,
+        AI_EVENT_MAX_CHARS,
+    );
+    let probe_lines = cap_ai_lines(
+        detail
+            .and_then(|detail| detail.probe_panel.as_ref())
+            .map(|panel| {
+                panel
+                    .container_probes
+                    .iter()
+                    .flat_map(|(name, probes)| {
+                        let mut lines = Vec::new();
+                        if let Some(config) = probes.liveness.as_ref() {
+                            lines.push(truncate_ai_block(
+                                &format!("{name} liveness: {}", config.format_display()),
+                                180,
+                            ));
+                        }
+                        if let Some(config) = probes.readiness.as_ref() {
+                            lines.push(truncate_ai_block(
+                                &format!("{name} readiness: {}", config.format_display()),
+                                180,
+                            ));
+                        }
+                        if let Some(config) = probes.startup.as_ref() {
+                            lines.push(truncate_ai_block(
+                                &format!("{name} startup: {}", config.format_display()),
+                                180,
+                            ));
+                        }
+                        lines
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default(),
+        AI_PROBE_MAX_LINES,
+        AI_PROBE_MAX_CHARS,
+    );
+    let mut log_lines = Vec::new();
+    for tab in &app.workbench().tabs {
+        match &tab.state {
+            WorkbenchTabState::PodLogs(logs_tab) if &logs_tab.resource == resource => {
+                let indices = logs_tab.viewer.filtered_indices();
+                log_lines.extend(
+                    indices
+                        .into_iter()
+                        .rev()
+                        .take(AI_LOG_MAX_LINES)
+                        .rev()
+                        .filter_map(|idx| logs_tab.viewer.lines.get(idx))
+                        .map(|entry| {
+                            truncate_ai_block(
+                                entry.display_text(logs_tab.viewer.structured_view),
+                                180,
+                            )
+                        }),
+                );
+            }
+            WorkbenchTabState::WorkloadLogs(logs_tab) if &logs_tab.resource == resource => {
+                let filtered = logs_tab
+                    .lines
+                    .iter()
+                    .filter(|line| logs_tab.matches_filter(line))
+                    .collect::<Vec<_>>();
+                log_lines.extend(filtered.into_iter().rev().take(AI_LOG_MAX_LINES).rev().map(
+                    |line| {
+                        truncate_ai_block(
+                            &format!(
+                                "{} {} {}",
+                                line.pod_name,
+                                line.container_name,
+                                line.entry.display_text(logs_tab.structured_view)
+                            ),
+                            180,
+                        )
+                    },
+                ));
+            }
+            _ => {}
+        }
+        if log_lines.len() >= AI_LOG_MAX_LINES {
+            break;
+        }
+    }
+    let log_lines = cap_ai_lines(log_lines, AI_LOG_MAX_LINES, AI_LOG_MAX_CHARS);
+
+    AiAnalysisContext {
+        resource: resource.clone(),
+        cluster_context: app.current_context_name.clone(),
+        metadata_lines,
+        issue_lines,
+        event_lines,
+        probe_lines,
+        log_lines,
+        yaml_excerpt: detail
+            .and_then(|detail| detail.yaml.clone())
+            .and_then(|yaml| sanitize_ai_yaml_excerpt(resource, &yaml)),
+    }
+}
+
 /// Main asynchronous runtime entrypoint.
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -510,7 +837,10 @@ pub(crate) async fn run_app_inner(
         tokio::sync::mpsc::channel::<ExtensionFetchResult>(16);
     let (extension_command_tx, mut extension_command_rx) =
         tokio::sync::mpsc::channel::<ExtensionCommandAsyncResult>(16);
+    let (ai_analysis_tx, mut ai_analysis_rx) =
+        tokio::sync::mpsc::channel::<AiAnalysisAsyncResult>(16);
     let mut next_extension_execution_id: u64 = 1;
+    let mut next_ai_execution_id: u64 = 1;
     let (events_tx, mut events_rx) = tokio::sync::mpsc::channel::<EventsAsyncResult>(16);
     let mut events_state = EventsFetchRuntimeState::default();
 
@@ -2430,6 +2760,82 @@ pub(crate) async fn run_app_inner(
                 }
             }
 
+            result = ai_analysis_rx.recv() => {
+                if let Some(result) = result {
+                    let resource_label = format!(
+                        "{} on {} '{}'",
+                        result.title,
+                        result.resource.kind(),
+                        result.resource.name(),
+                    );
+                    if let Some(tab) = app
+                        .workbench_mut()
+                        .find_tab_mut(&WorkbenchTabKey::AiAnalysis(result.execution_id))
+                        && let WorkbenchTabState::AiAnalysis(tab_state) = &mut tab.state
+                    {
+                        match result.result {
+                            Ok(analysis) => {
+                                tab_state.apply_result(
+                                    analysis.provider_label,
+                                    analysis.model,
+                                    analysis.summary,
+                                    analysis.likely_causes,
+                                    analysis.next_steps,
+                                    analysis.uncertainty,
+                                );
+                                app.complete_action_history(
+                                    result.action_history_id,
+                                    ActionStatus::Succeeded,
+                                    format!("{resource_label} completed."),
+                                    true,
+                                );
+                                set_transient_status(
+                                    &mut app,
+                                    &mut status_message_clear_at,
+                                    format!("{resource_label} completed."),
+                                );
+                            }
+                            Err(error) => {
+                                tab_state.apply_error(error.clone());
+                                app.complete_action_history(
+                                    result.action_history_id,
+                                    ActionStatus::Failed,
+                                    error.clone(),
+                                    true,
+                                );
+                                app.set_error(error);
+                            }
+                        }
+                    } else {
+                        match result.result {
+                            Ok(_) => {
+                                app.complete_action_history(
+                                    result.action_history_id,
+                                    ActionStatus::Succeeded,
+                                    format!("{resource_label} completed."),
+                                    true,
+                                );
+                                set_transient_status(
+                                    &mut app,
+                                    &mut status_message_clear_at,
+                                    format!("{resource_label} completed."),
+                                );
+                            }
+                            Err(error) => {
+                                app.complete_action_history(
+                                    result.action_history_id,
+                                    ActionStatus::Failed,
+                                    error.clone(),
+                                    true,
+                                );
+                                app.set_error(error);
+                            }
+                        }
+                    }
+                    needs_redraw = true;
+                }
+            }
+
             result = relations_rx.recv() => {
                 if let Some(result) = result {
                     let RelationsAsyncResult {
@@ -2965,15 +3371,6 @@ pub(crate) async fn run_app_inner(
                         continue;
                     }
 
-                    let context = extension_context_for_resource(&app, &cached_snapshot, &resource);
-                    let prepared = match prepare_command(&action, &context) {
-                        Ok(prepared) => prepared,
-                        Err(err) => {
-                            app.set_error(err);
-                            continue;
-                        }
-                    };
-
                     let resource_label = format!(
                         "{} on {} '{}'",
                         action.title,
@@ -2988,25 +3385,46 @@ pub(crate) async fn run_app_inner(
                         format!("Running {resource_label}..."),
                     );
 
-                    match action.mode {
-                        ExtensionExecutionMode::Foreground => {
-                            match run_extension_command_in_terminal(terminal, &prepared) {
-                                Ok(status) if status.success() => {
+                    match action.kind.clone() {
+                        LoadedExtensionActionKind::Command { mode, command } => {
+                            let context =
+                                extension_context_for_resource(&app, &cached_snapshot, &resource);
+                            let prepared = match prepare_command(&action.title, &command, &context)
+                            {
+                                Ok(prepared) => prepared,
+                                Err(err) => {
+                                    let message = format!("{resource_label} failed: {err}");
                                     app.complete_action_history(
                                         action_history_id,
-                                        ActionStatus::Succeeded,
-                                        format!("{resource_label} completed."),
+                                        ActionStatus::Failed,
+                                        message.clone(),
                                         true,
                                     );
-                                    set_transient_status(
-                                        &mut app,
-                                        &mut status_message_clear_at,
-                                        format!("{resource_label} completed."),
-                                    );
+                                    app.set_error(message);
                                     needs_redraw = true;
+                                    continue;
                                 }
-                                Ok(status) => {
-                                    let message = status
+                            };
+
+                            match mode {
+                                ExtensionExecutionMode::Foreground => {
+                                    match run_extension_command_in_terminal(terminal, &prepared) {
+                                        Ok(status) if status.success() => {
+                                            app.complete_action_history(
+                                                action_history_id,
+                                                ActionStatus::Succeeded,
+                                                format!("{resource_label} completed."),
+                                                true,
+                                            );
+                                            set_transient_status(
+                                                &mut app,
+                                                &mut status_message_clear_at,
+                                                format!("{resource_label} completed."),
+                                            );
+                                            needs_redraw = true;
+                                        }
+                                        Ok(status) => {
+                                            let message = status
                                         .code()
                                         .map(|code| {
                                             format!("{resource_label} exited with status {code}.")
@@ -3014,72 +3432,118 @@ pub(crate) async fn run_app_inner(
                                         .unwrap_or_else(|| {
                                             format!("{resource_label} terminated by signal.")
                                         });
-                                    app.complete_action_history(
-                                        action_history_id,
-                                        ActionStatus::Failed,
-                                        message.clone(),
-                                        true,
-                                    );
-                                    app.set_error(message);
-                                    needs_redraw = true;
+                                            app.complete_action_history(
+                                                action_history_id,
+                                                ActionStatus::Failed,
+                                                message.clone(),
+                                                true,
+                                            );
+                                            app.set_error(message);
+                                            needs_redraw = true;
+                                        }
+                                        Err(err) => {
+                                            let message =
+                                                format!("{resource_label} failed: {err:#}");
+                                            app.complete_action_history(
+                                                action_history_id,
+                                                ActionStatus::Failed,
+                                                message.clone(),
+                                                true,
+                                            );
+                                            app.set_error(message);
+                                            needs_redraw = true;
+                                        }
+                                    }
                                 }
-                                Err(err) => {
-                                    let message = format!("{resource_label} failed: {err:#}");
-                                    app.complete_action_history(
-                                        action_history_id,
-                                        ActionStatus::Failed,
-                                        message.clone(),
-                                        true,
-                                    );
-                                    app.set_error(message);
-                                    needs_redraw = true;
+                                ExtensionExecutionMode::Background
+                                | ExtensionExecutionMode::Silent => {
+                                    let execution_id = if mode == ExtensionExecutionMode::Background
+                                    {
+                                        let execution_id = next_extension_execution_id;
+                                        next_extension_execution_id =
+                                            next_extension_execution_id.wrapping_add(1).max(1);
+                                        app.detail_view = None;
+                                        app.open_extension_output_tab(
+                                            execution_id,
+                                            action.title.clone(),
+                                            Some(resource.clone()),
+                                            mode.label(),
+                                            prepared.preview.clone(),
+                                        );
+                                        Some(execution_id)
+                                    } else {
+                                        set_transient_status(
+                                            &mut app,
+                                            &mut status_message_clear_at,
+                                            format!("Running {resource_label}..."),
+                                        );
+                                        None
+                                    };
+
+                                    let tx = extension_command_tx.clone();
+                                    let title = action.title.clone();
+                                    tokio::spawn(async move {
+                                        let result = match tokio::task::spawn_blocking(move || {
+                                            run_extension_command(prepared)
+                                        })
+                                        .await
+                                        {
+                                            Ok(result) => result,
+                                            Err(err) => ExtensionCommandRunResult {
+                                                lines: Vec::new(),
+                                                success: false,
+                                                exit_code: None,
+                                                error: Some(format!(
+                                                    "extension task failed to join: {err}"
+                                                )),
+                                            },
+                                        };
+                                        let _ = tx
+                                            .send(ExtensionCommandAsyncResult {
+                                                action_history_id,
+                                                resource,
+                                                execution_id,
+                                                title,
+                                                result,
+                                            })
+                                            .await;
+                                    });
                                 }
                             }
                         }
-                        ExtensionExecutionMode::Background | ExtensionExecutionMode::Silent => {
-                            let execution_id = if action.mode == ExtensionExecutionMode::Background
-                            {
-                                let execution_id = next_extension_execution_id;
-                                next_extension_execution_id =
-                                    next_extension_execution_id.wrapping_add(1).max(1);
-                                app.detail_view = None;
-                                app.open_extension_output_tab(
-                                    execution_id,
-                                    action.title.clone(),
-                                    Some(resource.clone()),
-                                    action.mode.label(),
-                                    prepared.preview.clone(),
-                                );
-                                Some(execution_id)
-                            } else {
-                                set_transient_status(
-                                    &mut app,
-                                    &mut status_message_clear_at,
-                                    format!("Running {resource_label}..."),
-                                );
-                                None
-                            };
-
-                            let tx = extension_command_tx.clone();
+                        LoadedExtensionActionKind::AiAnalysis {
+                            provider,
+                            system_prompt,
+                        } => {
+                            let execution_id = next_ai_execution_id;
+                            next_ai_execution_id = next_ai_execution_id.wrapping_add(1).max(1);
+                            let context =
+                                build_ai_analysis_context(&app, &cached_snapshot, &resource);
+                            app.detail_view = None;
+                            app.open_ai_analysis_tab(
+                                execution_id,
+                                action.title.clone(),
+                                resource.clone(),
+                            );
+                            let tx = ai_analysis_tx.clone();
                             let title = action.title.clone();
                             tokio::spawn(async move {
+                                let provider = provider.clone();
+                                let system_prompt = system_prompt.clone();
+                                let context = context.clone();
                                 let result = match tokio::task::spawn_blocking(move || {
-                                    run_extension_command(prepared)
+                                    run_ai_analysis(&provider, system_prompt.as_deref(), &context)
                                 })
                                 .await
                                 {
-                                    Ok(result) => result,
-                                    Err(err) => ExtensionCommandRunResult {
-                                        lines: Vec::new(),
-                                        success: false,
-                                        exit_code: None,
-                                        error: Some(format!(
-                                            "extension task failed to join: {err}"
-                                        )),
-                                    },
+                                    Ok(result) => result
+                                        .map_err(|err| format!("{resource_label} failed: {err:#}")),
+                                    Err(err) => Err(format!(
+                                        "{resource_label} AI analysis task failed to join: {err}"
+                                    )),
                                 };
                                 let _ = tx
-                                    .send(ExtensionCommandAsyncResult {
+                                    .send(AiAnalysisAsyncResult {
                                         action_history_id,
                                         resource,
                                         execution_id,

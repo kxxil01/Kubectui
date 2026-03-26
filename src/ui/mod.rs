@@ -607,6 +607,7 @@ struct PodDerivedCell {
 }
 
 type PodDerivedCacheValue = DerivedRowsCacheValue<PodDerivedCell>;
+type PodMetricsMap<'a> = HashMap<(&'a str, &'a str), (u64, u64)>;
 static POD_DERIVED_CACHE: LazyLock<DerivedRowsCache<PodDerivedCell>> =
     LazyLock::new(Default::default);
 
@@ -663,6 +664,65 @@ fn truncate_error(msg: &str, max_len: usize) -> &str {
     }
     let end = msg.floor_char_boundary(max_len.saturating_sub(1));
     &msg[..end]
+}
+
+#[derive(Clone, Copy)]
+enum PodColumnKind {
+    Name,
+    Namespace,
+    Ip,
+    Status,
+    Node,
+    Restarts,
+    Age,
+    CpuUsage,
+    MemUsage,
+    CpuReq,
+    MemReq,
+    CpuLim,
+    MemLim,
+    CpuPctReq,
+    MemPctReq,
+    CpuPctLim,
+    MemPctLim,
+    Unknown,
+}
+
+impl PodColumnKind {
+    fn from_id(id: &str) -> Self {
+        match id {
+            "name" => Self::Name,
+            "namespace" => Self::Namespace,
+            "ip" => Self::Ip,
+            "status" => Self::Status,
+            "node" => Self::Node,
+            "restarts" => Self::Restarts,
+            "age" => Self::Age,
+            "cpu_usage" => Self::CpuUsage,
+            "mem_usage" => Self::MemUsage,
+            "cpu_req" => Self::CpuReq,
+            "mem_req" => Self::MemReq,
+            "cpu_lim" => Self::CpuLim,
+            "mem_lim" => Self::MemLim,
+            "cpu_pct_req" => Self::CpuPctReq,
+            "mem_pct_req" => Self::MemPctReq,
+            "cpu_pct_lim" => Self::CpuPctLim,
+            "mem_pct_lim" => Self::MemPctLim,
+            _ => Self::Unknown,
+        }
+    }
+
+    const fn needs_metrics(self) -> bool {
+        matches!(
+            self,
+            Self::CpuUsage
+                | Self::MemUsage
+                | Self::CpuPctReq
+                | Self::MemPctReq
+                | Self::CpuPctLim
+                | Self::MemPctLim
+        )
+    }
 }
 
 /// Renders a full frame for the current app and cluster state.
@@ -1431,10 +1491,14 @@ fn render_pods_widget(
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
     let window = table_window(total, selected, table_viewport_rows(area));
+    let pod_columns = visible_columns
+        .iter()
+        .map(|col| PodColumnKind::from_id(col.id))
+        .collect::<Vec<_>>();
 
-    let pod_sort_header = |col_id: &str, label: &str| -> String {
-        match col_id {
-            "name" => format!(
+    let pod_sort_header = |kind: PodColumnKind, label: &str| -> String {
+        match kind {
+            PodColumnKind::Name => format!(
                 "  {}",
                 match pod_sort {
                     Some(PodSortState {
@@ -1448,7 +1512,7 @@ fn render_pods_widget(
                     _ => label.to_string(),
                 }
             ),
-            "age" => match pod_sort {
+            PodColumnKind::Age => match pod_sort {
                 Some(PodSortState {
                     column: PodSortColumn::Age,
                     descending: true,
@@ -1459,7 +1523,7 @@ fn render_pods_widget(
                 }) => format!("{label}\u{25b2}"),
                 _ => label.to_string(),
             },
-            "status" => match pod_sort {
+            PodColumnKind::Status => match pod_sort {
                 Some(PodSortState {
                     column: PodSortColumn::Status,
                     descending: true,
@@ -1470,7 +1534,7 @@ fn render_pods_widget(
                 }) => format!("{label}\u{25b2}"),
                 _ => label.to_string(),
             },
-            "restarts" => match pod_sort {
+            PodColumnKind::Restarts => match pod_sort {
                 Some(PodSortState {
                     column: PodSortColumn::Restarts,
                     descending: true,
@@ -1487,18 +1551,19 @@ fn render_pods_widget(
 
     let header_cells: Vec<Cell> = visible_columns
         .iter()
-        .map(|col| {
+        .zip(pod_columns.iter().copied())
+        .map(|(col, kind)| {
             Cell::from(Span::styled(
-                pod_sort_header(col.id, col.label),
+                pod_sort_header(kind, col.label),
                 theme.header_style(),
             ))
         })
         .collect();
     let header = Row::new(header_cells).height(1).style(theme.header_style());
 
-    let name_style = ratatui::prelude::Style::default().fg(theme.fg);
-    let dim_style = ratatui::prelude::Style::default().fg(theme.fg_dim);
-    let even_row_style = ratatui::prelude::Style::default().bg(theme.bg);
+    let name_style = Style::default().fg(theme.fg);
+    let dim_style = Style::default().fg(theme.fg_dim);
+    let even_row_style = Style::default().bg(theme.bg);
     let odd_row_style = theme.row_alt_style();
     let age_style = theme.inactive_style();
     let zero_restart_style = theme.inactive_style();
@@ -1506,35 +1571,24 @@ fn render_pods_widget(
     let error_restart_style = theme.badge_error_style();
     let now_unix = now_unix_seconds();
     let derived = cached_pod_derived(cluster, query, indices.as_ref(), now_unix, cache_variant);
+    let pod_metrics_map: Option<PodMetricsMap<'_>> = pod_columns
+        .iter()
+        .copied()
+        .any(PodColumnKind::needs_metrics)
+        .then(|| {
+            cluster
+                .pod_metrics
+                .iter()
+                .map(|pm| {
+                    let (cpu, mem) = pm.containers.iter().fold((0u64, 0u64), |(ac, am), c| {
+                        (ac + parse_millicores(&c.cpu), am + parse_mib(&c.memory))
+                    });
+                    ((pm.name.as_str(), pm.namespace.as_str()), (cpu, mem))
+                })
+                .collect()
+        });
 
-    // Build pod metrics lookup only when metric columns are visible
-    let needs_metrics = visible_columns.iter().any(|c| {
-        matches!(
-            c.id,
-            "cpu_usage"
-                | "mem_usage"
-                | "cpu_pct_req"
-                | "mem_pct_req"
-                | "cpu_pct_lim"
-                | "mem_pct_lim"
-        )
-    });
-    let pod_metrics_map: HashMap<(&str, &str), (u64, u64)> = if needs_metrics {
-        cluster
-            .pod_metrics
-            .iter()
-            .map(|pm| {
-                let (cpu, mem) = pm.containers.iter().fold((0u64, 0u64), |(ac, am), c| {
-                    (ac + parse_millicores(&c.cpu), am + parse_mib(&c.memory))
-                });
-                ((pm.name.as_str(), pm.namespace.as_str()), (cpu, mem))
-            })
-            .collect()
-    } else {
-        HashMap::new()
-    };
-
-    let mut rows: Vec<Row> = Vec::with_capacity(window.end.saturating_sub(window.start));
+    let mut rows = Vec::with_capacity(window.end.saturating_sub(window.start));
     for (local_idx, &pod_idx) in indices[window.start..window.end].iter().enumerate() {
         let idx = window.start + local_idx;
         let pod = &cluster.pods[pod_idx];
@@ -1556,12 +1610,13 @@ fn render_pods_widget(
             .get(idx)
             .map(|cell| cell.age.as_str())
             .unwrap_or("-");
-        let cells: Vec<Cell> = visible_columns
+        let cells: Vec<Cell> = pod_columns
             .iter()
-            .map(|col| match col.id {
-                "name" => {
+            .copied()
+            .map(|kind| match kind {
+                PodColumnKind::Name => {
                     if bookmarks.is_empty() {
-                        name_cell_with_bookmark(false, pod.name.as_str(), name_style, &theme)
+                        Cell::from(Span::styled(pod.name.as_str(), name_style))
                     } else {
                         bookmarked_name_cell(
                             || ResourceRef::Pod(pod.name.clone(), pod.namespace.clone()),
@@ -1572,110 +1627,118 @@ fn render_pods_widget(
                         )
                     }
                 }
-                "namespace" => Cell::from(Span::styled(pod.namespace.as_str(), dim_style)),
-                "ip" => Cell::from(Span::styled(
+                PodColumnKind::Namespace => {
+                    Cell::from(Span::styled(pod.namespace.as_str(), dim_style))
+                }
+                PodColumnKind::Ip => Cell::from(Span::styled(
                     pod.pod_ip.as_deref().unwrap_or("-"),
                     dim_style,
                 )),
-                "status" => Cell::from(Span::styled(status, status_style)),
-                "node" => Cell::from(Span::styled(
+                PodColumnKind::Status => Cell::from(Span::styled(status, status_style)),
+                PodColumnKind::Node => Cell::from(Span::styled(
                     pod.node.as_deref().unwrap_or("n/a"),
                     dim_style,
                 )),
-                "restarts" => Cell::from(Span::styled(
+                PodColumnKind::Restarts => Cell::from(Span::styled(
                     format_small_int(i64::from(pod.restarts)),
                     restart_style,
                 )),
-                "age" => Cell::from(Span::styled(age, age_style)),
-                "cpu_usage" | "mem_usage" => {
-                    match pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str())) {
-                        Some(&(cpu_m, mem_mib)) => {
-                            let is_cpu = col.id == "cpu_usage";
-                            let usage = if is_cpu { cpu_m } else { mem_mib };
-                            let formatted = if is_cpu {
-                                format_millicores(usage)
-                            } else {
-                                format_mib(usage)
-                            };
-                            let request_raw = if is_cpu {
-                                pod.cpu_request.as_deref()
-                            } else {
-                                pod.memory_request.as_deref()
-                            };
-                            let style = match request_raw {
-                                Some(req) => {
-                                    let req_val = if is_cpu {
-                                        parse_millicores(req)
-                                    } else {
-                                        parse_mib(req)
-                                    };
-                                    if req_val > 0 {
-                                        utilization_style(usage * 100 / req_val, &theme)
-                                    } else {
-                                        dim_style
-                                    }
+                PodColumnKind::Age => Cell::from(Span::styled(age, age_style)),
+                PodColumnKind::CpuUsage | PodColumnKind::MemUsage => match pod_metrics_map
+                    .as_ref()
+                    .and_then(|map| map.get(&(pod.name.as_str(), pod.namespace.as_str())))
+                {
+                    Some(&(cpu_m, mem_mib)) => {
+                        let is_cpu = matches!(kind, PodColumnKind::CpuUsage);
+                        let usage = if is_cpu { cpu_m } else { mem_mib };
+                        let formatted = if is_cpu {
+                            format_millicores(usage)
+                        } else {
+                            format_mib(usage)
+                        };
+                        let request_raw = if is_cpu {
+                            pod.cpu_request.as_deref()
+                        } else {
+                            pod.memory_request.as_deref()
+                        };
+                        let style = match request_raw {
+                            Some(req) => {
+                                let req_val = if is_cpu {
+                                    parse_millicores(req)
+                                } else {
+                                    parse_mib(req)
+                                };
+                                if req_val > 0 {
+                                    utilization_style(usage * 100 / req_val, &theme)
+                                } else {
+                                    dim_style
                                 }
-                                _ => dim_style,
-                            };
-                            Cell::from(Span::styled(formatted, style))
-                        }
-                        None => Cell::from(Span::styled("-", dim_style)),
+                            }
+                            None => dim_style,
+                        };
+                        Cell::from(Span::styled(formatted, style))
                     }
-                }
-                "cpu_req" => Cell::from(Span::styled(
+                    None => Cell::from(Span::styled("-", dim_style)),
+                },
+                PodColumnKind::CpuReq => Cell::from(Span::styled(
                     pod.cpu_request.as_deref().unwrap_or("-"),
                     dim_style,
                 )),
-                "mem_req" => Cell::from(Span::styled(
+                PodColumnKind::MemReq => Cell::from(Span::styled(
                     pod.memory_request.as_deref().unwrap_or("-"),
                     dim_style,
                 )),
-                "cpu_lim" => Cell::from(Span::styled(
+                PodColumnKind::CpuLim => Cell::from(Span::styled(
                     pod.cpu_limit.as_deref().unwrap_or("-"),
                     dim_style,
                 )),
-                "mem_lim" => Cell::from(Span::styled(
+                PodColumnKind::MemLim => Cell::from(Span::styled(
                     pod.memory_limit.as_deref().unwrap_or("-"),
                     dim_style,
                 )),
-                "cpu_pct_req" | "mem_pct_req" | "cpu_pct_lim" | "mem_pct_lim" => {
-                    match pod_metrics_map.get(&(pod.name.as_str(), pod.namespace.as_str())) {
-                        Some(&(cpu_m, mem_mib)) => {
-                            let is_cpu = col.id.starts_with("cpu");
-                            let is_req = col.id.ends_with("req");
-                            let usage = if is_cpu { cpu_m } else { mem_mib };
-                            let denom_str = if is_cpu {
-                                if is_req {
-                                    pod.cpu_request.as_deref()
-                                } else {
-                                    pod.cpu_limit.as_deref()
-                                }
-                            } else if is_req {
-                                pod.memory_request.as_deref()
+                PodColumnKind::CpuPctReq
+                | PodColumnKind::MemPctReq
+                | PodColumnKind::CpuPctLim
+                | PodColumnKind::MemPctLim => match pod_metrics_map
+                    .as_ref()
+                    .and_then(|map| map.get(&(pod.name.as_str(), pod.namespace.as_str())))
+                {
+                    Some(&(cpu_m, mem_mib)) => {
+                        let is_cpu =
+                            matches!(kind, PodColumnKind::CpuPctReq | PodColumnKind::CpuPctLim);
+                        let is_req =
+                            matches!(kind, PodColumnKind::CpuPctReq | PodColumnKind::MemPctReq);
+                        let usage = if is_cpu { cpu_m } else { mem_mib };
+                        let denom_str = if is_cpu {
+                            if is_req {
+                                pod.cpu_request.as_deref()
                             } else {
-                                pod.memory_limit.as_deref()
-                            };
-                            match denom_str {
-                                Some(d) => {
-                                    let denom = if is_cpu {
-                                        parse_millicores(d)
-                                    } else {
-                                        parse_mib(d)
-                                    };
-                                    if denom > 0 {
-                                        let pct = usage * 100 / denom;
-                                        Cell::from(utilization_bar(pct, &theme))
-                                    } else {
-                                        Cell::from(Span::styled("-", dim_style))
-                                    }
-                                }
-                                None => Cell::from(Span::styled("-", dim_style)),
+                                pod.cpu_limit.as_deref()
                             }
+                        } else if is_req {
+                            pod.memory_request.as_deref()
+                        } else {
+                            pod.memory_limit.as_deref()
+                        };
+                        match denom_str {
+                            Some(d) => {
+                                let denom = if is_cpu {
+                                    parse_millicores(d)
+                                } else {
+                                    parse_mib(d)
+                                };
+                                if denom > 0 {
+                                    Cell::from(utilization_bar(usage * 100 / denom, &theme))
+                                } else {
+                                    Cell::from(Span::styled("-", dim_style))
+                                }
+                            }
+                            None => Cell::from(Span::styled("-", dim_style)),
                         }
-                        None => Cell::from(Span::styled("-", dim_style)),
                     }
-                }
-                _ => Cell::from(""),
+                    None => Cell::from(Span::styled("-", dim_style)),
+                },
+                PodColumnKind::Unknown => Cell::from(""),
             })
             .collect();
         rows.push(Row::new(cells).style(row_style));
@@ -2267,6 +2330,29 @@ mod tests {
         let rendered = render_to_string(&app, &snapshot);
         assert!(rendered.contains("Helm"));
         assert!(rendered.contains("rev   7"));
+    }
+
+    #[test]
+    fn render_ai_analysis_workbench_smoke() {
+        let mut app = app_with_view(AppView::Pods);
+        let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+        app.open_ai_analysis_tab(11, "Ask AI", resource);
+        if let Some(tab) = app.workbench_mut().active_tab_mut()
+            && let crate::workbench::WorkbenchTabState::AiAnalysis(tab) = &mut tab.state
+        {
+            tab.apply_result(
+                "AI",
+                "gpt-test",
+                "CrashLoopBackOff is likely caused by invalid configuration.".to_string(),
+                vec!["Bad env var value".to_string()],
+                vec!["Inspect Secret projection".to_string()],
+                vec!["No recent logs were available".to_string()],
+            );
+        }
+
+        let rendered = render_to_string(&app, &ClusterSnapshot::default());
+        assert!(rendered.contains("CrashLoopBackOff"));
+        assert!(rendered.contains("Likely Causes"));
     }
 
     #[test]

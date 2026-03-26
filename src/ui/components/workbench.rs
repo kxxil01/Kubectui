@@ -164,6 +164,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, cluster: 
         WorkbenchTabState::WorkloadLogs(tab) => render_workload_logs_tab(frame, inner, tab),
         WorkbenchTabState::Exec(tab) => render_exec_tab(frame, inner, tab),
         WorkbenchTabState::ExtensionOutput(tab) => render_extension_output_tab(frame, inner, tab),
+        WorkbenchTabState::AiAnalysis(tab) => render_ai_analysis_tab(frame, inner, tab),
         WorkbenchTabState::PortForward(tab) => tab.dialog.render_embedded(frame, inner),
         WorkbenchTabState::Relations(tab) => {
             crate::ui::views::relations::render_relations_tab(frame, inner, tab, &theme)
@@ -2408,6 +2409,91 @@ fn render_extension_output_tab(
         sections[1],
     );
     render_scrollbar(frame, sections[1], total, window.start);
+}
+
+fn render_ai_analysis_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab: &crate::workbench::AiAnalysisTabState,
+) {
+    let theme = default_theme();
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![
+        if tab.loading {
+            Span::styled(" running ", theme.badge_warning_style())
+        } else if tab.error.is_some() {
+            Span::styled(" failed ", theme.badge_error_style())
+        } else {
+            Span::styled(" ready ", theme.badge_success_style())
+        },
+        Span::raw(" "),
+        Span::styled(
+            if tab
+                .content
+                .as_ref()
+                .is_none_or(|content| content.model.is_empty())
+            {
+                "AI".to_string()
+            } else {
+                let content = tab
+                    .content
+                    .as_ref()
+                    .expect("content exists when model is set");
+                format!("{} • {}", content.provider_label, content.model)
+            },
+            Style::default().fg(theme.fg),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "[Esc] back",
+        theme.keybind_desc_style(),
+    )));
+    lines.push(Line::default());
+
+    if tab.loading {
+        lines.push(Line::from(Span::styled(
+            "Running AI analysis...",
+            theme.inactive_style(),
+        )));
+    } else if let Some(error) = &tab.error {
+        lines.push(Line::from(Span::styled(
+            format!("Error: {error}"),
+            theme.badge_error_style(),
+        )));
+    } else if let Some(content) = &tab.content {
+        {
+            lines.push(Line::from(Span::styled("Summary", theme.title_style())));
+            lines.push(Line::from(content.summary.clone()));
+            lines.push(Line::default());
+        }
+        render_ai_section(&mut lines, "Likely Causes", &content.likely_causes, &theme);
+        render_ai_section(&mut lines, "Next Steps", &content.next_steps, &theme);
+        render_ai_section(&mut lines, "Uncertainty", &content.uncertainty, &theme);
+    }
+
+    let scroll = tab.scroll.min(lines.len().saturating_sub(1));
+    let paragraph = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((scroll.min(u16::MAX as usize) as u16, 0));
+    frame.render_widget(paragraph, area);
+    render_scrollbar(frame, area, tab.rendered_line_count(), scroll);
+}
+
+fn render_ai_section(
+    lines: &mut Vec<Line<'static>>,
+    title: &str,
+    items: &[String],
+    theme: &crate::ui::theme::Theme,
+) {
+    if items.is_empty() {
+        return;
+    }
+    lines.push(Line::from(Span::styled(
+        title.to_string(),
+        theme.title_style(),
+    )));
+    lines.extend(items.iter().map(|item| Line::from(format!("• {item}"))));
+    lines.push(Line::default());
 }
 
 fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize) {

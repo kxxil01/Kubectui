@@ -160,6 +160,37 @@ impl AppState {
                     _ => AppAction::None,
                 }
             }
+            WorkbenchTabState::AiAnalysis(tab) => {
+                let max_scroll = tab.rendered_line_count().saturating_sub(1);
+                match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.scroll = tab.scroll.saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.scroll = 0;
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        tab.scroll = max_scroll;
+                        AppAction::None
+                    }
+                    KeyCode::PageDown => {
+                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::PageUp => {
+                        tab.scroll = tab.scroll.saturating_sub(10);
+                        AppAction::None
+                    }
+                    _ => AppAction::None,
+                }
+            }
             WorkbenchTabState::HelmHistory(tab) => {
                 if tab.rollback_pending {
                     return AppAction::None;
@@ -1159,6 +1190,7 @@ impl AppState {
             WorkbenchTabState::Rollout(_) => false,
             WorkbenchTabState::Exec(_)
             | WorkbenchTabState::ExtensionOutput(_)
+            | WorkbenchTabState::AiAnalysis(_)
             | WorkbenchTabState::PortForward(_) => false,
         };
 

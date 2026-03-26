@@ -47,6 +47,7 @@ pub enum WorkbenchTabKind {
     WorkloadLogs,
     Exec,
     Extension,
+    AiAnalysis,
     PortForward,
     Relations,
     NetworkPolicy,
@@ -68,6 +69,7 @@ impl WorkbenchTabKind {
             WorkbenchTabKind::WorkloadLogs => "Workload Logs",
             WorkbenchTabKind::Exec => "Exec",
             WorkbenchTabKind::Extension => "Extension",
+            WorkbenchTabKind::AiAnalysis => "AI",
             WorkbenchTabKind::PortForward => "Port-Forward",
             WorkbenchTabKind::Relations => "Relations",
             WorkbenchTabKind::NetworkPolicy => "NetPol",
@@ -90,6 +92,7 @@ pub enum WorkbenchTabKey {
     WorkloadLogs(ResourceRef),
     Exec(ResourceRef),
     ExtensionOutput(u64),
+    AiAnalysis(u64),
     PortForward,
     Relations(ResourceRef),
     NetworkPolicy(ResourceRef),
@@ -1078,6 +1081,90 @@ impl ExtensionOutputTabState {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct AiAnalysisContent {
+    pub provider_label: String,
+    pub model: String,
+    pub summary: String,
+    pub likely_causes: Vec<String>,
+    pub next_steps: Vec<String>,
+    pub uncertainty: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AiAnalysisTabState {
+    pub execution_id: u64,
+    pub title: String,
+    pub resource: ResourceRef,
+    pub scroll: usize,
+    pub loading: bool,
+    pub error: Option<String>,
+    pub content: Option<Box<AiAnalysisContent>>,
+}
+
+impl AiAnalysisTabState {
+    pub fn new(execution_id: u64, title: impl Into<String>, resource: ResourceRef) -> Self {
+        Self {
+            execution_id,
+            title: title.into(),
+            resource,
+            scroll: 0,
+            loading: true,
+            error: None,
+            content: None,
+        }
+    }
+
+    pub fn rendered_line_count(&self) -> usize {
+        let mut lines = 3usize;
+        if self.loading || self.error.is_some() {
+            return lines + 1;
+        }
+        if let Some(content) = &self.content {
+            lines += 3;
+            for section in [
+                &content.likely_causes,
+                &content.next_steps,
+                &content.uncertainty,
+            ] {
+                if !section.is_empty() {
+                    lines += section.len() + 2;
+                }
+            }
+        }
+        lines
+    }
+
+    pub fn apply_result(
+        &mut self,
+        provider_label: impl Into<String>,
+        model: impl Into<String>,
+        summary: String,
+        likely_causes: Vec<String>,
+        next_steps: Vec<String>,
+        uncertainty: Vec<String>,
+    ) {
+        self.scroll = 0;
+        self.loading = false;
+        self.error = None;
+        self.content = Some(Box::new(AiAnalysisContent {
+            provider_label: provider_label.into(),
+            model: model.into(),
+            summary,
+            likely_causes,
+            next_steps,
+            uncertainty,
+        }));
+    }
+
+    pub fn apply_error(&mut self, error: String) {
+        self.scroll = 0;
+        self.loading = false;
+        self.error = Some(error);
+        self.content = None;
+    }
+}
+
 impl ExecTabState {
     pub fn new(
         resource: ResourceRef,
@@ -1467,6 +1554,7 @@ pub enum WorkbenchTabState {
     WorkloadLogs(WorkloadLogsTabState),
     Exec(ExecTabState),
     ExtensionOutput(ExtensionOutputTabState),
+    AiAnalysis(Box<AiAnalysisTabState>),
     PortForward(PortForwardTabState),
     Relations(RelationsTabState),
     NetworkPolicy(NetworkPolicyTabState),
@@ -1488,6 +1576,7 @@ impl WorkbenchTabState {
             Self::WorkloadLogs(_) => WorkbenchTabKind::WorkloadLogs,
             Self::Exec(_) => WorkbenchTabKind::Exec,
             Self::ExtensionOutput(_) => WorkbenchTabKind::Extension,
+            Self::AiAnalysis(_) => WorkbenchTabKind::AiAnalysis,
             Self::PortForward(_) => WorkbenchTabKind::PortForward,
             Self::Relations(_) => WorkbenchTabKind::Relations,
             Self::NetworkPolicy(_) => WorkbenchTabKind::NetworkPolicy,
@@ -1509,6 +1598,7 @@ impl WorkbenchTabState {
             Self::WorkloadLogs(tab) => WorkbenchTabKey::WorkloadLogs(tab.resource.clone()),
             Self::Exec(tab) => WorkbenchTabKey::Exec(tab.resource.clone()),
             Self::ExtensionOutput(tab) => WorkbenchTabKey::ExtensionOutput(tab.execution_id),
+            Self::AiAnalysis(tab) => WorkbenchTabKey::AiAnalysis(tab.execution_id),
             Self::PortForward(_) => WorkbenchTabKey::PortForward,
             Self::Relations(tab) => WorkbenchTabKey::Relations(tab.resource.clone()),
             Self::NetworkPolicy(tab) => WorkbenchTabKey::NetworkPolicy(tab.resource.clone()),
@@ -1549,6 +1639,9 @@ impl WorkbenchTabState {
                 Some(resource) => format!("{icon}Ext {} {}", tab.title, resource_title(resource)),
                 None => format!("{icon}Ext {}", tab.title),
             },
+            Self::AiAnalysis(tab) => {
+                format!("{icon}AI {} {}", tab.title, resource_title(&tab.resource))
+            }
             Self::PortForward(tab) => match &tab.target {
                 Some(resource) => {
                     format!("{icon}{kind_label} {}", resource_title(resource))
@@ -2091,6 +2184,30 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(state.tabs.len(), 1);
         assert!(state.open);
+    }
+
+    #[test]
+    fn ai_analysis_rendered_line_count_tracks_sections_and_resets_scroll() {
+        let mut tab = AiAnalysisTabState::new(7, "Ask AI", pod("pod-0"));
+        assert_eq!(tab.rendered_line_count(), 4);
+
+        tab.scroll = 9;
+        tab.apply_result(
+            "AI",
+            "gpt-test",
+            "summary".to_string(),
+            vec!["cause".to_string()],
+            vec!["step".to_string(), "step2".to_string()],
+            vec!["uncertain".to_string()],
+        );
+
+        assert_eq!(tab.scroll, 0);
+        assert_eq!(tab.rendered_line_count(), 16);
+
+        tab.scroll = 4;
+        tab.apply_error("boom".to_string());
+        assert_eq!(tab.scroll, 0);
+        assert_eq!(tab.rendered_line_count(), 4);
     }
 
     #[test]
