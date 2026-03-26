@@ -325,7 +325,9 @@ fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'sta
     if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewRollout)) {
         bindings.push(("O", "View rollout control center"));
     }
-    if detail.is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) {
+    if detail.is_some_and(|detail| detail.supports_action(DetailAction::NodeDebugShell)) {
+        bindings.push(("g", "Launch node debug shell"));
+    } else if detail.is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) {
         bindings.push(("g", "Launch debug container"));
     }
     if detail.is_some_and(|detail| detail.supports_action(DetailAction::CheckNetworkConnectivity)) {
@@ -403,6 +405,7 @@ mod tests {
         let bindings = detail_bindings(Some(&detail));
         assert!(bindings.contains(&("D", "Drain node (with confirmation)")));
         assert!(!bindings.contains(&("D", "View config drift (live vs last-applied)")));
+        assert!(bindings.contains(&("g", "Launch node debug shell")));
         assert!(!bindings.contains(&("C", "Check pod reachability")));
     }
 

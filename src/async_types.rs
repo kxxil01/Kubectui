@@ -9,6 +9,7 @@ use kubectui::{
         dtos::K8sEventInfo,
         exec::DebugContainerLaunchResult,
         helm::{HelmHistoryResult, HelmValuesDiffResult},
+        node_debug::NodeDebugLaunchResult,
         probes::ContainerProbes,
         relationships::RelationNode,
         rollout::RolloutInspection,
@@ -178,6 +179,23 @@ pub struct DebugContainerLaunchAsyncResult {
     pub resource: ResourceRef,
     pub session_id: u64,
     pub result: Result<DebugContainerLaunchResult, String>,
+}
+
+pub struct NodeDebugLaunchAsyncResult {
+    pub action_history_id: u64,
+    pub cleanup_client: K8sClient,
+    pub context_generation: u64,
+    pub resource: ResourceRef,
+    pub session_id: u64,
+    pub result: Result<NodeDebugLaunchResult, String>,
+}
+
+#[derive(Debug)]
+pub struct NodeDebugCleanupAsyncResult {
+    pub node_name: String,
+    pub pod_name: String,
+    pub namespace: String,
+    pub result: Result<(), String>,
 }
 
 #[derive(Debug)]

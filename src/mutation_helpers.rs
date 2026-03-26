@@ -106,6 +106,7 @@ pub fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
             | DetailAction::Restart
             | DetailAction::Probes
             | DetailAction::DebugContainer
+            | DetailAction::NodeDebugShell
             | DetailAction::Delete
             | DetailAction::EditYaml
             | DetailAction::Trigger
@@ -130,6 +131,7 @@ pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
         DetailAction::Logs => AppAction::LogsViewerOpen,
         DetailAction::Exec => AppAction::OpenExec,
         DetailAction::DebugContainer => AppAction::DebugContainerDialogOpen,
+        DetailAction::NodeDebugShell => AppAction::NodeDebugDialogOpen,
         DetailAction::PortForward => AppAction::PortForwardOpen,
         DetailAction::Probes => AppAction::ProbePanelOpen,
         DetailAction::Scale => AppAction::ScaleDialogOpen,
@@ -158,6 +160,7 @@ pub fn palette_action_requires_loaded_detail(action: &AppAction) -> bool {
             | AppAction::RolloutRestart
             | AppAction::ProbePanelOpen
             | AppAction::DebugContainerDialogOpen
+            | AppAction::NodeDebugDialogOpen
             | AppAction::DeleteResource
             | AppAction::EditYaml
             | AppAction::TriggerCronJob

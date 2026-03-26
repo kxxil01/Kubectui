@@ -10,6 +10,7 @@ pub mod debug_container_dialog;
 pub mod help_overlay;
 pub mod input_field;
 pub mod namespace_picker;
+pub mod node_debug_dialog;
 pub mod port_forward_dialog;
 pub mod probe_panel;
 pub mod resource_template_dialog;
@@ -24,6 +25,9 @@ pub use debug_container_dialog::{
 };
 pub use input_field::InputFieldWidget;
 pub use namespace_picker::{NamespacePicker, NamespacePickerAction};
+pub use node_debug_dialog::{
+    NodeDebugDialogEvent, NodeDebugDialogState, NodeDebugField, render_node_debug_dialog,
+};
 pub use port_forward_dialog::{FormField, PortForwardAction, PortForwardDialog, PortForwardMode};
 pub use probe_panel::ProbePanelState;
 pub use resource_template_dialog::{

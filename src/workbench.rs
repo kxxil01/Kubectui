@@ -1076,6 +1076,15 @@ impl ExecTabState {
         self.error = None;
     }
 
+    pub fn append_banner(&mut self, lines: &[String]) {
+        for line in lines {
+            self.lines.push(line.clone());
+        }
+        if !lines.is_empty() {
+            self.lines.push(String::new());
+        }
+    }
+
     /// Max pending fragment size before force-flushing (1 MB).
     const MAX_PENDING_FRAGMENT: usize = 1_048_576;
 

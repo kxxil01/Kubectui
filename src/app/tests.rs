@@ -1313,7 +1313,7 @@ fn uppercase_o_is_noop_for_pod_detail() {
 }
 
 #[test]
-fn g_key_is_noop_for_node_detail() {
+fn g_key_opens_node_debug_dialog_for_node_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
         resource: Some(ResourceRef::Node("node-0".to_string())),
@@ -1322,7 +1322,7 @@ fn g_key_is_noop_for_node_detail() {
     });
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
-    assert_eq!(action, AppAction::None);
+    assert_eq!(action, AppAction::NodeDebugDialogOpen);
 }
 
 #[test]

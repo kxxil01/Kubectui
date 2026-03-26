@@ -14,7 +14,7 @@ use crate::{
         nearest_timestamp_index, parse_jump_target,
     },
     ui::components::{
-        debug_container_dialog::DebugContainerDialogState,
+        debug_container_dialog::DebugContainerDialogState, node_debug_dialog::NodeDebugDialogState,
         probe_panel::ProbePanelState as ProbePanelComponentState, scale_dialog::ScaleDialogState,
     },
 };
@@ -46,6 +46,7 @@ pub enum ActiveComponent {
     LogsViewer,
     PortForward,
     DebugContainer,
+    NodeDebug,
     Scale,
     ProbePanel,
 }
@@ -494,6 +495,7 @@ pub struct DetailViewState {
     pub loading: bool,
     pub error: Option<String>,
     pub debug_dialog: Option<DebugContainerDialogState>,
+    pub node_debug_dialog: Option<NodeDebugDialogState>,
     pub scale_dialog: Option<ScaleDialogState>,
     pub probe_panel: Option<ProbePanelComponentState>,
     pub cronjob_history: Vec<CronJobHistoryEntry>,

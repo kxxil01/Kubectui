@@ -1322,6 +1322,23 @@ impl AppState {
                 }
                 return AppAction::None;
             }
+            ActiveComponent::NodeDebug => {
+                if let Some(detail) = &mut self.detail_view
+                    && let Some(dialog) = &mut detail.node_debug_dialog
+                {
+                    return match dialog.handle_key(key) {
+                        crate::ui::components::NodeDebugDialogEvent::None => AppAction::None,
+                        crate::ui::components::NodeDebugDialogEvent::Submit => {
+                            AppAction::NodeDebugDialogSubmit
+                        }
+                        crate::ui::components::NodeDebugDialogEvent::Close => {
+                            detail.node_debug_dialog = None;
+                            AppAction::None
+                        }
+                    };
+                }
+                return AppAction::None;
+            }
             ActiveComponent::Scale => {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
@@ -1556,12 +1573,20 @@ impl AppState {
                 AppAction::OpenExec
             }
             KeyCode::Char('g')
+                if self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::DebugContainer)
+                        || detail.supports_action(DetailAction::NodeDebugShell)
+                }) =>
+            {
                 if self
                     .detail_view
                     .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) =>
-            {
-                AppAction::DebugContainerDialogOpen
+                    .is_some_and(|detail| detail.supports_action(DetailAction::NodeDebugShell))
+                {
+                    AppAction::NodeDebugDialogOpen
+                } else {
+                    AppAction::DebugContainerDialogOpen
+                }
             }
             KeyCode::Char('f')
                 if self
