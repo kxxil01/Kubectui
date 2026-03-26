@@ -145,6 +145,17 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
             "check connectivity",
         ],
     ),
+    (
+        DetailAction::ViewTrafficDebug,
+        &[
+            "traffic",
+            "traffic debug",
+            "service debug",
+            "ingress trace",
+            "endpoint audit",
+            "dns debug",
+        ],
+    ),
     (DetailAction::Cordon, &["cordon", "unschedulable"]),
     (DetailAction::Uncordon, &["uncordon", "schedulable"]),
     (DetailAction::Drain, &["drain", "evict"]),
@@ -1192,6 +1203,20 @@ mod tests {
                 matches!(entry, PaletteEntry::Action(DetailAction::ToggleBookmark))
             })
         );
+    }
+
+    #[test]
+    fn filtered_traffic_query_matches_traffic_debug_action() {
+        let mut palette = CommandPalette::default();
+        let resource = ctx(ResourceRef::Service("api".into(), "default".into()), None);
+        palette.open_with_context(Some(resource));
+        for c in "traffic".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let entries = palette.filtered();
+        assert!(entries.iter().any(|entry| {
+            matches!(entry, PaletteEntry::Action(DetailAction::ViewTrafficDebug))
+        }));
     }
 
     #[test]

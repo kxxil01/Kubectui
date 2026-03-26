@@ -2988,6 +2988,17 @@ pub(crate) async fn run_app_inner(
                         continue;
                     }
                 }
+                AppAction::OpenTrafficDebug => {
+                    if action::detail_tabs::handle_open_traffic_debug(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
                 AppAction::OpenResourceEvents => {
                     if action::detail_tabs::handle_open_resource_events(
                         &mut app,

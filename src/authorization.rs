@@ -146,7 +146,9 @@ impl ResourceRef {
                 )],
                 _ => self.base_access_checks("get"),
             },
-            DetailAction::ViewRollout | DetailAction::ViewHelmHistory => Vec::new(),
+            DetailAction::ViewRollout
+            | DetailAction::ViewHelmHistory
+            | DetailAction::ViewTrafficDebug => Vec::new(),
             DetailAction::ViewDecodedSecret => self.base_access_checks("get"),
             DetailAction::ViewEvents => {
                 if !self.supports_events_tab() {

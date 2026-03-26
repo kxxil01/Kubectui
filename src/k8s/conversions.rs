@@ -27,13 +27,14 @@ use kube::core::PartialObjectMeta;
 use crate::cronjob::cronjob_next_schedule_time;
 use crate::k8s::dtos::{
     ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, ContainerPortInfo, CronJobInfo,
-    DaemonSetInfo, DeploymentInfo, EndpointInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
-    K8sEventInfo, LabelSelectorInfo, LabelSelectorRequirementInfo, LimitRangeInfo, LimitSpec,
-    NamespaceInfo, NetworkPolicyInfo, NetworkPolicyPeerInfo, NetworkPolicyPortInfo,
-    NetworkPolicyRuleInfo, NodeInfo, OwnerRefInfo, PodDisruptionBudgetInfo, PodInfo,
-    PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo, ReplicationControllerInfo,
-    ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject, RoleInfo, SecretInfo,
-    ServiceAccountInfo, ServiceInfo, ServicePortInfo, StatefulSetInfo, StorageClassInfo,
+    DaemonSetInfo, DeploymentInfo, EndpointInfo, HpaInfo, IngressClassInfo, IngressInfo,
+    IngressRouteInfo, JobInfo, K8sEventInfo, LabelSelectorInfo, LabelSelectorRequirementInfo,
+    LimitRangeInfo, LimitSpec, NamespaceInfo, NetworkPolicyInfo, NetworkPolicyPeerInfo,
+    NetworkPolicyPortInfo, NetworkPolicyRuleInfo, NodeInfo, OwnerRefInfo, PodDisruptionBudgetInfo,
+    PodInfo, PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo,
+    ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject, RoleInfo,
+    SecretInfo, ServiceAccountInfo, ServiceInfo, ServicePortInfo, StatefulSetInfo,
+    StorageClassInfo,
 };
 use crate::state::alerts::{format_mib, format_millicores, parse_mib, parse_millicores};
 
@@ -613,6 +614,10 @@ pub fn service_to_info(svc: Service) -> ServiceInfo {
             .unwrap_or_else(|| "default".to_string()),
         type_: service_type,
         cluster_ip: svc.spec.as_ref().and_then(|spec| spec.cluster_ip.clone()),
+        external_name: svc
+            .spec
+            .as_ref()
+            .and_then(|spec| spec.external_name.clone()),
         ports,
         selector: svc
             .spec
@@ -1123,11 +1128,11 @@ pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
         .and_then(|lb| lb.ingress.as_ref())
         .and_then(|ingresses| ingresses.first())
         .and_then(|i| i.ip.clone().or_else(|| i.hostname.clone()));
-    let backend_services: Vec<(String, String)> = ing
+    let routes: Vec<IngressRouteInfo> = ing
         .spec
         .as_ref()
         .map(|spec| {
-            let mut backends = Vec::new();
+            let mut routes = Vec::new();
             if let Some(default_backend) = &spec.default_backend
                 && let Some(svc) = &default_backend.service
             {
@@ -1140,7 +1145,12 @@ pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
                             .unwrap_or_else(|| p.number.map(|n| n.to_string()).unwrap_or_default())
                     })
                     .unwrap_or_default();
-                backends.push((svc.name.clone(), port));
+                routes.push(IngressRouteInfo {
+                    host: None,
+                    path: None,
+                    service_name: svc.name.clone(),
+                    service_port: port,
+                });
             }
             for rule in spec.rules.as_deref().unwrap_or_default() {
                 if let Some(http) = &rule.http {
@@ -1155,16 +1165,25 @@ pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
                                     })
                                 })
                                 .unwrap_or_default();
-                            backends.push((svc.name.clone(), port));
+                            routes.push(IngressRouteInfo {
+                                host: rule.host.clone(),
+                                path: path.path.clone(),
+                                service_name: svc.name.clone(),
+                                service_port: port,
+                            });
                         }
                     }
                 }
             }
-            backends.sort();
-            backends.dedup();
-            backends
+            routes
         })
         .unwrap_or_default();
+    let mut backend_services: Vec<(String, String)> = routes
+        .iter()
+        .map(|route| (route.service_name.clone(), route.service_port.clone()))
+        .collect();
+    backend_services.sort();
+    backend_services.dedup();
     IngressInfo {
         name: m.name,
         namespace: m.namespace,
@@ -1173,6 +1192,7 @@ pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
         address,
         ports: vec!["80".to_string(), "443".to_string()],
         backend_services,
+        routes,
         age: m.age,
         created_at: m.created_at,
     }

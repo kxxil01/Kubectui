@@ -5,10 +5,11 @@ use crate::{
     network_policy_analysis::NetworkPolicyAnalysis,
     policy::DetailAction,
     resource_diff::ResourceDiffResult,
+    traffic_debug::TrafficDebugAnalysis,
     ui::components::scale_dialog::ScaleTargetKind,
     workbench::{
         ConnectivityTabState, ConnectivityTargetOption, HelmHistoryTabState, NetworkPolicyTabState,
-        ResourceDiffTabState, RolloutTabState,
+        ResourceDiffTabState, RolloutTabState, TrafficDebugTabState,
     },
 };
 
@@ -228,6 +229,22 @@ impl AppState {
             .open_tab(WorkbenchTabState::Connectivity(ConnectivityTabState::new(
                 source, targets,
             )));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_traffic_debug_tab(
+        &mut self,
+        resource: ResourceRef,
+        analysis: Option<TrafficDebugAnalysis>,
+        error: Option<String>,
+    ) {
+        let mut tab = TrafficDebugTabState::new(resource);
+        tab.error = error;
+        if let Some(analysis) = analysis {
+            tab.apply_analysis(analysis);
+        }
+        self.workbench
+            .open_tab(WorkbenchTabState::TrafficDebug(tab));
         self.focus = Focus::Workbench;
     }
 

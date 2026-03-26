@@ -23,7 +23,9 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         AppAction::RefreshData => true,
         AppAction::FluxReconcile => true,
         AppAction::OpenDetail(_) => true,
-        AppAction::OpenNetworkPolicyView | AppAction::OpenNetworkConnectivity => true,
+        AppAction::OpenNetworkPolicyView
+        | AppAction::OpenNetworkConnectivity
+        | AppAction::OpenTrafficDebug => true,
         AppAction::CloseDetail => {
             app_state.detail_view = None;
             true
