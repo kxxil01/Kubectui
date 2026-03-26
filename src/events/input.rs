@@ -58,6 +58,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             true
         }
         AppAction::OpenCommandPalette => {
+            app_state.refresh_palette_columns();
+            app_state.refresh_palette_workspaces();
             app_state.command_palette.open();
             true
         }
@@ -572,6 +574,66 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 true
             }
         },
+        AppAction::SaveWorkspace => {
+            app_state.save_current_workspace();
+            true
+        }
+        AppAction::ApplyPreviousWorkspace => match app_state.cycle_saved_workspace_name(false) {
+            Ok(name) => match app_state.saved_workspace_snapshot(&name) {
+                Some(snapshot) => {
+                    app_state.apply_workspace_snapshot(&snapshot);
+                    app_state.set_status(format!("Applied workspace: {name}"));
+                    true
+                }
+                None => {
+                    app_state.set_error(format!("Saved workspace '{name}' was not found."));
+                    true
+                }
+            },
+            Err(err) => {
+                app_state.set_error(err);
+                true
+            }
+        },
+        AppAction::ApplyNextWorkspace => match app_state.cycle_saved_workspace_name(true) {
+            Ok(name) => match app_state.saved_workspace_snapshot(&name) {
+                Some(snapshot) => {
+                    app_state.apply_workspace_snapshot(&snapshot);
+                    app_state.set_status(format!("Applied workspace: {name}"));
+                    true
+                }
+                None => {
+                    app_state.set_error(format!("Saved workspace '{name}' was not found."));
+                    true
+                }
+            },
+            Err(err) => {
+                app_state.set_error(err);
+                true
+            }
+        },
+        AppAction::ApplyWorkspace(name) => match app_state.saved_workspace_snapshot(&name) {
+            Some(snapshot) => {
+                app_state.apply_workspace_snapshot(&snapshot);
+                app_state.set_status(format!("Applied workspace: {name}"));
+                true
+            }
+            None => {
+                app_state.set_error(format!("Saved workspace '{name}' was not found."));
+                true
+            }
+        },
+        AppAction::ActivateWorkspaceBank(name) => match app_state.workspace_bank_snapshot(&name) {
+            Some(snapshot) => {
+                app_state.apply_workspace_snapshot(&snapshot);
+                app_state.set_status(format!("Activated workspace bank: {name}"));
+                true
+            }
+            None => {
+                app_state.set_error(format!("Workspace bank '{name}' was not found."));
+                true
+            }
+        },
         AppAction::ApplyPreviousLogPreset => match app_state.cycle_active_log_preset(false) {
             Ok(_) => true,
             Err(err) => {
@@ -897,5 +959,73 @@ mod tests {
         assert_eq!(tab.scroll, 1);
         assert!(!tab.jumping_to_time);
         assert!(tab.time_jump_error.is_none());
+    }
+
+    #[test]
+    fn save_workspace_persists_current_snapshot() {
+        let mut app = AppState::default();
+        app.view = crate::app::AppView::Pods;
+        app.set_namespace("payments".into());
+
+        assert!(apply_action(AppAction::SaveWorkspace, &mut app));
+        let saved = app.saved_workspaces();
+        assert_eq!(saved.len(), 1);
+        assert_eq!(saved[0].snapshot.view, crate::app::AppView::Pods);
+        assert_eq!(saved[0].snapshot.namespace, "payments");
+    }
+
+    #[test]
+    fn apply_workspace_restores_view_namespace_and_action_history() {
+        use crate::app::ResourceRef;
+        use crate::ui::components::port_forward_dialog::PortForwardDialog;
+        use crate::workbench::{PodLogsTabState, PortForwardTabState, WorkbenchTabState};
+
+        let mut app = AppState::default();
+        let prefs = app.preferences.get_or_insert_with(Default::default);
+        prefs
+            .workspaces
+            .saved
+            .push(crate::workspaces::SavedWorkspace {
+                name: "incident".into(),
+                snapshot: crate::workspaces::WorkspaceSnapshot {
+                    context: None,
+                    namespace: "ops".into(),
+                    view: crate::app::AppView::Pods,
+                    collapsed_groups: Vec::new(),
+                    workbench_open: true,
+                    workbench_height: 12,
+                    workbench_maximized: false,
+                    action_history_tab: true,
+                },
+            });
+
+        app.view = crate::app::AppView::Services;
+        app.set_namespace("default".into());
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+                ResourceRef::Pod("api-0".into(), "default".into()),
+            )));
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
+                None,
+                PortForwardDialog::new(),
+            )));
+
+        assert!(apply_action(
+            AppAction::ApplyWorkspace("incident".into()),
+            &mut app
+        ));
+        assert_eq!(app.view(), crate::app::AppView::Pods);
+        assert_eq!(app.get_namespace(), "ops");
+        assert!(app.workbench().open);
+        assert!(
+            app.workbench()
+                .has_tab(&crate::workbench::WorkbenchTabKey::ActionHistory)
+        );
+        assert_eq!(app.workbench().tabs.len(), 1);
+        assert!(
+            !app.workbench()
+                .has_tab(&crate::workbench::WorkbenchTabKey::PortForward)
+        );
     }
 }

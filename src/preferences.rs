@@ -3,6 +3,7 @@
 use crate::{
     bookmarks::BookmarkEntry,
     log_investigation::{PodLogPreset, WorkloadLogPreset},
+    workspaces::WorkspacePreferences,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -61,6 +62,8 @@ pub struct UserPreferences {
     pub views: HashMap<String, ViewPreferences>,
     #[serde(default)]
     pub log_presets: LogPresetPreferences,
+    #[serde(default)]
+    pub workspaces: WorkspacePreferences,
 }
 
 /// Per-cluster preference overrides.
@@ -390,6 +393,7 @@ mod tests {
                     container_filter: Some("main".into()),
                 }],
             },
+            workspaces: Default::default(),
         };
 
         let serialized = serde_json::to_string(&prefs).expect("serialized user prefs");

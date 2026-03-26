@@ -1,6 +1,7 @@
 //! NavGroup and AppView enum definitions for sidebar navigation.
 
 use crate::icons::{group_icon, view_icon};
+use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
 
 /// Sidebar navigation groups.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -17,6 +18,37 @@ pub enum NavGroup {
 }
 
 impl NavGroup {
+    pub const fn persisted_key(self) -> &'static str {
+        match self {
+            NavGroup::Overview => "overview",
+            NavGroup::Workloads => "workloads",
+            NavGroup::Network => "network",
+            NavGroup::Config => "config",
+            NavGroup::Storage => "storage",
+            NavGroup::Helm => "helm",
+            NavGroup::FluxCD => "flux_cd",
+            NavGroup::AccessControl => "access_control",
+            NavGroup::CustomResources => "custom_resources",
+        }
+    }
+
+    pub fn from_persisted_str(value: &str) -> Option<Self> {
+        match value {
+            "overview" | "Overview" => Some(NavGroup::Overview),
+            "workloads" | "Workloads" => Some(NavGroup::Workloads),
+            "network" | "Network" => Some(NavGroup::Network),
+            "config" | "Config" => Some(NavGroup::Config),
+            "storage" | "Storage" => Some(NavGroup::Storage),
+            "helm" | "Helm" => Some(NavGroup::Helm),
+            "flux_cd" | "FluxCD" => Some(NavGroup::FluxCD),
+            "access_control" | "AccessControl" | "Access Control" => Some(NavGroup::AccessControl),
+            "custom_resources" | "CustomResources" | "Custom Resources" => {
+                Some(NavGroup::CustomResources)
+            }
+            _ => None,
+        }
+    }
+
     pub const fn label(self) -> &'static str {
         match self {
             NavGroup::Overview => "Overview",
@@ -40,6 +72,26 @@ impl NavGroup {
         let arrow = if collapsed { "▶" } else { "▼" };
         let icon = group_icon(self.label()).active();
         format!(" {arrow} {icon}{}", self.label())
+    }
+}
+
+impl Serialize for NavGroup {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.persisted_key())
+    }
+}
+
+impl<'de> Deserialize<'de> for NavGroup {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        NavGroup::from_persisted_str(&value)
+            .ok_or_else(|| D::Error::custom(format!("unknown nav group '{value}'")))
     }
 }
 
@@ -109,6 +161,127 @@ pub enum AppView {
 }
 
 impl AppView {
+    pub const fn persisted_key(self) -> &'static str {
+        match self {
+            AppView::Dashboard => "dashboard",
+            AppView::Bookmarks => "bookmarks",
+            AppView::HealthReport => "health_report",
+            AppView::Nodes => "nodes",
+            AppView::Pods => "pods",
+            AppView::Deployments => "deployments",
+            AppView::StatefulSets => "stateful_sets",
+            AppView::DaemonSets => "daemon_sets",
+            AppView::ReplicaSets => "replica_sets",
+            AppView::ReplicationControllers => "replication_controllers",
+            AppView::Jobs => "jobs",
+            AppView::CronJobs => "cron_jobs",
+            AppView::Services => "services",
+            AppView::Endpoints => "endpoints",
+            AppView::Ingresses => "ingresses",
+            AppView::IngressClasses => "ingress_classes",
+            AppView::NetworkPolicies => "network_policies",
+            AppView::PortForwarding => "port_forwarding",
+            AppView::ConfigMaps => "config_maps",
+            AppView::Secrets => "secrets",
+            AppView::ResourceQuotas => "resource_quotas",
+            AppView::LimitRanges => "limit_ranges",
+            AppView::HPAs => "hpas",
+            AppView::PodDisruptionBudgets => "pod_disruption_budgets",
+            AppView::PriorityClasses => "priority_classes",
+            AppView::PersistentVolumeClaims => "persistent_volume_claims",
+            AppView::PersistentVolumes => "persistent_volumes",
+            AppView::StorageClasses => "storage_classes",
+            AppView::Namespaces => "namespaces",
+            AppView::Events => "events",
+            AppView::HelmCharts => "helm_charts",
+            AppView::HelmReleases => "helm_releases",
+            AppView::FluxCDAlertProviders => "flux_cd_alert_providers",
+            AppView::FluxCDAlerts => "flux_cd_alerts",
+            AppView::FluxCDAll => "flux_cd_all",
+            AppView::FluxCDArtifacts => "flux_cd_artifacts",
+            AppView::FluxCDHelmReleases => "flux_cd_helm_releases",
+            AppView::FluxCDHelmRepositories => "flux_cd_helm_repositories",
+            AppView::FluxCDImages => "flux_cd_images",
+            AppView::FluxCDKustomizations => "flux_cd_kustomizations",
+            AppView::FluxCDReceivers => "flux_cd_receivers",
+            AppView::FluxCDSources => "flux_cd_sources",
+            AppView::ServiceAccounts => "service_accounts",
+            AppView::ClusterRoles => "cluster_roles",
+            AppView::Roles => "roles",
+            AppView::ClusterRoleBindings => "cluster_role_bindings",
+            AppView::RoleBindings => "role_bindings",
+            AppView::Extensions => "extensions",
+            AppView::Issues => "issues",
+        }
+    }
+
+    pub fn from_persisted_str(value: &str) -> Option<Self> {
+        match value {
+            "dashboard" | "Dashboard" => Some(AppView::Dashboard),
+            "bookmarks" | "Bookmarks" => Some(AppView::Bookmarks),
+            "health_report" | "HealthReport" => Some(AppView::HealthReport),
+            "nodes" | "Nodes" => Some(AppView::Nodes),
+            "pods" | "Pods" => Some(AppView::Pods),
+            "deployments" | "Deployments" => Some(AppView::Deployments),
+            "stateful_sets" | "StatefulSets" => Some(AppView::StatefulSets),
+            "daemon_sets" | "DaemonSets" => Some(AppView::DaemonSets),
+            "replica_sets" | "ReplicaSets" => Some(AppView::ReplicaSets),
+            "replication_controllers" | "ReplicationControllers" => {
+                Some(AppView::ReplicationControllers)
+            }
+            "jobs" | "Jobs" => Some(AppView::Jobs),
+            "cron_jobs" | "CronJobs" => Some(AppView::CronJobs),
+            "services" | "Services" => Some(AppView::Services),
+            "endpoints" | "Endpoints" => Some(AppView::Endpoints),
+            "ingresses" | "Ingresses" => Some(AppView::Ingresses),
+            "ingress_classes" | "IngressClasses" => Some(AppView::IngressClasses),
+            "network_policies" | "NetworkPolicies" => Some(AppView::NetworkPolicies),
+            "port_forwarding" | "PortForwarding" => Some(AppView::PortForwarding),
+            "config_maps" | "ConfigMaps" => Some(AppView::ConfigMaps),
+            "secrets" | "Secrets" => Some(AppView::Secrets),
+            "resource_quotas" | "ResourceQuotas" => Some(AppView::ResourceQuotas),
+            "limit_ranges" | "LimitRanges" => Some(AppView::LimitRanges),
+            "hpas" | "HPAs" => Some(AppView::HPAs),
+            "pod_disruption_budgets" | "PodDisruptionBudgets" => {
+                Some(AppView::PodDisruptionBudgets)
+            }
+            "priority_classes" | "PriorityClasses" => Some(AppView::PriorityClasses),
+            "persistent_volume_claims" | "PersistentVolumeClaims" => {
+                Some(AppView::PersistentVolumeClaims)
+            }
+            "persistent_volumes" | "PersistentVolumes" => Some(AppView::PersistentVolumes),
+            "storage_classes" | "StorageClasses" => Some(AppView::StorageClasses),
+            "namespaces" | "Namespaces" => Some(AppView::Namespaces),
+            "events" | "Events" => Some(AppView::Events),
+            "helm_charts" | "HelmCharts" => Some(AppView::HelmCharts),
+            "helm_releases" | "HelmReleases" => Some(AppView::HelmReleases),
+            "flux_cd_alert_providers" | "FluxCDAlertProviders" => {
+                Some(AppView::FluxCDAlertProviders)
+            }
+            "flux_cd_alerts" | "FluxCDAlerts" => Some(AppView::FluxCDAlerts),
+            "flux_cd_all" | "FluxCDAll" => Some(AppView::FluxCDAll),
+            "flux_cd_artifacts" | "FluxCDArtifacts" => Some(AppView::FluxCDArtifacts),
+            "flux_cd_helm_releases" | "FluxCDHelmReleases" => Some(AppView::FluxCDHelmReleases),
+            "flux_cd_helm_repositories" | "FluxCDHelmRepositories" => {
+                Some(AppView::FluxCDHelmRepositories)
+            }
+            "flux_cd_images" | "FluxCDImages" => Some(AppView::FluxCDImages),
+            "flux_cd_kustomizations" | "FluxCDKustomizations" => {
+                Some(AppView::FluxCDKustomizations)
+            }
+            "flux_cd_receivers" | "FluxCDReceivers" => Some(AppView::FluxCDReceivers),
+            "flux_cd_sources" | "FluxCDSources" => Some(AppView::FluxCDSources),
+            "service_accounts" | "ServiceAccounts" => Some(AppView::ServiceAccounts),
+            "cluster_roles" | "ClusterRoles" => Some(AppView::ClusterRoles),
+            "roles" | "Roles" => Some(AppView::Roles),
+            "cluster_role_bindings" | "ClusterRoleBindings" => Some(AppView::ClusterRoleBindings),
+            "role_bindings" | "RoleBindings" => Some(AppView::RoleBindings),
+            "extensions" | "Extensions" => Some(AppView::Extensions),
+            "issues" | "Issues" => Some(AppView::Issues),
+            _ => None,
+        }
+    }
+
     const ORDER: [AppView; 49] = [
         // Overview
         AppView::Dashboard,
@@ -390,5 +563,56 @@ impl AppView {
     /// Enumerates all available top-level tabs in stable order.
     pub const fn tabs() -> &'static [AppView; Self::COUNT] {
         &Self::ORDER
+    }
+}
+
+impl Serialize for AppView {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(self.persisted_key())
+    }
+}
+
+impl<'de> Deserialize<'de> for AppView {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let value = String::deserialize(deserializer)?;
+        AppView::from_persisted_str(&value)
+            .ok_or_else(|| D::Error::custom(format!("unknown app view '{value}'")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_view_serializes_to_stable_key() {
+        let encoded = serde_json::to_string(&AppView::FluxCDHelmRepositories).expect("serialize");
+        assert_eq!(encoded, "\"flux_cd_helm_repositories\"");
+    }
+
+    #[test]
+    fn app_view_deserializes_legacy_variant_name() {
+        let decoded: AppView = serde_json::from_str("\"FluxCDHelmRepositories\"")
+            .expect("deserialize legacy app view");
+        assert_eq!(decoded, AppView::FluxCDHelmRepositories);
+    }
+
+    #[test]
+    fn nav_group_serializes_to_stable_key() {
+        let encoded = serde_json::to_string(&NavGroup::AccessControl).expect("serialize");
+        assert_eq!(encoded, "\"access_control\"");
+    }
+
+    #[test]
+    fn nav_group_deserializes_legacy_variant_name() {
+        let decoded: NavGroup =
+            serde_json::from_str("\"CustomResources\"").expect("deserialize legacy nav group");
+        assert_eq!(decoded, NavGroup::CustomResources);
     }
 }

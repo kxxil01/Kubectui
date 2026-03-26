@@ -5,10 +5,11 @@ use super::flux_reconcile::{
 };
 use super::{
     ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
-    apply_extension_fetch_result, map_palette_detail_action, mutation_refresh_options,
-    normalize_recent_events, palette_action_requires_loaded_detail, prepare_bookmark_target,
-    queued_refresh_requires_two_phase, refresh_options_for_view, selected_extension_crd,
-    selected_flux_reconcile_resource, selected_resource, workbench_follow_streams_to_stop,
+    apply_extension_fetch_result, fail_context_switch, map_palette_detail_action,
+    mutation_refresh_options, normalize_recent_events, palette_action_requires_loaded_detail,
+    prepare_bookmark_target, queued_refresh_requires_two_phase, refresh_options_for_view,
+    selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
+    workbench_follow_streams_to_stop,
 };
 use kubectui::{
     action_history::ActionKind,
@@ -18,7 +19,7 @@ use kubectui::{
         ConfigMapInfo, CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo,
     },
     policy::DetailAction,
-    state::{ClusterSnapshot, RefreshOptions, RefreshScope},
+    state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
     time::{AppTimestamp, now},
     workbench::{PodLogsTabState, WorkbenchTabState},
 };
@@ -95,6 +96,38 @@ fn closing_non_logs_workbench_does_not_collect_streams() {
     let app = AppState::default();
     let streams = workbench_follow_streams_to_stop(&app, AppAction::WorkbenchCloseActiveTab);
     assert!(streams.is_empty());
+}
+
+#[test]
+fn failed_context_switch_clears_pending_workspace_restore() {
+    let mut app = AppState::default();
+    app.pending_workspace_restore = Some(kubectui::workspaces::WorkspaceSnapshot {
+        context: Some("prod".into()),
+        namespace: "payments".into(),
+        view: AppView::Pods,
+        collapsed_groups: Vec::new(),
+        workbench_open: false,
+        workbench_height: kubectui::workbench::DEFAULT_WORKBENCH_HEIGHT,
+        workbench_maximized: false,
+        action_history_tab: false,
+    });
+    let mut global_state = GlobalState::default();
+    let mut snapshot_dirty = false;
+    let mut needs_redraw = false;
+
+    fail_context_switch(
+        &mut app,
+        &mut global_state,
+        "context failed".into(),
+        &mut snapshot_dirty,
+        &mut needs_redraw,
+    );
+
+    assert!(app.pending_workspace_restore.is_none());
+    assert_eq!(global_state.snapshot().phase, DataPhase::Error);
+    assert!(snapshot_dirty);
+    assert!(needs_redraw);
+    assert_eq!(app.error_message(), Some("context failed"));
 }
 
 #[test]

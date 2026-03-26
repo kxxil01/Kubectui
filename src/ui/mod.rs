@@ -635,9 +635,6 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     let (sidebar_counts, sidebar_counts_hash): (Vec<(AppView, Option<usize>)>, u64) = {
         use crate::app::SidebarItem;
-        use std::hash::{Hash, Hasher};
-
-        let mut hasher = std::hash::DefaultHasher::new();
         let counts = crate::app::sidebar_rows(&app.collapsed_groups)
             .iter()
             .filter_map(|item| {
@@ -652,8 +649,15 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 }
             })
             .collect::<Vec<_>>();
-        counts.hash(&mut hasher);
-        (counts, hasher.finish())
+        let counts_hash = counts
+            .iter()
+            .fold(0xcbf29ce484222325_u64, |hash, (view, count)| {
+                let count_bits = count.map_or(u64::MAX, |value| value as u64);
+                hash.wrapping_mul(0x100000001b3)
+                    ^ (((*view as u64) + 1).wrapping_mul(0x9e3779b97f4a7c15)
+                        ^ count_bits.rotate_left(17))
+            });
+        (counts, counts_hash)
     };
 
     {

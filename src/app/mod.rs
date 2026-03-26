@@ -38,6 +38,7 @@ use crate::{
         PortForwardTabState, ResourceEventsTabState, ResourceYamlTabState, WorkbenchState,
         WorkbenchTabState, WorkloadLogsTabState,
     },
+    workspaces::WorkspaceSnapshot,
 };
 
 /// Actions emitted by input handling.
@@ -150,6 +151,11 @@ pub enum AppAction {
     ApplyPreviousLogPreset,
     ApplyNextLogPreset,
     ToggleLogCorrelation,
+    SaveWorkspace,
+    ApplyPreviousWorkspace,
+    ApplyNextWorkspace,
+    ApplyWorkspace(String),
+    ActivateWorkspaceBank(String),
     ToggleBookmark,
     SaveDecodedSecret,
     PaletteAction {
@@ -277,6 +283,8 @@ pub struct AppState {
     pub current_context_name: Option<String>,
     /// When true, config should be saved at next convenient point.
     pub needs_config_save: bool,
+    /// Snapshot queued for completion after an async context switch.
+    pub pending_workspace_restore: Option<WorkspaceSnapshot>,
     /// Persistent bottom workbench state.
     pub workbench: WorkbenchState,
     /// Spinner animation tick counter (0–7), advanced on each UI tick during loading.
