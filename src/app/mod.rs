@@ -98,6 +98,8 @@ pub enum AppAction {
     OpenExec,
     DebugContainerDialogOpen,
     DebugContainerDialogSubmit,
+    NodeDebugDialogOpen,
+    NodeDebugDialogSubmit,
     PortForwardOpen,
     PortForwardCreate(
         (

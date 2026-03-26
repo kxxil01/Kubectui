@@ -65,6 +65,7 @@ pub(crate) async fn fetch_detail_view(
         loading: false,
         error: None,
         debug_dialog: None,
+        node_debug_dialog: None,
         scale_dialog: None,
         probe_panel: None,
         cronjob_history,

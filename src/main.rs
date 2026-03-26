@@ -74,6 +74,45 @@ type AllContainerLogsInfo = (
     ResourceRef,
 );
 
+#[derive(Clone)]
+struct NodeDebugSessionRuntime {
+    client: K8sClient,
+    node_name: String,
+    pod_name: String,
+    namespace: String,
+}
+
+async fn spawn_node_debug_cleanup(
+    session: NodeDebugSessionRuntime,
+    cleanup_tx: tokio::sync::mpsc::Sender<NodeDebugCleanupAsyncResult>,
+) {
+    tokio::spawn(async move {
+        let result = session
+            .client
+            .delete_node_debug_pod(&session.namespace, &session.pod_name)
+            .await
+            .map_err(|err| format!("{err:#}"));
+        let _ = cleanup_tx
+            .send(NodeDebugCleanupAsyncResult {
+                node_name: session.node_name,
+                pod_name: session.pod_name,
+                namespace: session.namespace,
+                result,
+            })
+            .await;
+    });
+}
+
+async fn cleanup_node_debug_session_if_needed(
+    session_id: u64,
+    node_debug_sessions: &mut HashMap<u64, NodeDebugSessionRuntime>,
+    cleanup_tx: &tokio::sync::mpsc::Sender<NodeDebugCleanupAsyncResult>,
+) {
+    if let Some(session) = node_debug_sessions.remove(&session_id) {
+        spawn_node_debug_cleanup(session, cleanup_tx.clone()).await;
+    }
+}
+
 fn fail_context_switch(
     app: &mut kubectui::app::AppState,
     global_state: &mut GlobalState,
@@ -303,9 +342,14 @@ pub(crate) async fn run_app_inner(
     let mut debug_dialog_request_seq: u64 = 0;
     let (debug_launch_tx, mut debug_launch_rx) =
         tokio::sync::mpsc::channel::<DebugContainerLaunchAsyncResult>(16);
+    let (node_debug_launch_tx, mut node_debug_launch_rx) =
+        tokio::sync::mpsc::channel::<NodeDebugLaunchAsyncResult>(16);
+    let (node_debug_cleanup_tx, mut node_debug_cleanup_rx) =
+        tokio::sync::mpsc::channel::<NodeDebugCleanupAsyncResult>(16);
     let (exec_update_tx, mut exec_update_rx) = tokio::sync::mpsc::channel::<ExecEvent>(128);
     let mut next_exec_session_id: u64 = 1;
     let mut exec_sessions: HashMap<u64, ExecSessionHandle> = HashMap::new();
+    let mut node_debug_sessions: HashMap<u64, NodeDebugSessionRuntime> = HashMap::new();
     let (workload_logs_bootstrap_tx, mut workload_logs_bootstrap_rx) =
         tokio::sync::mpsc::channel::<WorkloadLogsBootstrapResult>(16);
     let mut next_workload_logs_session_id: u64 = 1;
@@ -1680,6 +1724,16 @@ pub(crate) async fn run_app_inner(
                 if let Some(result) = result {
                     needs_redraw = true;
                     if result.context_generation != refresh_state.context_generation {
+                        if let Some(detail) = app.detail_view.as_mut()
+                            && detail.resource.as_ref() == Some(&result.resource)
+                            && let Some(dialog) = detail.debug_dialog.as_mut()
+                        {
+                            dialog.set_pending_launch(false);
+                            dialog.error_message = Some(
+                                "Debug container launch was cancelled because the active context changed."
+                                    .to_string(),
+                            );
+                        }
                         app.complete_action_history(
                             result.action_history_id,
                             ActionStatus::Failed,
@@ -1691,54 +1745,23 @@ pub(crate) async fn run_app_inner(
 
                     match result.result {
                         Ok(launch) => {
-                            app.complete_action_history(
-                                result.action_history_id,
-                                ActionStatus::Succeeded,
-                                format!(
-                                    "Started debug container '{}' in Pod '{}'.",
-                                    launch.container_name, launch.pod_name
-                                ),
-                                true,
-                            );
-                            apply_mutation_success(
-                                &mut app,
-                                &mut MutationRuntime {
-                                    global_state: &mut global_state,
-                                    client: &client,
-                                    refresh_tx: &refresh_tx,
-                                    deferred_refresh_tx: &deferred_refresh_tx,
-                                    refresh_state: &mut refresh_state,
-                                    snapshot_dirty: &mut snapshot_dirty,
-                                    auto_refresh: &mut auto_refresh,
-                                    status_message_clear_at: &mut status_message_clear_at,
-                                },
-                                result.origin_view,
-                                format!(
-                                    "Started debug container '{}' in Pod '{}'. Refreshing view...",
-                                    launch.container_name, launch.pod_name
-                                ),
-                                false,
-                                MUTATION_REFRESH_DELAYS_SECS,
-                            );
-                            app.detail_view = None;
                             if let Some(existing_session_id) =
                                 app.workbench().exec_session_id(&result.resource)
                                 && let Some(handle) = exec_sessions.remove(&existing_session_id)
                             {
                                 let _ = handle.cancel_tx.send(());
+                                cleanup_node_debug_session_if_needed(
+                                    existing_session_id,
+                                    &mut node_debug_sessions,
+                                    &node_debug_cleanup_tx,
+                                )
+                                .await;
                             }
-                            app.open_exec_tab_for_container(
-                                result.resource.clone(),
-                                result.session_id,
-                                launch.pod_name.clone(),
-                                launch.namespace.clone(),
-                                launch.container_name.clone(),
-                            );
                             match spawn_exec_session(
                                 client.clone(),
                                 result.session_id,
-                                launch.pod_name,
-                                launch.namespace,
+                                launch.pod_name.clone(),
+                                launch.namespace.clone(),
                                 launch.container_name.clone(),
                                 exec_update_tx.clone(),
                             )
@@ -1746,21 +1769,83 @@ pub(crate) async fn run_app_inner(
                             {
                                 Ok(handle) => {
                                     exec_sessions.insert(result.session_id, handle);
+                                    app.complete_action_history(
+                                        result.action_history_id,
+                                        ActionStatus::Succeeded,
+                                        format!(
+                                            "Started debug container '{}' in Pod '{}'.",
+                                            launch.container_name, launch.pod_name
+                                        ),
+                                        true,
+                                    );
+                                    apply_mutation_success(
+                                        &mut app,
+                                        &mut MutationRuntime {
+                                            global_state: &mut global_state,
+                                            client: &client,
+                                            refresh_tx: &refresh_tx,
+                                            deferred_refresh_tx: &deferred_refresh_tx,
+                                            refresh_state: &mut refresh_state,
+                                            snapshot_dirty: &mut snapshot_dirty,
+                                            auto_refresh: &mut auto_refresh,
+                                            status_message_clear_at: &mut status_message_clear_at,
+                                        },
+                                        result.origin_view,
+                                        format!(
+                                            "Started debug container '{}' in Pod '{}'. Refreshing view...",
+                                            launch.container_name, launch.pod_name
+                                        ),
+                                        false,
+                                        MUTATION_REFRESH_DELAYS_SECS,
+                                    );
+                                    app.detail_view = None;
+                                    app.open_exec_tab_for_container(
+                                        result.resource.clone(),
+                                        result.session_id,
+                                        launch.pod_name,
+                                        launch.namespace,
+                                        launch.container_name,
+                                    );
                                 }
                                 Err(err) => {
-                                    if let Some(tab) = app
-                                        .workbench_mut()
-                                        .find_tab_mut(&WorkbenchTabKey::Exec(result.resource))
-                                        && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
-                                    {
-                                        exec_tab.loading = false;
-                                        exec_tab.error = Some(format!(
-                                            "Debug container launched, but shell attach failed: {err:#}"
-                                        ));
-                                    }
-                                    app.set_error(format!(
+                                    let error_message = format!(
                                         "Debug container launched, but shell attach failed: {err:#}"
-                                    ));
+                                    );
+                                    app.complete_action_history(
+                                        result.action_history_id,
+                                        ActionStatus::Failed,
+                                        error_message.clone(),
+                                        true,
+                                    );
+                                    apply_mutation_success(
+                                        &mut app,
+                                        &mut MutationRuntime {
+                                            global_state: &mut global_state,
+                                            client: &client,
+                                            refresh_tx: &refresh_tx,
+                                            deferred_refresh_tx: &deferred_refresh_tx,
+                                            refresh_state: &mut refresh_state,
+                                            snapshot_dirty: &mut snapshot_dirty,
+                                            auto_refresh: &mut auto_refresh,
+                                            status_message_clear_at: &mut status_message_clear_at,
+                                        },
+                                        result.origin_view,
+                                        format!(
+                                            "Debug container '{}' launched, but shell attach failed. Refreshing view...",
+                                            launch.container_name
+                                        ),
+                                        false,
+                                        MUTATION_REFRESH_DELAYS_SECS,
+                                    );
+                                    if let Some(detail) = app.detail_view.as_mut()
+                                        && detail.resource.as_ref() == Some(&result.resource)
+                                        && let Some(dialog) = detail.debug_dialog.as_mut()
+                                    {
+                                        dialog.set_pending_launch(false);
+                                        dialog.error_message = Some(error_message.clone());
+                                    }
+                                    status_message_clear_at = None;
+                                    app.set_error(error_message);
                                 }
                             }
                         }
@@ -1780,6 +1865,151 @@ pub(crate) async fn run_app_inner(
                             } else {
                                 status_message_clear_at = None;
                                 app.set_error(format!("Debug container launch failed: {err}"));
+                            }
+                        }
+                    }
+                }
+            }
+
+            result = node_debug_launch_rx.recv() => {
+                if let Some(result) = result {
+                    needs_redraw = true;
+                    match result.result {
+                        Ok(launch) => {
+                            if result.context_generation != refresh_state.context_generation {
+                                if let Some(detail) = app.detail_view.as_mut()
+                                    && detail.resource.as_ref() == Some(&result.resource)
+                                    && let Some(dialog) = detail.node_debug_dialog.as_mut()
+                                {
+                                    dialog.set_pending_launch(false);
+                                    dialog.error_message = Some(
+                                        "Node debug shell launch was cancelled because the active context changed."
+                                            .to_string(),
+                                    );
+                                }
+                                app.complete_action_history(
+                                    result.action_history_id,
+                                    ActionStatus::Failed,
+                                    "Node debug shell launch was cancelled because the active context changed.",
+                                    true,
+                                );
+                                spawn_node_debug_cleanup(
+                                    NodeDebugSessionRuntime {
+                                        client: result.cleanup_client,
+                                        node_name: launch.node_name,
+                                        pod_name: launch.pod_name,
+                                        namespace: launch.namespace,
+                                    },
+                                    node_debug_cleanup_tx.clone(),
+                                )
+                                .await;
+                                continue;
+                            }
+                            if let Some(existing_session_id) =
+                                app.workbench().exec_session_id(&result.resource)
+                            {
+                                if let Some(handle) = exec_sessions.remove(&existing_session_id) {
+                                    let _ = handle.cancel_tx.send(());
+                                }
+                                cleanup_node_debug_session_if_needed(
+                                    existing_session_id,
+                                    &mut node_debug_sessions,
+                                    &node_debug_cleanup_tx,
+                                )
+                                .await;
+                            }
+                            match spawn_exec_session(
+                                result.cleanup_client.clone(),
+                                result.session_id,
+                                launch.pod_name.clone(),
+                                launch.namespace.clone(),
+                                launch.container_name.clone(),
+                                exec_update_tx.clone(),
+                            )
+                            .await
+                            {
+                                Ok(handle) => {
+                                    exec_sessions.insert(result.session_id, handle);
+                                    node_debug_sessions.insert(
+                                        result.session_id,
+                                        NodeDebugSessionRuntime {
+                                            client: result.cleanup_client,
+                                            node_name: launch.node_name.clone(),
+                                            pod_name: launch.pod_name.clone(),
+                                            namespace: launch.namespace.clone(),
+                                        },
+                                    );
+                                    app.complete_action_history(
+                                        result.action_history_id,
+                                        ActionStatus::Succeeded,
+                                        format!(
+                                            "Started {} node debug shell for Node '{}'.",
+                                            launch.profile.label(),
+                                            launch.node_name
+                                        ),
+                                        true,
+                                    );
+                                    app.open_exec_tab_for_container(
+                                        result.resource.clone(),
+                                        result.session_id,
+                                        launch.pod_name.clone(),
+                                        launch.namespace.clone(),
+                                        launch.container_name.clone(),
+                                    );
+                                    app.append_exec_banner(
+                                        &result.resource,
+                                        result.session_id,
+                                        &action::node_debug::node_debug_shell_banner(&launch),
+                                    );
+                                    app.detail_view = None;
+                                }
+                                Err(err) => {
+                                    spawn_node_debug_cleanup(
+                                        NodeDebugSessionRuntime {
+                                            client: result.cleanup_client,
+                                            node_name: launch.node_name.clone(),
+                                            pod_name: launch.pod_name.clone(),
+                                            namespace: launch.namespace.clone(),
+                                        },
+                                        node_debug_cleanup_tx.clone(),
+                                    )
+                                    .await;
+                                    let error_message = format!(
+                                        "Node debug pod launched, but shell attach failed: {err:#}"
+                                    );
+                                    app.complete_action_history(
+                                        result.action_history_id,
+                                        ActionStatus::Failed,
+                                        format!("{error_message}. Cleanup requested."),
+                                        true,
+                                    );
+                                    if let Some(detail) = app.detail_view.as_mut()
+                                        && detail.resource.as_ref() == Some(&result.resource)
+                                        && let Some(dialog) = detail.node_debug_dialog.as_mut()
+                                    {
+                                        dialog.set_pending_launch(false);
+                                        dialog.error_message =
+                                            Some(format!("{error_message}. Cleanup requested."));
+                                    }
+                                    app.set_error(format!("{error_message}. Cleanup requested."));
+                                }
+                            }
+                        }
+                        Err(err) => {
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                format!("Node debug shell launch failed: {err}"),
+                                true,
+                            );
+                            if let Some(detail) = app.detail_view.as_mut()
+                                && detail.resource.as_ref() == Some(&result.resource)
+                                && let Some(dialog) = detail.node_debug_dialog.as_mut()
+                            {
+                                dialog.set_pending_launch(false);
+                                dialog.error_message = Some(err);
+                            } else {
+                                app.set_error(format!("Node debug shell launch failed: {err}"));
                             }
                         }
                     }
@@ -1820,12 +2050,24 @@ pub(crate) async fn run_app_inner(
                                     exec_tab.error = (!success).then_some(message.clone());
                                     exec_tab.append_output(&format!("{message}\n"));
                                     exec_sessions.remove(&session_id);
+                                    cleanup_node_debug_session_if_needed(
+                                        session_id,
+                                        &mut node_debug_sessions,
+                                        &node_debug_cleanup_tx,
+                                    )
+                                    .await;
                                 }
                                 ExecEvent::Error { error, session_id } => {
                                     exec_tab.loading = false;
                                     exec_tab.error = Some(error.clone());
                                     exec_tab.exited = true;
                                     exec_sessions.remove(&session_id);
+                                    cleanup_node_debug_session_if_needed(
+                                        session_id,
+                                        &mut node_debug_sessions,
+                                        &node_debug_cleanup_tx,
+                                    )
+                                    .await;
                                 }
                             }
                             break;
@@ -1833,6 +2075,18 @@ pub(crate) async fn run_app_inner(
                     }
                 }
             }
+
+            result = node_debug_cleanup_rx.recv() => {
+                    if let Some(result) = result {
+                        needs_redraw = true;
+                        if let Err(err) = result.result {
+                            app.set_error(format!(
+                                "Node debug pod '{}'(namespace '{}') for node '{}' was not cleaned up automatically: {}",
+                                result.pod_name, result.namespace, result.node_name, err
+                            ));
+                        }
+                    }
+                }
 
             result = workload_logs_bootstrap_rx.recv() => {
                 needs_redraw = true;
@@ -1959,6 +2213,12 @@ pub(crate) async fn run_app_inner(
                             let _ = coordinator.shutdown().await;
                             for (_, handle) in exec_sessions.drain() {
                                 let _ = handle.cancel_tx.send(());
+                            }
+                            for (_, session) in node_debug_sessions.drain() {
+                                let _ = session
+                                    .client
+                                    .delete_node_debug_pod(&session.namespace, &session.pod_name)
+                                    .await;
                             }
                             workload_log_sessions.clear();
                             port_forwarder.stop_all().await;
@@ -2351,6 +2611,12 @@ pub(crate) async fn run_app_inner(
                         if let Some(handle) = exec_sessions.remove(&session_id) {
                             let _ = handle.cancel_tx.send(());
                         }
+                        cleanup_node_debug_session_if_needed(
+                            session_id,
+                            &mut node_debug_sessions,
+                            &node_debug_cleanup_tx,
+                        )
+                        .await;
                     }
                     apply_action(action, &mut app);
                     app.needs_config_save = true;
@@ -2503,6 +2769,12 @@ pub(crate) async fn run_app_inner(
                         if let Some(handle) = exec_sessions.remove(&session_id) {
                             let _ = handle.cancel_tx.send(());
                         }
+                        cleanup_node_debug_session_if_needed(
+                            session_id,
+                            &mut node_debug_sessions,
+                            &node_debug_cleanup_tx,
+                        )
+                        .await;
                     }
                     port_forwarder.stop_all().await;
                     app.tunnel_registry.update_tunnels(Vec::new());
@@ -2625,6 +2897,12 @@ pub(crate) async fn run_app_inner(
                         if let Some(handle) = exec_sessions.remove(&session_id) {
                             let _ = handle.cancel_tx.send(());
                         }
+                        cleanup_node_debug_session_if_needed(
+                            session_id,
+                            &mut node_debug_sessions,
+                            &node_debug_cleanup_tx,
+                        )
+                        .await;
                     }
                     port_forwarder.stop_all().await;
                     app.tunnel_registry.update_tunnels(Vec::new());
@@ -2771,6 +3049,12 @@ pub(crate) async fn run_app_inner(
                     delete_in_flight_id = None;
                     for (_, handle) in exec_sessions.drain() {
                         let _ = handle.cancel_tx.send(());
+                    }
+                    for (_, session) in node_debug_sessions.drain() {
+                        let _ = session
+                            .client
+                            .delete_node_debug_pod(&session.namespace, &session.pod_name)
+                            .await;
                     }
                     for (_, streams) in workload_log_sessions.drain() {
                         for (pod_name, namespace, container_name) in streams {
@@ -3154,6 +3438,12 @@ pub(crate) async fn run_app_inner(
                         && let Some(handle) = exec_sessions.remove(&existing_session_id)
                     {
                         let _ = handle.cancel_tx.send(());
+                        cleanup_node_debug_session_if_needed(
+                            existing_session_id,
+                            &mut node_debug_sessions,
+                            &node_debug_cleanup_tx,
+                        )
+                        .await;
                     }
 
                     let session_id = next_exec_session_id;
@@ -3197,6 +3487,25 @@ pub(crate) async fn run_app_inner(
                         &mut app,
                         &client,
                         &debug_launch_tx,
+                        &mut next_exec_session_id,
+                        refresh_state.context_generation,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
+                AppAction::NodeDebugDialogOpen => {
+                    app.set_available_namespaces(global_state.namespaces().to_vec());
+                    if action::node_debug::handle_node_debug_dialog_open(&mut app) {
+                        continue;
+                    }
+                }
+                AppAction::NodeDebugDialogSubmit => {
+                    if action::node_debug::handle_node_debug_dialog_submit(
+                        &mut app,
+                        &client,
+                        &node_debug_launch_tx,
                         &mut next_exec_session_id,
                         refresh_state.context_generation,
                     )
@@ -4342,6 +4651,12 @@ pub(crate) async fn run_app_inner(
 
     for (_, handle) in exec_sessions.drain() {
         let _ = handle.cancel_tx.send(());
+    }
+    for (_, session) in node_debug_sessions.drain() {
+        let _ = session
+            .client
+            .delete_node_debug_pod(&session.namespace, &session.pod_name)
+            .await;
     }
     let _ = coordinator.shutdown().await;
     port_forwarder.stop_all().await;

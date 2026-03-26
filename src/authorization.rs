@@ -42,7 +42,7 @@ pub struct ResourceAccessCheck {
 }
 
 impl ResourceAccessCheck {
-    fn resource(
+    pub fn resource(
         verb: &str,
         group: Option<&str>,
         resource: &str,
@@ -59,7 +59,7 @@ impl ResourceAccessCheck {
         }
     }
 
-    fn subresource(
+    pub fn subresource(
         verb: &str,
         group: Option<&str>,
         resource: &str,
@@ -148,7 +148,8 @@ impl ResourceRef {
             },
             DetailAction::ViewRollout
             | DetailAction::ViewHelmHistory
-            | DetailAction::ViewTrafficDebug => Vec::new(),
+            | DetailAction::ViewTrafficDebug
+            | DetailAction::NodeDebugShell => Vec::new(),
             DetailAction::ViewDecodedSecret => self.base_access_checks("get"),
             DetailAction::ViewEvents => {
                 if !self.supports_events_tab() {
