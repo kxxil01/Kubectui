@@ -8,6 +8,7 @@ pub mod exec;
 pub mod flux;
 pub mod helm;
 pub mod logs;
+pub mod node_debug;
 pub mod portforward;
 pub mod portforward_errors;
 pub mod probes;

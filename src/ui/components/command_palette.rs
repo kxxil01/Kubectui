@@ -94,6 +94,16 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
         &["debug", "debug container", "ephemeral", "kubectl debug"],
     ),
     (
+        DetailAction::NodeDebugShell,
+        &[
+            "node debug",
+            "node shell",
+            "debug node",
+            "host shell",
+            "node troubleshoot",
+        ],
+    ),
+    (
         DetailAction::PortForward,
         &["port-forward", "forward", "tunnel", "pf"],
     ),

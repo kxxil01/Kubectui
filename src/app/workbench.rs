@@ -33,6 +33,8 @@ impl AppState {
 
         if detail.debug_dialog.is_some() {
             ActiveComponent::DebugContainer
+        } else if detail.node_debug_dialog.is_some() {
+            ActiveComponent::NodeDebug
         } else if detail.scale_dialog.is_some() {
             ActiveComponent::Scale
         } else if detail.probe_panel.is_some() {
@@ -288,6 +290,22 @@ impl AppState {
         tab.preset_container(container_name);
         self.workbench.open_tab(WorkbenchTabState::Exec(tab));
         self.focus = Focus::Workbench;
+    }
+
+    pub fn append_exec_banner(
+        &mut self,
+        resource: &ResourceRef,
+        session_id: u64,
+        lines: &[String],
+    ) {
+        if let Some(tab) = self
+            .workbench_mut()
+            .find_tab_mut(&crate::workbench::WorkbenchTabKey::Exec(resource.clone()))
+            && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+            && exec_tab.session_id == session_id
+        {
+            exec_tab.append_banner(lines);
+        }
     }
 
     pub fn open_port_forward_tab(

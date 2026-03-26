@@ -47,6 +47,10 @@ use crate::{
             age_from_created_at, app_timestamp_from_k8s_timestamp, namespace_metadata_to_info,
         },
         exec::{DebugContainerLaunchRequest, DebugContainerLaunchResult, launch_debug_container},
+        node_debug::{
+            NodeDebugLaunchRequest, NodeDebugLaunchResult, delete_node_debug_pod,
+            launch_node_debug_pod,
+        },
     },
     policy::DetailAction,
 };
@@ -932,8 +936,9 @@ impl K8sClient {
                 continue;
             }
 
-            let status =
-                DetailActionAuthorization::from_allowed(self.evaluate_access_checks(&checks).await);
+            let status = DetailActionAuthorization::from_allowed(
+                self.evaluate_access_checks_cached(&checks).await,
+            );
             authorizations.insert(action, status);
         }
 
@@ -955,8 +960,12 @@ impl K8sClient {
         }
 
         Some(DetailActionAuthorization::from_allowed(
-            self.evaluate_access_checks(&checks).await,
+            self.evaluate_access_checks_cached(&checks).await,
         ))
+    }
+
+    pub async fn evaluate_access_checks(&self, checks: &[ResourceAccessCheck]) -> Option<bool> {
+        self.evaluate_access_checks_cached(checks).await
     }
 
     /// Fetches a concrete resource and renders it as YAML.
@@ -1095,6 +1104,17 @@ impl K8sClient {
 
     pub async fn apply_yaml_documents(&self, yaml_str: &str) -> Result<usize> {
         yaml::apply_yaml_documents(&self.client, yaml_str).await
+    }
+
+    pub async fn launch_node_debug_pod(
+        &self,
+        request: &NodeDebugLaunchRequest,
+    ) -> Result<NodeDebugLaunchResult> {
+        launch_node_debug_pod(self, request).await
+    }
+
+    pub async fn delete_node_debug_pod(&self, namespace: &str, pod_name: &str) -> Result<()> {
+        delete_node_debug_pod(self, namespace, pod_name).await
     }
 
     /// Deletes a Kubernetes resource by kind, name, and optional namespace.
@@ -1512,7 +1532,7 @@ impl K8sClient {
         Ok(port)
     }
 
-    async fn evaluate_access_checks(&self, checks: &[ResourceAccessCheck]) -> Option<bool> {
+    async fn evaluate_access_checks_cached(&self, checks: &[ResourceAccessCheck]) -> Option<bool> {
         let mut saw_unknown = false;
 
         for check in checks {

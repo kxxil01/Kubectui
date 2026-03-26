@@ -48,6 +48,7 @@ pub enum DetailAction {
     Logs,
     Exec,
     DebugContainer,
+    NodeDebugShell,
     PortForward,
     Probes,
     Scale,
@@ -77,7 +78,7 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 27] = [
+    pub const ORDER: [DetailAction; 28] = [
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
         DetailAction::ViewRollout,
@@ -88,6 +89,7 @@ impl DetailAction {
         DetailAction::Logs,
         DetailAction::Exec,
         DetailAction::DebugContainer,
+        DetailAction::NodeDebugShell,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -119,6 +121,7 @@ impl DetailAction {
             DetailAction::Logs => "[l]",
             DetailAction::Exec => "[x]",
             DetailAction::DebugContainer => "[g]",
+            DetailAction::NodeDebugShell => "[g]",
             DetailAction::PortForward => "[f]",
             DetailAction::Probes => "[p]",
             DetailAction::Scale => "[s]",
@@ -149,6 +152,7 @@ impl DetailAction {
             DetailAction::Logs => "Logs",
             DetailAction::Exec => "Exec",
             DetailAction::DebugContainer => "Debug",
+            DetailAction::NodeDebugShell => "NodeDbg",
             DetailAction::PortForward => "Port-Fwd",
             DetailAction::Probes => "Probes",
             DetailAction::Scale => "Scale",
@@ -494,6 +498,7 @@ impl ResourceRef {
                     | ResourceRef::Endpoint(_, _)
                     | ResourceRef::Ingress(_, _)
             ),
+            DetailAction::NodeDebugShell => matches!(self, ResourceRef::Node(_)),
             DetailAction::ViewRelationships => {
                 crate::k8s::relationships::resource_has_relationships(self)
             }
@@ -569,6 +574,7 @@ impl DetailViewState {
     pub fn has_blocking_detail_overlay(&self) -> bool {
         self.scale_dialog.is_some()
             || self.debug_dialog.is_some()
+            || self.node_debug_dialog.is_some()
             || self.probe_panel.is_some()
             || self.confirm_delete
             || self.confirm_drain
@@ -590,6 +596,7 @@ impl DetailViewState {
                 | DetailAction::Logs
                 | DetailAction::Exec
                 | DetailAction::DebugContainer
+                | DetailAction::NodeDebugShell
                 | DetailAction::PortForward
                 | DetailAction::Probes
                 | DetailAction::Scale
@@ -699,6 +706,21 @@ mod tests {
         assert!(detail.supports_action(DetailAction::Delete));
         assert!(detail.supports_action(DetailAction::Logs));
         assert!(!detail.supports_action(DetailAction::FluxReconcile));
+    }
+
+    #[test]
+    fn node_detail_actions_match_operator_expectations() {
+        let detail = DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            yaml: Some("kind: Node".to_string()),
+            ..DetailViewState::default()
+        };
+
+        assert!(detail.supports_action(DetailAction::NodeDebugShell));
+        assert!(detail.supports_action(DetailAction::Cordon));
+        assert!(detail.supports_action(DetailAction::Drain));
+        assert!(!detail.supports_action(DetailAction::DebugContainer));
+        assert!(!detail.supports_action(DetailAction::PortForward));
     }
 
     #[test]

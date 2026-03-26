@@ -63,6 +63,10 @@ impl NamespacePicker {
         &self.search_query
     }
 
+    pub fn namespaces(&self) -> &[String] {
+        &self.namespaces
+    }
+
     pub fn handle_key(&mut self, key: KeyEvent) -> NamespacePickerAction {
         if !self.is_open {
             return NamespacePickerAction::None;

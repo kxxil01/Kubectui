@@ -15,7 +15,7 @@ use crate::{
     ui::{
         components::{
             default_theme, probe_panel::render_probe_panel, render_debug_container_dialog,
-            scale_dialog::render_scale_dialog,
+            render_node_debug_dialog, scale_dialog::render_scale_dialog,
         },
         format_age, table_window,
     },
@@ -715,6 +715,8 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         render_cronjob_suspend_confirm(frame, popup, detail_state);
     } else if let Some(dialog) = &detail_state.debug_dialog {
         render_debug_container_dialog(frame, popup, dialog);
+    } else if let Some(dialog) = &detail_state.node_debug_dialog {
+        render_node_debug_dialog(frame, popup, dialog);
     }
 }
 
