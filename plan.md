@@ -46,7 +46,7 @@ Current milestone status:
 - Milestone 28: completed
 - Milestone 29: completed
 - Milestone 30: completed
-- Milestone 31: not started
+- Milestone 31: completed
 - Milestone 32: not started
 - Phase 8 (Watch-Backed Caches): completed
 
@@ -85,6 +85,7 @@ Completion notes:
 - Milestone 27 shipped (PR #60): advanced investigation on the canonical pod/workload logs path with saved presets, regex/text mode, bounded time-window filters, exact RFC3339 jump-to-time, structured JSON summaries, severity/request-id badges, cross-pod correlation by request token or pod label, and filtered copy/export behavior that follows the active investigation view rather than raw buffers. Workload target refresh now rebuilds label/pod/container filter inventories as the single source of truth so presets and filters stay correct across retargets.
 - Milestone 28 shipped (PR #61): saved workspaces, lightweight cluster/view banks, typed configurable hotkeys for views/actions/workspaces/banks, palette/help integration, authoritative workspace restore across context and namespace switches, stable persisted workspace keys for AppView/NavGroup, and runtime cleanup for non-persisted port-forward/log/exec state during restore.
 - Milestone 30 shipped (PR #63): bounded resource creation on the canonical editor/apply path with built-in Deployment, Deployment + Service, and ConfigMap templates, upfront validated inputs, command-palette template discovery, external-editor handoff, multi-document server-side apply, conservative manifest discovery fallback, and regression coverage for dialog routing, palette behavior, validation, and editor-command parsing.
+- Milestone 31 shipped (PR #64): canonical traffic debugging on the detail/workbench path for Pods, Services, Endpoints, and Ingresses with service endpoint audits, ingress backend trace summaries, DNS guidance, selectorless/manual endpoint handling, port-forward tunnel diagnostics, palette/help/detail-view `t` integration, and regression coverage for routing, rendering, and service-to-backend correctness.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
 - 2026-03-18 kube 3.1 metadata watch adoption: namespace discovery and the Namespaces view now use metadata-only `Namespace` payloads end-to-end. The canonical watch path uses `metadata_watcher()` for cluster-scoped namespace updates, polling uses `list_metadata()` for namespace fetches, and namespace status is derived consistently from metadata (`Active` vs `Terminating`) so the picker and namespace view stay live with lower API payload cost.
@@ -123,6 +124,7 @@ Verification status for completed milestones:
 - Latest M28 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping workspaces, banks, and typed hotkeys. The clean 5-run render-profile comparison vs clean `HEAD` was positive (`render` `254.102ms -> 249.561ms`, `-4.541ms`; `sidebar` `20.106ms -> 19.792ms`; `header` `14.428ms -> 14.354ms`).
 - Latest M29 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping the Security / Vulnerability Center. The clean 5-run render sweep now includes one additional top-level view (`2000` frames vs `1960` on pre-M29 `HEAD`), so raw `render` totals are not directly comparable across the two trees; normalized per-frame render time still improved (`245.747ms / 1960 = 0.1254ms` vs `249.282ms / 2000 = 0.1246ms`), and no hot view regressed materially in the final profile.
 - Latest M30 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Resource Create / Apply Templates. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `247.930ms -> 247.124ms`, `-0.806ms`; `sidebar` `20.532ms -> 20.497ms`; `header` `14.130ms -> 14.143ms`).
+- Latest M31 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Service / Traffic Debugging. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `249.650ms -> 239.788ms`, `-9.862ms`; `sidebar` `21.075ms -> 20.036ms`; `header` `14.183ms -> 14.035ms`). GitHub PR checks for PR #64 also passed: `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)`.
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -2114,6 +2116,7 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 #### M31: Service / Traffic Debugging
 
+- Status: Completed (PR #64)
 - Big win: medium
 - Why:
   - closes the gap between Service state, Endpoints, Ingress, DNS, port-forward, and NetworkPolicy intent
@@ -2126,6 +2129,12 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 - Guardrails:
   - keep it text-first and explanation-first
   - reuse relationships and M25 semantics instead of building a graph canvas
+- Shipped scope:
+  - snapshot-only traffic analysis tab on the canonical detail/workbench path for Pods, Services, Endpoints, and Ingresses
+  - service endpoint resolution audit with correct `targetPort` defaulting and selectorless/manual endpoint handling
+  - ingress backend route tracing plus missing-backend and service-port mismatch reporting
+  - DNS guidance, active port-forward tunnel diagnostics, and network-policy ingress isolation hints folded into one explanation-first tree
+  - palette/help/detail-view `t` integration, deduped workbench tabs, and regression coverage for routing, rendering, and backend matching edge cases
 
 #### M23: Extension System & AI Assistant Hooks
 
@@ -2159,14 +2168,10 @@ These are the highest-value remaining roadmap candidates. They are intentionally
 
 ### Recommended Remaining Order
 
-- M28: Hotkeys / Workspaces / Cluster Banks
-- M29: Security / Vulnerability Center
-- M30: Resource Create / Apply Templates
-- M31: Service / Traffic Debugging
+- M32: Node Shell / Node Debug
 - M23 Phase 1: extension foundation
 - M23 Phase 2: AI assistant hooks
 - M23 Phase 3: specialized AI workflows
-- M32: Node Shell / Node Debug
 
 ### Research Basis
 
