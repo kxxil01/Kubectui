@@ -30,3 +30,4 @@ pub mod security;
 pub mod services;
 pub mod statefulsets;
 pub mod storage;
+pub mod vulnerabilities;

@@ -62,6 +62,7 @@ fn view_info(view: AppView) -> (&'static str, Option<&'static [ColumnDef]>) {
         AppView::Bookmarks => ("bookmarks", None),
         AppView::Issues => ("issues", Some(ISSUE_COLUMNS)),
         AppView::HealthReport => ("health_report", Some(ISSUE_COLUMNS)),
+        AppView::Vulnerabilities => ("vulnerabilities", Some(VULNERABILITY_COLUMNS)),
         AppView::Nodes => ("nodes", Some(NODE_COLUMNS)),
         AppView::Namespaces => ("namespaces", Some(NAMESPACE_COLUMNS)),
         AppView::Events => ("events", Some(EVENT_COLUMNS)),
@@ -154,6 +155,17 @@ pub const NODE_COLUMNS: &[ColumnDef] = &[
     col("cpu", "CPU", Constraint::Percentage(16)),
     col("memory", "Memory", Constraint::Percentage(16)),
     col("age", "Age", Constraint::Percentage(10)),
+];
+
+pub const VULNERABILITY_COLUMNS: &[ColumnDef] = &[
+    col_fixed("name", "Name", Constraint::Min(22)),
+    col("namespace", "Namespace", Constraint::Length(18)),
+    col("kind", "Kind", Constraint::Length(18)),
+    col("critical", "Critical", Constraint::Length(10)),
+    col("high", "High", Constraint::Length(8)),
+    col("medium", "Medium", Constraint::Length(10)),
+    col("fixable", "Fixable", Constraint::Length(10)),
+    col("artifacts", "Artifacts", Constraint::Min(22)),
 ];
 
 pub const SERVICE_COLUMNS: &[ColumnDef] = &[

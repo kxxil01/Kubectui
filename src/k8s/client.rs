@@ -61,6 +61,7 @@ pub use crate::k8s::{
         PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo,
         ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject,
         RoleInfo, SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
+        VulnerabilityReportInfo, VulnerabilitySummaryCounts,
     },
     events::EventInfo,
 };
@@ -69,6 +70,8 @@ const MAX_EVENTS_LIST_LIMIT: u32 = 1000;
 const MAX_RECENT_EVENTS_ITEMS: usize = 250;
 const CLIENT_RETRY_BUFFER_SIZE: usize = 1024;
 const EPHEMERAL_CONTAINERS_MIN_MINOR: u32 = 25;
+const TRIVY_OPERATOR_GROUP: &str = "aquasecurity.github.io";
+const TRIVY_OPERATOR_VERSION: &str = "v1alpha1";
 
 /// Configured Kubernetes client wrapper.
 #[derive(Clone)]
@@ -686,6 +689,89 @@ impl K8sClient {
 
         resources.sort_unstable_by(|a, b| a.name.cmp(&b.name));
         Ok(resources)
+    }
+
+    /// Fetches Trivy Operator vulnerability reports. Missing CRDs or RBAC simply yield no rows.
+    pub async fn fetch_vulnerability_reports(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<VulnerabilityReportInfo>> {
+        let mut reports = self
+            .fetch_namespaced_vulnerability_reports(namespace)
+            .await?;
+        reports.extend(self.fetch_cluster_vulnerability_reports().await?);
+        reports.sort_unstable_by(|left, right| {
+            vulnerability_severity_rank(right.counts.highest_severity())
+                .cmp(&vulnerability_severity_rank(left.counts.highest_severity()))
+                .then_with(|| right.counts.total().cmp(&left.counts.total()))
+                .then_with(|| left.resource_namespace.cmp(&right.resource_namespace))
+                .then_with(|| left.resource_kind.cmp(&right.resource_kind))
+                .then_with(|| left.resource_name.cmp(&right.resource_name))
+                .then_with(|| left.container_name.cmp(&right.container_name))
+        });
+        Ok(reports)
+    }
+
+    async fn fetch_namespaced_vulnerability_reports(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<VulnerabilityReportInfo>> {
+        let gvk = GroupVersionKind::gvk(
+            TRIVY_OPERATOR_GROUP,
+            TRIVY_OPERATOR_VERSION,
+            "VulnerabilityReport",
+        );
+        let mut ar = ApiResource::from_gvk(&gvk);
+        ar.plural = "vulnerabilityreports".to_string();
+        let api: Api<DynamicObject> = match namespace {
+            Some(ns) => Api::namespaced_with(self.client.clone(), ns, &ar),
+            None => Api::all_with(self.client.clone(), &ar),
+        };
+
+        let items = match api.list(&ListParams::default()).await {
+            Ok(list) => list.items,
+            Err(err) if is_forbidden_error(&err) || is_missing_api_error(&err) => {
+                return Ok(Vec::new());
+            }
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    if let Some(ns) = namespace {
+                        format!("failed fetching vulnerability reports in namespace '{ns}'")
+                    } else {
+                        "failed fetching vulnerability reports across all namespaces".to_string()
+                    }
+                });
+            }
+        };
+
+        Ok(items
+            .into_iter()
+            .filter_map(|item| parse_vulnerability_report(item, false))
+            .collect())
+    }
+
+    async fn fetch_cluster_vulnerability_reports(&self) -> Result<Vec<VulnerabilityReportInfo>> {
+        let gvk = GroupVersionKind::gvk(
+            TRIVY_OPERATOR_GROUP,
+            TRIVY_OPERATOR_VERSION,
+            "ClusterVulnerabilityReport",
+        );
+        let mut ar = ApiResource::from_gvk(&gvk);
+        ar.plural = "clustervulnerabilityreports".to_string();
+        let api: Api<DynamicObject> = Api::all_with(self.client.clone(), &ar);
+
+        let items = match api.list(&ListParams::default()).await {
+            Ok(list) => list.items,
+            Err(err) if is_forbidden_error(&err) || is_missing_api_error(&err) => {
+                return Ok(Vec::new());
+            }
+            Err(err) => return Err(err).context("failed fetching cluster vulnerability reports"),
+        };
+
+        Ok(items
+            .into_iter()
+            .filter_map(|item| parse_vulnerability_report(item, true))
+            .collect())
     }
 
     /// Fetches pod metrics via metrics.k8s.io (returns None when unavailable).
@@ -1696,6 +1782,110 @@ fn is_missing_api_error(err: &kube::Error) -> bool {
         || text.contains("NotFound")
 }
 
+fn vulnerability_severity_rank(severity: crate::k8s::dtos::AlertSeverity) -> u8 {
+    match severity {
+        crate::k8s::dtos::AlertSeverity::Error => 3,
+        crate::k8s::dtos::AlertSeverity::Warning => 2,
+        crate::k8s::dtos::AlertSeverity::Info => 1,
+    }
+}
+
+fn parse_vulnerability_report(
+    item: DynamicObject,
+    cluster_scoped: bool,
+) -> Option<VulnerabilityReportInfo> {
+    let metadata = item.metadata;
+    let data = item.data;
+    let labels = metadata.labels.unwrap_or_default();
+    let report = data.get("report")?;
+    let summary = report.get("summary")?;
+    let vulnerabilities = report
+        .get("vulnerabilities")
+        .and_then(|value| value.as_array());
+
+    let fixed_version_count = vulnerabilities
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| {
+                    item.get("fixedVersion")
+                        .and_then(|value| value.as_str())
+                        .is_some_and(|value| !value.trim().is_empty())
+                })
+                .count()
+        })
+        .unwrap_or_default();
+
+    let name = metadata.name?;
+    let namespace = metadata.namespace.unwrap_or_default();
+    let resource_kind = labels
+        .get("trivy-operator.resource.kind")
+        .cloned()
+        .unwrap_or_else(|| "Unknown".to_string());
+    let resource_name = labels
+        .get("trivy-operator.resource.name")
+        .cloned()
+        .unwrap_or_else(|| name.clone());
+    let resource_namespace = labels
+        .get("trivy-operator.resource.namespace")
+        .cloned()
+        .or_else(|| (!namespace.is_empty()).then_some(namespace.clone()))
+        .unwrap_or_default();
+
+    Some(VulnerabilityReportInfo {
+        name,
+        namespace,
+        resource_kind,
+        resource_name,
+        resource_namespace,
+        container_name: labels.get("trivy-operator.container.name").cloned(),
+        artifact_repository: report
+            .pointer("/artifact/repository")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string),
+        artifact_tag: report
+            .pointer("/artifact/tag")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string),
+        registry_server: report
+            .pointer("/registry/server")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string),
+        fixable_count: fixed_version_count,
+        counts: VulnerabilitySummaryCounts {
+            critical: summary_count(summary, "criticalCount"),
+            high: summary_count(summary, "highCount"),
+            medium: summary_count(summary, "mediumCount"),
+            low: summary_count(summary, "lowCount"),
+            unknown: summary_count(summary, "unknownCount"),
+        },
+        scanner_name: report
+            .pointer("/scanner/name")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string),
+        scanner_vendor: report
+            .pointer("/scanner/vendor")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string),
+        scanner_version: report
+            .pointer("/scanner/version")
+            .and_then(|value| value.as_str())
+            .map(ToString::to_string),
+        update_timestamp: report
+            .pointer("/updateTimestamp")
+            .and_then(|value| value.as_str())
+            .and_then(parse_timestamp),
+        cluster_scoped,
+    })
+}
+
+fn summary_count(summary: &serde_json::Value, key: &str) -> usize {
+    summary
+        .get(key)
+        .and_then(|value| value.as_u64())
+        .unwrap_or_default() as usize
+}
+
 fn flux_ready_details(data: &serde_json::Value) -> (Option<bool>, Option<String>) {
     let Some(conditions) = data
         .pointer("/status/conditions")
@@ -2219,6 +2409,68 @@ mod tests {
     fn node_role_defaults_to_worker() {
         let node = Node::default();
         assert_eq!(node_role(&node), "worker");
+    }
+
+    #[test]
+    fn parse_vulnerability_report_reads_summary_labels_and_fixable_count() {
+        let obj = DynamicObject {
+            types: None,
+            metadata: ObjectMeta {
+                name: Some("api-abc123".to_string()),
+                namespace: Some("default".to_string()),
+                labels: Some(BTreeMap::from([
+                    (
+                        "trivy-operator.resource.kind".to_string(),
+                        "Deployment".to_string(),
+                    ),
+                    (
+                        "trivy-operator.resource.name".to_string(),
+                        "api".to_string(),
+                    ),
+                    (
+                        "trivy-operator.container.name".to_string(),
+                        "web".to_string(),
+                    ),
+                ])),
+                ..ObjectMeta::default()
+            },
+            data: serde_json::json!({
+                "report": {
+                    "artifact": { "repository": "ghcr.io/demo/api", "tag": "1.2.3" },
+                    "scanner": { "name": "Trivy", "vendor": "Aqua", "version": "0.59.1" },
+                    "summary": {
+                        "criticalCount": 1,
+                        "highCount": 2,
+                        "mediumCount": 3,
+                        "lowCount": 4,
+                        "unknownCount": 5
+                    },
+                    "updateTimestamp": "2026-03-26T06:00:00Z",
+                    "vulnerabilities": [
+                        { "vulnerabilityID": "CVE-1", "fixedVersion": "2.0.0" },
+                        { "vulnerabilityID": "CVE-2", "fixedVersion": "" },
+                        { "vulnerabilityID": "CVE-3", "fixedVersion": "1.3.0" }
+                    ]
+                }
+            }),
+        };
+
+        let report = parse_vulnerability_report(obj, false).expect("report should parse");
+        assert_eq!(report.resource_kind, "Deployment");
+        assert_eq!(report.resource_name, "api");
+        assert_eq!(report.container_name.as_deref(), Some("web"));
+        assert_eq!(
+            report.artifact_repository.as_deref(),
+            Some("ghcr.io/demo/api")
+        );
+        assert_eq!(report.artifact_tag.as_deref(), Some("1.2.3"));
+        assert_eq!(report.counts.critical, 1);
+        assert_eq!(report.counts.high, 2);
+        assert_eq!(report.counts.medium, 3);
+        assert_eq!(report.counts.low, 4);
+        assert_eq!(report.counts.unknown, 5);
+        assert_eq!(report.fixable_count, 2);
+        assert!(report.update_timestamp.is_some());
     }
 
     /// Verifies node mapping preserves defaults for missing metadata fields.

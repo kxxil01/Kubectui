@@ -287,6 +287,12 @@ impl GlobalState {
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_cluster_role_bindings()
             ),
+            maybe_fetch(
+                fetch_security,
+                "vulnerabilityreports",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_vulnerability_reports(namespace)
+            ),
             maybe_fetch(fetch_extensions, "crds", &SECONDARY_FETCH_SEMAPHORE, || {
                 client.fetch_custom_resource_definitions()
             }),
@@ -390,6 +396,7 @@ impl GlobalState {
                 role_bindings_res,
                 cluster_roles_res,
                 cluster_role_bindings_res,
+                vulnerability_reports_res,
                 custom_resource_definitions_res,
                 endpoints_res,
                 ingresses_res,
@@ -553,6 +560,13 @@ impl GlobalState {
                 &mut snap.cluster_role_bindings,
                 cluster_role_bindings_res,
                 "clusterrolebindings",
+                &mut errors,
+                &mut total_fetches,
+            );
+            apply_vec_fetch_result(
+                &mut snap.vulnerability_reports,
+                vulnerability_reports_res,
+                "vulnerabilityreports",
                 &mut errors,
                 &mut total_fetches,
             );
