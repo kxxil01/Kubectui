@@ -1093,6 +1093,10 @@ impl K8sClient {
         yaml::apply_resource_yaml(&self.client, yaml_str, kind, name, namespace).await
     }
 
+    pub async fn apply_yaml_documents(&self, yaml_str: &str) -> Result<usize> {
+        yaml::apply_yaml_documents(&self.client, yaml_str).await
+    }
+
     /// Deletes a Kubernetes resource by kind, name, and optional namespace.
     pub async fn delete_resource(
         &self,

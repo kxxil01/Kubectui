@@ -88,6 +88,112 @@ fn fail_context_switch(
     app.set_error(message);
 }
 
+fn edit_yaml_in_external_editor(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    file_stem: &str,
+    yaml_content: &str,
+    skip_unchanged: bool,
+) -> Result<Option<String>> {
+    struct TempPathGuard(std::path::PathBuf);
+
+    impl Drop for TempPathGuard {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.0);
+        }
+    }
+
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0u64, |d| d.as_nanos() as u64)
+        ^ std::process::id() as u64;
+    let safe_stem = file_stem
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '-' | '_') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>();
+    let tmp_path = std::env::temp_dir().join(format!("kubectui-{safe_stem}-{nonce:016x}.yaml"));
+    std::fs::write(&tmp_path, yaml_content)
+        .with_context(|| format!("failed to write temp file '{}'", tmp_path.display()))?;
+    let _tmp_path_guard = TempPathGuard(tmp_path.clone());
+
+    let _ = restore_terminal(terminal);
+    let editor = std::env::var("EDITOR")
+        .or_else(|_| std::env::var("VISUAL"))
+        .unwrap_or_else(|_| "vi".to_string());
+    let editor_args = parse_editor_command(&editor)
+        .with_context(|| format!("invalid editor command '{editor}'"))?;
+    let (program, args) = editor_args
+        .split_first()
+        .context("editor command cannot be empty")?;
+    let status = std::process::Command::new(program)
+        .args(args)
+        .arg(&tmp_path)
+        .status();
+
+    *terminal = setup_terminal().context("failed to restore terminal after editor exit")?;
+
+    let status = status.with_context(|| format!("failed to launch editor '{editor}'"))?;
+    if !status.success() {
+        return Ok(None);
+    }
+
+    let edited_yaml = std::fs::read_to_string(&tmp_path)
+        .with_context(|| format!("failed to read edited file '{}'", tmp_path.display()))?;
+    if skip_unchanged && edited_yaml.trim() == yaml_content.trim() {
+        return Ok(None);
+    }
+
+    Ok(Some(edited_yaml))
+}
+
+fn parse_editor_command(command: &str) -> Result<Vec<String>> {
+    let mut args = Vec::new();
+    let mut current = String::new();
+    let mut quote = None;
+    let mut escaped = false;
+
+    for c in command.chars() {
+        if escaped {
+            current.push(c);
+            escaped = false;
+            continue;
+        }
+
+        match c {
+            '\\' => escaped = true,
+            '\'' | '"' if quote == Some(c) => quote = None,
+            '\'' | '"' if quote.is_none() => quote = Some(c),
+            c if c.is_whitespace() && quote.is_none() => {
+                if !current.is_empty() {
+                    args.push(std::mem::take(&mut current));
+                }
+            }
+            _ => current.push(c),
+        }
+    }
+
+    if escaped {
+        return Err(anyhow::anyhow!(
+            "editor command ends with a dangling escape"
+        ));
+    }
+    if quote.is_some() {
+        return Err(anyhow::anyhow!("editor command has an unmatched quote"));
+    }
+    if !current.is_empty() {
+        args.push(current);
+    }
+    if args.is_empty() {
+        return Err(anyhow::anyhow!("editor command cannot be empty"));
+    }
+    Ok(args)
+}
+
 /// Main asynchronous runtime entrypoint.
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -3740,144 +3846,200 @@ pub(crate) async fn run_app_inner(
                             app.set_error(message);
                             continue;
                         }
-                        // Write YAML to a temp file with unique suffix to prevent
-                        // symlink attacks from predictable paths.
-                        let nonce = std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .map_or(0u64, |d| d.as_nanos() as u64)
-                            ^ std::process::id() as u64;
-                        let tmp_path = std::env::temp_dir()
-                            .join(format!("kubectui-{kind}-{name}-{nonce:016x}.yaml"));
-                        if let Err(err) = std::fs::write(&tmp_path, &yaml_content) {
-                            app.set_error(format!("Failed to write temp file: {err}"));
-                        } else {
-                            // Suspend TUI — restore terminal to canonical mode
-                            let _ = restore_terminal(terminal);
-
-                            // Spawn $EDITOR (fallback: vi)
-                            let editor = std::env::var("EDITOR")
-                                .or_else(|_| std::env::var("VISUAL"))
-                                .unwrap_or_else(|_| "vi".to_string());
-
-                            let status =
-                                std::process::Command::new(&editor).arg(&tmp_path).status();
-
-                            // Re-init TUI regardless of editor outcome
-                            match setup_terminal() {
-                                Ok(new_terminal) => *terminal = new_terminal,
-                                Err(err) => {
-                                    eprintln!("Failed to restore terminal: {err:#}");
-                                    app.should_quit = true;
-                                    continue;
-                                }
-                            }
-
-                            match status {
-                                Err(err) => {
-                                    app.set_error(format!(
-                                        "Failed to launch editor '{editor}': {err}"
-                                    ));
-                                }
-                                Ok(exit) if !exit.success() => {
-                                    // Editor exited non-zero (e.g. :cq in vim) — treat as cancel
-                                }
-                                Ok(_) => {
-                                    // Read back the edited file
-                                    match std::fs::read_to_string(&tmp_path) {
-                                        Err(err) => {
-                                            app.set_error(format!(
-                                                "Failed to read edited file: {err}"
-                                            ));
-                                        }
-                                        Ok(edited_yaml) => {
-                                            if edited_yaml.trim() == yaml_content.trim() {
-                                                // No changes — skip apply
-                                            } else {
-                                                let origin_view = app.view();
-                                                let resource_label = format!(
-                                                    "{} '{}'{}",
-                                                    kind,
-                                                    name,
-                                                    namespace
-                                                        .as_deref()
-                                                        .map(|ns| format!(" in namespace '{ns}'"))
-                                                        .unwrap_or_default()
-                                                );
-                                                let jump_resource = app
-                                                    .detail_view
-                                                    .as_ref()
-                                                    .and_then(|detail| detail.resource.clone());
-                                                let action_history_id = app.record_action_pending(
-                                                    ActionKind::ApplyYaml,
-                                                    origin_view,
-                                                    jump_resource,
-                                                    resource_label.clone(),
-                                                    format!(
-                                                        "Applying changes to {resource_label}..."
-                                                    ),
-                                                );
-                                                match client
-                                                    .apply_resource_yaml(
-                                                        &edited_yaml,
-                                                        &kind,
-                                                        &name,
-                                                        namespace.as_deref(),
-                                                    )
-                                                    .await
-                                                {
-                                                    Ok(()) => {
-                                                        app.complete_action_history(
-                                                                action_history_id,
-                                                                ActionStatus::Succeeded,
-                                                                format!(
-                                                                    "Applied changes to {resource_label}."
-                                                                ),
-                                                                true,
-                                                            );
-                                                        app.detail_view = None;
-                                                        app.focus = kubectui::app::Focus::Content;
-                                                        apply_mutation_success(
-                                                            &mut app,
-                                                            &mut MutationRuntime {
-                                                                global_state: &mut global_state,
-                                                                client: &client,
-                                                                refresh_tx: &refresh_tx,
-                                                                deferred_refresh_tx:
-                                                                    &deferred_refresh_tx,
-                                                                refresh_state: &mut refresh_state,
-                                                                snapshot_dirty: &mut snapshot_dirty,
-                                                                auto_refresh: &mut auto_refresh,
-                                                                status_message_clear_at:
-                                                                    &mut status_message_clear_at,
-                                                            },
-                                                            origin_view,
-                                                            format!(
-                                                                "Applied changes to {} '{}'. Refreshing view...",
-                                                                kind, name
-                                                            ),
-                                                            false,
-                                                            MUTATION_REFRESH_DELAYS_SECS,
-                                                        );
-                                                    }
-                                                    Err(err) => {
-                                                        app.complete_action_history(
-                                                            action_history_id,
-                                                            ActionStatus::Failed,
-                                                            format!("Apply failed: {err:#}"),
-                                                            true,
-                                                        );
-                                                        app.set_error(format!(
-                                                            "Apply failed: {err:#}"
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                        }
+                        match edit_yaml_in_external_editor(
+                            terminal,
+                            &format!("{kind}-{name}"),
+                            &yaml_content,
+                            true,
+                        ) {
+                            Err(err) => app.set_error(format!("{err:#}")),
+                            Ok(None) => {}
+                            Ok(Some(edited_yaml)) => {
+                                let origin_view = app.view();
+                                let resource_label = format!(
+                                    "{} '{}'{}",
+                                    kind,
+                                    name,
+                                    namespace
+                                        .as_deref()
+                                        .map(|ns| format!(" in namespace '{ns}'"))
+                                        .unwrap_or_default()
+                                );
+                                let jump_resource = app
+                                    .detail_view
+                                    .as_ref()
+                                    .and_then(|detail| detail.resource.clone());
+                                let action_history_id = app.record_action_pending(
+                                    ActionKind::ApplyYaml,
+                                    origin_view,
+                                    jump_resource,
+                                    resource_label.clone(),
+                                    format!("Applying changes to {resource_label}..."),
+                                );
+                                match client
+                                    .apply_resource_yaml(
+                                        &edited_yaml,
+                                        &kind,
+                                        &name,
+                                        namespace.as_deref(),
+                                    )
+                                    .await
+                                {
+                                    Ok(()) => {
+                                        app.complete_action_history(
+                                            action_history_id,
+                                            ActionStatus::Succeeded,
+                                            format!("Applied changes to {resource_label}."),
+                                            true,
+                                        );
+                                        app.detail_view = None;
+                                        app.focus = kubectui::app::Focus::Content;
+                                        apply_mutation_success(
+                                            &mut app,
+                                            &mut MutationRuntime {
+                                                global_state: &mut global_state,
+                                                client: &client,
+                                                refresh_tx: &refresh_tx,
+                                                deferred_refresh_tx: &deferred_refresh_tx,
+                                                refresh_state: &mut refresh_state,
+                                                snapshot_dirty: &mut snapshot_dirty,
+                                                auto_refresh: &mut auto_refresh,
+                                                status_message_clear_at:
+                                                    &mut status_message_clear_at,
+                                            },
+                                            origin_view,
+                                            format!(
+                                                "Applied changes to {} '{}'. Refreshing view...",
+                                                kind, name
+                                            ),
+                                            false,
+                                            MUTATION_REFRESH_DELAYS_SECS,
+                                        );
+                                    }
+                                    Err(err) => {
+                                        app.complete_action_history(
+                                            action_history_id,
+                                            ActionStatus::Failed,
+                                            format!("Apply failed: {err:#}"),
+                                            true,
+                                        );
+                                        app.set_error(format!("Apply failed: {err:#}"));
                                     }
                                 }
                             }
-                            // Clean up temp file
-                            let _ = std::fs::remove_file(&tmp_path);
+                        }
+                    }
+                }
+                AppAction::SubmitResourceTemplateDialog => {
+                    let Some(dialog) = app.resource_template_dialog.clone() else {
+                        app.set_error("No resource template dialog is open.".to_string());
+                        continue;
+                    };
+                    let validated = match dialog.values.validate() {
+                        Ok(validated) => validated,
+                        Err(err) => {
+                            if let Some(state) = &mut app.resource_template_dialog {
+                                state.error_message = Some(err.to_string());
+                            }
+                            continue;
+                        }
+                    };
+                    let rendered_yaml = match validated.render_yaml() {
+                        Ok(yaml) => yaml,
+                        Err(err) => {
+                            let message = format!("Failed to render template: {err:#}");
+                            if let Some(state) = &mut app.resource_template_dialog {
+                                state.error_message = Some(message.clone());
+                            }
+                            app.set_error(message);
+                            continue;
+                        }
+                    };
+                    let file_stem = format!(
+                        "template-{}-{}",
+                        validated
+                            .kind
+                            .label()
+                            .to_ascii_lowercase()
+                            .replace(' ', "-"),
+                        validated.name
+                    );
+                    let edited_yaml = match edit_yaml_in_external_editor(
+                        terminal,
+                        &file_stem,
+                        &rendered_yaml,
+                        false,
+                    ) {
+                        Ok(Some(edited_yaml)) => edited_yaml,
+                        Ok(None) => {
+                            app.resource_template_dialog = None;
+                            continue;
+                        }
+                        Err(err) => {
+                            let message = format!("{err:#}");
+                            if let Some(state) = &mut app.resource_template_dialog {
+                                state.error_message = Some(message.clone());
+                            }
+                            app.set_error(message);
+                            continue;
+                        }
+                    };
+
+                    let origin_view = app.view();
+                    let resource_label = format!(
+                        "{} '{}' in namespace '{}'",
+                        validated.kind.label(),
+                        validated.name,
+                        validated.namespace
+                    );
+                    let action_history_id = app.record_action_pending(
+                        ActionKind::ApplyYaml,
+                        origin_view,
+                        None,
+                        resource_label.clone(),
+                        format!("Applying {resource_label}..."),
+                    );
+                    match client.apply_yaml_documents(&edited_yaml).await {
+                        Ok(document_count) => {
+                            app.complete_action_history(
+                                action_history_id,
+                                ActionStatus::Succeeded,
+                                format!(
+                                    "Applied {document_count} manifest(s) for {resource_label}."
+                                ),
+                                true,
+                            );
+                            app.resource_template_dialog = None;
+                            apply_mutation_success(
+                                &mut app,
+                                &mut MutationRuntime {
+                                    global_state: &mut global_state,
+                                    client: &client,
+                                    refresh_tx: &refresh_tx,
+                                    deferred_refresh_tx: &deferred_refresh_tx,
+                                    refresh_state: &mut refresh_state,
+                                    snapshot_dirty: &mut snapshot_dirty,
+                                    auto_refresh: &mut auto_refresh,
+                                    status_message_clear_at: &mut status_message_clear_at,
+                                },
+                                origin_view,
+                                format!("Applied {resource_label}. Refreshing view..."),
+                                false,
+                                MUTATION_REFRESH_DELAYS_SECS,
+                            );
+                        }
+                        Err(err) => {
+                            let message = format!("Apply failed: {err:#}");
+                            app.complete_action_history(
+                                action_history_id,
+                                ActionStatus::Failed,
+                                message.clone(),
+                                true,
+                            );
+                            if let Some(state) = &mut app.resource_template_dialog {
+                                state.error_message = Some(message.clone());
+                            }
+                            app.set_error(message);
                         }
                     }
                 }

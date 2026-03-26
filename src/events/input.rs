@@ -634,6 +634,19 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 true
             }
         },
+        AppAction::OpenResourceTemplateDialog(kind) => {
+            app_state.command_palette.close();
+            app_state.resource_template_dialog =
+                Some(crate::ui::components::ResourceTemplateDialogState::new(
+                    kind,
+                    app_state.current_namespace.clone(),
+                ));
+            true
+        }
+        AppAction::SubmitResourceTemplateDialog => {
+            // Handled in main.rs (editor handoff + async apply).
+            true
+        }
         AppAction::ApplyPreviousLogPreset => match app_state.cycle_active_log_preset(false) {
             Ok(_) => true,
             Err(err) => {
@@ -972,6 +985,22 @@ mod tests {
         assert_eq!(saved.len(), 1);
         assert_eq!(saved[0].snapshot.view, crate::app::AppView::Pods);
         assert_eq!(saved[0].snapshot.namespace, "payments");
+    }
+
+    #[test]
+    fn open_resource_template_dialog_closes_palette() {
+        let mut app = AppState::default();
+        app.command_palette.open();
+
+        assert!(apply_action(
+            AppAction::OpenResourceTemplateDialog(
+                crate::resource_templates::ResourceTemplateKind::Deployment
+            ),
+            &mut app,
+        ));
+
+        assert!(!app.command_palette.is_open());
+        assert!(app.resource_template_dialog.is_some());
     }
 
     #[test]

@@ -1290,6 +1290,11 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         app.command_palette.render(frame, frame.area());
     }
 
+    if let Some(dialog) = app.resource_template_dialog.as_ref() {
+        let _template_scope = profiling::span_scope("overlay.resource_template");
+        crate::ui::components::render_resource_template_dialog(frame, frame.area(), dialog);
+    }
+
     if app.confirm_quit {
         let _quit_scope = profiling::span_scope("overlay.quit_confirm");
         render_quit_confirm(frame, frame.area());

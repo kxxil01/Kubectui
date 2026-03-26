@@ -4,8 +4,11 @@ use anyhow::{Context, Result, anyhow};
 use kube::{
     Api, Client,
     api::{ApiResource, DynamicObject, GroupVersionKind, Patch, PatchParams},
+    discovery,
 };
+use serde::Deserialize;
 use serde_json::json;
+use std::collections::HashMap;
 
 use crate::k8s::flux::{
     FluxReconcileSupport, RECONCILE_REQUEST_ANNOTATION, flux_reconcile_support,
@@ -116,6 +119,98 @@ pub async fn apply_resource_yaml(
         .with_context(|| format!("failed to apply {kind}/{name}"))?;
 
     Ok(())
+}
+
+/// Applies one or more YAML documents using server-side apply.
+///
+/// Empty documents are ignored. Each document must define `apiVersion`,
+/// `kind`, and `metadata.name`. Namespaced resources must also define
+/// `metadata.namespace`.
+pub async fn apply_yaml_documents(client: &Client, yaml_str: &str) -> Result<usize> {
+    #[derive(Debug, Deserialize)]
+    struct ManifestMeta {
+        name: String,
+        namespace: Option<String>,
+    }
+
+    #[derive(Debug, Deserialize)]
+    struct ManifestHeader {
+        #[serde(rename = "apiVersion")]
+        api_version: String,
+        kind: String,
+        metadata: ManifestMeta,
+    }
+
+    let mut applied = 0usize;
+    let mut discovered_resources: HashMap<(String, String), (ApiResource, bool)> = HashMap::new();
+    for document in serde_yaml::Deserializer::from_str(yaml_str) {
+        let value = serde_yaml::Value::deserialize(document).context("invalid YAML document")?;
+        if value.is_null() {
+            continue;
+        }
+
+        let header: ManifestHeader =
+            serde_yaml::from_value(value.clone()).context("manifest is missing required fields")?;
+        let object: DynamicObject =
+            serde_yaml::from_value(value).context("invalid manifest object")?;
+        let (api_resource, namespaced) = resolve_manifest_api_resource(
+            client,
+            &header.api_version,
+            &header.kind,
+            &mut discovered_resources,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "unsupported manifest apiVersion '{}' kind '{}'",
+                header.api_version, header.kind
+            )
+        })?;
+        let api = resource_api(
+            client,
+            &api_resource,
+            namespaced,
+            &header.kind,
+            header.metadata.namespace.as_deref(),
+        )?;
+        let params = PatchParams::apply("kubectui").force();
+        api.patch(&header.metadata.name, &params, &Patch::Apply(&object))
+            .await
+            .with_context(|| format!("failed to apply {}/{}", header.kind, header.metadata.name))?;
+        applied += 1;
+    }
+
+    if applied == 0 {
+        return Err(anyhow!("no manifest documents were found"));
+    }
+    Ok(applied)
+}
+
+async fn resolve_manifest_api_resource(
+    client: &Client,
+    api_version: &str,
+    kind: &str,
+    cache: &mut HashMap<(String, String), (ApiResource, bool)>,
+) -> Result<(ApiResource, bool)> {
+    let cache_key = (api_version.to_string(), kind.to_string());
+    if let Some(cached) = cache.get(&cache_key) {
+        return Ok(cached.clone());
+    }
+
+    let (group, version) = api_version
+        .split_once('/')
+        .map_or(("", api_version), |(group, version)| (group, version));
+    let gvk = GroupVersionKind::gvk(group, version, kind);
+    let resolved = match discovery::pinned_kind(client, &gvk).await {
+        Ok((api_resource, caps)) => {
+            let namespaced = matches!(caps.scope, discovery::Scope::Namespaced);
+            (api_resource, namespaced)
+        }
+        Err(discovery_err) => api_resource_for_manifest(api_version, kind)
+            .with_context(|| discovery_err.to_string())?,
+    };
+    cache.insert(cache_key, resolved.clone());
+    Ok(resolved)
 }
 
 /// Truncates YAML payload when it exceeds [`MAX_YAML_BYTES`].
@@ -344,6 +439,101 @@ fn api_resource_for_kind(kind: &str) -> Result<(ApiResource, bool)> {
         )),
         _ => Err(anyhow!("unsupported kind: {kind}")),
     }
+}
+
+fn api_resource_for_manifest(api_version: &str, kind: &str) -> Result<(ApiResource, bool)> {
+    let resolved = match (api_version, kind) {
+        ("v1", "Pod") => Some((GroupVersionKind::gvk("", "v1", "Pod"), true)),
+        ("v1", "Service") => Some((GroupVersionKind::gvk("", "v1", "Service"), true)),
+        ("v1", "Namespace") => Some((GroupVersionKind::gvk("", "v1", "Namespace"), false)),
+        ("v1", "Node") => Some((GroupVersionKind::gvk("", "v1", "Node"), false)),
+        ("v1", "ConfigMap") => Some((GroupVersionKind::gvk("", "v1", "ConfigMap"), true)),
+        ("v1", "Secret") => Some((GroupVersionKind::gvk("", "v1", "Secret"), true)),
+        ("v1", "PersistentVolumeClaim") => Some((
+            GroupVersionKind::gvk("", "v1", "PersistentVolumeClaim"),
+            true,
+        )),
+        ("v1", "PersistentVolume") => {
+            Some((GroupVersionKind::gvk("", "v1", "PersistentVolume"), false))
+        }
+        ("v1", "ServiceAccount") => Some((GroupVersionKind::gvk("", "v1", "ServiceAccount"), true)),
+        ("v1", "Endpoints") => Some((GroupVersionKind::gvk("", "v1", "Endpoints"), true)),
+        ("v1", "Event") => Some((GroupVersionKind::gvk("", "v1", "Event"), true)),
+        ("v1", "ReplicationController") => Some((
+            GroupVersionKind::gvk("", "v1", "ReplicationController"),
+            true,
+        )),
+        ("v1", "ResourceQuota") => Some((GroupVersionKind::gvk("", "v1", "ResourceQuota"), true)),
+        ("v1", "LimitRange") => Some((GroupVersionKind::gvk("", "v1", "LimitRange"), true)),
+        ("apps/v1", "Deployment") => {
+            Some((GroupVersionKind::gvk("apps", "v1", "Deployment"), true))
+        }
+        ("apps/v1", "StatefulSet") => {
+            Some((GroupVersionKind::gvk("apps", "v1", "StatefulSet"), true))
+        }
+        ("apps/v1", "DaemonSet") => Some((GroupVersionKind::gvk("apps", "v1", "DaemonSet"), true)),
+        ("apps/v1", "ReplicaSet") => {
+            Some((GroupVersionKind::gvk("apps", "v1", "ReplicaSet"), true))
+        }
+        ("batch/v1", "Job") => Some((GroupVersionKind::gvk("batch", "v1", "Job"), true)),
+        ("batch/v1", "CronJob") => Some((GroupVersionKind::gvk("batch", "v1", "CronJob"), true)),
+        ("networking.k8s.io/v1", "Ingress") => Some((
+            GroupVersionKind::gvk("networking.k8s.io", "v1", "Ingress"),
+            true,
+        )),
+        ("networking.k8s.io/v1", "IngressClass") => Some((
+            GroupVersionKind::gvk("networking.k8s.io", "v1", "IngressClass"),
+            false,
+        )),
+        ("networking.k8s.io/v1", "NetworkPolicy") => Some((
+            GroupVersionKind::gvk("networking.k8s.io", "v1", "NetworkPolicy"),
+            true,
+        )),
+        ("autoscaling/v2", "HorizontalPodAutoscaler") => Some((
+            GroupVersionKind::gvk("autoscaling", "v2", "HorizontalPodAutoscaler"),
+            true,
+        )),
+        ("policy/v1", "PodDisruptionBudget") => Some((
+            GroupVersionKind::gvk("policy", "v1", "PodDisruptionBudget"),
+            true,
+        )),
+        ("scheduling.k8s.io/v1", "PriorityClass") => Some((
+            GroupVersionKind::gvk("scheduling.k8s.io", "v1", "PriorityClass"),
+            false,
+        )),
+        ("storage.k8s.io/v1", "StorageClass") => Some((
+            GroupVersionKind::gvk("storage.k8s.io", "v1", "StorageClass"),
+            false,
+        )),
+        ("rbac.authorization.k8s.io/v1", "ClusterRole") => Some((
+            GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "ClusterRole"),
+            false,
+        )),
+        ("rbac.authorization.k8s.io/v1", "ClusterRoleBinding") => Some((
+            GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "ClusterRoleBinding"),
+            false,
+        )),
+        ("rbac.authorization.k8s.io/v1", "Role") => Some((
+            GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "Role"),
+            true,
+        )),
+        ("rbac.authorization.k8s.io/v1", "RoleBinding") => Some((
+            GroupVersionKind::gvk("rbac.authorization.k8s.io", "v1", "RoleBinding"),
+            true,
+        )),
+        ("apiextensions.k8s.io/v1", "CustomResourceDefinition") => Some((
+            GroupVersionKind::gvk("apiextensions.k8s.io", "v1", "CustomResourceDefinition"),
+            false,
+        )),
+        _ => None,
+    };
+
+    let Some((gvk, namespaced)) = resolved else {
+        return Err(anyhow!(
+            "unsupported manifest kind fallback for apiVersion '{api_version}' kind '{kind}'"
+        ));
+    };
+    Ok((ApiResource::from_gvk(&gvk), namespaced))
 }
 
 /// Fetches YAML for a custom resource using explicit API coordinates.
@@ -645,6 +835,30 @@ mod tests {
         assert_eq!(
             patch["metadata"]["annotations"][RECONCILE_REQUEST_ANNOTATION],
             "2026-03-06T12:00:00.123456789Z"
+        );
+    }
+
+    #[test]
+    fn manifest_scope_fallback_marks_cluster_scoped_kinds() {
+        let (_, namespaced) =
+            api_resource_for_manifest("rbac.authorization.k8s.io/v1", "ClusterRole")
+                .expect("cluster role");
+        assert!(!namespaced);
+    }
+
+    #[test]
+    fn manifest_scope_fallback_marks_namespaced_kinds() {
+        let (_, namespaced) =
+            api_resource_for_manifest("apps/v1", "Deployment").expect("deployment");
+        assert!(namespaced);
+    }
+
+    #[test]
+    fn manifest_scope_fallback_rejects_unknown_kinds() {
+        let err = api_resource_for_manifest("example.com/v1", "Widget").expect_err("unsupported");
+        assert!(
+            err.to_string()
+                .contains("unsupported manifest kind fallback")
         );
     }
 }
