@@ -6,6 +6,7 @@ pub mod issues;
 mod optimistic;
 pub mod port_forward;
 mod refresh;
+pub mod vulnerabilities;
 pub mod watch;
 
 use crate::time::AppTimestamp;
@@ -24,6 +25,7 @@ use crate::k8s::{
         PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo,
         ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
         SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
+        VulnerabilityReportInfo,
     },
 };
 
@@ -152,6 +154,7 @@ pub struct ClusterSnapshot {
     pub role_bindings: Vec<RoleBindingInfo>,
     pub cluster_roles: Vec<ClusterRoleInfo>,
     pub cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
+    pub vulnerability_reports: Vec<VulnerabilityReportInfo>,
     pub custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
     pub cluster_info: Option<ClusterInfo>,
     pub endpoints: Vec<EndpointInfo>,
@@ -176,6 +179,7 @@ pub struct ClusterSnapshot {
     pub pod_metrics: Vec<PodMetricsInfo>,
     pub issue_count: usize,
     pub sanitizer_count: usize,
+    pub vulnerability_count: usize,
     pub namespaces_count: usize,
     pub phase: DataPhase,
     pub last_updated: Option<AppTimestamp>,
@@ -209,6 +213,7 @@ impl Default for ClusterSnapshot {
             role_bindings: Vec::new(),
             cluster_roles: Vec::new(),
             cluster_role_bindings: Vec::new(),
+            vulnerability_reports: Vec::new(),
             custom_resource_definitions: Vec::new(),
             cluster_info: None,
             endpoints: Vec::new(),
@@ -233,6 +238,7 @@ impl Default for ClusterSnapshot {
             pod_metrics: Vec::new(),
             issue_count: 0,
             sanitizer_count: 0,
+            vulnerability_count: 0,
             namespaces_count: 0,
             phase: DataPhase::Idle,
             last_updated: None,
@@ -315,6 +321,7 @@ impl ClusterSnapshot {
             AppView::FluxCDSources => Some(self.flux_counts.sources),
             AppView::Issues => Some(self.issue_count),
             AppView::HealthReport => Some(self.sanitizer_count),
+            AppView::Vulnerabilities => Some(self.vulnerability_count),
             // Dashboard, Bookmarks, and PortForwarding don't have direct collections
             AppView::Dashboard | AppView::Bookmarks | AppView::PortForwarding => None,
         }
@@ -378,6 +385,11 @@ pub trait ClusterDataSource {
     async fn fetch_cluster_roles(&self) -> Result<Vec<ClusterRoleInfo>>;
     /// Fetches ClusterRoleBinding list.
     async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>>;
+    /// Fetches Trivy Operator vulnerability reports.
+    async fn fetch_vulnerability_reports(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<VulnerabilityReportInfo>>;
     /// Fetches CRD list used by Extensions view.
     async fn fetch_custom_resource_definitions(&self) -> Result<Vec<CustomResourceDefinitionInfo>>;
     /// Fetches cached API server version metadata.
@@ -519,6 +531,13 @@ impl ClusterDataSource for K8sClient {
 
     async fn fetch_cluster_role_bindings(&self) -> Result<Vec<ClusterRoleBindingInfo>> {
         K8sClient::fetch_cluster_role_bindings(self).await
+    }
+
+    async fn fetch_vulnerability_reports(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<VulnerabilityReportInfo>> {
+        K8sClient::fetch_vulnerability_reports(self, namespace).await
     }
 
     async fn fetch_custom_resource_definitions(&self) -> Result<Vec<CustomResourceDefinitionInfo>> {
@@ -746,9 +765,12 @@ impl GlobalState {
         self.snapshot_dirty = false;
         let count = issues::compute_issues(&self.snapshot).len();
         let sanitizer_count = issues::sanitizer_issue_count(&self.snapshot);
+        let vulnerability_count =
+            vulnerabilities::compute_vulnerability_findings(&self.snapshot).len();
         let snapshot = Arc::make_mut(&mut self.snapshot);
         snapshot.issue_count = count;
         snapshot.sanitizer_count = sanitizer_count;
+        snapshot.vulnerability_count = vulnerability_count;
     }
 
     /// Returns fetched namespaces.
@@ -762,7 +784,9 @@ impl GlobalState {
             AppView::Bookmarks | AppView::PortForwarding => RefreshScope::NONE,
             AppView::Issues | AppView::HealthReport => RefreshScope::CORE_OVERVIEW
                 .union(RefreshScope::LEGACY_SECONDARY)
+                .union(RefreshScope::SECURITY)
                 .union(RefreshScope::FLUX),
+            AppView::Vulnerabilities => RefreshScope::SECURITY,
             AppView::Nodes => RefreshScope::NODES,
             AppView::Namespaces => RefreshScope::NAMESPACES,
             AppView::Pods => RefreshScope::PODS,
@@ -825,6 +849,7 @@ impl GlobalState {
                     || !self.snapshot.deployments.is_empty()
             }
             AppView::Bookmarks => false,
+            AppView::Vulnerabilities => !self.snapshot.vulnerability_reports.is_empty(),
             AppView::Nodes => !self.snapshot.nodes.is_empty(),
             AppView::Namespaces => !self.snapshot.namespace_list.is_empty(),
             AppView::Events => !self.snapshot.events.is_empty(),
@@ -870,8 +895,16 @@ impl GlobalState {
             AppView::ClusterRoleBindings => !self.snapshot.cluster_role_bindings.is_empty(),
             AppView::RoleBindings => !self.snapshot.role_bindings.is_empty(),
             AppView::Extensions => !self.snapshot.custom_resource_definitions.is_empty(),
-            AppView::Issues | AppView::HealthReport => {
-                !self.snapshot.pods.is_empty() || !self.snapshot.nodes.is_empty()
+            AppView::Issues => {
+                self.snapshot.issue_count > 0
+                    || !self.snapshot.pods.is_empty()
+                    || !self.snapshot.nodes.is_empty()
+                    || !self.snapshot.vulnerability_reports.is_empty()
+            }
+            AppView::HealthReport => {
+                self.snapshot.sanitizer_count > 0
+                    || !self.snapshot.pods.is_empty()
+                    || !self.snapshot.nodes.is_empty()
             }
         }
     }
@@ -1138,6 +1171,7 @@ mod tests {
         role_bindings: Vec<RoleBindingInfo>,
         cluster_roles: Vec<ClusterRoleInfo>,
         cluster_role_bindings: Vec<ClusterRoleBindingInfo>,
+        vulnerability_reports: Vec<VulnerabilityReportInfo>,
         custom_resource_definitions: Vec<CustomResourceDefinitionInfo>,
         flux_resources: Vec<FluxResourceInfo>,
         helm_releases: Vec<HelmReleaseInfo>,
@@ -1160,6 +1194,7 @@ mod tests {
         role_bindings_err: Option<String>,
         cluster_roles_err: Option<String>,
         cluster_role_bindings_err: Option<String>,
+        vulnerability_reports_err: Option<String>,
         cluster_info_err: Option<String>,
         node_metrics_err: Option<String>,
         pod_metrics_err: Option<String>,
@@ -1285,6 +1320,7 @@ mod tests {
                     role_ref_name: "cluster-admin".to_string(),
                     ..ClusterRoleBindingInfo::default()
                 }],
+                vulnerability_reports: Vec::new(),
                 custom_resource_definitions: vec![CustomResourceDefinitionInfo {
                     name: "widgets.demo.io".to_string(),
                     group: "demo.io".to_string(),
@@ -1336,6 +1372,7 @@ mod tests {
                 role_bindings_err: None,
                 cluster_roles_err: None,
                 cluster_role_bindings_err: None,
+                vulnerability_reports_err: None,
                 cluster_info_err: None,
                 node_metrics_err: None,
                 pod_metrics_err: None,
@@ -1615,6 +1652,21 @@ mod tests {
                 return Err(anyhow!(err.clone()));
             }
             Ok(self.cluster_role_bindings.clone())
+        }
+
+        async fn fetch_vulnerability_reports(
+            &self,
+            namespace: Option<&str>,
+        ) -> Result<Vec<VulnerabilityReportInfo>> {
+            self.bump(&self.fetch_counters.security_calls);
+            if let Some(err) = &self.vulnerability_reports_err {
+                return Err(anyhow!(err.clone()));
+            }
+            Ok(Self::filter_namespace(
+                &self.vulnerability_reports,
+                namespace,
+                |report| &report.namespace,
+            ))
         }
 
         async fn fetch_custom_resource_definitions(
@@ -2477,7 +2529,7 @@ mod tests {
                 "service_accounts",
                 RefreshScope::SECURITY,
                 ExpectedFetchCounts {
-                    total: 5,
+                    total: 6,
                     nodes: 0,
                     pods: 0,
                     services: 0,
@@ -2486,7 +2538,7 @@ mod tests {
                     network_calls: 0,
                     config_calls: 0,
                     storage_calls: 0,
-                    security_calls: 5,
+                    security_calls: 6,
                     helm_calls: 0,
                     extension_calls: 0,
                     flux_resources: 0,
@@ -2579,7 +2631,7 @@ mod tests {
                     .union(RefreshScope::LEGACY_SECONDARY)
                     .union(RefreshScope::FLUX),
                 ExpectedFetchCounts {
-                    total: 33,
+                    total: 34,
                     nodes: 1,
                     pods: 1,
                     services: 1,
@@ -2588,7 +2640,7 @@ mod tests {
                     network_calls: 4,
                     config_calls: 7,
                     storage_calls: 3,
-                    security_calls: 5,
+                    security_calls: 6,
                     helm_calls: 1,
                     extension_calls: 1,
                     flux_resources: 1,
@@ -2854,6 +2906,7 @@ mod tests {
             role_bindings: vec![],
             cluster_roles: vec![],
             cluster_role_bindings: vec![],
+            vulnerability_reports: vec![],
             custom_resource_definitions: vec![],
             cluster_info: None,
             ..MockDataSource::success()
@@ -2894,6 +2947,7 @@ mod tests {
             role_bindings: vec![],
             cluster_roles: vec![],
             cluster_role_bindings: vec![],
+            vulnerability_reports: vec![],
             custom_resource_definitions: vec![],
             flux_resources: vec![],
             helm_releases: vec![],
@@ -2916,6 +2970,7 @@ mod tests {
             role_bindings_err: Some("rolebindings down".to_string()),
             cluster_roles_err: Some("clusterroles down".to_string()),
             cluster_role_bindings_err: Some("clusterrolebindings down".to_string()),
+            vulnerability_reports_err: Some("vulnerabilityreports down".to_string()),
             cluster_info_err: Some("cluster down".to_string()),
             node_metrics_err: Some("node metrics down".to_string()),
             pod_metrics_err: Some("pod metrics down".to_string()),
@@ -2973,6 +3028,7 @@ mod tests {
             role_bindings: vec![],
             cluster_roles: vec![],
             cluster_role_bindings: vec![],
+            vulnerability_reports: vec![],
             custom_resource_definitions: vec![],
             cluster_info: Some(ClusterInfo {
                 server: "https://kind.local".to_string(),

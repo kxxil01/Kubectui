@@ -178,6 +178,16 @@ const COMMANDS: &[Command] = &[
         aliases: &["health", "health report", "sanitizer", "lint"],
     },
     Command {
+        view: AppView::Vulnerabilities,
+        aliases: &[
+            "vulnerabilities",
+            "vulnerability",
+            "security",
+            "security center",
+            "trivy",
+        ],
+    },
+    Command {
         view: AppView::Nodes,
         aliases: &["nodes", "node", "no"],
     },

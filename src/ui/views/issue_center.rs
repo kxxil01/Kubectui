@@ -13,7 +13,7 @@ use crate::{
     k8s::dtos::AlertSeverity,
     state::{
         ClusterSnapshot, RefreshScope,
-        issues::{ClusterIssueSource, compute_issues},
+        issues::{ClusterIssueSource, compute_issues, filtered_issue_indices_by_source},
     },
     ui::{
         TableFrame, components::default_theme, render_centered_message, render_table_frame,
@@ -77,30 +77,18 @@ fn render_diagnostics(
     let theme = default_theme();
     let query = search.trim();
     let all_issues = compute_issues(cluster);
-    let filtered_source = all_issues
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, issue)| match mode {
-            DiagnosticsMode::All => Some(idx),
-            DiagnosticsMode::SanitizerOnly => {
-                (issue.source == ClusterIssueSource::Sanitizer).then_some(idx)
-            }
-        })
-        .collect::<Vec<_>>();
+    let source_filter = match mode {
+        DiagnosticsMode::All => None,
+        DiagnosticsMode::SanitizerOnly => Some(ClusterIssueSource::Sanitizer),
+    };
     let diagnostics_loaded = cluster.scope_loaded(
         RefreshScope::CORE_OVERVIEW
             .union(RefreshScope::LEGACY_SECONDARY)
+            .union(RefreshScope::SECURITY)
             .union(RefreshScope::FLUX),
     );
 
-    let indices = if query.is_empty() {
-        filtered_source
-    } else {
-        filtered_source
-            .into_iter()
-            .filter(|idx| all_issues[*idx].matches_query(query))
-            .collect()
-    };
+    let indices = filtered_issue_indices_by_source(&all_issues, query, source_filter);
     let label = match mode {
         DiagnosticsMode::All => "Issues",
         DiagnosticsMode::SanitizerOnly => "Health Report",
@@ -180,7 +168,7 @@ fn render_diagnostics(
                 Cell::from(issue.resource_kind),
                 Cell::from(issue.resource_name.as_str()),
                 Cell::from(issue.namespace.as_str()),
-                Cell::from(issue.message.chars().take(80).collect::<String>()),
+                Cell::from(issue_message_preview(&issue.message)),
             ])
             .style(row_style)
         })
@@ -196,11 +184,8 @@ fn render_diagnostics(
         format!(" {icon}{label} ({total}){coverage_suffix} ")
     } else {
         let all = match mode {
-            DiagnosticsMode::All => all_issues.len(),
-            DiagnosticsMode::SanitizerOnly => all_issues
-                .iter()
-                .filter(|issue| issue.source == ClusterIssueSource::Sanitizer)
-                .count(),
+            DiagnosticsMode::All => cluster.issue_count,
+            DiagnosticsMode::SanitizerOnly => cluster.sanitizer_count,
         };
         format!(" {icon}{label} ({total} of {all}) [/{query}]{coverage_suffix}")
     };
@@ -229,4 +214,16 @@ fn render_diagnostics(
         },
         &theme,
     );
+}
+
+fn issue_message_preview(message: &str) -> &str {
+    if message.len() <= 80 {
+        return message;
+    }
+
+    let mut end = 80;
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    &message[..end]
 }

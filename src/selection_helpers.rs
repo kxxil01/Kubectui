@@ -34,6 +34,15 @@ pub fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<R
     match app.view() {
         AppView::Dashboard => None,
         AppView::Bookmarks => selected_bookmark_resource(app.bookmarks(), idx, app.search_query()),
+        AppView::Vulnerabilities => {
+            let findings =
+                kubectui::state::vulnerabilities::compute_vulnerability_findings(snapshot);
+            let indices = kubectui::state::vulnerabilities::filtered_vulnerability_indices(
+                &findings,
+                app.search_query(),
+            );
+            filtered_index(&indices, idx).and_then(|i| findings[i].resource_ref.clone())
+        }
         AppView::Issues | AppView::HealthReport => {
             let issues = kubectui::state::issues::compute_issues(snapshot);
             let query = app.search_query().trim();

@@ -239,6 +239,53 @@ pub struct ClusterRoleBindingInfo {
     pub created_at: Option<AppTimestamp>,
 }
 
+/// Grouped vulnerability totals reported by Trivy Operator.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct VulnerabilitySummaryCounts {
+    pub critical: usize,
+    pub high: usize,
+    pub medium: usize,
+    pub low: usize,
+    pub unknown: usize,
+}
+
+impl VulnerabilitySummaryCounts {
+    pub const fn total(&self) -> usize {
+        self.critical + self.high + self.medium + self.low + self.unknown
+    }
+
+    pub const fn highest_severity(&self) -> AlertSeverity {
+        if self.critical > 0 || self.high > 0 {
+            AlertSeverity::Error
+        } else if self.medium > 0 {
+            AlertSeverity::Warning
+        } else {
+            AlertSeverity::Info
+        }
+    }
+}
+
+/// Lightweight Trivy Operator vulnerability report used by state aggregation and rendering.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct VulnerabilityReportInfo {
+    pub name: String,
+    pub namespace: String,
+    pub resource_kind: String,
+    pub resource_name: String,
+    pub resource_namespace: String,
+    pub container_name: Option<String>,
+    pub artifact_repository: Option<String>,
+    pub artifact_tag: Option<String>,
+    pub registry_server: Option<String>,
+    pub fixable_count: usize,
+    pub counts: VulnerabilitySummaryCounts,
+    pub scanner_name: Option<String>,
+    pub scanner_vendor: Option<String>,
+    pub scanner_version: Option<String>,
+    pub update_timestamp: Option<AppTimestamp>,
+    pub cluster_scoped: bool,
+}
+
 /// Lightweight ReplicaSet view used by list and detail pages.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct ReplicaSetInfo {

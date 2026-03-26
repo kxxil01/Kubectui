@@ -109,6 +109,11 @@ pub fn view_icon(view: AppView) -> Icon {
             emoji: "🩺 ",
             plain: "",
         },
+        AppView::Vulnerabilities => Icon {
+            nerd: "󰒃 ",
+            emoji: "🛡 ",
+            plain: "",
+        },
         AppView::Issues => Icon {
             nerd: "󰀬 ",
             emoji: "⚠ ",
