@@ -2,6 +2,7 @@
 
 use std::time::Instant;
 
+use crate::ai::AiAnalysisResult;
 use kubectui::{
     app::{AppView, DetailViewState, ResourceRef},
     k8s::{
@@ -226,6 +227,15 @@ pub struct ExtensionCommandAsyncResult {
     pub execution_id: Option<u64>,
     pub title: String,
     pub result: ExtensionCommandRunResult,
+}
+
+#[derive(Debug)]
+pub struct AiAnalysisAsyncResult {
+    pub action_history_id: u64,
+    pub resource: ResourceRef,
+    pub execution_id: u64,
+    pub title: String,
+    pub result: Result<AiAnalysisResult, String>,
 }
 
 #[derive(Debug)]

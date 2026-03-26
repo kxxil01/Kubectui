@@ -416,6 +416,59 @@ fn workbench_b_key_toggles_from_workbench_focus() {
 }
 
 #[test]
+fn ai_workbench_tab_supports_scrolling_shortcuts() {
+    use crate::workbench::{AiAnalysisTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    let mut tab = AiAnalysisTabState::new(
+        9,
+        "Ask AI",
+        ResourceRef::Pod("api-0".into(), "default".into()),
+    );
+    tab.apply_result(
+        "AI",
+        "gpt-test",
+        "summary".into(),
+        vec!["cause-1".into(), "cause-2".into()],
+        vec!["step-1".into(), "step-2".into()],
+        vec!["uncertain-1".into()],
+    );
+    app.workbench
+        .open_tab(WorkbenchTabState::AiAnalysis(Box::new(tab)));
+    app.focus = Focus::Workbench;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('j'))),
+        AppAction::None
+    );
+    let scroll_after_down = match &app.workbench.active_tab().expect("tab").state {
+        WorkbenchTabState::AiAnalysis(tab) => tab.scroll,
+        _ => panic!("expected ai analysis tab"),
+    };
+    assert_eq!(scroll_after_down, 1);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('G'))),
+        AppAction::None
+    );
+    let max_scroll = match &app.workbench.active_tab().expect("tab").state {
+        WorkbenchTabState::AiAnalysis(tab) => tab.scroll,
+        _ => panic!("expected ai analysis tab"),
+    };
+    assert!(max_scroll > 1);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('g'))),
+        AppAction::None
+    );
+    let scroll_after_top = match &app.workbench.active_tab().expect("tab").state {
+        WorkbenchTabState::AiAnalysis(tab) => tab.scroll,
+        _ => panic!("expected ai analysis tab"),
+    };
+    assert_eq!(scroll_after_top, 0);
+}
+
+#[test]
 fn search_esc_resets_selected_idx() {
     let mut app = AppState::default();
     app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));

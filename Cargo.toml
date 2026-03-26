@@ -37,6 +37,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tower = { version = "0.5.1", features = ["buffer", "retry"] }
 notify = "8.2.0"
+ureq = { version = "3", default-features = false, features = ["json", "rustls"] }
 
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false }
