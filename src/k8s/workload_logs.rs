@@ -22,6 +22,7 @@ pub struct WorkloadLogTarget {
     pub pod_name: String,
     pub namespace: String,
     pub containers: Vec<String>,
+    pub labels: Vec<(String, String)>,
 }
 
 pub async fn resolve_workload_log_targets(
@@ -190,10 +191,19 @@ fn map_pod_to_target(pod: Pod) -> Result<WorkloadLogTarget> {
         return Err(anyhow!("pod '{name}' has no containers"));
     }
 
+    let mut labels = pod
+        .metadata
+        .labels
+        .unwrap_or_default()
+        .into_iter()
+        .collect::<Vec<_>>();
+    labels.sort_unstable_by(|left, right| left.0.cmp(&right.0).then(left.1.cmp(&right.1)));
+
     Ok(WorkloadLogTarget {
         pod_name: name,
         namespace,
         containers,
+        labels,
     })
 }
 

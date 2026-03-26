@@ -7,11 +7,16 @@ use crate::{
         client::EventInfo,
         dtos::{NodeMetricsInfo, OwnerRefInfo, PodMetricsInfo},
     },
+    log_investigation::PodLogPreset,
+    log_investigation::{
+        LogEntry, LogQueryMode, LogTimeWindow, compile_query, entry_matches_correlation,
+        entry_matches_query, entry_matches_time_window, format_jump_target,
+        nearest_timestamp_index, parse_jump_target,
+    },
     ui::components::{
         debug_container_dialog::DebugContainerDialogState,
         probe_panel::ProbePanelState as ProbePanelComponentState, scale_dialog::ScaleDialogState,
     },
-    ui::contains_ci,
 };
 
 use super::ResourceRef;
@@ -50,11 +55,11 @@ pub enum ActiveComponent {
 pub const MAX_LOG_LINES: usize = 10_000;
 
 /// In-detail logs viewer state.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct LogsViewerState {
     pub scroll_offset: usize,
     pub follow_mode: bool,
-    pub lines: Vec<String>,
+    pub lines: Vec<LogEntry>,
     pub pod_name: String,
     pub pod_namespace: String,
     pub container_name: String,
@@ -75,8 +80,51 @@ pub struct LogsViewerState {
     /// When true, request timestamps from the Kubernetes API.
     pub show_timestamps: bool,
     pub search_query: String,
+    pub search_mode: LogQueryMode,
+    pub compiled_search: Option<regex::Regex>,
+    pub search_error: Option<String>,
+    pub time_window: LogTimeWindow,
+    pub correlation_request_id: Option<String>,
     pub search_input: String,
     pub searching: bool,
+    pub time_jump_input: String,
+    pub jumping_to_time: bool,
+    pub time_jump_error: Option<String>,
+    pub structured_view: bool,
+}
+
+impl Default for LogsViewerState {
+    fn default() -> Self {
+        Self {
+            scroll_offset: 0,
+            follow_mode: false,
+            lines: Vec::new(),
+            pod_name: String::new(),
+            pod_namespace: String::new(),
+            container_name: String::new(),
+            containers: Vec::new(),
+            picking_container: false,
+            container_cursor: 0,
+            pending_container_request_id: None,
+            pending_logs_request_id: None,
+            loading: false,
+            error: None,
+            previous_logs: false,
+            show_timestamps: false,
+            search_query: String::new(),
+            search_mode: LogQueryMode::Substring,
+            compiled_search: None,
+            search_error: None,
+            time_window: LogTimeWindow::All,
+            correlation_request_id: None,
+            search_input: String::new(),
+            searching: false,
+            time_jump_input: String::new(),
+            jumping_to_time: false,
+            time_jump_error: None,
+            structured_view: true,
+        }
+    }
 }
 
 impl LogsViewerState {
@@ -94,7 +142,7 @@ impl LogsViewerState {
         } else {
             line
         };
-        self.lines.push(line);
+        self.lines.push(LogEntry::from_raw(line));
         if self.lines.len() > MAX_LOG_LINES {
             let excess = self.lines.len() - MAX_LOG_LINES;
             self.lines.drain(..excess);
@@ -104,11 +152,23 @@ impl LogsViewerState {
 
     pub fn open_search(&mut self) {
         self.searching = true;
+        self.jumping_to_time = false;
+        self.time_jump_error = None;
         self.search_input = self.search_query.clone();
     }
 
     pub fn commit_search(&mut self) {
         self.search_query = self.search_input.clone();
+        self.search_error = None;
+        match compile_query(&self.search_query, self.search_mode) {
+            Ok(compiled) => {
+                self.compiled_search = compiled;
+            }
+            Err(err) => {
+                self.compiled_search = None;
+                self.search_error = Some(err);
+            }
+        }
         self.searching = false;
         self.jump_to_first_match();
     }
@@ -116,6 +176,69 @@ impl LogsViewerState {
     pub fn cancel_search(&mut self) {
         self.search_input = self.search_query.clone();
         self.searching = false;
+    }
+
+    pub fn open_time_jump(&mut self) {
+        self.jumping_to_time = true;
+        self.time_jump_error = None;
+        self.time_jump_input = self
+            .current_visible_line()
+            .and_then(LogEntry::timestamp)
+            .map(format_jump_target)
+            .unwrap_or_default();
+    }
+
+    pub fn commit_time_jump(&mut self) {
+        self.time_jump_error = None;
+        let target = match parse_jump_target(&self.time_jump_input) {
+            Ok(target) => target,
+            Err(err) => {
+                self.time_jump_error = Some(err);
+                return;
+            }
+        };
+        let filtered = self.filtered_indices();
+        let Some(index) = nearest_timestamp_index(
+            filtered
+                .iter()
+                .filter_map(|index| self.lines.get(*index).map(|entry| (*index, entry))),
+            target,
+        ) else {
+            self.time_jump_error = Some(
+                "No visible log lines have timestamps in the current investigation view."
+                    .to_string(),
+            );
+            return;
+        };
+        self.scroll_offset = index;
+        self.follow_mode = false;
+        self.jumping_to_time = false;
+    }
+
+    pub fn cancel_time_jump(&mut self) {
+        self.jumping_to_time = false;
+        self.time_jump_error = None;
+        self.time_jump_input.clear();
+    }
+
+    pub fn toggle_search_mode(&mut self) {
+        self.search_mode = self.search_mode.toggle();
+        self.search_error = None;
+        match compile_query(&self.search_query, self.search_mode) {
+            Ok(compiled) => {
+                self.compiled_search = compiled;
+            }
+            Err(err) => {
+                self.compiled_search = None;
+                self.search_error = Some(err);
+            }
+        }
+        self.jump_to_first_match();
+    }
+
+    pub fn cycle_time_window(&mut self) {
+        self.time_window = self.time_window.next();
+        self.jump_to_first_match();
     }
 
     pub fn jump_to_first_match(&mut self) -> bool {
@@ -150,22 +273,167 @@ impl LogsViewerState {
 
     fn find_match_forward(&self, start: usize) -> Option<usize> {
         (!self.search_query.is_empty()).then_some(())?;
+        let now = crate::time::now();
 
         self.lines
             .iter()
             .enumerate()
             .skip(start)
-            .find_map(|(index, line)| contains_ci(line, &self.search_query).then_some(index))
+            .find_map(|(index, line)| {
+                (entry_matches_time_window(line, self.time_window, now)
+                    && entry_matches_correlation(line, self.correlation_request_id.as_deref())
+                    && entry_matches_query(
+                        line,
+                        &self.search_query,
+                        self.search_mode,
+                        self.compiled_search.as_ref(),
+                        self.structured_view,
+                    ))
+                .then_some(index)
+            })
     }
 
     fn find_match_backward(&self, end_exclusive: usize) -> Option<usize> {
         (!self.search_query.is_empty()).then_some(())?;
+        let now = crate::time::now();
 
         self.lines[..end_exclusive]
             .iter()
             .enumerate()
             .rev()
-            .find_map(|(index, line)| contains_ci(line, &self.search_query).then_some(index))
+            .find_map(|(index, line)| {
+                (entry_matches_time_window(line, self.time_window, now)
+                    && entry_matches_correlation(line, self.correlation_request_id.as_deref())
+                    && entry_matches_query(
+                        line,
+                        &self.search_query,
+                        self.search_mode,
+                        self.compiled_search.as_ref(),
+                        self.structured_view,
+                    ))
+                .then_some(index)
+            })
+    }
+
+    pub fn matches_time_window(&self, line: &LogEntry) -> bool {
+        entry_matches_time_window(line, self.time_window, crate::time::now())
+    }
+
+    pub fn filtered_indices(&self) -> Vec<usize> {
+        let now = crate::time::now();
+        self.lines
+            .iter()
+            .enumerate()
+            .filter_map(|(index, line)| {
+                (entry_matches_time_window(line, self.time_window, now)
+                    && entry_matches_correlation(line, self.correlation_request_id.as_deref()))
+                .then_some(index)
+            })
+            .collect()
+    }
+
+    pub fn filtered_cursor(&self, filtered_indices: &[usize]) -> usize {
+        filtered_indices
+            .iter()
+            .position(|index| *index >= self.scroll_offset)
+            .unwrap_or_else(|| filtered_indices.len().saturating_sub(1))
+    }
+
+    pub fn current_visible_line(&self) -> Option<&LogEntry> {
+        let filtered = self.filtered_indices();
+        let index = filtered.get(self.filtered_cursor(&filtered)).copied()?;
+        self.lines.get(index)
+    }
+
+    pub fn scroll_filtered_up(&mut self) {
+        let filtered = self.filtered_indices();
+        let cursor = self.filtered_cursor(&filtered);
+        if let Some(index) = filtered.get(cursor.saturating_sub(1)) {
+            self.scroll_offset = *index;
+        } else {
+            self.scroll_offset = 0;
+        }
+    }
+
+    pub fn scroll_filtered_down(&mut self) {
+        let filtered = self.filtered_indices();
+        let cursor = self.filtered_cursor(&filtered);
+        if let Some(index) = filtered.get((cursor + 1).min(filtered.len().saturating_sub(1))) {
+            self.scroll_offset = *index;
+        }
+    }
+
+    pub fn scroll_filtered_top(&mut self) {
+        self.scroll_offset = self.filtered_indices().first().copied().unwrap_or(0);
+    }
+
+    pub fn scroll_filtered_bottom(&mut self) {
+        self.scroll_offset = self.filtered_indices().last().copied().unwrap_or(0);
+    }
+
+    pub fn preset_snapshot(&self) -> PodLogPreset {
+        PodLogPreset {
+            name: String::new(),
+            query: self.search_query.clone(),
+            mode: self.search_mode,
+            time_window: self.time_window,
+            structured_view: self.structured_view,
+        }
+    }
+
+    pub fn apply_preset(&mut self, preset: &PodLogPreset) {
+        self.searching = false;
+        self.jumping_to_time = false;
+        self.search_query = preset.query.clone();
+        self.search_input = self.search_query.clone();
+        self.time_jump_input.clear();
+        self.time_jump_error = None;
+        self.search_mode = preset.mode;
+        self.time_window = preset.time_window;
+        self.correlation_request_id = None;
+        self.structured_view = preset.structured_view;
+        self.search_error = None;
+        match compile_query(&self.search_query, self.search_mode) {
+            Ok(compiled) => {
+                self.compiled_search = compiled;
+            }
+            Err(err) => {
+                self.compiled_search = None;
+                self.search_error = Some(err);
+            }
+        }
+        let found = self.jump_to_first_match();
+        if self.search_query.is_empty() {
+            self.follow_mode = false;
+            self.scroll_offset = self.lines.len().saturating_sub(1);
+        } else if !found {
+            self.follow_mode = false;
+            self.scroll_offset = 0;
+        }
+    }
+
+    pub fn toggle_correlation_on_current_line(&mut self) -> Result<Option<String>, String> {
+        if self.correlation_request_id.is_some() {
+            self.correlation_request_id = None;
+            self.scroll_filtered_top();
+            return Ok(None);
+        }
+        let filtered = self.filtered_indices();
+        let cursor = self.filtered_cursor(&filtered);
+        let Some(index) = filtered.get(cursor).copied() else {
+            return Err("No visible log line is available for correlation.".to_string());
+        };
+        let Some(request_id) = self
+            .lines
+            .get(index)
+            .and_then(LogEntry::request_id)
+            .map(str::to_string)
+        else {
+            return Err("The current log line does not contain a request token.".to_string());
+        };
+        self.correlation_request_id = Some(request_id.clone());
+        self.scroll_filtered_top();
+        Ok(Some(request_id))
     }
 }
 

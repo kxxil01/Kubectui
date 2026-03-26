@@ -1,6 +1,9 @@
 //! User preference types for view personalization.
 
-use crate::bookmarks::BookmarkEntry;
+use crate::{
+    bookmarks::BookmarkEntry,
+    log_investigation::{PodLogPreset, WorkloadLogPreset},
+};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -42,11 +45,22 @@ impl Default for ViewPreferences {
     }
 }
 
+/// Saved log investigation presets.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct LogPresetPreferences {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pod_logs: Vec<PodLogPreset>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workload_logs: Vec<WorkloadLogPreset>,
+}
+
 /// Global user preferences.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct UserPreferences {
     #[serde(default)]
     pub views: HashMap<String, ViewPreferences>,
+    #[serde(default)]
+    pub log_presets: LogPresetPreferences,
 }
 
 /// Per-cluster preference overrides.
@@ -351,5 +365,44 @@ mod tests {
 
         assert_eq!(decoded.bookmarks.len(), 1);
         assert_eq!(decoded.bookmarks[0].bookmarked_at_unix, 123);
+    }
+
+    #[test]
+    fn user_preferences_preserve_log_presets() {
+        let prefs = UserPreferences {
+            views: HashMap::new(),
+            log_presets: LogPresetPreferences {
+                pod_logs: vec![PodLogPreset {
+                    name: "pod errors".into(),
+                    query: "error".into(),
+                    mode: crate::log_investigation::LogQueryMode::Substring,
+                    time_window: crate::log_investigation::LogTimeWindow::All,
+                    structured_view: true,
+                }],
+                workload_logs: vec![WorkloadLogPreset {
+                    name: "workload req".into(),
+                    query: "req=abc".into(),
+                    mode: crate::log_investigation::LogQueryMode::Regex,
+                    time_window: crate::log_investigation::LogTimeWindow::Last15Minutes,
+                    structured_view: false,
+                    label_filter: Some("app=api".into()),
+                    pod_filter: Some("api-0".into()),
+                    container_filter: Some("main".into()),
+                }],
+            },
+        };
+
+        let serialized = serde_json::to_string(&prefs).expect("serialized user prefs");
+        let decoded: UserPreferences =
+            serde_json::from_str(&serialized).expect("decoded user prefs");
+
+        assert_eq!(decoded.log_presets.pod_logs.len(), 1);
+        assert_eq!(decoded.log_presets.workload_logs.len(), 1);
+        assert_eq!(
+            decoded.log_presets.workload_logs[0]
+                .container_filter
+                .as_deref(),
+            Some("main")
+        );
     }
 }

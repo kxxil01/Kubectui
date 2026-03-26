@@ -35,12 +35,19 @@ Current milestone status:
 - Milestone 17: completed
 - Milestone 18: completed
 - Milestone 19: completed
-- Milestone 20: not started
+- Milestone 20: completed
 - Milestone 21: completed
 - Milestone 22: completed (v1)
 - Milestone 23: not started
 - Milestone 24: completed
 - Milestone 25: completed
+- Milestone 26: completed
+- Milestone 27: completed
+- Milestone 28: not started
+- Milestone 29: not started
+- Milestone 30: not started
+- Milestone 31: not started
+- Milestone 32: not started
 - Phase 8 (Watch-Backed Caches): completed
 
 Completion notes:
@@ -69,10 +76,13 @@ Completion notes:
 - PR #16 hardened the post-M18 surface: canonical RBAC-aware detail/action authorization, graceful forbidden list/discovery degradation, workbench/detail/palette permission preflight, paused CronJob next-run suppression, and CronJob history log gating based on live pods plus log access.
 - Milestone 19 shipped (PR #53): Pod-only ephemeral debug container launcher with preset/custom image selection, optional target-container PID namespace targeting, Kubernetes version/capability checks for stable ephemeral containers, action palette and detail-view `g` integration, action history coverage, and exec workbench reuse so the launched container opens in the canonical shell tab path. Follow-up tri-state detail authorization hardening also shipped with M19 so privileged actions now fail closed on unknown RBAC while read-only actions remain best-effort.
 - PR #54 hardened the post-M19 surface: `wait_for_debug_container_ready` now detects terminated container state and returns an immediate error with the real failure reason instead of polling for 30s and reporting a misleading timeout. Adds `container_state_is_terminated` helper alongside existing `container_state_is_running`.
+- Milestone 20 shipped (PR #58): workbench-hosted Helm history and rollback flow with release-deduped Helm tab, revision list, current-vs-target computed values diff, in-tab rollback confirmation on `R`, action palette/help integration, action-history tracking, Helm 3+ enforcement, selected-kube-context CLI execution, and regression coverage across parsing, routing, workbench state, and render smoke behavior.
 - Milestone 21 shipped (PR #18): comprehensive resource utilization dashboard — ClusterResourceSummary with cluster-wide CPU/memory utilization and overcommitment percentages, 5-gauge dashboard row (Nodes Ready, Pods Running, Workload Ready, Cluster CPU, Cluster Mem), Overcommit & Governance panel (commitment ratios, missing request/limit counts), Top Pod Consumers panel (top-5 CPU and memory), enhanced Namespace Utilization table with %CPU/R and %MEM/R columns, 10 new hideable pod columns (CPU, Memory, CPU Req, Mem Req, CPU Lim, Mem Lim, %CPU/R, %MEM/R, %CPU/L, %MEM/L), enriched node CPU/Memory columns with used/alloc/pct% format and threshold coloring, pod_metrics pipeline integration via metrics.k8s.io with graceful degradation, compact dashboard layout for small terminals, 20+ new tests, 3 criterion benchmarks.
 - Milestone 22 shipped (v1): workbench-hosted Drift tab, action palette integration, detail-view `D` shortcut, last-applied baseline extraction from `kubectl.kubernetes.io/last-applied-configuration`, full-fidelity manifest fetch for diffing (no truncation / no RBAC placeholder parsing), deterministic normalized unified diff rendering, explicit no-baseline / unavailable-manifest states, SSA-aware fallback messaging when only `managedFields` ownership exists, and regression coverage for normalization, ordering, and keybinding behavior. Current scope still does not invent a historical SSA baseline from `managedFields`.
 - Milestone 24 shipped: snapshot-only sanitizer findings integrated into the canonical diagnostics path, dedicated Health Report sidebar view, Issue Center source tagging (`Runtime` vs `Sanitizer`), annotation-based rule suppression via `kubectui.io/ignore`, and high-confidence checks for requests/limits, probes, security context, risky image tags, host namespace usage, missing PDB coverage, naked pods, service target mismatches, and unused ConfigMaps/Secrets. Findings stay cached by `snapshot_version`, use workload-template references to avoid false positives on scaled-to-zero or not-yet-started workloads, remain capped to the Issue Center ceiling, and are covered by regression tests.
 - Milestone 25 shipped: snapshot-only NetworkPolicy analysis for Pods, Namespaces, and NetworkPolicies, dedicated NetPol workbench tab with resolved ingress/egress rule trees, namespace isolation summaries, and a Pod reachability query (`C`) that evaluates source egress plus destination ingress intent in one canonical workbench flow. The connectivity surface reuses the relationship-tree renderer, stays API-free beyond the existing snapshot, explicitly frames output as policy intent rather than CNI enforcement, and caps broad peer expansions so large selectors do not explode the tree/render path.
+- Milestone 26 shipped (PR #59): workbench-hosted Rollout Control Center for Deployments, StatefulSets, and DaemonSets with revision-aware rollout inspection, workload-condition summaries, in-tab restart, Deployment pause/resume, revision undo with confirmation, action history coverage, palette/help/detail-view `O` integration, and API-native mutation/fetch paths without shelling out to `kubectl rollout`. The rollout tab dedupes per workload, preserves selected revision across refreshes, refreshes inspection after successful mutations, and shipped with regression coverage plus a positive render-path median check.
+- Milestone 27 shipped (PR #60): advanced investigation on the canonical pod/workload logs path with saved presets, regex/text mode, bounded time-window filters, exact RFC3339 jump-to-time, structured JSON summaries, severity/request-id badges, cross-pod correlation by request token or pod label, and filtered copy/export behavior that follows the active investigation view rather than raw buffers. Workload target refresh now rebuilds label/pod/container filter inventories as the single source of truth so presets and filters stay correct across retargets.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
 - 2026-03-18 kube 3.1 metadata watch adoption: namespace discovery and the Namespaces view now use metadata-only `Namespace` payloads end-to-end. The canonical watch path uses `metadata_watcher()` for cluster-scoped namespace updates, polling uses `list_metadata()` for namespace fetches, and namespace status is derived consistently from metadata (`Active` vs `Terminating`) so the picker and namespace view stay live with lower API payload cost.
@@ -105,7 +115,9 @@ Verification status for completed milestones:
 - Render profiling check passes on 2026-03-18: 5-run median vs pre-patch `HEAD` improved slightly (`render` `242.530ms -> 242.121ms`, `-0.409ms`, `-0.17%`; `sidebar` `18.366ms -> 18.342ms`; `header` `13.920ms -> 13.810ms`)
 - Latest ordinary-table render-template verification on 2026-03-19: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass after expanding helper coverage and tightening the sidebar cache path. The latest clean 5-run render-profile comparison vs clean `HEAD` is now positive across the primary global metrics (`render` median `240.670ms -> 238.851ms`, `-1.819ms`, `-0.76%`; `sidebar` `17.928ms -> 17.594ms`, `-0.334ms`, `-1.86%`; `header` `13.994ms -> 13.705ms`, `-0.289ms`, `-2.07%`). Treat the broader expansion and sidebar follow-up as shipped with the performance gate satisfied.
 - Latest structural refactor verification on 2026-03-19: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass after the `app/mod.rs` split, test extraction, and `main.rs` startup/helper extraction. Current root sizes are materially lower: `src/app/mod.rs` `2575 -> 267` lines, `src/main.rs` `3941 -> 3254` lines. The remaining large `main.rs` surface is now concentrated in the event loop rather than mixed with startup and test code.
-- Latest M19/M24/M25 verification on 2026-03-25: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after the final sanitizer false-positive fixes, NetworkPolicy selector hardening, and broad-peer render cap landed on the canonical workbench/render routes.
+- Latest M20 verification on 2026-03-25: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Helm history, computed-values diff, and rollback on the canonical workbench/action-history path.
+- Latest M26 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping the Rollout Control Center. The clean 5-run render median comparison vs pre-M26 `HEAD` was positive (`261.326ms -> 257.281ms`, `-4.045ms`, `-1.55%`). GitHub PR checks for PR #59 also passed: `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)`.
+- Latest M27 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping advanced log investigation. The final local review also fixed a single-pod all-containers build regression and hardened workload target refresh so stale pod/container/label filters cannot survive retargets.
 - remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
 
 ---
@@ -484,7 +496,7 @@ Current issue:
 
 Needed:
 
-- config-based plugin system for custom actions
+- config-based extension system for custom actions and optional AI hooks
 - variable substitution with resource context
 
 ## Gap T: No preventive misconfiguration detection
@@ -1434,7 +1446,7 @@ Production containers increasingly use distroless or scratch-based images that l
 
 ### Status
 
-Not started
+Completed (PR #58)
 
 ### Goal
 
@@ -1450,6 +1462,15 @@ Helm rollback is one of the most time-critical operations during incidents. Curr
 - per-revision: revision number, chart version, app version, status, timestamp, description
 - one-key rollback to a selected revision with confirmation
 - values diff between any two revisions
+
+### Implemented
+
+- workbench-hosted Helm tab with revision list, current revision detection, and per-release deduping
+- `h` shortcut from Helm release detail and Helm Releases list view
+- `Enter` opens current-vs-target revision values diff in the same Helm tab
+- `R` opens rollback confirmation and executes `helm rollback` with action-history tracking
+- Helm CLI integration bound to the selected kube context, with Helm 3+ enforcement and computed values diff via `helm get values --all`
+- regression coverage for CLI parsing, key routing, palette/help exposure, workbench state, and render smoke behavior
 
 ### Tasks
 
@@ -1617,7 +1638,7 @@ Configuration drift is a top-3 operational concern. When something breaks, the f
 
 ---
 
-## Milestone 23: Plugin / Custom Action System
+## Milestone 23: Extension System & AI Assistant Hooks
 
 ### Status
 
@@ -1625,56 +1646,78 @@ Not started
 
 ### Goal
 
-Let teams extend the action palette with custom operational workflows.
+Let teams extend Kubectui with custom operational workflows first, then layer on optional AI-assisted diagnosis through the same canonical action/workbench path.
 
 ### Why this matters
 
-This is k9s's most powerful extensibility feature and consistently cited as why power users stick with k9s. Every team has custom workflows — opening a resource in Grafana, running diagnostic scripts, triggering CI pipelines. No two teams' workflows are the same. The action palette already provides the UI framework; plugins extend the action catalog.
+The original plugin/custom action system remains one of the highest-leverage extensibility features because every team has different operational workflows: opening Grafana, running diagnostics, triggering CI, or jumping into internal tooling. But AI-assisted diagnosis is only worth adding if it sits on top of the same extensibility substrate instead of becoming a second hardcoded subsystem. The right long-term shape is: extensions are the platform, AI is one extension class on top of it.
 
 ### Scope
 
-- YAML config file defining custom actions
+- config-defined extension actions
 - variable substitution: `$NAME`, `$NAMESPACE`, `$KIND`, `$CONTEXT`, `$LABELS`
 - resource type filtering (action only appears for matching resources)
 - execution modes: background (capture output), foreground (terminal handoff), silent (fire and forget)
+- optional AI-backed analysis action for the selected resource
+- workbench-hosted output for both command and AI results
 - custom keyboard shortcuts (optional)
+
+### Delivery order
+
+1. Extension foundation first
+2. AI assistant hooks second
+3. Specialized AI workflows third
+
+Do not invert this order. The extension substrate is the platform; AI should consume it, not replace it.
 
 ### Tasks
 
-1. Define plugin config schema: `~/.config/kubectui/plugins.yaml` (or `plugins/` directory).
-2. Implement plugin loader: parse YAML, validate schema, register actions.
-3. Add plugin actions to action palette filtered by resource type.
+1. Define extension config schema: `~/.config/kubectui/extensions.yaml` (or `extensions/` directory).
+2. Implement extension loader: parse YAML, validate schema, register actions.
+3. Add extension actions to the action palette filtered by resource type.
 4. Implement variable substitution engine with shell-safe escaping.
-5. Add three execution modes:
+5. Add three command execution modes:
    - `background`: run command, capture output in workbench tab
    - `foreground`: hand off terminal (like existing YAML edit)
    - `silent`: run command, show success/failure in status bar
-6. Add plugin output workbench tab for background mode.
-7. Record plugin executions in action history.
-8. Hot-reload plugins on config file change (watch with notify).
-9. Ship example plugins: "Open in Grafana", "Copy connection string", "Run diagnostic".
-10. Add tests for config parsing, variable substitution, resource type matching, execution modes.
+6. Add extension output workbench tab for background mode.
+7. Record extension executions in action history.
+8. Hot-reload extensions on config file change (watch with `notify`).
+9. Add AI provider config model (provider, model, auth env var, timeout, token budget).
+10. Implement one first-class AI extension kind: `Ask AI` for the selected resource.
+11. Build compact AI context from existing canonical app data only: resource metadata, events, probes, sanitizer findings, capped logs, Helm/NetPol analysis when relevant.
+12. Render AI responses in a workbench tab with summary, likely causes, next steps, and uncertainty notes.
+13. Ship example extensions: "Open in Grafana", "Run diagnostic", "Ask AI about this resource".
+14. Add tests for config parsing, variable substitution, resource type matching, execution modes, AI context assembly, and workbench rendering.
 
 ### Deliverables
 
 - team-customizable operational workflows without app modifications
+- optional AI-assisted resource diagnosis without adding a second execution surface
 
 ### Risks
 
 - arbitrary command execution (security concern)
-- plugin config errors causing crashes
+- extension config errors causing crashes
+- provider/API latency and token-cost surprises
+- prompt/context bloat causing slow or low-signal AI responses
 
 ### Guardrails
 
-- plugins run with user's permissions only (no privilege escalation)
-- invalid plugin configs logged and skipped, not fatal
-- confirmation dialog for destructive-tagged plugins
+- extensions run with user's permissions only (no privilege escalation)
+- invalid extension configs are logged and skipped, not fatal
+- confirmation dialog for destructive-tagged command extensions
+- AI runs only on explicit user action; never on refresh or in render hot paths
+- AI context is bounded and assembled once per request, not per frame
+- provider/network work is always off the main render/input path
 - document security model clearly
 
 ### Acceptance Criteria
 
 - a team can add a custom "Open in Grafana" action that appears for Deployments/StatefulSets
-- plugin actions feel native — same palette, same history, same keybinding system
+- extension actions feel native — same palette, same history, same keybinding system
+- users can run `Ask AI` on a selected resource and get a useful, bounded diagnosis in a workbench tab
+- no measurable regression is introduced to ordinary render/input paths
 
 ---
 
@@ -1861,9 +1904,16 @@ These dependencies are strict unless there is a compelling reason to revise the 
 | 20 Helm History & Rollback | 0, 3 | needs action history and workbench |
 | 21 Resource Utilization | 0 | needs metrics API integration |
 | 22 Resource Diff View | 0, 2 | needs YAML view infrastructure |
-| 23 Plugin / Custom Actions | 9 | needs action palette framework |
+| 23 Extension System & AI Assistant Hooks | 9 | needs action palette framework |
 | 24 Resource Sanitizer | 12 | builds on issue center model |
 | 25 Network Policy Visualizer | 10 | builds on relationship explorer infrastructure |
+| 26 Rollout Control Center | 3, 12, 13, 20 | builds on action history, issues, timeline, and rollback workflows |
+| 27 Advanced Log Investigation | 5 | builds on canonical log session/workbench path |
+| 28 Hotkeys / Workspaces / Cluster Banks | 14, 9 | needs persistence and action/keybinding framework |
+| 29 Security / Vulnerability Center | 12, 24 | builds on issue center and sanitizer surfaces |
+| 30 Resource Create / Apply Templates | 0, 1, 9 | needs canonical validation, workbench/editor, and action framework |
+| 31 Service / Traffic Debugging | 10, 25 | builds on relationship explorer and network policy semantics |
+| 32 Node Shell / Node Debug | 11, 19 | builds on node-ops safety model and debug/exec infrastructure |
 
 ---
 
@@ -1904,11 +1954,21 @@ This is the execution order.
 
 ## P5 (Next)
 
-- Milestone 20: Helm Release History & Rollback
+- Milestone 28: Hotkeys / Workspaces / Cluster Banks
+- Milestone 29: Security / Vulnerability Center
 
 ## P6
 
-- Milestone 23: Plugin / Custom Action System
+- Milestone 30: Resource Create / Apply Templates
+- Milestone 31: Service / Traffic Debugging
+
+## P7
+
+- Milestone 23: Extension System & AI Assistant Hooks
+
+## P8 (Later)
+
+- Milestone 32: Node Shell / Node Debug
 
 ## Continuous
 
@@ -1918,18 +1978,209 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M19 and M21-M25 are complete. The next unstarted milestone is M20: Helm Release History & Rollback.
+M0-M27 are complete. The next highest-priority unstarted milestones are the direct operator workflow wins, with M23 intentionally deferred behind them.
 
 Recommended near-term order:
 
-- M20: Helm Release History & Rollback
-- M23: Plugin / Custom Action System
+- M28: Hotkeys / Workspaces / Cluster Banks
+- M29: Security / Vulnerability Center
+- M30: Resource Create / Apply Templates
 
 Do not start next with:
 
-- AI features
+- M23 before the higher-leverage workflow wins above
+- autonomous/general AI features outside the M23 extension path
 - visual graph experiments that don't fit TUI constraints
 - desktop-style interaction patterns
+
+---
+
+## Remaining Backlog Priority Order
+
+These are the highest-value remaining roadmap candidates. They are intentionally ordered by operator leverage first, implementation risk second, and fit with KubecTUI's performance constraints third.
+
+### Big Win Priority Order
+
+1. M28: Hotkeys / Workspaces / Cluster Banks
+2. M29: Security / Vulnerability Center
+3. M30: Resource Create / Apply Templates
+4. M31: Service / Traffic Debugging
+5. M23: Extension System & AI Assistant Hooks
+6. M32: Node Shell / Node Debug
+
+### Why this order
+
+- M26 and M27 are shipped and validated; they remain the reference for the kind of high-leverage workflow-compression milestone that should come first.
+- M28 now becomes the next amplifier milestone after logs by reducing repetitive navigation and making high-value workflows one keystroke away.
+- M29 is high value but depends on either external scanners/operators or a careful local integration model, so it should follow the workflow-compression milestones first.
+- M30 is useful, but creation/apply flows are less central than investigation/recovery flows for KubecTUI's current positioning.
+- M31 is valuable but overlaps with M25 and existing relationship tooling, so it should come after the higher-leverage operational surfaces.
+- M23 is still strategically useful, but it is an extensibility platform rather than a direct operator workflow win; it should follow the bigger day-to-day and incident-response gains first.
+- M32 is powerful but riskier, more privilege-sensitive, and easier to get wrong operationally, so it belongs later.
+
+### Candidate Milestones
+
+#### M26: Rollout Control Center
+
+- Status: Completed (PR #59)
+- Big win: highest
+- Why:
+  - strongest operator value in the remaining roadmap
+  - directly adjacent to existing Helm rollback, action history, issue center, and workload detail flows
+  - high incident-response leverage without requiring new architectural primitives
+- Scope:
+  - rollout status/watch in workbench
+  - workload revision history for Deployments, StatefulSets, and DaemonSets
+  - pause/resume rollout
+  - undo rollout
+  - failed rollout diagnosis summary from existing conditions/events/issues
+- Guardrails:
+  - reuse canonical action/workbench/history paths
+  - no duplicate workload mutation surface
+  - no background polling beyond the existing data model
+- Shipped scope:
+  - workbench-hosted rollout inspection tab opened via detail-view `O` and action palette
+  - revision history for Deployments, StatefulSets, and DaemonSets
+  - in-tab restart, Deployment pause/resume, and revision undo with confirmation
+  - condition/status summaries plus post-mutation refresh and action-history recording
+  - render/input regression tests and positive median render check before merge
+
+#### M27: Advanced Log Investigation
+
+- Big win: very high
+- Why:
+  - logs are still one of the highest-frequency operator workflows in Lens and K9s-class tools
+  - KubecTUI already has a strong logs base, so deeper investigation features have good leverage
+- Scope:
+  - saved log filters/presets
+  - regex search
+  - jump-to-time / time-window filters
+  - structured JSON log folding
+  - severity/request-id highlighting
+  - cross-pod correlation by label or token
+- Guardrails:
+  - preserve bounded buffers and explicit follow lifecycle
+  - keep parsing/filtering off hot render paths
+  - no unbounded in-memory correlation graph
+- Shipped scope:
+  - canonical shared log investigation model reused by pod logs and workload logs
+  - saved pod/workload presets with persistence, cycling, and scoped naming
+  - regex/text mode, bounded time windows, exact RFC3339 jump-to-time, and structured JSON summaries
+  - severity/request-id badges plus token-based and label-based correlation on workload logs
+  - filtered copy/export behavior and help/keybinding coverage on the existing workbench path
+  - final hardening pass fixed stale workload filter inventories on target refresh and the single-pod all-containers bootstrap path
+
+#### M28: Hotkeys / Workspaces / Cluster Banks
+
+- Big win: high
+- Why:
+  - compresses repetitive operator workflows
+  - compounds the value of M20, M24, M25, and M23 extensions
+- Scope:
+  - saved workspaces / layouts
+  - named cluster/view banks
+  - user-defined hotkeys for views/actions
+  - optional incident presets for common workflows
+- Guardrails:
+  - stable persisted format
+  - explicit context boundaries
+  - no hidden state mutations when switching contexts
+
+#### M29: Security / Vulnerability Center
+
+- Big win: medium-high
+- Why:
+  - natural extension of M24 sanitizer/health reporting
+  - strong value for operator/security collaboration
+- Scope:
+  - vulnerability summaries from cluster-integrated scanners/operators
+  - severity rollups by workload/namespace
+  - drill-down from issue center / health report
+- Guardrails:
+  - prefer direct integrations with established cluster-side tools
+  - do not embed a separate scanning engine in KubecTUI
+  - keep data fetches bounded and explicit
+
+#### M30: Resource Create / Apply Templates
+
+- Big win: medium
+- Why:
+  - useful for resource bootstrapping and repetitive apply flows
+  - complements workbench/editor flows
+- Scope:
+  - create/apply from built-in templates
+  - variableized snippets for common workload/service patterns
+  - namespace-scoped resource templates
+- Guardrails:
+  - validate inputs up front
+  - no hidden resource creation without explicit confirmation
+  - avoid turning KubecTUI into a generic IDE/editor
+
+#### M31: Service / Traffic Debugging
+
+- Big win: medium
+- Why:
+  - closes the gap between Service state, Endpoints, Ingress, DNS, port-forward, and NetworkPolicy intent
+  - useful for "why is traffic broken?" investigations
+- Scope:
+  - service endpoint resolution audit
+  - ingress/backend path tracing
+  - DNS/debug helpers
+  - port-forward health and reconnection diagnostics
+- Guardrails:
+  - keep it text-first and explanation-first
+  - reuse relationships and M25 semantics instead of building a graph canvas
+
+#### M23: Extension System & AI Assistant Hooks
+
+- Big win: strategic, but deferred
+- Why:
+  - still valuable as a platform for customization and optional AI-assisted diagnosis
+  - lower immediate operator payoff than rollout/logs/workspace improvements
+  - should be built after the bigger first-order workflow wins are already shipped
+- Scope:
+  - keep the milestone definition above
+  - preserve the phased order inside M23 itself: extension foundation, then AI hooks, then specialized AI workflows
+- Guardrails:
+  - do not build AI outside the canonical extension/action/workbench path
+  - keep all provider/network work off render/input hot paths
+  - treat this as a later platform investment, not the immediate next milestone
+
+#### M32: Node Shell / Node Debug
+
+- Big win: specialized
+- Why:
+  - valuable for cluster/SRE operators
+  - lower-frequency but high-power workflow
+- Scope:
+  - guarded node debug shell flow
+  - explicit confirmations and privilege warnings
+  - node troubleshooting helpers
+- Guardrails:
+  - strict authz/confirmation flow
+  - no silent privilege expansion
+  - keep it later than workload-focused investigation features
+
+### Recommended Remaining Order
+
+- M28: Hotkeys / Workspaces / Cluster Banks
+- M29: Security / Vulnerability Center
+- M30: Resource Create / Apply Templates
+- M31: Service / Traffic Debugging
+- M23 Phase 1: extension foundation
+- M23 Phase 2: AI assistant hooks
+- M23 Phase 3: specialized AI workflows
+- M32: Node Shell / Node Debug
+
+### Research Basis
+
+This ordering is informed by the workflows emphasized in active operator tools and docs:
+
+- K9s plugin, XRay, shell, and workflow emphasis
+- Lens/Freelens command palette, logs, terminal, overview, and hotbar workflows
+- KubecTUI's existing strengths: workbench, action history, Helm rollback, health/sanitizer, network policy analysis
+
+The goal is not parity for its own sake. The goal is to invest next in the workflows that most reduce operator round-trips while staying fast and terminal-native.
 
 ---
 
@@ -1949,7 +2200,7 @@ Examples:
 - capability tables
 - persistence model
 - keybinding registry
-- plugin config schema
+- extension config schema
 - sanitizer rule engine
 
 Rules:
@@ -2027,7 +2278,7 @@ Examples:
 - sort persistence
 - column persistence
 - bookmark persistence
-- plugin config loading
+- extension config loading
 
 Rules:
 
@@ -2067,8 +2318,8 @@ A milestone is done only when:
 
 These are valid ideas, but they are not current milestone priorities:
 
-- AI assistant features
-- extension marketplace (plugin system in M23 is config-based, not a marketplace)
+- autonomous AI agents that mutate cluster state without explicit user action
+- extension marketplace (M23 is config-based extension infrastructure, not a marketplace)
 - desktop-like window choreography
 - visually complex graph canvases
 - integrated Prometheus metric graphs (sparklines possible in later milestone)
@@ -2087,6 +2338,7 @@ These are workflow references, not UI templates:
 - Lens docs: [https://docs.k8slens.dev/](https://docs.k8slens.dev/)
 - Lens repo: [https://github.com/lensapp/lens](https://github.com/lensapp/lens)
 - Freelens repo: [https://github.com/freelensapp/freelens](https://github.com/freelensapp/freelens)
+- K9s repo/docs: [https://github.com/derailed/k9s](https://github.com/derailed/k9s)
 
 Use them to learn:
 
@@ -2122,7 +2374,7 @@ The correct path is:
 - add view personalization and workspace persistence (done)
 - close daily workflow friction (secrets, bookmarks, cronjob management)
 - unlock modern debugging patterns (ephemeral containers, Helm rollback, utilization)
-- add drift detection and extensibility (diff view, plugins, sanitizer)
+- add drift detection and extensibility (diff view, extension system, sanitizer)
 - complete network visibility (policy visualizer)
 - preserve speed at every step
 

@@ -349,4 +349,30 @@ impl AppState {
             detail.probe_panel = None;
         }
     }
+
+    pub fn toggle_active_log_correlation(&mut self) -> Result<String, String> {
+        let message = {
+            let Some(tab) = self.workbench.active_tab_mut() else {
+                return Err("No active workbench tab.".to_string());
+            };
+
+            match &mut tab.state {
+                WorkbenchTabState::PodLogs(tab) => {
+                    match tab.viewer.toggle_correlation_on_current_line()? {
+                        Some(request_id) => format!("Correlating pod logs on req={request_id}"),
+                        None => "Cleared pod log correlation".to_string(),
+                    }
+                }
+                WorkbenchTabState::WorkloadLogs(tab) => match tab
+                    .toggle_correlation_on_current_line()?
+                {
+                    Some(request_id) => format!("Correlating workload logs on req={request_id}"),
+                    None => "Cleared workload log correlation".to_string(),
+                },
+                _ => return Err("Log correlation is only available from log tabs.".to_string()),
+            }
+        };
+        self.set_status(message.clone());
+        Ok(message)
+    }
 }

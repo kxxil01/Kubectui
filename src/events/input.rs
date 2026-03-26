@@ -114,7 +114,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(tab) = app_state.workbench_mut().active_tab_mut()
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                logs_tab.viewer.scroll_offset = logs_tab.viewer.scroll_offset.saturating_sub(1);
+                logs_tab.viewer.scroll_filtered_up();
+                logs_tab.viewer.follow_mode = false;
                 return true;
             }
             false
@@ -123,8 +124,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(tab) = app_state.workbench_mut().active_tab_mut()
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                let max = logs_tab.viewer.lines.len().saturating_sub(1);
-                logs_tab.viewer.scroll_offset = (logs_tab.viewer.scroll_offset + 1).min(max);
+                logs_tab.viewer.scroll_filtered_down();
+                logs_tab.viewer.follow_mode = false;
                 return true;
             }
             false
@@ -133,7 +134,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(tab) = app_state.workbench_mut().active_tab_mut()
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                logs_tab.viewer.scroll_offset = 0;
+                logs_tab.viewer.scroll_filtered_top();
+                logs_tab.viewer.follow_mode = false;
                 return true;
             }
             false
@@ -142,7 +144,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             if let Some(tab) = app_state.workbench_mut().active_tab_mut()
                 && let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state
             {
-                logs_tab.viewer.scroll_offset = logs_tab.viewer.lines.len().saturating_sub(1);
+                logs_tab.viewer.scroll_filtered_bottom();
                 logs_tab.viewer.follow_mode = true;
                 return true;
             }
@@ -230,6 +232,125 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             }
             false
         }
+        AppAction::OpenLogTimeJump => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut() {
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        logs_tab.viewer.open_time_jump();
+                        true
+                    }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        logs_tab.open_time_jump();
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+        AppAction::ApplyLogTimeJump => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut() {
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        logs_tab.viewer.commit_time_jump();
+                        true
+                    }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        logs_tab.commit_time_jump();
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+        AppAction::CancelLogTimeJump => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut() {
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        logs_tab.viewer.cancel_time_jump();
+                        true
+                    }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        logs_tab.cancel_time_jump();
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+        AppAction::ToggleLogRegexMode => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut() {
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        logs_tab.viewer.toggle_search_mode();
+                        true
+                    }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        logs_tab.toggle_text_filter_mode();
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+        AppAction::ToggleLogTimeWindow => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut() {
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        logs_tab.viewer.cycle_time_window();
+                        true
+                    }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        logs_tab.cycle_time_window();
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+        AppAction::CycleWorkloadLogLabelFilter => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut()
+                && let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state
+            {
+                logs_tab.cycle_label_filter();
+                true
+            } else {
+                false
+            }
+        }
+        AppAction::ToggleStructuredLogView => {
+            if let Some(tab) = app_state.workbench_mut().active_tab_mut() {
+                match &mut tab.state {
+                    WorkbenchTabState::PodLogs(logs_tab) => {
+                        logs_tab.viewer.structured_view = !logs_tab.viewer.structured_view;
+                        true
+                    }
+                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                        logs_tab.structured_view = !logs_tab.structured_view;
+                        true
+                    }
+                    _ => false,
+                }
+            } else {
+                false
+            }
+        }
+        AppAction::ToggleLogCorrelation => match app_state.toggle_active_log_correlation() {
+            Ok(_) => true,
+            Err(err) => {
+                app_state.set_error(err);
+                true
+            }
+        },
         // LogsViewerSelectContainer / SelectAll / TogglePrevious / ToggleTimestamps handled in main.rs (needs async log fetch)
         AppAction::LogsViewerTogglePrevious => true,
         AppAction::LogsViewerSelectContainer(_) => true,
@@ -444,6 +565,27 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             // Handled in main.rs (needs log buffer access)
             true
         }
+        AppAction::SaveLogPreset => match app_state.save_active_log_preset() {
+            Ok(_) => true,
+            Err(err) => {
+                app_state.set_error(err);
+                true
+            }
+        },
+        AppAction::ApplyPreviousLogPreset => match app_state.cycle_active_log_preset(false) {
+            Ok(_) => true,
+            Err(err) => {
+                app_state.set_error(err);
+                true
+            }
+        },
+        AppAction::ApplyNextLogPreset => match app_state.cycle_active_log_preset(true) {
+            Ok(_) => true,
+            Err(err) => {
+                app_state.set_error(err);
+                true
+            }
+        },
         AppAction::PaletteAction { .. } => {
             app_state.command_palette.close();
             true
@@ -560,14 +702,15 @@ mod tests {
     #[test]
     fn logs_viewer_search_close_applies_query_and_jumps_to_first_match() {
         use crate::app::ResourceRef;
+        use crate::log_investigation::LogEntry;
 
         let mut app = AppState::default();
         let resource = ResourceRef::Pod("pod-0".into(), "default".into());
         let mut tab = PodLogsTabState::new(resource);
         tab.viewer.lines = vec![
-            "booting".into(),
-            "ready check pending".into(),
-            "steady state".into(),
+            LogEntry::from_raw("booting"),
+            LogEntry::from_raw("ready check pending"),
+            LogEntry::from_raw("steady state"),
         ];
         tab.viewer.searching = true;
         tab.viewer.search_input = "ready".into();
@@ -585,5 +728,174 @@ mod tests {
         assert_eq!(tab.viewer.search_query, "ready");
         assert_eq!(tab.viewer.scroll_offset, 1);
         assert!(!tab.viewer.follow_mode);
+    }
+
+    #[test]
+    fn toggle_log_regex_mode_updates_workload_filter_mode() {
+        use crate::{
+            app::ResourceRef,
+            log_investigation::{LogQueryMode, LogTimeWindow},
+            workbench::{WorkbenchTabState, WorkloadLogsTabState},
+        };
+
+        let mut app = AppState::default();
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+                ResourceRef::Pod("pod-0".into(), "default".into()),
+                1,
+            )));
+
+        assert!(apply_action(AppAction::ToggleLogRegexMode, &mut app));
+
+        let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench().active_tab().unwrap().state
+        else {
+            panic!("expected workload logs tab");
+        };
+        assert_eq!(tab.text_filter_mode, LogQueryMode::Regex);
+
+        assert!(apply_action(AppAction::ToggleLogTimeWindow, &mut app));
+        let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench().active_tab().unwrap().state
+        else {
+            panic!("expected workload logs tab");
+        };
+        assert_eq!(tab.time_window, LogTimeWindow::Last5Minutes);
+    }
+
+    #[test]
+    fn apply_saved_log_preset_without_saved_entries_sets_error() {
+        use crate::app::ResourceRef;
+
+        let mut app = AppState::default();
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+                ResourceRef::Pod("pod-0".into(), "default".into()),
+            )));
+
+        assert!(apply_action(AppAction::ApplyNextLogPreset, &mut app));
+        assert_eq!(app.error_message(), Some("No saved pod log presets yet."));
+    }
+
+    #[test]
+    fn toggle_log_correlation_sets_and_clears_request_filter() {
+        use crate::{app::ResourceRef, log_investigation::LogEntry};
+
+        let mut app = AppState::default();
+        let mut tab = PodLogsTabState::new(ResourceRef::Pod("pod-0".into(), "default".into()));
+        tab.viewer.lines.push(LogEntry::from_raw(
+            "2026-03-26T10:00:00Z request_id=req-7 started",
+        ));
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(tab));
+
+        assert!(apply_action(AppAction::ToggleLogCorrelation, &mut app));
+        let WorkbenchTabState::PodLogs(tab) = &app.workbench().active_tab().unwrap().state else {
+            panic!("expected pod logs tab");
+        };
+        assert_eq!(tab.viewer.correlation_request_id.as_deref(), Some("req-7"));
+
+        assert!(apply_action(AppAction::ToggleLogCorrelation, &mut app));
+        let WorkbenchTabState::PodLogs(tab) = &app.workbench().active_tab().unwrap().state else {
+            panic!("expected pod logs tab");
+        };
+        assert!(tab.viewer.correlation_request_id.is_none());
+    }
+
+    #[test]
+    fn toggle_workload_log_correlation_sets_and_clears_request_filter() {
+        use crate::{
+            app::ResourceRef,
+            log_investigation::LogEntry,
+            workbench::{WorkloadLogLine, WorkloadLogsTabState},
+        };
+
+        let mut app = AppState::default();
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "default".into()), 1);
+        tab.lines.push(WorkloadLogLine {
+            pod_name: "api-0".into(),
+            container_name: "main".into(),
+            entry: LogEntry::from_raw("2026-03-26T10:00:00Z request_id=req-9 started"),
+            is_stderr: false,
+        });
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::WorkloadLogs(tab));
+
+        assert!(apply_action(AppAction::ToggleLogCorrelation, &mut app));
+        let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench().active_tab().unwrap().state
+        else {
+            panic!("expected workload logs tab");
+        };
+        assert_eq!(tab.correlation_request_id.as_deref(), Some("req-9"));
+
+        assert!(apply_action(AppAction::ToggleLogCorrelation, &mut app));
+        let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench().active_tab().unwrap().state
+        else {
+            panic!("expected workload logs tab");
+        };
+        assert!(tab.correlation_request_id.is_none());
+    }
+
+    #[test]
+    fn apply_log_time_jump_moves_pod_logs_to_nearest_visible_timestamp() {
+        use crate::{app::ResourceRef, log_investigation::LogEntry};
+
+        let mut app = AppState::default();
+        let mut tab = PodLogsTabState::new(ResourceRef::Pod("pod-0".into(), "default".into()));
+        tab.viewer
+            .lines
+            .push(LogEntry::from_raw("2026-03-26T10:00:00Z first"));
+        tab.viewer
+            .lines
+            .push(LogEntry::from_raw("2026-03-26T10:04:00Z second"));
+        tab.viewer.open_time_jump();
+        tab.viewer.time_jump_input = "2026-03-26T10:03:30Z".into();
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(tab));
+
+        assert!(apply_action(AppAction::ApplyLogTimeJump, &mut app));
+        let WorkbenchTabState::PodLogs(tab) = &app.workbench().active_tab().unwrap().state else {
+            panic!("expected pod logs tab");
+        };
+        assert_eq!(tab.viewer.scroll_offset, 1);
+        assert!(!tab.viewer.jumping_to_time);
+        assert!(tab.viewer.time_jump_error.is_none());
+    }
+
+    #[test]
+    fn apply_log_time_jump_moves_workload_logs_to_nearest_visible_timestamp() {
+        use crate::{
+            app::ResourceRef,
+            log_investigation::LogEntry,
+            workbench::{WorkloadLogLine, WorkloadLogsTabState},
+        };
+
+        let mut app = AppState::default();
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "default".into()), 1);
+        tab.lines.push(WorkloadLogLine {
+            pod_name: "api-0".into(),
+            container_name: "main".into(),
+            entry: LogEntry::from_raw("2026-03-26T10:00:00Z first"),
+            is_stderr: false,
+        });
+        tab.lines.push(WorkloadLogLine {
+            pod_name: "api-1".into(),
+            container_name: "main".into(),
+            entry: LogEntry::from_raw("2026-03-26T10:08:00Z second"),
+            is_stderr: false,
+        });
+        tab.open_time_jump();
+        tab.time_jump_input = "2026-03-26T10:06:00Z".into();
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::WorkloadLogs(tab));
+
+        assert!(apply_action(AppAction::ApplyLogTimeJump, &mut app));
+        let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench().active_tab().unwrap().state
+        else {
+            panic!("expected workload logs tab");
+        };
+        assert_eq!(tab.scroll, 1);
+        assert!(!tab.jumping_to_time);
+        assert!(tab.time_jump_error.is_none());
     }
 }

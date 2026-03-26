@@ -412,6 +412,24 @@ impl AppState {
                         }
                         _ => AppAction::None,
                     }
+                } else if tab.viewer.jumping_to_time {
+                    match key.code {
+                        KeyCode::Esc => AppAction::CancelLogTimeJump,
+                        KeyCode::Enter => AppAction::ApplyLogTimeJump,
+                        KeyCode::Backspace => {
+                            tab.viewer.time_jump_input.pop();
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.viewer.time_jump_input.clear();
+                            AppAction::None
+                        }
+                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.viewer.time_jump_input.push(c);
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    }
                 } else {
                     match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
@@ -466,11 +484,35 @@ impl AppState {
                         KeyCode::Char('N') if !tab.viewer.picking_container => {
                             AppAction::LogsViewerSearchPrev
                         }
+                        KeyCode::Char('R') if !tab.viewer.picking_container => {
+                            AppAction::ToggleLogRegexMode
+                        }
+                        KeyCode::Char('W') if !tab.viewer.picking_container => {
+                            AppAction::ToggleLogTimeWindow
+                        }
+                        KeyCode::Char('T') if !tab.viewer.picking_container => {
+                            AppAction::OpenLogTimeJump
+                        }
+                        KeyCode::Char('C') if !tab.viewer.picking_container => {
+                            AppAction::ToggleLogCorrelation
+                        }
+                        KeyCode::Char('J') if !tab.viewer.picking_container => {
+                            AppAction::ToggleStructuredLogView
+                        }
                         KeyCode::Char('y') if !tab.viewer.picking_container => {
                             AppAction::CopyLogContent
                         }
                         KeyCode::Char('S') if !tab.viewer.picking_container => {
                             AppAction::ExportLogs
+                        }
+                        KeyCode::Char('M') if !tab.viewer.picking_container => {
+                            AppAction::SaveLogPreset
+                        }
+                        KeyCode::Char('[') if !tab.viewer.picking_container => {
+                            AppAction::ApplyPreviousLogPreset
+                        }
+                        KeyCode::Char(']') if !tab.viewer.picking_container => {
+                            AppAction::ApplyNextLogPreset
                         }
                         _ => AppAction::None,
                     }
@@ -490,9 +532,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Enter => {
-                            tab.text_filter = tab.filter_input.clone();
-                            tab.editing_text_filter = false;
-                            tab.scroll = 0;
+                            tab.commit_text_filter();
                             AppAction::None
                         }
                         KeyCode::Backspace => {
@@ -505,6 +545,24 @@ impl AppState {
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.filter_input.push(c);
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    }
+                } else if tab.jumping_to_time {
+                    match key.code {
+                        KeyCode::Esc => AppAction::CancelLogTimeJump,
+                        KeyCode::Enter => AppAction::ApplyLogTimeJump,
+                        KeyCode::Backspace => {
+                            tab.time_jump_input.pop();
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.time_jump_input.clear();
+                            AppAction::None
+                        }
+                        KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.time_jump_input.push(c);
                             AppAction::None
                         }
                         _ => AppAction::None,
@@ -562,8 +620,21 @@ impl AppState {
                             tab.cycle_container_filter();
                             AppAction::None
                         }
+                        KeyCode::Char('R') => AppAction::ToggleLogRegexMode,
+                        KeyCode::Char('W') => AppAction::ToggleLogTimeWindow,
+                        KeyCode::Char('T') => AppAction::OpenLogTimeJump,
+                        KeyCode::Char('L') => AppAction::CycleWorkloadLogLabelFilter,
+                        KeyCode::Char('C') => AppAction::ToggleLogCorrelation,
+                        KeyCode::Char('J') => AppAction::ToggleStructuredLogView,
                         KeyCode::Char('y') if !tab.editing_text_filter => AppAction::CopyLogContent,
                         KeyCode::Char('S') if !tab.editing_text_filter => AppAction::ExportLogs,
+                        KeyCode::Char('M') if !tab.editing_text_filter => AppAction::SaveLogPreset,
+                        KeyCode::Char('[') if !tab.editing_text_filter => {
+                            AppAction::ApplyPreviousLogPreset
+                        }
+                        KeyCode::Char(']') if !tab.editing_text_filter => {
+                            AppAction::ApplyNextLogPreset
+                        }
                         _ => AppAction::None,
                     }
                 }
@@ -975,9 +1046,13 @@ impl AppState {
             | WorkbenchTabState::NetworkPolicy(_) => true,
             WorkbenchTabState::Connectivity(tab) => tab.focus != ConnectivityTabFocus::Filter,
             WorkbenchTabState::PodLogs(tab) => {
-                !tab.viewer.searching && !tab.viewer.picking_container
+                !tab.viewer.searching
+                    && !tab.viewer.jumping_to_time
+                    && !tab.viewer.picking_container
             }
-            WorkbenchTabState::WorkloadLogs(tab) => !tab.editing_text_filter,
+            WorkbenchTabState::WorkloadLogs(tab) => {
+                !tab.editing_text_filter && !tab.jumping_to_time
+            }
             WorkbenchTabState::DecodedSecret(_) => false,
             WorkbenchTabState::HelmHistory(tab) => {
                 !tab.rollback_pending && tab.confirm_rollback_revision.is_none()
