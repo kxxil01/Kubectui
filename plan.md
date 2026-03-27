@@ -50,8 +50,8 @@ Current milestone status:
 - Milestone 32: completed
 - Milestone 33: completed
 - Milestone 34: completed
-- Milestone 35: not started
-- Milestone 36: not started
+- Milestone 35: completed
+- Milestone 36: completed
 - Milestone 37: not started
 - Phase 8 (Watch-Backed Caches): completed
 
@@ -95,6 +95,8 @@ Completion notes:
 - Milestone 32 shipped (PR #66): guarded node debug shell flow on the canonical detail/exec path with namespace + profile selection, API-native debug pod launch on the target node, explicit host-namespace and privilege warnings, automatic pod cleanup on close/restore/context switch/shutdown, and action-history coverage that now records success only after shell attach is established. The final hardening pass also fixed orphan cleanup on failed launch readiness, stopped defaulting to a nonexistent `default` namespace when the cluster does not have one, and aligned attach-failure semantics for both node debug and Pod debug shells.
 - Milestone 33 shipped: disposable `kind`-backed smoke automation for rollout control, ephemeral debug containers, Helm history/rollback, and NetworkPolicy intent validation; canonical `scripts/kind_smoke.sh`; release checklist docs; CI `kind-smoke` coverage; and release-script hardening that moves version bumps onto a release PR branch and separates post-merge tag publication into `scripts/publish_release_tag.sh` so release prep no longer bypasses the repo branch/PR policy.
 - Milestone 34 shipped: snapshot-cached Projects view in Overview, native-label application scope inference with Kubernetes recommended label precedence, project summary pane spanning workloads/services/ingresses/pods/issues, representative-resource jump on `Enter`, sidebar/project count integration, and workspace/bank jump persistence via restored per-view search queries.
+- Milestone 35 shipped (PR #75): optional Gateway API support on the canonical traffic/relationship paths with `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, and `ReferenceGrant` views, Gateway-aware traffic debugging from routes and services, conservative cross-namespace attachment and backend-reference semantics, project attribution for Gateway routes, and shared Gateway policy evaluation in one canonical semantics module instead of duplicated ad hoc checks.
+- Milestone 36 shipped (PR #76): guided runbooks and incident packs on the canonical palette/workbench/action path with validated built-in plus config-backed runbooks, step-level checklist/workspace/detail-action/extension/AI execution, progress tracking and banner feedback in a dedicated runbook tab, and preserved runbook state across workspace, namespace, and context restores so incident flow does not get dropped during operator navigation.
 - 2026-03-27 release-prep pass shipped: README now reflects the post-roadmap feature surface, `CHANGELOG.md` captures the roadmap-completion release, and the `?` help overlay now advertises the broader action palette surface accurately.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
@@ -138,6 +140,8 @@ Verification status for completed milestones:
 - Latest M32 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Node Shell / Node Debug. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `254.084ms -> 248.616ms`, `-5.468ms`; `sidebar` `21.536ms -> 20.920ms`; `header` `15.319ms -> 14.470ms`).
 - Latest M23 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping both AI assistant hooks and specialized AI workflows. The final clean 5-run render-profile comparison for Phase 3 vs clean `origin/main` stayed positive on the required medians (`render` `252.801ms -> 251.295ms`, `-1.506ms`; `sidebar` `21.438ms -> 21.220ms`; `header` `14.600ms -> 14.608ms`).
 - Latest stabilization verification on 2026-03-27: targeted suites for AI, workspaces, Helm, rollout, advanced logs, sanitizer, vulnerabilities, and NetworkPolicy analysis all pass locally (`cargo test --all-targets --all-features ai:: -- --nocapture`, `workspaces`, `helm`, `rollout`, `log_investigation`, `issues::`, `vulnerabilities`, `network_policy`).
+- Latest M35 verification on 2026-03-28: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Gateway API support. The raw totals rose because the profile loop now renders 5 additional top-level views; normalized per-view medians still stayed acceptable (`render` `-2.63%`, `sidebar` `-0.03%`, `header` `+0.91%` vs clean pre-M35 `HEAD`).
+- Latest M36 verification on 2026-03-28: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `git diff --check` all pass locally after shipping Guided Runbooks & Incident Packs. The clean 5-run render-profile comparison vs clean `HEAD` remained positive on the primary metrics (`render` `279.121ms -> 272.215ms`; `sidebar` `25.058ms -> 25.066ms`; `header` `16.542ms -> 16.425ms`), with global render and header improved and sidebar effectively flat.
 - Latest M33 verification on 2026-03-27: `bash -n scripts/kind_smoke.sh`, `bash -n scripts/release.sh`, `bash -n scripts/publish_release_tag.sh`, `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, `cargo test --test kind_smoke -- --ignored --nocapture --test-threads=1`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping release hardening and disposable-cluster smoke automation. The ignored smoke suite is now gated behind `KUBECTUI_KIND_SMOKE=1` and a `kind-*` kube context, so routine local/CI validation can compile the suite safely while real cluster-backed smoke runs stay explicit and deterministic.
 - Latest M34 verification on 2026-03-27: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Projects / Application Scopes. The clean 5-run profiling sweep versus clean `main` now includes one additional top-level view (`2040` profiled frames vs `2000` before M34), so raw `render` totals are not directly comparable across the two trees; normalized per-frame totals stayed close (`249.992ms / 2000 = 0.1250ms` baseline vs `257.008ms / 2040 = 0.1260ms` candidate), and the added cost is attributable primarily to the new Projects view itself rather than regressions in existing hotspot paths.
 
@@ -1995,7 +1999,7 @@ This is the execution order.
 
 ## P5 (Next)
 
-- Milestone 35: Gateway API & Modern Traffic Surface
+- Milestone 37: Governance & Cost Center
 
 ## Continuous
 
@@ -2005,11 +2009,11 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M34 are complete.
+M0-M36 are complete.
 
 Recommended near-term order:
 
-- M35 -> M36 -> M37
+- M37
 
 Do not start next with:
 
@@ -2025,19 +2029,11 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 ### Big Win Priority Order
 
-- M33: Release Hardening & Smoke Automation
-- M34: Projects / Application Scopes
-- M35: Gateway API & Modern Traffic Surface
-- M36: Guided Runbooks & Incident Packs
 - M37: Governance & Cost Center
 
 ### Why this order
 
-- M33 comes first because the roadmap is broad now; confidence, repeatable smoke coverage, and release hygiene will pay back every future feature and lower regression risk more than adding another surface immediately.
-- M34 comes next because application/project scoping is a proven onboarding and troubleshooting accelerator in current tools, especially for multi-namespace or multi-cluster operators.
-- M35 follows because Gateway API is a growing production surface and KubecTUI already has strong service, ingress, and traffic-debug foundations to build on without introducing a second traffic model.
-- M36 should build on the now-shipped M23 extension and AI substrate instead of inventing a separate automation stack.
-- M37 is valuable, but it should follow once release confidence, scope compression, and modern traffic support are stronger.
+- M37 is now the only remaining milestone in this expansion set. It should build on the already-shipped utilization, sanitizer, vulnerability, project, and runbook surfaces without inventing a second diagnostics model or a heavyweight external cost system.
 
 ### Next Milestones
 
@@ -2088,7 +2084,7 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 #### M35: Gateway API & Modern Traffic Surface
 
-- Status: not started
+- Status: Completed (PR #75)
 - Big win: high
 - Why:
   - Gateway API is increasingly part of real operator traffic debugging, and KubecTUI currently stops at Services, Endpoints, and Ingress
@@ -2102,10 +2098,16 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
   - no graph-canvas UI
   - no duplicate traffic analyzer separate from the current workbench path
   - graceful feature absence when CRDs are not installed
+- What shipped:
+  - optional Gateway API support on the canonical traffic/relationship paths
+  - `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, and `ReferenceGrant` views with graceful CRD absence handling
+  - Gateway-aware traffic debug from routes and backend services
+  - shared Gateway attachment and `ReferenceGrant` semantics in one canonical policy module
+  - project attribution for Gateway routes without overclaiming shared Gateway infrastructure ownership
 
 #### M36: Guided Runbooks & Incident Packs
 
-- Status: not started
+- Status: Completed (PR #76)
 - Big win: medium-high
 - Why:
   - KubecTUI now has workspaces, AI workflows, logs, rollout control, Helm, traffic debug, and diagnostics; the next leverage step is stitching them into reusable operator flows
@@ -2118,6 +2120,11 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
   - no autonomous cluster mutation
   - deterministic steps first, AI second
   - reuse workspaces, extensions, action history, and AI tabs as first-class paths
+- What shipped:
+  - built-in and config-backed runbook definitions with validation and palette discovery
+  - dedicated runbook workbench tabs with checklist/progress state and banner feedback
+  - step execution on the canonical workspace, detail-action, extension, and AI paths
+  - preserved runbook progress across workspace, namespace, and context restores
 
 #### M37: Governance & Cost Center
 
