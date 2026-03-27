@@ -241,23 +241,20 @@ fn render_project_summary(frame: &mut Frame, area: Rect, project: &ProjectSummar
     }
 
     if let Some(representative) = &project.representative {
-        lines.push(Line::from(vec![
+        let accent = Style::default()
+            .fg(theme.info)
+            .add_modifier(ratatui::style::Modifier::BOLD);
+        let mut spans = vec![
             Span::styled("Enter opens: ", Style::default().fg(theme.fg_dim)),
-            Span::styled(
-                format!(
-                    "{} {}{}",
-                    representative.kind(),
-                    representative
-                        .namespace()
-                        .map(|namespace| format!("{namespace}/"))
-                        .unwrap_or_default(),
-                    representative.name()
-                ),
-                Style::default()
-                    .fg(theme.info)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-        ]));
+            Span::styled(representative.kind(), accent),
+            Span::styled("/", accent),
+        ];
+        if let Some(namespace) = representative.namespace() {
+            spans.push(Span::styled(namespace, accent));
+            spans.push(Span::styled("/", accent));
+        }
+        spans.push(Span::styled(representative.name(), accent));
+        lines.push(Line::from(spans));
     }
 
     frame.render_widget(

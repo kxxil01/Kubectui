@@ -223,16 +223,21 @@ fn render_governance_summary(
         }
     }
 
-    if summary.namespace != "cluster" {
-        lines.push(Line::from(vec![
+    if let Some(representative) = &summary.representative {
+        let accent = Style::default()
+            .fg(theme.info)
+            .add_modifier(ratatui::style::Modifier::BOLD);
+        let mut spans = vec![
             Span::styled("Enter opens: ", Style::default().fg(theme.fg_dim)),
-            Span::styled(
-                format!("Namespace/{}", summary.namespace),
-                Style::default()
-                    .fg(theme.info)
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ),
-        ]));
+            Span::styled(representative.kind(), accent),
+            Span::styled("/", accent),
+        ];
+        if let Some(namespace) = representative.namespace() {
+            spans.push(Span::styled(namespace, accent));
+            spans.push(Span::styled("/", accent));
+        }
+        spans.push(Span::styled(representative.name(), accent));
+        lines.push(Line::from(spans));
     }
 
     frame.render_widget(
@@ -258,6 +263,91 @@ fn severity_badge(severity: AlertSeverity) -> (&'static str, Style) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{app::ResourceRef, governance::GovernanceWorkloadSummary};
+
+    fn render_summary_to_string(summary: &NamespaceGovernanceSummary) -> String {
+        let backend = ratatui::backend::TestBackend::new(120, 20);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        terminal
+            .draw(|frame| {
+                render_governance_summary(frame, frame.area(), summary, true);
+            })
+            .expect("render");
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    fn summary_with_representative(
+        representative: Option<ResourceRef>,
+    ) -> NamespaceGovernanceSummary {
+        NamespaceGovernanceSummary {
+            namespace: "team-a".to_string(),
+            project_count: 1,
+            project_count_label: "1".to_string(),
+            workload_count: 1,
+            workload_count_label: "1".to_string(),
+            pod_count: 1,
+            runtime_issue_count: 0,
+            sanitizer_issue_count: 0,
+            security_issue_count: 0,
+            total_issue_count_label: "0".to_string(),
+            vulnerability_total: 0,
+            vulnerability_total_label: "0".to_string(),
+            fixable_vulnerabilities: 0,
+            quota_count: 0,
+            limit_range_count: 0,
+            pdb_gap_count: 0,
+            policy_surface_count_label: "0".to_string(),
+            missing_cpu_request_pods: 0,
+            missing_mem_request_pods: 0,
+            missing_limit_pods: 0,
+            cpu_usage_m: 0,
+            mem_usage_mib: 0,
+            cpu_request_m: 0,
+            mem_request_mib: 0,
+            cpu_req_utilization_pct: None,
+            cpu_req_utilization_label: "n/a".to_string(),
+            mem_req_utilization_pct: None,
+            mem_req_utilization_label: "n/a".to_string(),
+            idle_cpu_request_m: 0,
+            idle_mem_request_mib: 0,
+            idle_request_label: "0m/0Mi".to_string(),
+            highest_severity: AlertSeverity::Info,
+            representative,
+            projects: vec!["payments".to_string()],
+            projects_label: "payments".to_string(),
+            counts_summary_label:
+                "Workloads: 1 • Pods: 1 • Issues: runtime 0 / sanitizer 0 / security 0".to_string(),
+            policy_surfaces_label:
+                "Policy surfaces: ResourceQuota 0 • LimitRange 0 • Missing PDB 0".to_string(),
+            vulnerabilities_label: "Vulnerabilities: 0 total • 0 fixable".to_string(),
+            requests_label: "Requests: CPU 0m/0m (n/a) • Mem 0Mi/0Mi (n/a)".to_string(),
+            coverage_gaps_label:
+                "Coverage gaps: missing CPU req 0 • missing Mem req 0 • missing limit 0".to_string(),
+            risk_signals: vec!["Low request utilization".to_string()],
+            top_workloads: vec![GovernanceWorkloadSummary {
+                resource_ref: ResourceRef::Deployment("api".to_string(), "team-a".to_string()),
+                issue_count: 0,
+                vulnerability_total: 0,
+                fixable_vulnerabilities: 0,
+                cpu_request_m: 0,
+                mem_request_mib: 0,
+                cpu_usage_m: 0,
+                mem_usage_mib: 0,
+                missing_requests: 0,
+                missing_limits: 0,
+                highest_severity: AlertSeverity::Info,
+                compact_label: "Deployment/api".to_string(),
+            }],
+        }
+    }
 
     #[test]
     fn render_governance_empty_smoke() {
@@ -275,5 +365,26 @@ mod tests {
                 );
             })
             .expect("render");
+    }
+
+    #[test]
+    fn render_governance_summary_uses_actual_representative_label() {
+        let summary = summary_with_representative(Some(ResourceRef::Deployment(
+            "api".to_string(),
+            "team-a".to_string(),
+        )));
+
+        let rendered = render_summary_to_string(&summary);
+        assert!(rendered.contains("Enter opens:"));
+        assert!(rendered.contains("Deployment/team-a/api"));
+        assert!(!rendered.contains("Namespace/team-a"));
+    }
+
+    #[test]
+    fn render_governance_summary_hides_enter_hint_without_valid_representative() {
+        let summary = summary_with_representative(None);
+
+        let rendered = render_summary_to_string(&summary);
+        assert!(!rendered.contains("Enter opens:"));
     }
 }
