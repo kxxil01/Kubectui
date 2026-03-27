@@ -225,6 +225,13 @@ pub fn refresh_options_for_view(
             dispatch.options.include_cluster_info = include_cluster_info;
             dispatch
         }
+        AppView::Projects => RefreshDispatch::new(
+            RefreshScope::CORE_OVERVIEW,
+            RefreshScope::CORE_OVERVIEW
+                .union(RefreshScope::LEGACY_SECONDARY)
+                .union(RefreshScope::NETWORK)
+                .union(RefreshScope::SECURITY),
+        ),
         AppView::Pods => RefreshDispatch::new(
             RefreshScope::PODS,
             RefreshScope::PODS.union(RefreshScope::METRICS),

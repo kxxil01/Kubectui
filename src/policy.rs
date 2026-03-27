@@ -300,6 +300,7 @@ impl AppView {
     pub const fn persistence_capabilities(self) -> &'static [ViewPersistenceCapability] {
         match self {
             AppView::Dashboard
+            | AppView::Projects
             | AppView::Bookmarks
             | AppView::PortForwarding
             | AppView::HelmCharts

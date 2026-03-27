@@ -28,6 +28,7 @@ use crate::k8s::{
         VulnerabilityReportInfo,
     },
 };
+use crate::projects::compute_projects;
 
 /// High-level data loading phase for cluster resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -275,6 +276,7 @@ impl ClusterSnapshot {
         }
 
         match view {
+            AppView::Projects => Some(compute_projects(self).len()),
             AppView::Nodes => Some(self.nodes.len()),
             AppView::Pods => Some(self.pods.len()),
             AppView::Deployments => Some(self.deployments.len()),
@@ -781,6 +783,10 @@ impl GlobalState {
     const fn view_ready_scope(view: AppView) -> RefreshScope {
         match view {
             AppView::Dashboard => RefreshScope::CORE_OVERVIEW,
+            AppView::Projects => RefreshScope::CORE_OVERVIEW
+                .union(RefreshScope::LEGACY_SECONDARY)
+                .union(RefreshScope::NETWORK)
+                .union(RefreshScope::SECURITY),
             AppView::Bookmarks | AppView::PortForwarding => RefreshScope::NONE,
             AppView::Issues | AppView::HealthReport => RefreshScope::CORE_OVERVIEW
                 .union(RefreshScope::LEGACY_SECONDARY)
@@ -848,6 +854,7 @@ impl GlobalState {
                     || !self.snapshot.services.is_empty()
                     || !self.snapshot.deployments.is_empty()
             }
+            AppView::Projects => !compute_projects(&self.snapshot).is_empty(),
             AppView::Bookmarks => false,
             AppView::Vulnerabilities => !self.snapshot.vulnerability_reports.is_empty(),
             AppView::Nodes => !self.snapshot.nodes.is_empty(),

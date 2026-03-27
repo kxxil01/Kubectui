@@ -113,6 +113,14 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Projects",
+        &[
+            ("Enter", "Open representative resource for selected project"),
+            ("/", "Filter by project, namespace, or related resource"),
+            ("W", "Save workspace jump with current project filter"),
+        ],
+    ),
+    (
         "Dashboard & Metrics",
         &[
             ("", "5 gauges: Nodes, Pods, Workload, CPU, Mem"),
