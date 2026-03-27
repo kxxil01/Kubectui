@@ -49,7 +49,7 @@ Current milestone status:
 - Milestone 31: completed
 - Milestone 32: completed
 - Milestone 33: completed
-- Milestone 34: not started
+- Milestone 34: completed
 - Milestone 35: not started
 - Milestone 36: not started
 - Milestone 37: not started
@@ -94,6 +94,7 @@ Completion notes:
 - Milestone 31 shipped (PR #64): canonical traffic debugging on the detail/workbench path for Pods, Services, Endpoints, and Ingresses with service endpoint audits, ingress backend trace summaries, DNS guidance, selectorless/manual endpoint handling, port-forward tunnel diagnostics, palette/help/detail-view `t` integration, and regression coverage for routing, rendering, and service-to-backend correctness.
 - Milestone 32 shipped (PR #66): guarded node debug shell flow on the canonical detail/exec path with namespace + profile selection, API-native debug pod launch on the target node, explicit host-namespace and privilege warnings, automatic pod cleanup on close/restore/context switch/shutdown, and action-history coverage that now records success only after shell attach is established. The final hardening pass also fixed orphan cleanup on failed launch readiness, stopped defaulting to a nonexistent `default` namespace when the cluster does not have one, and aligned attach-failure semantics for both node debug and Pod debug shells.
 - Milestone 33 shipped: disposable `kind`-backed smoke automation for rollout control, ephemeral debug containers, Helm history/rollback, and NetworkPolicy intent validation; canonical `scripts/kind_smoke.sh`; release checklist docs; CI `kind-smoke` coverage; and release-script hardening that moves version bumps onto a release PR branch and separates post-merge tag publication into `scripts/publish_release_tag.sh` so release prep no longer bypasses the repo branch/PR policy.
+- Milestone 34 shipped: snapshot-cached Projects view in Overview, native-label application scope inference with Kubernetes recommended label precedence, project summary pane spanning workloads/services/ingresses/pods/issues, representative-resource jump on `Enter`, sidebar/project count integration, and workspace/bank jump persistence via restored per-view search queries.
 - 2026-03-27 release-prep pass shipped: README now reflects the post-roadmap feature surface, `CHANGELOG.md` captures the roadmap-completion release, and the `?` help overlay now advertises the broader action palette surface accurately.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
@@ -138,6 +139,7 @@ Verification status for completed milestones:
 - Latest M23 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping both AI assistant hooks and specialized AI workflows. The final clean 5-run render-profile comparison for Phase 3 vs clean `origin/main` stayed positive on the required medians (`render` `252.801ms -> 251.295ms`, `-1.506ms`; `sidebar` `21.438ms -> 21.220ms`; `header` `14.600ms -> 14.608ms`).
 - Latest stabilization verification on 2026-03-27: targeted suites for AI, workspaces, Helm, rollout, advanced logs, sanitizer, vulnerabilities, and NetworkPolicy analysis all pass locally (`cargo test --all-targets --all-features ai:: -- --nocapture`, `workspaces`, `helm`, `rollout`, `log_investigation`, `issues::`, `vulnerabilities`, `network_policy`).
 - Latest M33 verification on 2026-03-27: `bash -n scripts/kind_smoke.sh`, `bash -n scripts/release.sh`, `bash -n scripts/publish_release_tag.sh`, `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, `cargo test --test kind_smoke -- --ignored --nocapture --test-threads=1`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping release hardening and disposable-cluster smoke automation. The ignored smoke suite is now gated behind `KUBECTUI_KIND_SMOKE=1` and a `kind-*` kube context, so routine local/CI validation can compile the suite safely while real cluster-backed smoke runs stay explicit and deterministic.
+- Latest M34 verification on 2026-03-27: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Projects / Application Scopes. The clean 5-run profiling sweep versus clean `main` now includes one additional top-level view (`2040` profiled frames vs `2000` before M34), so raw `render` totals are not directly comparable across the two trees; normalized per-frame totals stayed close (`249.992ms / 2000 = 0.1250ms` baseline vs `257.008ms / 2040 = 0.1260ms` candidate), and the added cost is attributable primarily to the new Projects view itself rather than regressions in existing hotspot paths.
 
 ---
 
@@ -1993,7 +1995,7 @@ This is the execution order.
 
 ## P5 (Next)
 
-- Milestone 34: Projects / Application Scopes
+- Milestone 35: Gateway API & Modern Traffic Surface
 
 ## Continuous
 
@@ -2003,11 +2005,11 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M33 are complete.
+M0-M34 are complete.
 
 Recommended near-term order:
 
-- M34 -> M35 -> M36
+- M35 -> M36 -> M37
 
 Do not start next with:
 
@@ -2064,7 +2066,7 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 #### M34: Projects / Application Scopes
 
-- Status: not started
+- Status: completed
 - Big win: very high
 - Why:
   - application-centric grouping is one of the clearest workflow wins in current Kubernetes tools for onboarding, troubleshooting, and multi-namespace clarity
@@ -2078,6 +2080,11 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
   - no second navigation model parallel to AppView
   - keep project computation snapshot-based and bounded
   - preserve single-resource detail/workbench flows as the canonical deep path
+- Shipped scope:
+  - new Overview `Projects` view built on a cached snapshot-only project inference pass
+  - label precedence rooted in native Kubernetes application labels, with cluster-scoped grouping for `app.kubernetes.io/part-of` and `app.kubernetes.io/instance`, and namespace-scoped fallbacks for `app.kubernetes.io/name`, `app`, `k8s-app`, and `release`
+  - summary pane covering namespaces, workloads, services, ingresses, pods, and recent issues, plus `Enter` opening a representative resource on the existing deep path
+  - workspace/bank integration through persisted per-view search queries so saved jumps can reopen a filtered project scope directly
 
 #### M35: Gateway API & Modern Traffic Surface
 
@@ -2294,7 +2301,7 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 ### Recommended Remaining Order
 
-- M34 -> M35 -> M36 -> M37
+- M35 -> M36 -> M37
 
 ### Research Basis
 

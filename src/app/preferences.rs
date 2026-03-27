@@ -383,6 +383,8 @@ impl AppState {
             context: self.current_context_name.clone(),
             namespace: self.current_namespace.clone(),
             view: self.view,
+            search_query: (!self.search_query.trim().is_empty())
+                .then(|| self.search_query.trim().to_string()),
             collapsed_groups: crate::app::sidebar::all_groups()
                 .filter(|group| self.collapsed_groups.contains(group))
                 .collect(),
@@ -491,7 +493,7 @@ impl AppState {
 
     pub fn apply_workspace_snapshot(&mut self, snapshot: &crate::workspaces::WorkspaceSnapshot) {
         self.detail_view = None;
-        self.search_query.clear();
+        self.search_query = snapshot.search_query.clone().unwrap_or_default();
         self.is_search_mode = false;
         self.selected_idx = 0;
         self.extension_in_instances = false;

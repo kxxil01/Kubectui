@@ -23,6 +23,7 @@ pub mod network_policies;
 pub mod nodes;
 pub mod port_forwarding;
 pub mod priority_classes;
+pub mod projects;
 pub mod relations;
 pub mod replicasets;
 pub mod replication_controllers;
