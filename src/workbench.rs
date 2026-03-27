@@ -20,6 +20,7 @@ use crate::{
     resource_diff::{
         ResourceDiffBaselineKind, ResourceDiffLine, ResourceDiffResult, YamlDocumentDiffResult,
     },
+    runbooks::{LoadedRunbook, LoadedRunbookStep},
     secret::DecodedSecretEntry,
     timeline::{TimelineEntry, build_timeline},
     traffic_debug::TrafficDebugAnalysis,
@@ -48,6 +49,7 @@ pub enum WorkbenchTabKind {
     Exec,
     Extension,
     AiAnalysis,
+    Runbook,
     PortForward,
     Relations,
     NetworkPolicy,
@@ -70,6 +72,7 @@ impl WorkbenchTabKind {
             WorkbenchTabKind::Exec => "Exec",
             WorkbenchTabKind::Extension => "Extension",
             WorkbenchTabKind::AiAnalysis => "AI",
+            WorkbenchTabKind::Runbook => "Runbook",
             WorkbenchTabKind::PortForward => "Port-Forward",
             WorkbenchTabKind::Relations => "Relations",
             WorkbenchTabKind::NetworkPolicy => "NetPol",
@@ -93,6 +96,7 @@ pub enum WorkbenchTabKey {
     Exec(ResourceRef),
     ExtensionOutput(u64),
     AiAnalysis(u64),
+    Runbook(String, Option<ResourceRef>),
     PortForward,
     Relations(ResourceRef),
     NetworkPolicy(ResourceRef),
@@ -1102,6 +1106,104 @@ pub struct AiAnalysisTabState {
     pub content: Option<Box<AiAnalysisContent>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunbookStepState {
+    Pending,
+    Done,
+    Skipped,
+}
+
+#[derive(Debug, Clone)]
+pub struct RunbookStepRuntime {
+    pub step: LoadedRunbookStep,
+    pub state: RunbookStepState,
+}
+
+#[derive(Debug, Clone)]
+pub struct RunbookTabState {
+    pub runbook: LoadedRunbook,
+    pub resource: Option<ResourceRef>,
+    pub selected: usize,
+    pub banner: Option<String>,
+    pub steps: Vec<RunbookStepRuntime>,
+}
+
+impl RunbookTabState {
+    pub fn new(runbook: LoadedRunbook, resource: Option<ResourceRef>) -> Self {
+        let steps = runbook
+            .steps
+            .iter()
+            .cloned()
+            .map(|step| RunbookStepRuntime {
+                step,
+                state: RunbookStepState::Pending,
+            })
+            .collect();
+        Self {
+            runbook,
+            resource,
+            selected: 0,
+            banner: None,
+            steps,
+        }
+    }
+
+    pub fn select_next(&mut self) {
+        if !self.steps.is_empty() {
+            self.selected = (self.selected + 1).min(self.steps.len().saturating_sub(1));
+        }
+    }
+
+    pub fn select_previous(&mut self) {
+        self.selected = self.selected.saturating_sub(1);
+    }
+
+    pub fn select_top(&mut self) {
+        self.selected = 0;
+    }
+
+    pub fn select_bottom(&mut self) {
+        self.selected = self.steps.len().saturating_sub(1);
+    }
+
+    pub fn selected_step(&self) -> Option<&RunbookStepRuntime> {
+        self.steps
+            .get(self.selected.min(self.steps.len().saturating_sub(1)))
+    }
+
+    pub fn selected_step_mut(&mut self) -> Option<&mut RunbookStepRuntime> {
+        let index = self.selected.min(self.steps.len().saturating_sub(1));
+        self.steps.get_mut(index)
+    }
+
+    pub fn toggle_done(&mut self) {
+        if let Some(step) = self.selected_step_mut() {
+            step.state = match step.state {
+                RunbookStepState::Done => RunbookStepState::Pending,
+                _ => RunbookStepState::Done,
+            };
+        }
+    }
+
+    pub fn toggle_skipped(&mut self) {
+        if let Some(step) = self.selected_step_mut() {
+            step.state = match step.state {
+                RunbookStepState::Skipped => RunbookStepState::Pending,
+                _ => RunbookStepState::Skipped,
+            };
+        }
+    }
+
+    pub fn progress_label(&self) -> String {
+        let done = self
+            .steps
+            .iter()
+            .filter(|step| step.state == RunbookStepState::Done)
+            .count();
+        format!("{done}/{}", self.steps.len())
+    }
+}
+
 impl AiAnalysisTabState {
     pub fn new(execution_id: u64, title: impl Into<String>, resource: ResourceRef) -> Self {
         Self {
@@ -1555,6 +1657,7 @@ pub enum WorkbenchTabState {
     Exec(ExecTabState),
     ExtensionOutput(ExtensionOutputTabState),
     AiAnalysis(Box<AiAnalysisTabState>),
+    Runbook(Box<RunbookTabState>),
     PortForward(PortForwardTabState),
     Relations(RelationsTabState),
     NetworkPolicy(NetworkPolicyTabState),
@@ -1577,6 +1680,7 @@ impl WorkbenchTabState {
             Self::Exec(_) => WorkbenchTabKind::Exec,
             Self::ExtensionOutput(_) => WorkbenchTabKind::Extension,
             Self::AiAnalysis(_) => WorkbenchTabKind::AiAnalysis,
+            Self::Runbook(_) => WorkbenchTabKind::Runbook,
             Self::PortForward(_) => WorkbenchTabKind::PortForward,
             Self::Relations(_) => WorkbenchTabKind::Relations,
             Self::NetworkPolicy(_) => WorkbenchTabKind::NetworkPolicy,
@@ -1599,6 +1703,9 @@ impl WorkbenchTabState {
             Self::Exec(tab) => WorkbenchTabKey::Exec(tab.resource.clone()),
             Self::ExtensionOutput(tab) => WorkbenchTabKey::ExtensionOutput(tab.execution_id),
             Self::AiAnalysis(tab) => WorkbenchTabKey::AiAnalysis(tab.execution_id),
+            Self::Runbook(tab) => {
+                WorkbenchTabKey::Runbook(tab.runbook.id.clone(), tab.resource.clone())
+            }
             Self::PortForward(_) => WorkbenchTabKey::PortForward,
             Self::Relations(tab) => WorkbenchTabKey::Relations(tab.resource.clone()),
             Self::NetworkPolicy(tab) => WorkbenchTabKey::NetworkPolicy(tab.resource.clone()),
@@ -1642,6 +1749,14 @@ impl WorkbenchTabState {
             Self::AiAnalysis(tab) => {
                 format!("{icon}AI {} {}", tab.title, resource_title(&tab.resource))
             }
+            Self::Runbook(tab) => match &tab.resource {
+                Some(resource) => format!(
+                    "{icon}Runbook {} {}",
+                    tab.runbook.title,
+                    resource_title(resource)
+                ),
+                None => format!("{icon}Runbook {}", tab.runbook.title),
+            },
             Self::PortForward(tab) => match &tab.target {
                 Some(resource) => {
                     format!("{icon}{kind_label} {}", resource_title(resource))
@@ -1986,6 +2101,75 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(state.tabs.len(), 1);
         assert!(state.open);
+    }
+
+    #[test]
+    fn runbook_tab_deduplicates_by_id_and_resource() {
+        let mut state = WorkbenchState::default();
+        let runbook = LoadedRunbook {
+            id: "pod_failure".into(),
+            title: "Pod Failure Triage".into(),
+            description: None,
+            aliases: vec!["incident".into()],
+            resource_kinds: vec!["Pod".into()],
+            shortcut: None,
+            steps: vec![LoadedRunbookStep {
+                title: "Open logs".into(),
+                description: None,
+                kind: crate::runbooks::LoadedRunbookStepKind::DetailAction {
+                    action: crate::runbooks::RunbookDetailAction::Logs,
+                },
+            }],
+        };
+        let resource = pod("pod-0");
+        let first = state.open_tab(WorkbenchTabState::Runbook(Box::new(RunbookTabState::new(
+            runbook.clone(),
+            Some(resource.clone()),
+        ))));
+        let second = state.open_tab(WorkbenchTabState::Runbook(Box::new(RunbookTabState::new(
+            runbook,
+            Some(resource),
+        ))));
+
+        assert_eq!(first, second);
+        assert_eq!(state.tabs.len(), 1);
+    }
+
+    #[test]
+    fn runbook_progress_counts_done_steps_only() {
+        let runbook = LoadedRunbook {
+            id: "pod_failure".into(),
+            title: "Pod Failure Triage".into(),
+            description: None,
+            aliases: vec!["incident".into()],
+            resource_kinds: vec!["Pod".into()],
+            shortcut: None,
+            steps: vec![
+                LoadedRunbookStep {
+                    title: "Checklist".into(),
+                    description: None,
+                    kind: crate::runbooks::LoadedRunbookStepKind::Checklist {
+                        items: vec!["Inspect events".into()],
+                    },
+                },
+                LoadedRunbookStep {
+                    title: "Open logs".into(),
+                    description: None,
+                    kind: crate::runbooks::LoadedRunbookStepKind::DetailAction {
+                        action: crate::runbooks::RunbookDetailAction::Logs,
+                    },
+                },
+            ],
+        };
+        let mut tab = RunbookTabState::new(runbook, Some(pod("pod-0")));
+        assert_eq!(tab.progress_label(), "0/2");
+
+        tab.toggle_done();
+        assert_eq!(tab.progress_label(), "1/2");
+
+        tab.select_next();
+        tab.toggle_skipped();
+        assert_eq!(tab.progress_label(), "1/2");
     }
 
     #[test]

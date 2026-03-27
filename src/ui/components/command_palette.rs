@@ -14,6 +14,7 @@ use crate::app::{AppView, ResourceRef};
 use crate::extensions::LoadedExtensionAction;
 use crate::policy::{DetailAction, ResourceActionContext};
 use crate::resource_templates::ResourceTemplateKind;
+use crate::runbooks::LoadedRunbook;
 use crate::workspaces::display_hotkey;
 
 const TEMPLATE_INTENT_ALIASES: &[&str] =
@@ -26,6 +27,7 @@ pub enum CommandPaletteAction {
     Navigate(AppView),
     Execute(DetailAction, ResourceRef),
     ExecuteExtension(String, ResourceRef),
+    OpenRunbook(String, Option<ResourceRef>),
     ToggleColumn(String),
     SaveWorkspace,
     ApplyWorkspace(String),
@@ -39,6 +41,7 @@ pub enum PaletteEntry {
     Navigate(AppView),
     Action(DetailAction),
     ExtensionAction(PaletteExtensionAction),
+    Runbook(PaletteRunbookAction),
     SaveWorkspace,
     Template(ResourceTemplateKind),
     Workspace(String),
@@ -60,6 +63,15 @@ pub struct PaletteExtensionAction {
     pub aliases: Vec<String>,
     pub shortcut: Option<String>,
     pub badge_label: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteRunbookAction {
+    pub id: String,
+    pub title: String,
+    pub aliases: Vec<String>,
+    pub shortcut: Option<String>,
+    pub resource: Option<ResourceRef>,
 }
 
 #[derive(Debug, Clone)]
@@ -421,6 +433,7 @@ pub struct CommandPalette {
     /// Column toggle info for current view: (id, label, currently_visible).
     columns_info: Option<Vec<(String, String, bool)>>,
     extension_actions: Vec<PaletteExtensionAction>,
+    runbooks: Vec<PaletteRunbookAction>,
     saved_workspaces: Vec<String>,
     workspace_banks: Vec<(String, Option<String>)>,
 }
@@ -443,6 +456,7 @@ impl CommandPalette {
         self.resource_context = None;
         self.columns_info = None;
         self.extension_actions.clear();
+        self.runbooks.clear();
     }
 
     pub fn set_columns_info(&mut self, info: Option<Vec<(String, String, bool)>>) {
@@ -461,6 +475,28 @@ impl CommandPalette {
                     aliases: action.aliases,
                     shortcut: action.shortcut,
                     badge_label,
+                }
+            })
+            .collect();
+        self.cached_filtered.borrow_mut().take();
+    }
+
+    pub fn set_runbooks(&mut self, runbooks: Vec<LoadedRunbook>, resource: Option<ResourceRef>) {
+        self.runbooks = runbooks
+            .into_iter()
+            .map(|runbook| {
+                let mut aliases = runbook.aliases;
+                aliases.push(runbook.title.to_ascii_lowercase());
+                aliases.push("runbook".into());
+                aliases.push("incident".into());
+                aliases.sort();
+                aliases.dedup();
+                PaletteRunbookAction {
+                    id: runbook.id,
+                    title: runbook.title,
+                    aliases,
+                    shortcut: runbook.shortcut,
+                    resource: resource.clone(),
                 }
             })
             .collect();
@@ -514,6 +550,10 @@ impl CommandPalette {
                                 CommandPaletteAction::None
                             }
                         }
+                        PaletteEntry::Runbook(runbook) => CommandPaletteAction::OpenRunbook(
+                            runbook.id.clone(),
+                            runbook.resource.clone(),
+                        ),
                         PaletteEntry::SaveWorkspace => CommandPaletteAction::SaveWorkspace,
                         PaletteEntry::Template(kind) => {
                             CommandPaletteAction::OpenTemplateDialog(*kind)
@@ -596,6 +636,29 @@ impl CommandPalette {
                         .any(|alias| fuzzy_match(alias, &self.query))
                 {
                     result.push(PaletteEntry::ExtensionAction(action.clone()));
+                }
+            }
+            for runbook in &self.runbooks {
+                if self.query.is_empty()
+                    || runbook
+                        .aliases
+                        .iter()
+                        .any(|alias| fuzzy_match(alias, &self.query))
+                {
+                    result.push(PaletteEntry::Runbook(runbook.clone()));
+                }
+            }
+        }
+
+        if self.resource_context.is_none() {
+            for runbook in &self.runbooks {
+                if self.query.is_empty()
+                    || runbook
+                        .aliases
+                        .iter()
+                        .any(|alias| fuzzy_match(alias, &self.query))
+                {
+                    result.push(PaletteEntry::Runbook(runbook.clone()));
                 }
             }
         }
@@ -771,6 +834,7 @@ impl CommandPalette {
         } else {
             let mut seen_action = false;
             let mut seen_extension = false;
+            let mut seen_runbook = false;
             let mut seen_workspace = false;
             let mut seen_template = false;
             let mut seen_bank = false;
@@ -797,6 +861,13 @@ impl CommandPalette {
                         seen_column = true;
                         items.push(ListItem::new(Line::from(Span::styled(
                             " ── Columns ──",
+                            theme.muted_style(),
+                        ))));
+                    }
+                    PaletteEntry::Runbook(_) if !seen_runbook => {
+                        seen_runbook = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Runbooks ──",
                             theme.muted_style(),
                         ))));
                     }
@@ -872,6 +943,14 @@ impl CommandPalette {
                             .as_deref()
                             .map(display_hotkey)
                             .unwrap_or_else(|| action.badge_label.clone()),
+                    ),
+                    PaletteEntry::Runbook(runbook) => (
+                        runbook.title.clone(),
+                        runbook
+                            .shortcut
+                            .as_deref()
+                            .map(display_hotkey)
+                            .unwrap_or_else(|| "Runbook".to_string()),
                     ),
                     PaletteEntry::SaveWorkspace => {
                         ("Save current workspace".to_string(), "[W]".to_string())
@@ -1474,6 +1553,60 @@ mod tests {
         assert_eq!(
             palette.handle_key(KeyEvent::from(KeyCode::Enter)),
             CommandPaletteAction::ExecuteExtension("describe".into(), resource)
+        );
+    }
+
+    #[test]
+    fn palette_includes_runbook_entries() {
+        let mut palette = CommandPalette::default();
+        palette.set_runbooks(
+            vec![LoadedRunbook {
+                id: "pod_failure".into(),
+                title: "Pod Failure Triage".into(),
+                description: Some("Investigate failing pods".into()),
+                aliases: vec!["pod failure".into(), "incident".into()],
+                resource_kinds: vec!["Pod".into()],
+                shortcut: Some("rp".into()),
+                steps: Vec::new(),
+            }],
+            Some(ResourceRef::Pod("api".into(), "prod".into())),
+        );
+        palette.open_with_context(Some(ctx(
+            ResourceRef::Pod("api".into(), "prod".into()),
+            None,
+        )));
+
+        let entries = palette.filtered();
+        assert!(entries.iter().any(|entry| matches!(
+            entry,
+            PaletteEntry::Runbook(runbook) if runbook.id == "pod_failure"
+        )));
+    }
+
+    #[test]
+    fn enter_opens_selected_runbook() {
+        let mut palette = CommandPalette::default();
+        let resource = ResourceRef::Pod("api".into(), "prod".into());
+        palette.set_runbooks(
+            vec![LoadedRunbook {
+                id: "pod_failure".into(),
+                title: "Pod Failure Triage".into(),
+                description: Some("Investigate failing pods".into()),
+                aliases: vec!["pod failure".into(), "incident".into()],
+                resource_kinds: vec!["Pod".into()],
+                shortcut: None,
+                steps: Vec::new(),
+            }],
+            Some(resource.clone()),
+        );
+        palette.open_with_context(Some(ctx(resource.clone(), None)));
+        for c in "incident".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        assert_eq!(
+            palette.handle_key(KeyEvent::from(KeyCode::Enter)),
+            CommandPaletteAction::OpenRunbook("pod_failure".into(), Some(resource))
         );
     }
 }

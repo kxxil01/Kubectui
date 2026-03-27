@@ -2,6 +2,10 @@ use super::*;
 use crate::cronjob::CronJobHistoryEntry;
 use crate::k8s::dtos::PodInfo;
 use crate::k8s::rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind};
+use crate::runbooks::{
+    LoadedRunbook, LoadedRunbookStep, LoadedRunbookStepKind, RunbookDetailAction,
+};
+use crate::workbench::WorkbenchTabState;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Verifies full forward tab cycle across all views and wraps to Dashboard.
@@ -1525,6 +1529,61 @@ fn rollout_workbench_shortcuts_dispatch_expected_actions() {
         app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT)),
         AppAction::RolloutRestart
     );
+}
+
+#[test]
+fn runbook_workbench_shortcuts_dispatch_expected_actions() {
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    app.open_runbook_tab(
+        LoadedRunbook {
+            id: "pod_failure".into(),
+            title: "Pod Failure Triage".into(),
+            description: None,
+            aliases: vec!["incident".into()],
+            resource_kinds: vec!["Pod".into()],
+            shortcut: None,
+            steps: vec![
+                LoadedRunbookStep {
+                    title: "Checklist".into(),
+                    description: None,
+                    kind: LoadedRunbookStepKind::Checklist {
+                        items: vec!["Inspect events".into()],
+                    },
+                },
+                LoadedRunbookStep {
+                    title: "Open logs".into(),
+                    description: None,
+                    kind: LoadedRunbookStepKind::DetailAction {
+                        action: RunbookDetailAction::Logs,
+                    },
+                },
+            ],
+        },
+        Some(ResourceRef::Pod("api".into(), "prod".into())),
+    );
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Enter)),
+        AppAction::RunbookExecuteSelectedStep
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('d'))),
+        AppAction::RunbookToggleStepDone
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('s'))),
+        AppAction::RunbookToggleStepSkipped
+    );
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Down));
+    if let Some(tab) = app.workbench.active_tab()
+        && let WorkbenchTabState::Runbook(tab) = &tab.state
+    {
+        assert_eq!(tab.selected, 1);
+    } else {
+        panic!("expected active runbook tab");
+    }
 }
 
 #[test]

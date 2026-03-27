@@ -63,13 +63,14 @@ use kubectui::{
         },
     },
     policy::DetailAction,
+    runbooks::{LoadedRunbookStepKind, RunbookRegistry, load_runbook_registry},
     secret::{decode_secret_yaml, encode_secret_yaml},
     state::{
         DataPhase, GlobalState, RefreshScope,
         watch::{WatchUpdate, WatchedResource},
     },
     ui,
-    workbench::{WorkbenchTabKey, WorkbenchTabState},
+    workbench::{RunbookTabState, WorkbenchTabKey, WorkbenchTabState},
 };
 
 use terminal::{pick_context_at_startup, restore_terminal, setup_terminal};
@@ -127,14 +128,33 @@ fn fail_context_switch(
     app: &mut kubectui::app::AppState,
     global_state: &mut GlobalState,
     message: String,
+    pending_runbook_restore: &mut Option<RunbookTabState>,
     snapshot_dirty: &mut bool,
     needs_redraw: &mut bool,
 ) {
     app.pending_workspace_restore = None;
+    pending_runbook_restore.take();
     global_state.set_phase(DataPhase::Error);
     *snapshot_dirty = true;
     *needs_redraw = true;
     app.set_error(message);
+}
+
+fn reopen_pending_runbook(
+    app: &mut kubectui::app::AppState,
+    pending_runbook_restore: &mut Option<RunbookTabState>,
+) {
+    if let Some(mut tab_state) = pending_runbook_restore.take() {
+        tab_state.banner = Some("Workspace applied from runbook step.".to_string());
+        app.workbench
+            .open_tab(WorkbenchTabState::Runbook(Box::new(tab_state)));
+        app.focus = kubectui::app::Focus::Workbench;
+        if let Some(WorkbenchTabState::Runbook(tab)) =
+            app.workbench.active_tab_mut().map(|tab| &mut tab.state)
+        {
+            tab.banner = Some("Workspace applied from runbook step.".to_string());
+        }
+    }
 }
 
 struct WorkspaceRestoreRuntime<'a> {
@@ -375,7 +395,7 @@ fn parse_editor_command(command: &str) -> Result<Vec<String>> {
     Ok(args)
 }
 
-fn extension_watch_matches_path(event: &notify::Event, config_path: &Path) -> bool {
+fn config_watch_matches_path(event: &notify::Event, config_path: &Path) -> bool {
     let Some(config_name) = config_path.file_name() else {
         return false;
     };
@@ -385,8 +405,9 @@ fn extension_watch_matches_path(event: &notify::Event, config_path: &Path) -> bo
         .any(|path| path == config_path || path.file_name().is_some_and(|name| name == config_name))
 }
 
-fn create_extension_watcher(
+fn create_config_watcher(
     config_path: &Path,
+    config_label: &str,
 ) -> Result<(
     RecommendedWatcher,
     std::sync::mpsc::Receiver<notify::Result<notify::Event>>,
@@ -395,7 +416,7 @@ fn create_extension_watcher(
     let mut watcher = notify::recommended_watcher(move |result| {
         let _ = tx.send(result);
     })
-    .context("failed to initialize extension config watcher")?;
+    .with_context(|| format!("failed to initialize {config_label} config watcher"))?;
     let parent = config_path
         .parent()
         .context("extensions config path has no parent directory")?;
@@ -403,8 +424,8 @@ fn create_extension_watcher(
         .watch(parent, RecursiveMode::NonRecursive)
         .with_context(|| {
             format!(
-                "failed to watch extensions config directory '{}'",
-                parent.display()
+                "failed to watch {config_label} config directory '{}'",
+                parent.display(),
             )
         })?;
     Ok((watcher, rx))
@@ -504,6 +525,12 @@ fn notify_extension_load_warnings(app: &mut kubectui::app::AppState, warnings: &
     }
 }
 
+fn notify_runbook_load_warnings(app: &mut kubectui::app::AppState, warnings: &[String]) {
+    for warning in warnings {
+        app.push_toast(warning.clone(), true);
+    }
+}
+
 fn refresh_palette_extensions(
     app: &mut kubectui::app::AppState,
     snapshot: &kubectui::state::ClusterSnapshot,
@@ -518,6 +545,21 @@ fn refresh_palette_extensions(
         .map(|resource| registry.palette_actions_for(resource))
         .unwrap_or_default();
     app.command_palette.set_extension_actions(actions);
+}
+
+fn refresh_palette_runbooks(
+    app: &mut kubectui::app::AppState,
+    snapshot: &kubectui::state::ClusterSnapshot,
+    registry: &RunbookRegistry,
+) {
+    let selected = app
+        .detail_view
+        .as_ref()
+        .and_then(|detail| detail.resource.as_ref())
+        .cloned()
+        .or_else(|| selected_resource(app, snapshot));
+    let runbooks = registry.palette_runbooks_for(selected.as_ref());
+    app.command_palette.set_runbooks(runbooks, selected);
 }
 
 fn truncate_ai_block(value: &str, max_chars: usize) -> String {
@@ -1124,16 +1166,29 @@ pub(crate) async fn run_app_inner(
     let mut next_ai_execution_id: u64 = 1;
     let (events_tx, mut events_rx) = tokio::sync::mpsc::channel::<EventsAsyncResult>(16);
     let mut events_state = EventsFetchRuntimeState::default();
+    let mut pending_runbook_restore: Option<RunbookTabState> = None;
 
     let initial_extension_load = load_extensions_registry();
     let mut extension_registry = initial_extension_load.registry;
     notify_extension_load_warnings(&mut app, &initial_extension_load.warnings);
     let extension_config_path = initial_extension_load.path;
-    let extension_watch_setup = create_extension_watcher(&extension_config_path);
+    let extension_watch_setup = create_config_watcher(&extension_config_path, "extensions");
     let (_extension_watcher, extension_watch_rx) = match extension_watch_setup {
         Ok((watcher, rx)) => (Some(watcher), Some(rx)),
         Err(err) => {
             app.push_toast(format!("Extensions watcher disabled: {err:#}"), true);
+            (None, None)
+        }
+    };
+    let initial_runbook_load = load_runbook_registry();
+    let mut runbook_registry = initial_runbook_load.registry;
+    notify_runbook_load_warnings(&mut app, &initial_runbook_load.warnings);
+    let runbook_config_path = initial_runbook_load.path;
+    let runbook_watch_setup = create_config_watcher(&runbook_config_path, "runbooks");
+    let (_runbook_watcher, runbook_watch_rx) = match runbook_watch_setup {
+        Ok((watcher, rx)) => (Some(watcher), Some(rx)),
+        Err(err) => {
+            app.push_toast(format!("Runbooks watcher disabled: {err:#}"), true);
             (None, None)
         }
     };
@@ -1214,7 +1269,7 @@ pub(crate) async fn run_app_inner(
             loop {
                 match rx.try_recv() {
                     Ok(Ok(event)) => {
-                        if extension_watch_matches_path(&event, &extension_config_path) {
+                        if config_watch_matches_path(&event, &extension_config_path) {
                             reload_requested = true;
                         }
                     }
@@ -1237,6 +1292,45 @@ pub(crate) async fn run_app_inner(
                         "Reloaded extensions config ({} action{})",
                         extension_registry.actions().len(),
                         if extension_registry.actions().len() == 1 {
+                            ""
+                        } else {
+                            "s"
+                        }
+                    ),
+                    false,
+                );
+                needs_redraw = true;
+            }
+        }
+
+        if let Some(rx) = &runbook_watch_rx {
+            let mut reload_requested = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(Ok(event)) => {
+                        if config_watch_matches_path(&event, &runbook_config_path) {
+                            reload_requested = true;
+                        }
+                    }
+                    Ok(Err(err)) => {
+                        app.push_toast(format!("Runbooks watch error: {err}"), true);
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                }
+            }
+            if reload_requested {
+                let reload = load_runbook_registry();
+                runbook_registry = reload.registry;
+                notify_runbook_load_warnings(&mut app, &reload.warnings);
+                if app.command_palette.is_open() {
+                    refresh_palette_runbooks(&mut app, &cached_snapshot, &runbook_registry);
+                }
+                app.push_toast(
+                    format!(
+                        "Reloaded runbooks config ({} runbook{})",
+                        runbook_registry.runbooks().len(),
+                        if runbook_registry.runbooks().len() == 1 {
                             ""
                         } else {
                             "s"
@@ -3180,6 +3274,7 @@ pub(crate) async fn run_app_inner(
                                 .filter(|snapshot| snapshot.context.as_deref() == Some(ctx.as_str()))
                             {
                                 app.apply_workspace_snapshot(&snapshot);
+                                reopen_pending_runbook(&mut app, &mut pending_runbook_restore);
                             }
                             coordinator = UpdateCoordinator::new(client.clone(), update_tx.clone());
                             port_forwarder =
@@ -3238,6 +3333,7 @@ pub(crate) async fn run_app_inner(
                                 &mut app,
                                 &mut global_state,
                                 format!("Failed to connect to context '{ctx}': {err:#}"),
+                                &mut pending_runbook_restore,
                                 &mut snapshot_dirty,
                                 &mut needs_redraw,
                             );
@@ -3247,6 +3343,7 @@ pub(crate) async fn run_app_inner(
                                 &mut app,
                                 &mut global_state,
                                 format!("Context switch task panicked: {join_err}"),
+                                &mut pending_runbook_restore,
                                 &mut snapshot_dirty,
                                 &mut needs_redraw,
                             );
@@ -3594,6 +3691,7 @@ pub(crate) async fn run_app_inner(
                     app.refresh_palette_columns();
                     app.refresh_palette_workspaces();
                     refresh_palette_extensions(&mut app, &cached_snapshot, &extension_registry);
+                    refresh_palette_runbooks(&mut app, &cached_snapshot, &runbook_registry);
                     app.command_palette.open_with_context(resource_ctx);
                 }
                 AppAction::CloseCommandPalette => {
@@ -3635,6 +3733,176 @@ pub(crate) async fn run_app_inner(
                     }
 
                     pending_palette_action = Some(mapped);
+                }
+                AppAction::OpenRunbook { id, resource } => {
+                    app.command_palette.close();
+                    let Some(runbook) = runbook_registry.get(&id).cloned() else {
+                        app.set_error(format!("Runbook '{id}' is no longer available."));
+                        continue;
+                    };
+                    if !runbook.matches_resource(resource.as_ref()) {
+                        let scope = resource
+                            .as_ref()
+                            .map(|value| value.kind().to_string())
+                            .unwrap_or_else(|| "current".to_string());
+                        app.set_error(format!(
+                            "Runbook '{}' does not apply to {scope} resources.",
+                            runbook.title
+                        ));
+                        continue;
+                    }
+                    app.open_runbook_tab(runbook, resource);
+                }
+                AppAction::RunbookToggleStepDone => {
+                    if let Some(WorkbenchTabState::Runbook(tab)) =
+                        app.workbench.active_tab_mut().map(|tab| &mut tab.state)
+                    {
+                        tab.toggle_done();
+                        tab.banner = Some(format!("Updated progress: {}", tab.progress_label()));
+                    }
+                }
+                AppAction::RunbookToggleStepSkipped => {
+                    if let Some(WorkbenchTabState::Runbook(tab)) =
+                        app.workbench.active_tab_mut().map(|tab| &mut tab.state)
+                    {
+                        tab.toggle_skipped();
+                        tab.banner = Some(format!("Updated progress: {}", tab.progress_label()));
+                    }
+                }
+                AppAction::RunbookExecuteSelectedStep => {
+                    let runbook_context =
+                        app.workbench.active_tab().and_then(|tab| match &tab.state {
+                            WorkbenchTabState::Runbook(tab) => tab.selected_step().map(|step| {
+                                (
+                                    tab.as_ref().clone(),
+                                    tab.runbook.title.clone(),
+                                    tab.resource.clone(),
+                                    step.step.clone(),
+                                )
+                            }),
+                            _ => None,
+                        });
+                    let Some((runbook_tab, runbook_title, resource, step)) = runbook_context else {
+                        continue;
+                    };
+
+                    let mut banner_message = Some(format!("Ready: {}", step.title));
+                    match step.kind {
+                        LoadedRunbookStepKind::Checklist { .. } => {
+                            if let Some(WorkbenchTabState::Runbook(tab)) =
+                                app.workbench.active_tab_mut().map(|tab| &mut tab.state)
+                            {
+                                tab.toggle_done();
+                                banner_message = Some(format!(
+                                    "{}: checklist progress is now {}",
+                                    step.title,
+                                    tab.progress_label()
+                                ));
+                            }
+                        }
+                        LoadedRunbookStepKind::Workspace { name, target } => {
+                            pending_runbook_restore = Some(runbook_tab);
+                            banner_message = Some(format!(
+                                "{runbook_title}: applying {} '{}'",
+                                target.label(),
+                                name
+                            ));
+                            pending_palette_action = Some(match target {
+                                kubectui::runbooks::RunbookWorkspaceTarget::SavedWorkspace => {
+                                    AppAction::ApplyWorkspace(name)
+                                }
+                                kubectui::runbooks::RunbookWorkspaceTarget::WorkspaceBank => {
+                                    AppAction::ActivateWorkspaceBank(name)
+                                }
+                            });
+                        }
+                        LoadedRunbookStepKind::DetailAction { action } => {
+                            let Some(resource) = resource else {
+                                app.set_error(format!(
+                                    "Runbook '{}' requires a selected resource for '{}'.",
+                                    runbook_title, step.title
+                                ));
+                                banner_message =
+                                    Some("Resource-scoped step could not run.".to_string());
+                                if let Some(WorkbenchTabState::Runbook(tab)) =
+                                    app.workbench.active_tab_mut().map(|tab| &mut tab.state)
+                                {
+                                    tab.banner = banner_message;
+                                }
+                                continue;
+                            };
+                            let detail_action = action.into_detail_action();
+                            if palette_detail_action_needs_detail(detail_action)
+                                && app.detail_view.is_none()
+                            {
+                                open_detail_for_resource(
+                                    &mut app,
+                                    &cached_snapshot,
+                                    &client,
+                                    &detail_tx,
+                                    resource.clone(),
+                                    &mut detail_request_seq,
+                                );
+                            }
+                            banner_message =
+                                Some(format!("{runbook_title}: running {}", action.label()));
+                            pending_palette_action = Some(map_palette_detail_action(detail_action));
+                        }
+                        LoadedRunbookStepKind::ExtensionAction { action_id } => {
+                            let Some(resource) = resource else {
+                                app.set_error(format!(
+                                    "Runbook '{}' requires a selected resource for '{}'.",
+                                    runbook_title, step.title
+                                ));
+                                banner_message =
+                                    Some("Resource-scoped step could not run.".to_string());
+                                if let Some(WorkbenchTabState::Runbook(tab)) =
+                                    app.workbench.active_tab_mut().map(|tab| &mut tab.state)
+                                {
+                                    tab.banner = banner_message;
+                                }
+                                continue;
+                            };
+                            banner_message = Some(format!(
+                                "{runbook_title}: running extension '{}'",
+                                action_id
+                            ));
+                            pending_palette_action = Some(AppAction::ExecuteExtension {
+                                id: action_id,
+                                resource,
+                            });
+                        }
+                        LoadedRunbookStepKind::AiWorkflow { workflow } => {
+                            let Some(resource) = resource else {
+                                app.set_error(format!(
+                                    "Runbook '{}' requires a selected resource for '{}'.",
+                                    runbook_title, step.title
+                                ));
+                                banner_message =
+                                    Some("Resource-scoped step could not run.".to_string());
+                                if let Some(WorkbenchTabState::Runbook(tab)) =
+                                    app.workbench.active_tab_mut().map(|tab| &mut tab.state)
+                                {
+                                    tab.banner = banner_message;
+                                }
+                                continue;
+                            };
+                            banner_message = Some(format!(
+                                "{runbook_title}: running AI workflow '{}'",
+                                workflow.default_title()
+                            ));
+                            pending_palette_action = Some(AppAction::ExecuteExtension {
+                                id: workflow.default_id().to_string(),
+                                resource,
+                            });
+                        }
+                    }
+
+                    if let Some(WorkbenchTabState::Runbook(tab)) =
+                        app.workbench.active_tab_mut().map(|tab| &mut tab.state)
+                    {
+                        tab.banner = banner_message;
+                    }
                 }
                 AppAction::ExecuteExtension { id, resource } => {
                     app.command_palette.close();
@@ -3846,6 +4114,7 @@ pub(crate) async fn run_app_inner(
                 AppAction::ApplyWorkspace(name) => {
                     app.command_palette.close();
                     let Some(snapshot) = app.saved_workspace_snapshot(&name) else {
+                        pending_runbook_restore.take();
                         app.set_error(format!("Saved workspace '{name}' was not found."));
                         continue;
                     };
@@ -3880,11 +4149,13 @@ pub(crate) async fn run_app_inner(
                         extension_fetch_tx: &extension_fetch_tx,
                     };
                     apply_workspace_snapshot_and_refresh(&mut app, &snapshot, &mut runtime).await;
+                    reopen_pending_runbook(&mut app, &mut pending_runbook_restore);
                     app.set_status(format!("Applied workspace: {name}"));
                 }
                 AppAction::ActivateWorkspaceBank(name) => {
                     app.command_palette.close();
                     let Some(snapshot) = app.workspace_bank_snapshot(&name) else {
+                        pending_runbook_restore.take();
                         app.set_error(format!("Workspace bank '{name}' was not found."));
                         continue;
                     };
@@ -3919,6 +4190,7 @@ pub(crate) async fn run_app_inner(
                         extension_fetch_tx: &extension_fetch_tx,
                     };
                     apply_workspace_snapshot_and_refresh(&mut app, &snapshot, &mut runtime).await;
+                    reopen_pending_runbook(&mut app, &mut pending_runbook_restore);
                     app.set_status(format!("Activated workspace bank: {name}"));
                 }
                 AppAction::NavigateTo(view) => {
@@ -4059,6 +4331,7 @@ pub(crate) async fn run_app_inner(
                         })
                     {
                         app.apply_workspace_snapshot(&snapshot);
+                        reopen_pending_runbook(&mut app, &mut pending_runbook_restore);
                     }
                     app.sync_workbench_focus();
 
