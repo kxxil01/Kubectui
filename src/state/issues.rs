@@ -182,16 +182,19 @@ pub fn filtered_issue_indices_by_source(
 }
 
 #[allow(clippy::type_complexity)]
-static ISSUE_CACHE: LazyLock<Mutex<Option<(u64, Arc<Vec<ClusterIssue>>)>>> =
+static ISSUE_CACHE: LazyLock<Mutex<Option<((u64, usize), Arc<Vec<ClusterIssue>>)>>> =
     LazyLock::new(|| Mutex::new(None));
 
 /// Returns cached issues for the given snapshot, computing on first call per version.
 pub fn compute_issues(snapshot: &ClusterSnapshot) -> Arc<Vec<ClusterIssue>> {
-    let version = snapshot.snapshot_version;
+    let key = (
+        snapshot.snapshot_version,
+        std::ptr::from_ref(snapshot) as usize,
+    );
     {
         let guard = ISSUE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((cached_ver, ref issues)) = *guard
-            && cached_ver == version
+        if let Some((cached_key, ref issues)) = *guard
+            && cached_key == key
         {
             return Arc::clone(issues);
         }
@@ -200,7 +203,7 @@ pub fn compute_issues(snapshot: &ClusterSnapshot) -> Arc<Vec<ClusterIssue>> {
     let issues = Arc::new(detect_issues(snapshot));
     {
         let mut guard = ISSUE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some((version, Arc::clone(&issues)));
+        *guard = Some((key, Arc::clone(&issues)));
     }
     issues
 }

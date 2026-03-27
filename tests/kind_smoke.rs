@@ -49,6 +49,18 @@ fn kubectl_in(namespace: &str, args: &[&str]) -> Result<String, String> {
     run("kubectl", &full, None)
 }
 
+fn deployment_paused(namespace: &str, name: &str) -> bool {
+    matches!(
+        kubectl_in(
+            namespace,
+            &["get", "deployment", name, "-o", "jsonpath={.spec.paused}"],
+        )
+        .expect("read deployment paused state")
+        .as_str(),
+        "true"
+    )
+}
+
 fn helm(namespace: &str, args: &[&str]) -> Result<String, String> {
     let mut full = vec!["--namespace", namespace];
     full.extend_from_slice(args);
@@ -191,35 +203,13 @@ spec:
         .set_deployment_rollout_paused("smoke", &namespace, true)
         .await
         .expect("pause deployment");
-    let paused = kubectl_in(
-        &namespace,
-        &[
-            "get",
-            "deployment",
-            "smoke",
-            "-o",
-            "jsonpath={.spec.paused}",
-        ],
-    )
-    .expect("read paused state");
-    assert_eq!(paused, "true");
+    assert!(deployment_paused(&namespace, "smoke"));
 
     client
         .set_deployment_rollout_paused("smoke", &namespace, false)
         .await
         .expect("resume deployment");
-    let resumed = kubectl_in(
-        &namespace,
-        &[
-            "get",
-            "deployment",
-            "smoke",
-            "-o",
-            "jsonpath={.spec.paused}",
-        ],
-    )
-    .expect("read resumed state");
-    assert_eq!(resumed, "false");
+    assert!(!deployment_paused(&namespace, "smoke"));
 
     client
         .rollback_workload_to_revision(&resource, 1)

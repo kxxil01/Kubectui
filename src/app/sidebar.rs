@@ -18,6 +18,7 @@ const SIDEBAR_GROUPS: &[(NavGroup, &[AppView])] = &[
         &[
             AppView::Dashboard,
             AppView::Projects,
+            AppView::Governance,
             AppView::Bookmarks,
             AppView::Issues,
             AppView::HealthReport,

@@ -221,6 +221,10 @@ const COMMANDS: &[Command] = &[
         aliases: &["dashboard", "dash", "home"],
     },
     Command {
+        view: AppView::Governance,
+        aliases: &["governance", "cost", "cost center", "finops", "efficiency"],
+    },
+    Command {
         view: AppView::Bookmarks,
         aliases: &["bookmarks", "bookmark", "saved", "pinned"],
     },

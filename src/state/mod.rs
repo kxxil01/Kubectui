@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use std::{fmt, sync::Arc};
 
 use crate::app::AppView;
+use crate::governance::compute_governance;
 use crate::k8s::{
     client::K8sClient,
     dtos::{
@@ -288,6 +289,7 @@ impl ClusterSnapshot {
 
         match view {
             AppView::Projects => Some(compute_projects(self).len()),
+            AppView::Governance => Some(compute_governance(self).len()),
             AppView::Nodes => Some(self.nodes.len()),
             AppView::Pods => Some(self.pods.len()),
             AppView::Deployments => Some(self.deployments.len()),
@@ -839,6 +841,11 @@ impl GlobalState {
                 .union(RefreshScope::LEGACY_SECONDARY)
                 .union(RefreshScope::NETWORK)
                 .union(RefreshScope::SECURITY),
+            AppView::Governance => RefreshScope::CORE_OVERVIEW
+                .union(RefreshScope::METRICS)
+                .union(RefreshScope::LEGACY_SECONDARY)
+                .union(RefreshScope::NETWORK)
+                .union(RefreshScope::SECURITY),
             AppView::Bookmarks | AppView::PortForwarding => RefreshScope::NONE,
             AppView::Issues | AppView::HealthReport => RefreshScope::CORE_OVERVIEW
                 .union(RefreshScope::LEGACY_SECONDARY)
@@ -912,6 +919,10 @@ impl GlobalState {
                     || !self.snapshot.deployments.is_empty()
             }
             AppView::Projects => !compute_projects(&self.snapshot).is_empty(),
+            AppView::Governance => {
+                !compute_governance(&self.snapshot).is_empty()
+                    || !self.snapshot.namespace_list.is_empty()
+            }
             AppView::Bookmarks => false,
             AppView::Vulnerabilities => !self.snapshot.vulnerability_reports.is_empty(),
             AppView::Nodes => !self.snapshot.nodes.is_empty(),
