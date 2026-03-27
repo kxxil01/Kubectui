@@ -252,16 +252,30 @@ fn failed_context_switch_clears_pending_workspace_restore() {
     let mut global_state = GlobalState::default();
     let mut snapshot_dirty = false;
     let mut needs_redraw = false;
+    let mut pending_runbook_restore = Some(kubectui::workbench::RunbookTabState::new(
+        kubectui::runbooks::LoadedRunbook {
+            id: "pod_failure".into(),
+            title: "Pod Failure Triage".into(),
+            description: None,
+            aliases: vec!["incident".into()],
+            resource_kinds: vec!["Pod".into()],
+            shortcut: None,
+            steps: Vec::new(),
+        },
+        Some(ResourceRef::Pod("api".into(), "prod".into())),
+    ));
 
     fail_context_switch(
         &mut app,
         &mut global_state,
         "context failed".into(),
+        &mut pending_runbook_restore,
         &mut snapshot_dirty,
         &mut needs_redraw,
     );
 
     assert!(app.pending_workspace_restore.is_none());
+    assert!(pending_runbook_restore.is_none());
     assert_eq!(global_state.snapshot().phase, DataPhase::Error);
     assert!(snapshot_dirty);
     assert!(needs_redraw);

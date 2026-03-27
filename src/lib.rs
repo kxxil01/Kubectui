@@ -25,6 +25,7 @@ pub mod preferences;
 pub mod projects;
 pub mod resource_diff;
 pub mod resource_templates;
+pub mod runbooks;
 pub mod secret;
 pub mod state;
 pub mod time;

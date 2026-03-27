@@ -2410,6 +2410,44 @@ mod tests {
     }
 
     #[test]
+    fn render_runbook_workbench_smoke() {
+        let mut app = app_with_view(AppView::Pods);
+        let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+        app.open_runbook_tab(
+            crate::runbooks::LoadedRunbook {
+                id: "pod_failure".into(),
+                title: "Pod Failure Triage".into(),
+                description: Some("Deterministic pod checks.".into()),
+                aliases: vec!["incident".into()],
+                resource_kinds: vec!["Pod".into()],
+                shortcut: None,
+                steps: vec![
+                    crate::runbooks::LoadedRunbookStep {
+                        title: "Checklist".into(),
+                        description: Some("Inspect the latest signals first.".into()),
+                        kind: crate::runbooks::LoadedRunbookStepKind::Checklist {
+                            items: vec!["Check events".into(), "Check probes".into()],
+                        },
+                    },
+                    crate::runbooks::LoadedRunbookStep {
+                        title: "Open logs".into(),
+                        description: None,
+                        kind: crate::runbooks::LoadedRunbookStepKind::DetailAction {
+                            action: crate::runbooks::RunbookDetailAction::Logs,
+                        },
+                    },
+                ],
+            },
+            Some(resource),
+        );
+
+        let rendered = render_to_string(&app, &ClusterSnapshot::default());
+        assert!(rendered.contains("Runbook"));
+        assert!(rendered.contains("Pod Failure Triage"));
+        assert!(rendered.contains("Checklist"));
+    }
+
+    #[test]
     fn render_rollout_workbench_smoke() {
         let mut app = app_with_view(AppView::Deployments);
         let resource = ResourceRef::Deployment("api".to_string(), "default".to_string());

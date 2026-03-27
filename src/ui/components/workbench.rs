@@ -18,7 +18,7 @@ use crate::{
     state::ClusterSnapshot,
     time::format_local,
     ui::components::default_theme,
-    workbench::{WorkbenchTab, WorkbenchTabState},
+    workbench::{RunbookStepState, WorkbenchTab, WorkbenchTabState},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +165,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, cluster: 
         WorkbenchTabState::Exec(tab) => render_exec_tab(frame, inner, tab),
         WorkbenchTabState::ExtensionOutput(tab) => render_extension_output_tab(frame, inner, tab),
         WorkbenchTabState::AiAnalysis(tab) => render_ai_analysis_tab(frame, inner, tab),
+        WorkbenchTabState::Runbook(tab) => render_runbook_tab(frame, inner, tab),
         WorkbenchTabState::PortForward(tab) => tab.dialog.render_embedded(frame, inner),
         WorkbenchTabState::Relations(tab) => {
             crate::ui::views::relations::render_relations_tab(frame, inner, tab, &theme)
@@ -2409,6 +2410,194 @@ fn render_extension_output_tab(
         sections[1],
     );
     render_scrollbar(frame, sections[1], total, window.start);
+}
+
+fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::RunbookTabState) {
+    let theme = default_theme();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(0)])
+        .split(area);
+
+    let banner = tab
+        .banner
+        .as_deref()
+        .unwrap_or("Use [Enter] to run a step, [d] mark done, [s] skip.");
+    let resource = tab
+        .resource
+        .as_ref()
+        .map(|resource| {
+            format!(
+                "{} {}",
+                resource.kind(),
+                match resource.namespace() {
+                    Some(namespace) => format!("{namespace}/{}", resource.name()),
+                    None => resource.name().to_string(),
+                }
+            )
+        })
+        .unwrap_or_else(|| "global".to_string());
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled(" runbook ", theme.badge_success_style()),
+                Span::raw(" "),
+                Span::styled(tab.runbook.title.clone(), theme.title_style()),
+                Span::raw("  "),
+                Span::styled(
+                    format!("{} complete", tab.progress_label()),
+                    theme.muted_style(),
+                ),
+                Span::raw("  "),
+                Span::styled(resource, theme.inactive_style()),
+            ]),
+            Line::from(vec![
+                Span::styled(banner, Style::default().fg(theme.fg_dim)),
+                Span::raw("  "),
+                Span::styled("[Esc] back", theme.keybind_desc_style()),
+            ]),
+        ]),
+        rows[0],
+    );
+
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .split(rows[1]);
+
+    let left_block = Block::default()
+        .title(Span::styled(" Steps ", theme.section_title_style()))
+        .borders(Borders::ALL)
+        .border_style(theme.border_style());
+    let left_inner = left_block.inner(columns[0]);
+    frame.render_widget(left_block, columns[0]);
+
+    let window = centered_window(
+        tab.steps.len(),
+        tab.selected,
+        left_inner.height.max(1) as usize,
+    );
+    let step_lines = if tab.steps.is_empty() {
+        vec![Line::from(Span::styled(
+            "No runbook steps available.",
+            theme.inactive_style(),
+        ))]
+    } else {
+        tab.steps[window.start..window.end]
+            .iter()
+            .enumerate()
+            .map(|(offset, runtime)| {
+                let absolute = window.start + offset;
+                let selected = absolute == tab.selected;
+                let marker = match runtime.state {
+                    RunbookStepState::Pending => "[ ]",
+                    RunbookStepState::Done => "[x]",
+                    RunbookStepState::Skipped => "[-]",
+                };
+                let state_style = match runtime.state {
+                    RunbookStepState::Pending => Style::default().fg(theme.fg_dim),
+                    RunbookStepState::Done => theme.badge_success_style(),
+                    RunbookStepState::Skipped => theme.badge_warning_style(),
+                };
+                let row_style = if selected {
+                    theme.selection_style()
+                } else {
+                    Style::default().fg(theme.fg)
+                };
+                Line::from(vec![
+                    Span::styled(if selected { "› " } else { "  " }, row_style),
+                    Span::styled(marker, state_style),
+                    Span::raw(" "),
+                    Span::styled(runtime.step.title.clone(), row_style),
+                ])
+            })
+            .collect::<Vec<_>>()
+    };
+    frame.render_widget(
+        Paragraph::new(step_lines).wrap(Wrap { trim: false }),
+        left_inner,
+    );
+    render_scrollbar(frame, left_inner, tab.steps.len(), window.start);
+
+    let right_block = Block::default()
+        .title(Span::styled(" Step Detail ", theme.section_title_style()))
+        .borders(Borders::ALL)
+        .border_style(theme.border_style());
+    let right_inner = right_block.inner(columns[1]);
+    frame.render_widget(right_block, columns[1]);
+
+    let detail_lines = tab.selected_step().map_or_else(
+        || {
+            vec![Line::from(Span::styled(
+                "Select a runbook step to inspect it.",
+                theme.inactive_style(),
+            ))]
+        },
+        |runtime| {
+            let mut lines = Vec::new();
+            lines.push(Line::from(Span::styled(
+                runtime.step.title.clone(),
+                theme.title_style(),
+            )));
+            if let Some(description) = &runtime.step.description {
+                lines.push(Line::from(Span::styled(
+                    description.clone(),
+                    Style::default().fg(theme.fg_dim),
+                )));
+                lines.push(Line::default());
+            }
+            lines.push(Line::from(step_kind_label(&runtime.step.kind, &theme)));
+            if let crate::runbooks::LoadedRunbookStepKind::Checklist { items } = &runtime.step.kind
+            {
+                lines.push(Line::default());
+                lines.extend(items.iter().map(|item| Line::from(format!("- {item}"))));
+            }
+            lines.push(Line::default());
+            lines.push(Line::from(Span::styled(
+                "[Enter] run/toggle  [d] done  [s] skip  [j/k] select",
+                theme.keybind_desc_style(),
+            )));
+            lines
+        },
+    );
+    frame.render_widget(
+        Paragraph::new(detail_lines).wrap(Wrap { trim: false }),
+        right_inner,
+    );
+}
+
+fn step_kind_label<'a>(
+    kind: &'a crate::runbooks::LoadedRunbookStepKind,
+    theme: &crate::ui::theme::Theme,
+) -> Span<'a> {
+    use crate::runbooks::LoadedRunbookStepKind;
+
+    match kind {
+        LoadedRunbookStepKind::Checklist { items } => Span::styled(
+            format!(
+                "Checklist • {} item{}",
+                items.len(),
+                if items.len() == 1 { "" } else { "s" }
+            ),
+            theme.badge_warning_style(),
+        ),
+        LoadedRunbookStepKind::Workspace { name, target } => Span::styled(
+            format!("{} • {}", target.label(), name),
+            theme.badge_success_style(),
+        ),
+        LoadedRunbookStepKind::DetailAction { action } => Span::styled(
+            format!("Detail Action • {}", action.label()),
+            theme.badge_success_style(),
+        ),
+        LoadedRunbookStepKind::ExtensionAction { action_id } => Span::styled(
+            format!("Extension • {}", action_id),
+            theme.badge_success_style(),
+        ),
+        LoadedRunbookStepKind::AiWorkflow { workflow } => Span::styled(
+            format!("AI Workflow • {}", workflow.default_title()),
+            theme.badge_success_style(),
+        ),
+    }
 }
 
 fn render_ai_analysis_tab(
