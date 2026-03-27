@@ -39,6 +39,7 @@ fn test_daemonset_complete_workflow() {
             selector: "app=prometheus-exporter".to_string(),
             update_strategy: "RollingUpdate".to_string(),
             labels: monitoring_labels.clone(),
+            pod_template_labels: monitoring_labels.clone(),
             status_message: "Ready".to_string(),
         },
         DaemonSetInfo {
@@ -59,6 +60,7 @@ fn test_daemonset_complete_workflow() {
                 m.insert("managed-by".to_string(), "platform".to_string());
                 m
             },
+            pod_template_labels: BTreeMap::new(),
             status_message: "1 node unavailable".to_string(),
         },
         DaemonSetInfo {
@@ -75,6 +77,7 @@ fn test_daemonset_complete_workflow() {
             selector: "component=system".to_string(),
             update_strategy: "OnDelete".to_string(),
             labels: BTreeMap::new(),
+            pod_template_labels: BTreeMap::new(),
             status_message: "Ready".to_string(),
         },
     ];
@@ -118,6 +121,7 @@ fn test_daemonset_rendering_with_snapshot() {
         selector: "k8s-app=kube-proxy".to_string(),
         update_strategy: "RollingUpdate".to_string(),
         labels,
+        pod_template_labels: BTreeMap::new(),
         status_message: "Ready".to_string(),
     }];
 

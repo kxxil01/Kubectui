@@ -11,7 +11,9 @@ use crate::{
         dtos::{AlertSeverity, IngressInfo, JobInfo, LabelSelectorInfo, PodInfo, ServiceInfo},
         selectors::selector_matches_pairs,
     },
-    state::{ClusterSnapshot, issues::compute_issues},
+    state::{
+        ClusterSnapshot, issues::compute_issues, vulnerabilities::compute_vulnerability_findings,
+    },
     ui::contains_ci,
 };
 
@@ -328,7 +330,12 @@ fn build_projects(snapshot: &ClusterSnapshot) -> Vec<ProjectSummary> {
     }
 
     for daemonset in &snapshot.daemonsets {
-        if let Some(identity) = identity_from_map(&daemonset.namespace, &daemonset.labels) {
+        let labels = if daemonset.pod_template_labels.is_empty() {
+            &daemonset.labels
+        } else {
+            &daemonset.pod_template_labels
+        };
+        if let Some(identity) = identity_from_map(&daemonset.namespace, labels) {
             let resource =
                 ResourceRef::DaemonSet(daemonset.name.clone(), daemonset.namespace.clone());
             let project = project_mut(&mut projects, &identity);
@@ -363,70 +370,140 @@ fn build_projects(snapshot: &ClusterSnapshot) -> Vec<ProjectSummary> {
     }
 
     for statefulset in &snapshot.statefulsets {
-        if let Some(project_key) = single_owner_project(
-            &owner_projects,
-            "StatefulSet",
-            &statefulset.namespace,
-            &statefulset.name,
-        ) {
+        let project_key =
+            identity_from_map(&statefulset.namespace, &statefulset.pod_template_labels)
+                .map(|identity| {
+                    let resource = ResourceRef::StatefulSet(
+                        statefulset.name.clone(),
+                        statefulset.namespace.clone(),
+                    );
+                    let project = project_mut(&mut projects, &identity);
+                    project.add_statefulset(&resource);
+                    resource_projects.insert(resource_key(&resource), identity.key.clone());
+                    identity.key
+                })
+                .or_else(|| {
+                    single_owner_project(
+                        &owner_projects,
+                        "StatefulSet",
+                        &statefulset.namespace,
+                        &statefulset.name,
+                    )
+                });
+        if let Some(project_key) = project_key {
             let resource =
                 ResourceRef::StatefulSet(statefulset.name.clone(), statefulset.namespace.clone());
-            if let Some(project) = projects.get_mut(&project_key) {
+            if !resource_projects.contains_key(&resource_key(&resource))
+                && let Some(project) = projects.get_mut(&project_key)
+            {
                 project.add_statefulset(&resource);
+                resource_projects.insert(resource_key(&resource), project_key.clone());
             }
-            resource_projects.insert(resource_key(&resource), project_key);
         }
     }
 
     for job in &snapshot.jobs {
-        if let Some(project_key) =
-            single_owner_project(&owner_projects, "Job", &job.namespace, &job.name)
-        {
-            let resource = ResourceRef::Job(job.name.clone(), job.namespace.clone());
-            if let Some(project) = projects.get_mut(&project_key) {
+        let project_key = identity_from_map(&job.namespace, &job.pod_template_labels)
+            .map(|identity| {
+                let resource = ResourceRef::Job(job.name.clone(), job.namespace.clone());
+                let project = project_mut(&mut projects, &identity);
                 project.add_job(&resource);
+                resource_projects.insert(resource_key(&resource), identity.key.clone());
+                remember_cronjob_parents(&mut job_to_cronjobs, job, &identity.key);
+                identity.key
+            })
+            .or_else(|| single_owner_project(&owner_projects, "Job", &job.namespace, &job.name));
+        if let Some(project_key) = project_key {
+            let resource = ResourceRef::Job(job.name.clone(), job.namespace.clone());
+            if !resource_projects.contains_key(&resource_key(&resource))
+                && let Some(project) = projects.get_mut(&project_key)
+            {
+                project.add_job(&resource);
+                resource_projects.insert(resource_key(&resource), project_key.clone());
+                remember_cronjob_parents(&mut job_to_cronjobs, job, &project_key);
             }
-            resource_projects.insert(resource_key(&resource), project_key.clone());
-            remember_cronjob_parents(&mut job_to_cronjobs, job, &project_key);
         }
     }
 
     for cronjob in &snapshot.cronjobs {
-        let lookup = (cronjob.namespace.clone(), cronjob.name.clone());
-        if let Some(project_keys) = job_to_cronjobs.get(&lookup)
-            && project_keys.len() == 1
-            && let Some(project_key) = project_keys.iter().next().cloned()
-        {
-            let resource = ResourceRef::CronJob(cronjob.name.clone(), cronjob.namespace.clone());
-            if let Some(project) = projects.get_mut(&project_key) {
+        let project_key = identity_from_map(&cronjob.namespace, &cronjob.pod_template_labels)
+            .map(|identity| {
+                let resource =
+                    ResourceRef::CronJob(cronjob.name.clone(), cronjob.namespace.clone());
+                let project = project_mut(&mut projects, &identity);
                 project.add_cronjob(&resource);
+                resource_projects.insert(resource_key(&resource), identity.key.clone());
+                identity.key
+            })
+            .or_else(|| {
+                let lookup = (cronjob.namespace.clone(), cronjob.name.clone());
+                job_to_cronjobs.get(&lookup).and_then(|project_keys| {
+                    (project_keys.len() == 1)
+                        .then(|| project_keys.iter().next().cloned())
+                        .flatten()
+                })
+            });
+        if let Some(project_key) = project_key {
+            let resource = ResourceRef::CronJob(cronjob.name.clone(), cronjob.namespace.clone());
+            if !resource_projects.contains_key(&resource_key(&resource))
+                && let Some(project) = projects.get_mut(&project_key)
+            {
+                project.add_cronjob(&resource);
+                resource_projects.insert(resource_key(&resource), project_key.clone());
             }
-            resource_projects.insert(resource_key(&resource), project_key);
         }
     }
 
     for service in &snapshot.services {
-        if let Some(project_key) = service_project(service, snapshot, &pod_projects) {
-            let resource = ResourceRef::Service(service.name.clone(), service.namespace.clone());
-            if let Some(project) = projects.get_mut(&project_key) {
+        let service_labels = if service.selector.is_empty() {
+            &service.labels
+        } else {
+            &service.selector
+        };
+        let project_key = identity_from_map(&service.namespace, service_labels)
+            .map(|identity| {
+                let resource =
+                    ResourceRef::Service(service.name.clone(), service.namespace.clone());
+                let project = project_mut(&mut projects, &identity);
                 project.add_service(&resource);
+                resource_projects.insert(resource_key(&resource), identity.key.clone());
+                service_projects.insert(
+                    (service.namespace.clone(), service.name.clone()),
+                    identity.key.clone(),
+                );
+                identity.key
+            })
+            .or_else(|| service_project(service, snapshot, &pod_projects));
+        if let Some(project_key) = project_key {
+            let resource = ResourceRef::Service(service.name.clone(), service.namespace.clone());
+            if !resource_projects.contains_key(&resource_key(&resource))
+                && let Some(project) = projects.get_mut(&project_key)
+            {
+                project.add_service(&resource);
+                resource_projects.insert(resource_key(&resource), project_key.clone());
+                service_projects.insert(
+                    (service.namespace.clone(), service.name.clone()),
+                    project_key.clone(),
+                );
             }
-            resource_projects.insert(resource_key(&resource), project_key.clone());
-            service_projects.insert(
-                (service.namespace.clone(), service.name.clone()),
-                project_key,
-            );
         }
     }
 
     for ingress in &snapshot.ingresses {
-        if let Some(project_key) = ingress_project(ingress, &service_projects) {
+        if let Some(identity) = identity_from_map(&ingress.namespace, &ingress.labels) {
+            let resource = ResourceRef::Ingress(ingress.name.clone(), ingress.namespace.clone());
+            let project = project_mut(&mut projects, &identity);
+            project.add_ingress(&resource);
+            resource_projects.insert(resource_key(&resource), identity.key.clone());
+        } else if let Some(project_key) = ingress_project(ingress, &service_projects) {
             let resource = ResourceRef::Ingress(ingress.name.clone(), ingress.namespace.clone());
             if let Some(project) = projects.get_mut(&project_key) {
                 project.add_ingress(&resource);
             }
             resource_projects.insert(resource_key(&resource), project_key);
-        }
+        } else {
+            continue;
+        };
     }
 
     for issue in compute_issues(snapshot).iter() {
@@ -441,6 +518,27 @@ fn build_projects(snapshot: &ClusterSnapshot) -> Vec<ProjectSummary> {
                     issue.resource_kind,
                     issue.resource_name,
                     truncate_issue(&issue.message)
+                ),
+            );
+        }
+    }
+
+    for finding in compute_vulnerability_findings(snapshot).iter() {
+        let Some(resource_ref) = &finding.resource_ref else {
+            continue;
+        };
+        let key = resource_key(resource_ref);
+        if let Some(project_key) = resource_projects.get(&key)
+            && let Some(project) = projects.get_mut(project_key)
+        {
+            project.add_issue(
+                finding.severity,
+                format!(
+                    "{} {}: {} total vulnerability findings ({} fixable)",
+                    finding.resource_kind,
+                    finding.resource_name,
+                    finding.counts.total(),
+                    finding.fixable_count
                 ),
             );
         }
@@ -471,25 +569,46 @@ fn project_mut<'a>(
 }
 
 fn identity_from_pairs(namespace: &str, labels: &[(String, String)]) -> Option<ProjectIdentity> {
-    let label_map = labels
-        .iter()
-        .map(|(key, value)| (key.as_str(), value.as_str()))
-        .collect::<HashMap<_, _>>();
-    identity_from_values(
-        namespace,
-        label_map.get("app.kubernetes.io/part-of").copied(),
-        label_map.get("app.kubernetes.io/instance").copied(),
-        label_map.get("app.kubernetes.io/name").copied(),
-        label_map.get("app").copied(),
-        label_map.get("k8s-app").copied(),
-        label_map.get("release").copied(),
-    )
+    if labels.is_empty() {
+        return None;
+    }
+    let mut part_of = None;
+    let mut instance = None;
+    let mut name = None;
+    let mut app = None;
+    let mut k8s_app = None;
+    let mut release = None;
+
+    for (key, value) in labels {
+        match key.as_str() {
+            "app.kubernetes.io/part-of" => part_of = Some(value.as_str()),
+            "app.kubernetes.io/instance" => instance = Some(value.as_str()),
+            "app.kubernetes.io/name" => name = Some(value.as_str()),
+            "app" => app = Some(value.as_str()),
+            "k8s-app" => k8s_app = Some(value.as_str()),
+            "release" => release = Some(value.as_str()),
+            _ => {}
+        }
+        if part_of.is_some()
+            && instance.is_some()
+            && name.is_some()
+            && app.is_some()
+            && k8s_app.is_some()
+            && release.is_some()
+        {
+            break;
+        }
+    }
+    identity_from_values(namespace, part_of, instance, name, app, k8s_app, release)
 }
 
 fn identity_from_map(
     namespace: &str,
     labels: &BTreeMap<String, String>,
 ) -> Option<ProjectIdentity> {
+    if labels.is_empty() {
+        return None;
+    }
     identity_from_values(
         namespace,
         labels.get("app.kubernetes.io/part-of").map(String::as_str),
@@ -610,9 +729,9 @@ fn ingress_project(
     let matching = ingress
         .backend_services
         .iter()
-        .filter_map(|(namespace, service)| {
+        .filter_map(|(service, _port)| {
             service_projects
-                .get(&(namespace.clone(), service.clone()))
+                .get(&(ingress.namespace.clone(), service.clone()))
                 .cloned()
         })
         .collect::<BTreeSet<_>>();
@@ -651,7 +770,10 @@ fn truncate_issue(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::k8s::dtos::{DeploymentInfo, OwnerRefInfo, PodInfo, ServiceInfo};
+    use crate::k8s::dtos::{
+        CronJobInfo, DaemonSetInfo, DeploymentInfo, IngressInfo, JobInfo, OwnerRefInfo, PodInfo,
+        ServiceInfo, StatefulSetInfo,
+    };
 
     #[test]
     fn computes_project_summary_from_labels_and_service_selector() {
@@ -777,8 +899,184 @@ mod tests {
         let projects = compute_projects(&snapshot);
         assert_eq!(projects.len(), 1);
         let project = &projects[0];
-        assert_eq!(project.issue_count, 1);
+        assert!(project.issue_count >= 1);
         assert_eq!(project.highest_severity, AlertSeverity::Error);
-        assert!(project.recent_issues[0].contains("Pod api-123"));
+        assert!(
+            project
+                .recent_issues
+                .iter()
+                .any(|issue| issue.contains("Pod api-123"))
+        );
+    }
+
+    #[test]
+    fn infers_zero_pod_workloads_from_template_labels() {
+        let labels = BTreeMap::from([("app.kubernetes.io/part-of".into(), "checkout".into())]);
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 4,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.statefulsets.push(StatefulSetInfo {
+            name: "db".into(),
+            namespace: "payments".into(),
+            pod_template_labels: labels.clone(),
+            ..StatefulSetInfo::default()
+        });
+        snapshot.daemonsets.push(DaemonSetInfo {
+            name: "agent".into(),
+            namespace: "payments".into(),
+            pod_template_labels: labels.clone(),
+            ..DaemonSetInfo::default()
+        });
+        snapshot.jobs.push(JobInfo {
+            name: "seed".into(),
+            namespace: "payments".into(),
+            pod_template_labels: labels.clone(),
+            ..JobInfo::default()
+        });
+        snapshot.cronjobs.push(CronJobInfo {
+            name: "nightly".into(),
+            namespace: "payments".into(),
+            pod_template_labels: labels,
+            ..CronJobInfo::default()
+        });
+
+        let projects = compute_projects(&snapshot);
+        assert_eq!(projects.len(), 1);
+        let project = &projects[0];
+        assert_eq!(project.name, "checkout");
+        assert_eq!(project.statefulsets, 1);
+        assert_eq!(project.daemonsets, 1);
+        assert_eq!(project.jobs, 1);
+        assert_eq!(project.cronjobs, 1);
+        assert_eq!(project.pods, 0);
+    }
+
+    #[test]
+    fn infers_service_and_ingress_projects_without_live_pods() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 5,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.services.push(ServiceInfo {
+            name: "api".into(),
+            namespace: "payments".into(),
+            selector: BTreeMap::from([("app.kubernetes.io/part-of".into(), "checkout".into())]),
+            ..ServiceInfo::default()
+        });
+        snapshot.ingresses.push(IngressInfo {
+            name: "api".into(),
+            namespace: "payments".into(),
+            backend_services: vec![("api".into(), "80".into())],
+            ..IngressInfo::default()
+        });
+
+        let projects = compute_projects(&snapshot);
+        assert_eq!(projects.len(), 1);
+        let project = &projects[0];
+        assert_eq!(project.name, "checkout");
+        assert_eq!(project.services, 1);
+        assert_eq!(project.ingresses, 1);
+        assert_eq!(project.pods, 0);
+    }
+
+    #[test]
+    fn infers_selectorless_services_and_labeled_ingresses() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 6,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.services.push(ServiceInfo {
+            name: "api-external".into(),
+            namespace: "payments".into(),
+            labels: BTreeMap::from([("app.kubernetes.io/name".into(), "checkout".into())]),
+            type_: "ExternalName".into(),
+            external_name: Some("api.example.com".into()),
+            ..ServiceInfo::default()
+        });
+        snapshot.ingresses.push(IngressInfo {
+            name: "api-edge".into(),
+            namespace: "payments".into(),
+            labels: BTreeMap::from([("app.kubernetes.io/name".into(), "checkout".into())]),
+            ..IngressInfo::default()
+        });
+
+        let projects = compute_projects(&snapshot);
+        assert_eq!(projects.len(), 1);
+        let project = &projects[0];
+        assert_eq!(project.name, "checkout");
+        assert_eq!(project.services, 1);
+        assert_eq!(project.ingresses, 1);
+        assert_eq!(project.pods, 0);
+    }
+
+    #[test]
+    fn infers_project_from_labeled_ingress_without_other_resources() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 7,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.ingresses.push(IngressInfo {
+            name: "api-edge".into(),
+            namespace: "payments".into(),
+            labels: BTreeMap::from([("app.kubernetes.io/name".into(), "checkout".into())]),
+            ..IngressInfo::default()
+        });
+
+        let projects = compute_projects(&snapshot);
+        assert_eq!(projects.len(), 1);
+        let project = &projects[0];
+        assert_eq!(project.name, "checkout");
+        assert_eq!(project.ingresses, 1);
+        assert_eq!(
+            project.representative,
+            Some(ResourceRef::Ingress("api-edge".into(), "payments".into()))
+        );
+    }
+
+    #[test]
+    fn project_summary_includes_vulnerability_findings() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 8,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.deployments.push(DeploymentInfo {
+            name: "api".into(),
+            namespace: "payments".into(),
+            pod_template_labels: BTreeMap::from([(
+                "app.kubernetes.io/part-of".into(),
+                "checkout".into(),
+            )]),
+            ..DeploymentInfo::default()
+        });
+        snapshot
+            .vulnerability_reports
+            .push(crate::k8s::dtos::VulnerabilityReportInfo {
+                namespace: "payments".into(),
+                resource_kind: "Deployment".into(),
+                resource_name: "api".into(),
+                resource_namespace: "payments".into(),
+                counts: crate::k8s::dtos::VulnerabilitySummaryCounts {
+                    critical: 1,
+                    high: 0,
+                    medium: 0,
+                    low: 0,
+                    unknown: 0,
+                },
+                fixable_count: 1,
+                ..crate::k8s::dtos::VulnerabilityReportInfo::default()
+            });
+
+        let projects = compute_projects(&snapshot);
+        assert_eq!(projects.len(), 1);
+        let project = &projects[0];
+        assert_eq!(project.highest_severity, AlertSeverity::Error);
+        assert!(project.issue_count >= 1);
+        assert!(
+            project
+                .recent_issues
+                .iter()
+                .any(|issue| issue.contains("vulnerability findings"))
+        );
     }
 }

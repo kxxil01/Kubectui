@@ -830,6 +830,29 @@ fn test_namespace_persistence() {
     let _ = std::fs::remove_file(path);
 }
 
+#[test]
+fn save_config_skips_write_when_parent_is_not_directory() {
+    let marker = std::env::temp_dir().join(format!(
+        "kubectui-config-parent-file-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_file(&marker);
+    std::fs::write(&marker, "sentinel").expect("marker file");
+    let path = marker.join("kubectui-config.json");
+
+    let mut app = AppState::default();
+    app.set_namespace("demo".to_string());
+    save_config_to_path(&app, &path);
+
+    assert!(!path.exists());
+    assert_eq!(
+        std::fs::read_to_string(&marker).expect("marker contents"),
+        "sentinel"
+    );
+
+    let _ = std::fs::remove_file(marker);
+}
+
 /// Verifies quit requires confirmation: first q sets confirm_quit, second q quits.
 #[test]
 fn quit_action_sets_should_quit() {

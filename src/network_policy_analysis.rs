@@ -24,6 +24,7 @@ pub struct NetworkPolicyAnalysis {
 }
 
 const MAX_RESOLVED_PEER_PODS: usize = 40;
+const MAX_SELECTED_PODS: usize = 40;
 
 pub fn analyze_resource(
     resource: &ResourceRef,
@@ -152,14 +153,6 @@ fn analyze_namespace(namespace: &str, snapshot: &ClusterSnapshot) -> NetworkPoli
                         .pods
                         .iter()
                         .filter(|pod| pod.namespace == namespace && policy_selects_pod(policy, pod))
-                        .map(|pod| {
-                            leaf_with_resource(
-                                &format!("Pod {}", pod.name),
-                                Some(ResourceRef::Pod(pod.name.clone(), pod.namespace.clone())),
-                                Some(pod.status.clone()),
-                                Some(pod.namespace.clone()),
-                            )
-                        })
                         .collect::<Vec<_>>();
                     let mut children = vec![leaf(&format!(
                         "SelectedPods {}",
@@ -170,7 +163,10 @@ fn analyze_namespace(namespace: &str, snapshot: &ClusterSnapshot) -> NetworkPoli
                         }
                     ))];
                     if !selected_pods.is_empty() {
-                        children.push(section("Selected pods", selected_pods));
+                        children.push(section(
+                            "Selected pods",
+                            capped_selected_pod_nodes(selected_pods),
+                        ));
                     }
                     children.extend(direction_nodes(policy, snapshot));
                     RelationNode {
@@ -220,17 +216,7 @@ fn analyze_policy(policy: &NetworkPolicyInfo, snapshot: &ClusterSnapshot) -> Net
     if !selected_pods.is_empty() {
         tree.push(section(
             "Selected pods",
-            selected_pods
-                .into_iter()
-                .map(|pod| {
-                    leaf_with_resource(
-                        &format!("Pod {}", pod.name),
-                        Some(ResourceRef::Pod(pod.name.clone(), pod.namespace.clone())),
-                        Some(pod.status.clone()),
-                        Some(pod.namespace.clone()),
-                    )
-                })
-                .collect(),
+            capped_selected_pod_nodes(selected_pods),
         ));
     }
     tree.extend(direction_nodes(policy, snapshot));
@@ -402,6 +388,28 @@ fn peer_nodes(
         nodes.push(leaf(&format!(
             "ResolvedPods {} total (showing first {})",
             total, MAX_RESOLVED_PEER_PODS
+        )));
+    }
+    nodes
+}
+
+fn capped_selected_pod_nodes(selected_pods: Vec<&PodInfo>) -> Vec<RelationNode> {
+    let total = selected_pods.len();
+    let mut nodes = selected_pods
+        .into_iter()
+        .take(MAX_SELECTED_PODS)
+        .map(|pod| {
+            leaf_with_resource(
+                &format!("Pod {}", pod.name),
+                Some(ResourceRef::Pod(pod.name.clone(), pod.namespace.clone())),
+                Some(pod.status.clone()),
+                Some(pod.namespace.clone()),
+            )
+        })
+        .collect::<Vec<_>>();
+    if total > MAX_SELECTED_PODS {
+        nodes.push(leaf(&format!(
+            "SelectedPods {total} total (showing first {MAX_SELECTED_PODS})"
         )));
     }
     nodes
@@ -766,6 +774,37 @@ mod tests {
                 .iter()
                 .any(|node| node.label == "Selected pods")
         );
+    }
+
+    #[test]
+    fn policy_analysis_caps_selected_pod_rendering() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.network_policies.push(NetworkPolicyInfo {
+            name: "api-policy".into(),
+            namespace: "default".into(),
+            pod_selector_spec: LabelSelectorInfo {
+                match_labels: BTreeMap::from([("app".into(), "api".into())]),
+                match_expressions: Vec::new(),
+            },
+            ..Default::default()
+        });
+        for idx in 0..50 {
+            snapshot.pods.push(PodInfo {
+                name: format!("api-{idx:02}"),
+                namespace: "default".into(),
+                labels: vec![("app".into(), "api".into())],
+                ..Default::default()
+            });
+        }
+
+        let analysis = analyze_resource(
+            &ResourceRef::NetworkPolicy("api-policy".into(), "default".into()),
+            &snapshot,
+        )
+        .expect("policy");
+
+        let text = format!("{:#?}", analysis.tree);
+        assert!(text.contains("SelectedPods 50 total (showing first 40)"));
     }
 
     #[test]

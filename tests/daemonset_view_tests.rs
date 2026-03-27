@@ -37,6 +37,7 @@ fn test_daemonset_view_namespace_filtering() {
             selector: "app=prometheus".to_string(),
             update_strategy: "RollingUpdate".to_string(),
             labels: labels.clone(),
+            pod_template_labels: labels.clone(),
             status_message: "Ready".to_string(),
         },
         DaemonSetInfo {
@@ -57,6 +58,7 @@ fn test_daemonset_view_namespace_filtering() {
                 m.insert("app".to_string(), "logging".to_string());
                 m
             },
+            pod_template_labels: BTreeMap::new(),
             status_message: "Ready".to_string(),
         },
     ];
@@ -216,6 +218,7 @@ fn test_daemonset_detail_view_fields() {
         selector: "k8s-app=kube-proxy".to_string(),
         update_strategy: "OnDelete".to_string(),
         labels: labels.clone(),
+        pod_template_labels: labels.clone(),
         status_message: "Ready".to_string(),
     };
 
@@ -245,6 +248,7 @@ fn test_daemonset_degraded_status_message() {
         selector: "app=custom".to_string(),
         update_strategy: "RollingUpdate".to_string(),
         labels: BTreeMap::new(),
+        pod_template_labels: BTreeMap::new(),
         status_message: "2 nodes not ready; ImagePullBackOff on node-3".to_string(),
     };
 
@@ -277,6 +281,7 @@ fn test_daemonset_pod_relationships() {
             m.insert("version".to_string(), "v2".to_string());
             m
         },
+        pod_template_labels: BTreeMap::new(),
         status_message: "Ready".to_string(),
     };
 

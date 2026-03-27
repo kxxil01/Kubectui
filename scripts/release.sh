@@ -13,6 +13,13 @@ set -euo pipefail
 
 CARGO_TOML="Cargo.toml"
 
+require_cmd() {
+    command -v "$1" >/dev/null 2>&1 || {
+        echo "Error: missing required command: $1" >&2
+        exit 1
+    }
+}
+
 current_version() {
     grep '^version' "$CARGO_TOML" | head -1 | sed 's/.*"\(.*\)".*/\1/'
 }
@@ -43,6 +50,16 @@ if [ $# -ne 1 ]; then
     echo "  $0 major          # 1.0.0 -> 2.0.0"
     echo "  $0 1.2.3          # explicit version"
     echo "  $0 2.0.0-beta.1   # pre-release"
+    exit 1
+fi
+
+require_cmd cargo
+require_cmd git
+require_cmd gh
+require_cmd sed
+
+if ! gh auth status >/dev/null 2>&1; then
+    echo "Error: gh is not authenticated. Run 'gh auth login' first." >&2
     exit 1
 fi
 
