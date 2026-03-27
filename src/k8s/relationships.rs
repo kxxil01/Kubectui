@@ -6,6 +6,7 @@ use crate::app::{AppView, ResourceRef};
 use crate::k8s::dtos::OwnerRefInfo;
 use crate::k8s::gateway_semantics::{
     gateway_parent_attachment_allowed, reference_grant_allows_backend,
+    select_gateway_parent_attachment,
 };
 use crate::policy::RelationshipCapability;
 use crate::state::ClusterSnapshot;
@@ -872,13 +873,22 @@ pub fn resolve_gateway_topology_from_snapshot(
             };
             let mut children = Vec::new();
             for route in &snapshot.http_routes {
-                let matching_parent = route.parent_refs.iter().find(|parent| {
-                    let parent_namespace = parent.namespace.as_deref().unwrap_or(&route.namespace);
-                    parent.kind == "Gateway"
-                        && parent.name == gateway.name
-                        && parent_namespace == gateway.namespace
-                });
-                if let Some(parent) = matching_parent {
+                let matching_parent_refs = route
+                    .parent_refs
+                    .iter()
+                    .filter(|parent| {
+                        let parent_namespace =
+                            parent.namespace.as_deref().unwrap_or(&route.namespace);
+                        parent.kind == "Gateway"
+                            && parent.name == gateway.name
+                            && parent_namespace == gateway.namespace
+                    })
+                    .collect::<Vec<_>>();
+                if let Some((_, blocked)) = select_gateway_parent_attachment(
+                    gateway,
+                    &route.namespace,
+                    &matching_parent_refs,
+                ) {
                     let mut node = gateway_route_relation_node(
                         "HTTPRoute",
                         &route.name,
@@ -888,7 +898,7 @@ pub fn resolve_gateway_topology_from_snapshot(
                         route.backend_refs.as_slice(),
                         snapshot,
                     );
-                    if !gateway_parent_attachment_allowed(gateway, &route.namespace, parent) {
+                    if blocked {
                         node.status = Some(format!(
                             "{}; cross-namespace attachment may be rejected",
                             node.status.unwrap_or_default()
@@ -898,13 +908,22 @@ pub fn resolve_gateway_topology_from_snapshot(
                 }
             }
             for route in &snapshot.grpc_routes {
-                let matching_parent = route.parent_refs.iter().find(|parent| {
-                    let parent_namespace = parent.namespace.as_deref().unwrap_or(&route.namespace);
-                    parent.kind == "Gateway"
-                        && parent.name == gateway.name
-                        && parent_namespace == gateway.namespace
-                });
-                if let Some(parent) = matching_parent {
+                let matching_parent_refs = route
+                    .parent_refs
+                    .iter()
+                    .filter(|parent| {
+                        let parent_namespace =
+                            parent.namespace.as_deref().unwrap_or(&route.namespace);
+                        parent.kind == "Gateway"
+                            && parent.name == gateway.name
+                            && parent_namespace == gateway.namespace
+                    })
+                    .collect::<Vec<_>>();
+                if let Some((_, blocked)) = select_gateway_parent_attachment(
+                    gateway,
+                    &route.namespace,
+                    &matching_parent_refs,
+                ) {
                     let mut node = gateway_route_relation_node(
                         "GRPCRoute",
                         &route.name,
@@ -914,7 +933,7 @@ pub fn resolve_gateway_topology_from_snapshot(
                         route.backend_refs.as_slice(),
                         snapshot,
                     );
-                    if !gateway_parent_attachment_allowed(gateway, &route.namespace, parent) {
+                    if blocked {
                         node.status = Some(format!(
                             "{}; cross-namespace attachment may be rejected",
                             node.status.unwrap_or_default()
@@ -2753,6 +2772,78 @@ mod tests {
                 .status
                 .as_deref()
                 .is_some_and(|status| status.contains("attachment may be rejected"))
+        );
+    }
+
+    #[test]
+    fn resolve_gateway_root_prefers_allowed_parent_ref_status_when_same_gateway_is_referenced_twice()
+     {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.gateways = vec![GatewayInfo {
+            name: "edge".into(),
+            namespace: "shared".into(),
+            version: "v1".into(),
+            listeners: vec![
+                GatewayListenerInfo {
+                    name: "private".into(),
+                    protocol: "HTTP".into(),
+                    port: 80,
+                    allowed_routes_from: Some("Same".into()),
+                    ..Default::default()
+                },
+                GatewayListenerInfo {
+                    name: "public".into(),
+                    protocol: "HTTP".into(),
+                    port: 8080,
+                    allowed_routes_from: Some("All".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }];
+        snapshot.http_routes = vec![HttpRouteInfo {
+            name: "frontend".into(),
+            namespace: "apps".into(),
+            version: "v1".into(),
+            parent_refs: vec![
+                GatewayParentRefInfo {
+                    group: "gateway.networking.k8s.io".into(),
+                    kind: "Gateway".into(),
+                    name: "edge".into(),
+                    namespace: Some("shared".into()),
+                    section_name: Some("private".into()),
+                },
+                GatewayParentRefInfo {
+                    group: "gateway.networking.k8s.io".into(),
+                    kind: "Gateway".into(),
+                    name: "edge".into(),
+                    namespace: Some("shared".into()),
+                    section_name: Some("public".into()),
+                },
+            ],
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::CustomResource {
+            group: "gateway.networking.k8s.io".into(),
+            kind: "Gateway".into(),
+            plural: "gateways".into(),
+            version: "v1".into(),
+            name: "edge".into(),
+            namespace: Some("shared".into()),
+        };
+        let result = resolve_gateway_topology_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].children.len(), 1);
+        assert!(
+            result[0].children[0]
+                .status
+                .as_deref()
+                .is_none_or(|status| !status.contains("attachment may be rejected"))
         );
     }
 

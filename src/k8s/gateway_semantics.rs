@@ -17,16 +17,23 @@ pub fn gateway_parent_attachment_allowed(
     route_namespace: &str,
     parent_ref: &GatewayParentRefInfo,
 ) -> bool {
+    let listener = if let Some(section_name) = parent_ref.section_name.as_deref() {
+        let Some(listener) = gateway
+            .listeners
+            .iter()
+            .find(|listener| listener.name == section_name)
+        else {
+            return false;
+        };
+        Some(listener)
+    } else {
+        None
+    };
+
     if route_namespace == gateway.namespace {
         return true;
     }
 
-    let listener = parent_ref.section_name.as_deref().and_then(|section_name| {
-        gateway
-            .listeners
-            .iter()
-            .find(|listener| listener.name == section_name)
-    });
     match listener {
         Some(listener) => gateway_listener_allows_cross_namespace(listener),
         None => gateway
@@ -34,6 +41,24 @@ pub fn gateway_parent_attachment_allowed(
             .iter()
             .any(gateway_listener_allows_cross_namespace),
     }
+}
+
+pub fn select_gateway_parent_attachment<'a>(
+    gateway: &GatewayInfo,
+    route_namespace: &str,
+    parent_refs: &[&'a GatewayParentRefInfo],
+) -> Option<(&'a GatewayParentRefInfo, bool)> {
+    let first = *parent_refs.first()?;
+    let selected = parent_refs
+        .iter()
+        .copied()
+        .find(|parent| gateway_parent_attachment_allowed(gateway, route_namespace, parent))
+        .unwrap_or(first);
+    let blocked = route_namespace != gateway.namespace
+        && parent_refs
+            .iter()
+            .all(|parent| !gateway_parent_attachment_allowed(gateway, route_namespace, parent));
+    Some((selected, blocked))
 }
 
 pub fn reference_grant_allows_backend(
@@ -126,6 +151,79 @@ mod tests {
             "apps",
             &parent_ref,
         ));
+    }
+
+    #[test]
+    fn parent_attachment_rejects_unknown_section_name_instead_of_falling_back() {
+        let gateway = GatewayInfo {
+            namespace: "shared".into(),
+            listeners: vec![
+                GatewayListenerInfo {
+                    name: "private".into(),
+                    allowed_routes_from: Some("Same".into()),
+                    ..GatewayListenerInfo::default()
+                },
+                GatewayListenerInfo {
+                    name: "public".into(),
+                    allowed_routes_from: Some("All".into()),
+                    ..GatewayListenerInfo::default()
+                },
+            ],
+            ..GatewayInfo::default()
+        };
+        let parent_ref = GatewayParentRefInfo {
+            kind: "Gateway".into(),
+            name: "edge".into(),
+            namespace: Some("shared".into()),
+            section_name: Some("missing".into()),
+            ..GatewayParentRefInfo::default()
+        };
+
+        assert!(!gateway_parent_attachment_allowed(
+            &gateway,
+            "apps",
+            &parent_ref,
+        ));
+    }
+
+    #[test]
+    fn select_gateway_parent_attachment_prefers_allowed_parent_and_reports_blocked() {
+        let gateway = GatewayInfo {
+            namespace: "shared".into(),
+            listeners: vec![
+                GatewayListenerInfo {
+                    name: "private".into(),
+                    allowed_routes_from: Some("Same".into()),
+                    ..GatewayListenerInfo::default()
+                },
+                GatewayListenerInfo {
+                    name: "public".into(),
+                    allowed_routes_from: Some("All".into()),
+                    ..GatewayListenerInfo::default()
+                },
+            ],
+            ..GatewayInfo::default()
+        };
+        let denied = GatewayParentRefInfo {
+            kind: "Gateway".into(),
+            name: "edge".into(),
+            namespace: Some("shared".into()),
+            section_name: Some("private".into()),
+            ..GatewayParentRefInfo::default()
+        };
+        let allowed = GatewayParentRefInfo {
+            kind: "Gateway".into(),
+            name: "edge".into(),
+            namespace: Some("shared".into()),
+            section_name: Some("public".into()),
+            ..GatewayParentRefInfo::default()
+        };
+
+        let (selected, blocked) =
+            select_gateway_parent_attachment(&gateway, "apps", &[&denied, &allowed])
+                .expect("selected parent");
+        assert_eq!(selected.section_name.as_deref(), Some("public"));
+        assert!(!blocked);
     }
 
     #[test]

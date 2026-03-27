@@ -100,6 +100,10 @@ impl NamespaceGovernanceSummary {
     pub fn total_issue_count(&self) -> usize {
         self.runtime_issue_count + self.sanitizer_issue_count + self.security_issue_count
     }
+
+    pub fn representative_label(&self) -> Option<String> {
+        self.representative.as_ref().map(ResourceRef::summary_label)
+    }
 }
 
 type GovernanceCache = Arc<Vec<NamespaceGovernanceSummary>>;
@@ -107,6 +111,21 @@ type GovernanceCacheKey = (u64, usize);
 
 static GOVERNANCE_CACHE: LazyLock<Mutex<Option<(GovernanceCacheKey, GovernanceCache)>>> =
     LazyLock::new(|| Mutex::new(None));
+
+fn namespace_fallback_representative(
+    snapshot: &ClusterSnapshot,
+    namespace: &str,
+) -> Option<ResourceRef> {
+    if namespace == "cluster" {
+        return None;
+    }
+
+    snapshot
+        .namespace_list
+        .iter()
+        .any(|entry| entry.name == namespace)
+        .then(|| ResourceRef::Namespace(namespace.to_string()))
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct WorkloadKey {
@@ -584,7 +603,7 @@ fn build_governance(snapshot: &ClusterSnapshot) -> Vec<NamespaceGovernanceSummar
                 highest_severity: accumulator.highest_severity,
                 representative: accumulator
                     .representative
-                    .or_else(|| Some(ResourceRef::Namespace(namespace.clone()))),
+                    .or_else(|| namespace_fallback_representative(snapshot, &namespace)),
                 projects,
                 projects_label: projects_label.clone(),
                 counts_summary_label: format!(
@@ -976,5 +995,87 @@ mod tests {
         assert!(summary.matches_query("api"));
         assert!(summary.matches_query("payments"));
         assert!(summary.matches_query("missing requests"));
+    }
+
+    #[test]
+    fn governance_cluster_row_does_not_fallback_to_fake_namespace_target() {
+        let snapshot = ClusterSnapshot::default();
+
+        assert_eq!(
+            namespace_fallback_representative(&snapshot, "cluster"),
+            None
+        );
+    }
+
+    #[test]
+    fn governance_namespace_row_falls_back_to_real_namespace_target() {
+        let snapshot = ClusterSnapshot {
+            namespace_list: vec![NamespaceInfo {
+                name: "team-a".to_string(),
+                ..NamespaceInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        };
+
+        assert_eq!(
+            namespace_fallback_representative(&snapshot, "team-a"),
+            Some(ResourceRef::Namespace("team-a".to_string()))
+        );
+    }
+
+    #[test]
+    fn governance_representative_label_uses_actual_target() {
+        let summary = NamespaceGovernanceSummary {
+            namespace: "team-a".to_string(),
+            representative: Some(ResourceRef::Deployment(
+                "api".to_string(),
+                "team-a".to_string(),
+            )),
+            project_count: 0,
+            project_count_label: "0".to_string(),
+            workload_count: 0,
+            workload_count_label: "0".to_string(),
+            pod_count: 0,
+            runtime_issue_count: 0,
+            sanitizer_issue_count: 0,
+            security_issue_count: 0,
+            total_issue_count_label: "0".to_string(),
+            vulnerability_total: 0,
+            vulnerability_total_label: "0".to_string(),
+            fixable_vulnerabilities: 0,
+            quota_count: 0,
+            limit_range_count: 0,
+            pdb_gap_count: 0,
+            policy_surface_count_label: "0".to_string(),
+            missing_cpu_request_pods: 0,
+            missing_mem_request_pods: 0,
+            missing_limit_pods: 0,
+            cpu_usage_m: 0,
+            mem_usage_mib: 0,
+            cpu_request_m: 0,
+            mem_request_mib: 0,
+            cpu_req_utilization_pct: None,
+            cpu_req_utilization_label: "n/a".to_string(),
+            mem_req_utilization_pct: None,
+            mem_req_utilization_label: "n/a".to_string(),
+            idle_cpu_request_m: 0,
+            idle_mem_request_mib: 0,
+            idle_request_label: "0m/0Mi".to_string(),
+            highest_severity: AlertSeverity::Info,
+            projects: Vec::new(),
+            projects_label: "none".to_string(),
+            counts_summary_label: String::new(),
+            policy_surfaces_label: String::new(),
+            vulnerabilities_label: String::new(),
+            requests_label: String::new(),
+            coverage_gaps_label: String::new(),
+            risk_signals: Vec::new(),
+            top_workloads: Vec::new(),
+        };
+
+        assert_eq!(
+            summary.representative_label().as_deref(),
+            Some("Deployment/team-a/api")
+        );
     }
 }

@@ -167,6 +167,14 @@ impl ResourceRef {
         }
     }
 
+    /// Returns a compact UI label for navigation and summary hints.
+    pub fn summary_label(&self) -> String {
+        match self.namespace() {
+            Some(namespace) => format!("{}/{namespace}/{}", self.kind(), self.name()),
+            None => format!("{}/{}", self.kind(), self.name()),
+        }
+    }
+
     pub fn primary_view(&self) -> Option<AppView> {
         match self {
             ResourceRef::Node(_) => Some(AppView::Nodes),

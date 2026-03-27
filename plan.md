@@ -53,6 +53,12 @@ Current milestone status:
 - Milestone 35: completed
 - Milestone 36: completed
 - Milestone 37: completed
+- Milestone 38: not started
+- Milestone 39: not started
+- Milestone 40: not started
+- Milestone 41: not started
+- Milestone 42: not started
+- Milestone 43: not started
 - Phase 8 (Watch-Backed Caches): completed
 
 Completion notes:
@@ -1999,9 +2005,20 @@ This is the execution order.
 - Milestone 18: CronJob/Job Management Panel ✅
 - Milestone 19: Ephemeral Debug Container Launcher ✅
 
-## P5 (Completed)
+## P5 (Next)
 
-- Milestone 37: Governance & Cost Center ✅
+- Milestone 38: Multi-Cluster Workspaces & Compare
+- Milestone 39: Global Resource Search & Activity Switcher
+
+## P6
+
+- Milestone 40: RBAC Access Review & Reverse Lookup
+- Milestone 41: Extension Packaging & Catalog
+
+## P7
+
+- Milestone 42: Synthetic Service Checks & Benchmarks
+- Milestone 43: Local Sandbox Cluster Control
 
 ## Continuous
 
@@ -2015,27 +2032,37 @@ M0-M37 are complete.
 
 Recommended near-term order:
 
-- none in the current roadmap expansion set
+- M38 -> M39 -> M40
 
 Do not start next with:
 
 - autonomous/general AI features outside the shipped M23 extension path
 - visual graph experiments that don't fit TUI constraints
 - desktop-style interaction patterns
+- heavy cloud-cost billing integrations before multi-cluster and RBAC leverage are in place
 
 ---
 
 ## Remaining Backlog Priority Order
 
-The original milestone roadmap is complete. Any follow-up work from here is new roadmap expansion, not unfinished carryover. The next set should optimize for release confidence first, then operator workflow leverage, then modern Kubernetes surface area, while preserving the current performance budget.
+The original milestone roadmap is complete. Any follow-up work from here is new roadmap expansion, not unfinished carryover. The next set should optimize for operator workflow leverage first, then cross-cluster clarity, then secure extensibility, while preserving the current performance budget.
 
 ### Big Win Priority Order
 
-- none remaining in the current roadmap expansion set
+- M38: Multi-Cluster Workspaces & Compare
+- M39: Global Resource Search & Activity Switcher
+- M40: RBAC Access Review & Reverse Lookup
+- M41: Extension Packaging & Catalog
+- M42: Synthetic Service Checks & Benchmarks
+- M43: Local Sandbox Cluster Control
 
 ### Why this order
 
-- the current roadmap expansion set is complete; any work after this point should be a new roadmap decision rather than silently extending the old one
+- M38 is the highest leverage workflow gap left after Projects, Workspaces, Governance, and Gateway API. Operators still bounce between clusters manually, and the current bank/workspace model is single-cluster at a time.
+- M39 compounds M38 and the existing workbench by shrinking “find the thing first” latency across views, resources, and recent activities.
+- M40 follows because the product now has broad operational power but still lacks a first-class “what can this subject do / why is this denied” surface that K9s-class operators expect.
+- M41 comes after that because the extension substrate already exists; the next value is making it installable, inspectable, and shareable without weakening the canonical runtime path.
+- M42 and M43 are valuable but more specialized. They should come after the higher-frequency operator workflow gaps above.
 
 ### Next Milestones
 
@@ -2148,6 +2175,108 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
   - dedicated Overview `Governance` view with severity-first sorting, search/filter integration, representative-resource `Enter` routing, and per-namespace governance/cost summary panes
   - workload-level risk rollups that collapse pod ownership back to Deployments/StatefulSets/DaemonSets/Jobs/CronJobs where possible so operators see app-level hotspots instead of pod noise
   - conservative idle-request cost proxying derived from existing request-vs-usage data, plus coverage-gap signals for missing requests/limits and policy surfaces
+
+#### M38: Multi-Cluster Workspaces & Compare
+
+- Status: not started
+- Big win: highest
+- Why:
+  - KubecTUI now has strong single-cluster workflows, but operators still need to pivot between prod/staging/dev or between regional clusters quickly.
+  - current workspaces and banks are cluster-local jumps, not a first-class multi-cluster operating surface.
+- Scope:
+  - multi-cluster workspace banks and recent-cluster switching
+  - side-by-side compare for selected overview/resource surfaces where data is structurally comparable
+  - explicit cluster badges throughout navigation, workbench, and action history
+  - cluster-scoped saved jumps without cross-cluster state leakage
+- Guardrails:
+  - no hidden parallel refresh storm across every kubeconfig context
+  - no second state tree separate from the existing snapshot/workbench model
+  - compare views must stay bounded, text-first, and keyboard-native
+
+#### M39: Global Resource Search & Activity Switcher
+
+- Status: not started
+- Big win: very high
+- Why:
+  - the app now spans many views and workbench tabs; the remaining friction is often locating the right object or returning to the right recent activity.
+  - command-palette discovery is good, but it is still action-first rather than global-resource-first.
+- Scope:
+  - global cross-view resource search by kind/name/namespace/labels
+  - recent-activity switcher spanning workbench tabs, action history, and recent jumps
+  - cross-cluster resource jump when M38 lands
+  - optional fuzzy search ranking with explicit deterministic tie-breaking
+- Guardrails:
+  - keep search snapshot-based and cached
+  - no blocking full-scan recomputation on every keystroke beyond the existing bounded filtering model
+  - preserve the current palette as the canonical action launcher
+
+#### M40: RBAC Access Review & Reverse Lookup
+
+- Status: not started
+- Big win: high
+- Why:
+  - the app now depends heavily on correct authz behavior and tri-state checks, but it still lacks a direct surface for operators to inspect effective access.
+  - this is one of the highest-leverage troubleshooting workflows for shared clusters.
+- Scope:
+  - “what can I do” for the current identity in namespace or cluster scope
+  - reverse lookup from ServiceAccount/User/Group to Roles, ClusterRoles, and Bindings
+  - denied-action explanation surface tied back to the canonical detail/palette policy path
+  - explicit namespace-vs-cluster auth boundaries
+- Guardrails:
+  - no speculative auth modeling outside Kubernetes authz APIs and the existing snapshot
+  - single canonical source of truth for action requirements must remain `authorization.rs`
+  - fail clearly on clusters where self-subject review APIs are unavailable
+
+#### M41: Extension Packaging & Catalog
+
+- Status: not started
+- Big win: medium-high
+- Why:
+  - the extension/runtime substrate is already complete; the missing step is making those extensions easier to package, inspect, install, and share.
+  - this compounds the value of M23 without changing the execution model.
+- Scope:
+  - packaged extension manifests with metadata, versioning, and validation
+  - local catalog/registry view for installed extensions and AI actions
+  - enable/disable, trust, and config inspection on the canonical extension path
+  - import/export workflow for local extension bundles
+- Guardrails:
+  - no network marketplace in the first pass
+  - no alternate extension runtime; reuse the shipped command/AI action substrate
+  - strong validation and explicit trust boundaries before execution
+
+#### M42: Synthetic Service Checks & Benchmarks
+
+- Status: not started
+- Big win: medium
+- Why:
+  - KubecTUI already explains traffic intent and routing, but operators still need a fast “does this endpoint actually respond” surface for day-2 checks.
+  - K9s-style benchmark and connectivity workflows remain useful when kept bounded and explicit.
+- Scope:
+  - bounded HTTP/TCP synthetic checks from local operator context
+  - response summary, latency, status-code, and basic retry result surfacing
+  - optional short benchmark mode for selected services/endpoints
+  - action-history and workbench integration on the existing traffic-debug path
+- Guardrails:
+  - strictly opt-in; no background probes
+  - bounded runtime and output
+  - no confusion between local synthetic checks and in-cluster dataplane truth
+
+#### M43: Local Sandbox Cluster Control
+
+- Status: not started
+- Big win: medium
+- Why:
+  - the product now ships disposable-cluster smoke tooling, but it remains script-driven rather than operator-facing.
+  - local sandbox control would tighten the development and validation loop without touching production workflows.
+- Scope:
+  - detect and manage local `kind`/lightweight sandbox clusters
+  - launch/recreate/delete sandbox clusters from a guarded workflow
+  - connect smoke automation and release validation to that local-cluster surface
+  - explicit safeguards so local actions never target remote contexts
+- Guardrails:
+  - local-only in the first pass
+  - no remote managed-cluster lifecycle actions
+  - fail closed when the current context is not clearly a supported local sandbox
 
 ### Completed Priorities Record
 
@@ -2315,7 +2444,7 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 ### Recommended Remaining Order
 
-- none; M33-M37 are complete
+- M38 -> M39 -> M40 -> M41 -> M42 -> M43
 
 ### Research Basis
 
@@ -2323,6 +2452,8 @@ This ordering is informed by the workflows emphasized in active operator tools a
 
 - K9s plugin, XRay, shell, and workflow emphasis
 - Lens/Freelens command palette, logs, terminal, overview, and hotbar workflows
+- Lens teamwork and access-sharing workflows
+- Headlamp multi-cluster, plugin, and activity/task-oriented workflows
 - KubecTUI's existing strengths: workbench, action history, Helm rollback, health/sanitizer, network policy analysis
 
 The goal is not parity for its own sake. The goal is to invest next in the workflows that most reduce operator round-trips while staying fast and terminal-native.
@@ -2484,12 +2615,15 @@ These are workflow references, not UI templates:
 - Lens repo: [https://github.com/lensapp/lens](https://github.com/lensapp/lens)
 - Freelens repo: [https://github.com/freelensapp/freelens](https://github.com/freelensapp/freelens)
 - K9s repo/docs: [https://github.com/derailed/k9s](https://github.com/derailed/k9s)
+- Headlamp docs: [https://headlamp.dev/docs/latest/](https://headlamp.dev/docs/latest/)
+- Headlamp site: [https://headlamp.dev/](https://headlamp.dev/)
 
 Use them to learn:
 
 - what workflows matter
 - what operators expect
 - how discoverability is handled
+- how multi-cluster, plugin-catalog, and local-cluster workflows are evolving
 
 Do not use them as justification to clone desktop interaction patterns into a terminal.
 
