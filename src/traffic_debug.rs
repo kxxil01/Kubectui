@@ -9,7 +9,7 @@ use crate::{
             EndpointInfo, GatewayBackendRefInfo, GatewayInfo, GatewayParentRefInfo, GrpcRouteInfo,
             HttpRouteInfo, IngressInfo, IngressRouteInfo, PodInfo, ServiceInfo, ServicePortInfo,
         },
-        gateway_semantics::{gateway_parent_attachment_allowed, reference_grant_allows_backend},
+        gateway_semantics::{reference_grant_allows_backend, select_gateway_parent_attachment},
         portforward::{PortForwardTunnelInfo, TunnelState},
         relationships::{RelationKind, RelationNode},
     },
@@ -1111,15 +1111,9 @@ fn gateway_route_ref_for<'a>(
     if matching_parent_refs.is_empty() {
         return None;
     }
-    let parent_ref = matching_parent_refs
-        .iter()
-        .copied()
-        .find(|parent| gateway_parent_attachment_allowed(gateway, route.namespace, parent))
-        .unwrap_or(matching_parent_refs[0]);
-    let cross_namespace_parent_blocked = route.namespace != gateway.namespace
-        && matching_parent_refs
-            .iter()
-            .all(|parent| !gateway_parent_attachment_allowed(gateway, route.namespace, parent));
+    let (parent_ref, cross_namespace_parent_blocked) =
+        select_gateway_parent_attachment(gateway, route.namespace, &matching_parent_refs)
+            .expect("matching parent refs are not empty");
     let resolutions = route
         .backend_refs
         .iter()
@@ -2447,6 +2441,35 @@ mod tests {
             Some("public")
         );
         assert!(!route_refs[0].cross_namespace_parent_blocked);
+    }
+
+    #[test]
+    fn gateway_route_refs_treat_unknown_section_name_as_blocked_attachment() {
+        let mut snapshot = ClusterSnapshot::default();
+        let mut gateway = gateway();
+        gateway.listeners.push(GatewayListenerInfo {
+            name: "public".to_string(),
+            protocol: "HTTP".to_string(),
+            port: 8080,
+            hostname: None,
+            allowed_routes_from: Some("All".to_string()),
+            allowed_routes_selector: None,
+            attached_routes: 1,
+            ready: Some(true),
+        });
+        snapshot.gateways.push(gateway);
+
+        let mut route = http_route("apps");
+        route.parent_refs[0].section_name = Some("missing".to_string());
+        snapshot.http_routes.push(route);
+
+        let route_refs = gateway_route_refs(&snapshot, &snapshot.gateways[0]);
+        assert_eq!(route_refs.len(), 1);
+        assert_eq!(
+            route_refs[0].parent_ref.section_name.as_deref(),
+            Some("missing")
+        );
+        assert!(route_refs[0].cross_namespace_parent_blocked);
     }
 
     #[test]
