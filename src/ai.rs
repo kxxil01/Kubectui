@@ -115,9 +115,13 @@ struct StructuredAiResponse {
 #[inline(never)]
 pub fn run_ai_analysis(
     provider: &AiProviderConfig,
-    prompt_override: Option<&str>,
+    system_prompt: &str,
     context: &AiAnalysisContext,
 ) -> Result<AiAnalysisResult> {
+    let system_prompt = system_prompt.trim();
+    if system_prompt.is_empty() {
+        bail!("AI system prompt must not be empty");
+    }
     let api_key = std::env::var(&provider.api_key_env)
         .with_context(|| format!("AI API key env var '{}' is not set", provider.api_key_env))?;
     let agent_config = ureq::Agent::config_builder()
@@ -126,11 +130,6 @@ pub fn run_ai_analysis(
         .build();
     let agent: ureq::Agent = agent_config.into();
 
-    let system_prompt = prompt_override
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or(default_system_prompt_for_workflow(
-            AiWorkflowKind::ResourceAnalysis,
-        ));
     let user_prompt = context.render_prompt();
     let raw_json = match provider.provider {
         AiProviderKind::OpenAi => {
@@ -411,5 +410,34 @@ mod tests {
         assert!(
             default_system_prompt_for_workflow(AiWorkflowKind::RolloutRisk).contains("rollout")
         );
+    }
+
+    #[test]
+    fn empty_system_prompt_is_rejected() {
+        let provider = AiProviderConfig {
+            provider: AiProviderKind::OpenAi,
+            model: "gpt-test".into(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            endpoint: None,
+            timeout_secs: 5,
+            max_output_tokens: 128,
+            temperature: Some(0.1),
+            action: None,
+        };
+        let context = AiAnalysisContext {
+            resource: ResourceRef::Pod("api-0".into(), "prod".into()),
+            cluster_context: None,
+            metadata_lines: Vec::new(),
+            workflow_title: None,
+            workflow_lines: Vec::new(),
+            issue_lines: Vec::new(),
+            event_lines: Vec::new(),
+            probe_lines: Vec::new(),
+            log_lines: Vec::new(),
+            yaml_excerpt: None,
+        };
+
+        let err = run_ai_analysis(&provider, "   ", &context).expect_err("empty prompt");
+        assert!(err.to_string().contains("must not be empty"));
     }
 }

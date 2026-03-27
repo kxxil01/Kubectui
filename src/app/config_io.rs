@@ -1,6 +1,10 @@
 //! Config serialization and persistence for application state.
 
-use std::{collections::HashMap, fs, path::Path};
+use std::{
+    collections::HashMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -38,6 +42,10 @@ fn default_refresh_interval() -> u64 {
 
 fn default_workbench_height() -> u16 {
     DEFAULT_WORKBENCH_HEIGHT
+}
+
+fn default_config_path(base_dir: Option<PathBuf>) -> Option<PathBuf> {
+    base_dir.map(|base| base.join(".kube").join("kubectui-config.json"))
 }
 
 fn nav_group_from_config(name: &str) -> Option<NavGroup> {
@@ -118,31 +126,76 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
         clusters: app.cluster_preferences.clone(),
     };
 
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
+    if let Some(parent) = path.parent()
+        && let Err(err) = fs::create_dir_all(parent)
+    {
+        log::warn!(
+            "failed to create config directory '{}': {err}",
+            parent.display()
+        );
+        return;
     }
 
-    let serialized = serde_json::to_string(&cfg).unwrap_or_else(|_| "{}".to_string());
+    let serialized = match serde_json::to_string(&cfg) {
+        Ok(serialized) => serialized,
+        Err(err) => {
+            log::warn!(
+                "failed to serialize app config for '{}': {err}",
+                path.display()
+            );
+            return;
+        }
+    };
     let tmp = path.with_extension("tmp");
-    if fs::write(&tmp, &serialized).is_ok() {
-        let _ = fs::rename(&tmp, path);
+    if let Err(err) = fs::write(&tmp, &serialized) {
+        log::warn!("failed to write temp config '{}': {err}", tmp.display());
+        return;
+    }
+    if let Err(err) = fs::rename(&tmp, path) {
+        log::warn!(
+            "failed to replace config '{}' from '{}': {err}",
+            path.display(),
+            tmp.display()
+        );
+        let _ = fs::remove_file(&tmp);
     }
 }
 
 /// Loads app config from ~/.kube/kubectui-config.json.
 pub fn load_config() -> AppState {
-    let path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".kube")
-        .join("kubectui-config.json");
-    load_config_from_path(&path)
+    match default_config_path(dirs::home_dir()) {
+        Some(path) => load_config_from_path(&path),
+        None => {
+            log::warn!("home directory is unavailable; skipping app config load");
+            AppState {
+                current_context_name: kube::config::Kubeconfig::read()
+                    .ok()
+                    .and_then(|cfg| cfg.current_context),
+                ..AppState::default()
+            }
+        }
+    }
 }
 
 /// Saves app config to ~/.kube/kubectui-config.json.
 pub fn save_config(app: &AppState) {
-    let path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".kube")
-        .join("kubectui-config.json");
-    save_config_to_path(app, &path);
+    match default_config_path(dirs::home_dir()) {
+        Some(path) => save_config_to_path(app, &path),
+        None => log::warn!("home directory is unavailable; skipping app config save"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::default_config_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn default_config_path_uses_absolute_home_only() {
+        assert_eq!(
+            default_config_path(Some(PathBuf::from("/Users/tester"))),
+            Some(PathBuf::from("/Users/tester/.kube/kubectui-config.json"))
+        );
+        assert_eq!(default_config_path(None), None);
+    }
 }

@@ -32,6 +32,7 @@ fn test_daemonset_info_dto_complete() {
         selector: "app=node-exporter".to_string(),
         update_strategy: "RollingUpdate".to_string(),
         labels: labels.clone(),
+        pod_template_labels: labels.clone(),
         status_message: "Ready".to_string(),
     };
 
@@ -83,6 +84,7 @@ fn test_daemonset_info_serialization() {
         selector: "k8s-app=kube-proxy".to_string(),
         update_strategy: "RollingUpdate".to_string(),
         labels: labels.clone(),
+        pod_template_labels: labels.clone(),
         status_message: "Ready".to_string(),
     };
 
@@ -121,6 +123,7 @@ fn test_daemonset_info_multiple_labels() {
         selector: "app=fluent-bit,version=2.1".to_string(),
         update_strategy: "RollingUpdate".to_string(),
         labels,
+        pod_template_labels: BTreeMap::new(),
         status_message: "Ready".to_string(),
     };
 
@@ -147,6 +150,7 @@ fn test_daemonset_info_degraded_status() {
         selector: "component=agent".to_string(),
         update_strategy: "RollingUpdate".to_string(),
         labels: BTreeMap::new(),
+        pod_template_labels: BTreeMap::new(),
         status_message: "Some nodes are not ready".to_string(),
     };
 
@@ -172,6 +176,7 @@ fn test_daemonset_info_ondelete_strategy() {
         selector: "tier=critical".to_string(),
         update_strategy: "OnDelete".to_string(),
         labels: BTreeMap::new(),
+        pod_template_labels: BTreeMap::new(),
         status_message: "Ready".to_string(),
     };
 
@@ -195,6 +200,7 @@ fn test_daemonset_info_selector_parsing() {
         selector: "env=prod,tier=backend".to_string(),
         update_strategy: "RollingUpdate".to_string(),
         labels: BTreeMap::new(),
+        pod_template_labels: BTreeMap::new(),
         status_message: "Ready".to_string(),
     };
 
@@ -226,6 +232,7 @@ fn test_daemonset_selector_label_matching() {
                 m.insert("env".to_string(), "prod".to_string());
                 m
             },
+            pod_template_labels: BTreeMap::new(),
             status_message: "Ready".to_string(),
         },
         DaemonSetInfo {
@@ -246,6 +253,7 @@ fn test_daemonset_selector_label_matching() {
                 m.insert("env".to_string(), "dev".to_string());
                 m
             },
+            pod_template_labels: BTreeMap::new(),
             status_message: "Ready".to_string(),
         },
     ];

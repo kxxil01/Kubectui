@@ -3,9 +3,18 @@ set -euo pipefail
 
 CARGO_TOML="Cargo.toml"
 
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "Error: missing required command: $1" >&2
+    exit 1
+  }
+}
+
 current_version() {
   grep '^version' "$CARGO_TOML" | head -1 | sed 's/.*"\(.*\)".*/\1/'
 }
+
+require_cmd git
 
 if [[ -n "$(git status --porcelain)" ]]; then
   echo "Error: working directory is not clean." >&2

@@ -348,12 +348,12 @@ fn default_ai_action_title() -> String {
     DEFAULT_AI_ACTION_TITLE.to_string()
 }
 
-pub fn extensions_config_path() -> PathBuf {
-    dirs::config_dir()
-        .or_else(dirs::home_dir)
-        .unwrap_or_default()
-        .join("kubectui")
-        .join(EXTENSIONS_FILE_NAME)
+fn extensions_config_path_from_base(base_dir: Option<PathBuf>) -> Option<PathBuf> {
+    base_dir.map(|base| base.join("kubectui").join(EXTENSIONS_FILE_NAME))
+}
+
+pub fn extensions_config_path() -> Option<PathBuf> {
+    extensions_config_path_from_base(dirs::config_dir().or_else(dirs::home_dir))
 }
 
 pub fn load_extensions_config_from_path(path: &Path) -> Result<ExtensionsConfig, String> {
@@ -372,7 +372,13 @@ pub fn load_extensions_config_from_path(path: &Path) -> Result<ExtensionsConfig,
 }
 
 pub fn load_extensions_registry() -> ExtensionLoadResult {
-    let path = extensions_config_path();
+    let Some(path) = extensions_config_path() else {
+        return ExtensionLoadResult {
+            registry: ExtensionRegistry::default(),
+            warnings: vec!["user config directory is unavailable; skipping extensions load".into()],
+            path: PathBuf::from(EXTENSIONS_FILE_NAME),
+        };
+    };
     let Some(parent) = path.parent() else {
         return ExtensionLoadResult {
             registry: ExtensionRegistry::default(),
@@ -383,7 +389,16 @@ pub fn load_extensions_registry() -> ExtensionLoadResult {
             path,
         };
     };
-    let _ = fs::create_dir_all(parent);
+    if let Err(err) = fs::create_dir_all(parent) {
+        return ExtensionLoadResult {
+            registry: ExtensionRegistry::default(),
+            warnings: vec![format!(
+                "failed to create extensions config directory '{}': {err}",
+                parent.display()
+            )],
+            path,
+        };
+    }
     if !path.exists() {
         return ExtensionLoadResult {
             registry: ExtensionRegistry::default(),
@@ -873,5 +888,16 @@ mod tests {
             result.registry.actions()[0]
                 .matches_resource(&ResourceRef::Pod("api-0".into(), "prod".into(),))
         );
+    }
+
+    #[test]
+    fn extensions_config_path_requires_real_base_dir() {
+        assert_eq!(
+            extensions_config_path_from_base(Some(PathBuf::from("/Users/tester/.config"))),
+            Some(PathBuf::from(
+                "/Users/tester/.config/kubectui/extensions.yaml"
+            ))
+        );
+        assert_eq!(extensions_config_path_from_base(None), None);
     }
 }
