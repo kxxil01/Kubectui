@@ -60,6 +60,7 @@ fn view_info(view: AppView) -> (&'static str, Option<&'static [ColumnDef]>) {
     match view {
         AppView::Dashboard => ("dashboard", None),
         AppView::Projects => ("projects", None),
+        AppView::Governance => ("governance", None),
         AppView::Bookmarks => ("bookmarks", None),
         AppView::Issues => ("issues", Some(ISSUE_COLUMNS)),
         AppView::HealthReport => ("health_report", Some(ISSUE_COLUMNS)),

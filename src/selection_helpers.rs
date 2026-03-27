@@ -39,6 +39,12 @@ pub fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<R
                 kubectui::projects::filtered_project_indices(&projects, app.search_query());
             filtered_index(&indices, idx).and_then(|i| projects[i].representative.clone())
         }
+        AppView::Governance => {
+            let summaries = kubectui::governance::compute_governance(snapshot);
+            let indices =
+                kubectui::governance::filtered_governance_indices(&summaries, app.search_query());
+            filtered_index(&indices, idx).and_then(|i| summaries[i].representative.clone())
+        }
         AppView::Bookmarks => selected_bookmark_resource(app.bookmarks(), idx, app.search_query()),
         AppView::Vulnerabilities => {
             let findings =

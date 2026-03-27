@@ -52,7 +52,7 @@ Current milestone status:
 - Milestone 34: completed
 - Milestone 35: completed
 - Milestone 36: completed
-- Milestone 37: not started
+- Milestone 37: completed
 - Phase 8 (Watch-Backed Caches): completed
 
 Completion notes:
@@ -97,6 +97,7 @@ Completion notes:
 - Milestone 34 shipped: snapshot-cached Projects view in Overview, native-label application scope inference with Kubernetes recommended label precedence, project summary pane spanning workloads/services/ingresses/pods/issues, representative-resource jump on `Enter`, sidebar/project count integration, and workspace/bank jump persistence via restored per-view search queries.
 - Milestone 35 shipped (PR #75): optional Gateway API support on the canonical traffic/relationship paths with `GatewayClass`, `Gateway`, `HTTPRoute`, `GRPCRoute`, and `ReferenceGrant` views, Gateway-aware traffic debugging from routes and services, conservative cross-namespace attachment and backend-reference semantics, project attribution for Gateway routes, and shared Gateway policy evaluation in one canonical semantics module instead of duplicated ad hoc checks.
 - Milestone 36 shipped (PR #76): guided runbooks and incident packs on the canonical palette/workbench/action path with validated built-in plus config-backed runbooks, step-level checklist/workspace/detail-action/extension/AI execution, progress tracking and banner feedback in a dedicated runbook tab, and preserved runbook state across workspace, namespace, and context restores so incident flow does not get dropped during operator navigation.
+- Milestone 37 shipped: Governance & Cost Center on the canonical Overview path with snapshot-cached namespace governance rollups, request/limit/policy/vulnerability/hygiene synthesis, idle-request cost proxying from existing utilization data, representative-resource `Enter` routing, and a dedicated Governance view that reuses the existing sidebar/filter/selection model instead of inventing a second diagnostics surface.
 - 2026-03-27 release-prep pass shipped: README now reflects the post-roadmap feature surface, `CHANGELOG.md` captures the roadmap-completion release, and the `?` help overlay now advertises the broader action palette surface accurately.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
@@ -138,6 +139,7 @@ Verification status for completed milestones:
 - Latest M30 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Resource Create / Apply Templates. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `247.930ms -> 247.124ms`, `-0.806ms`; `sidebar` `20.532ms -> 20.497ms`; `header` `14.130ms -> 14.143ms`).
 - Latest M31 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Service / Traffic Debugging. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `249.650ms -> 239.788ms`, `-9.862ms`; `sidebar` `21.075ms -> 20.036ms`; `header` `14.183ms -> 14.035ms`). GitHub PR checks for PR #64 also passed: `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)`.
 - Latest M32 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Node Shell / Node Debug. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `254.084ms -> 248.616ms`, `-5.468ms`; `sidebar` `21.536ms -> 20.920ms`; `header` `15.319ms -> 14.470ms`).
+- Latest M37 verification on 2026-03-28: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and the required 5-run render-profile comparison vs clean post-M36 `HEAD` all pass locally after shipping Governance & Cost Center. Because M37 adds one more top-level profiled view, the perf gate was evaluated on normalized per-frame medians: `render/frame` improved `124.9121 -> 124.3890` (`-0.42%`), `header/frame` improved `7.5848 -> 7.2820` (`-3.99%`), and `sidebar/frame` moved only `11.4357 -> 11.4548` (`+0.17%`), which is not material.
 - Latest M23 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping both AI assistant hooks and specialized AI workflows. The final clean 5-run render-profile comparison for Phase 3 vs clean `origin/main` stayed positive on the required medians (`render` `252.801ms -> 251.295ms`, `-1.506ms`; `sidebar` `21.438ms -> 21.220ms`; `header` `14.600ms -> 14.608ms`).
 - Latest stabilization verification on 2026-03-27: targeted suites for AI, workspaces, Helm, rollout, advanced logs, sanitizer, vulnerabilities, and NetworkPolicy analysis all pass locally (`cargo test --all-targets --all-features ai:: -- --nocapture`, `workspaces`, `helm`, `rollout`, `log_investigation`, `issues::`, `vulnerabilities`, `network_policy`).
 - Latest M35 verification on 2026-03-28: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Gateway API support. The raw totals rose because the profile loop now renders 5 additional top-level views; normalized per-view medians still stayed acceptable (`render` `-2.63%`, `sidebar` `-0.03%`, `header` `+0.91%` vs clean pre-M35 `HEAD`).
@@ -1997,9 +1999,9 @@ This is the execution order.
 - Milestone 18: CronJob/Job Management Panel ✅
 - Milestone 19: Ephemeral Debug Container Launcher ✅
 
-## P5 (Next)
+## P5 (Completed)
 
-- Milestone 37: Governance & Cost Center
+- Milestone 37: Governance & Cost Center ✅
 
 ## Continuous
 
@@ -2009,11 +2011,11 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M36 are complete.
+M0-M37 are complete.
 
 Recommended near-term order:
 
-- M37
+- none in the current roadmap expansion set
 
 Do not start next with:
 
@@ -2029,11 +2031,11 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 ### Big Win Priority Order
 
-- M37: Governance & Cost Center
+- none remaining in the current roadmap expansion set
 
 ### Why this order
 
-- M37 is now the only remaining milestone in this expansion set. It should build on the already-shipped utilization, sanitizer, vulnerability, project, and runbook surfaces without inventing a second diagnostics model or a heavyweight external cost system.
+- the current roadmap expansion set is complete; any work after this point should be a new roadmap decision rather than silently extending the old one
 
 ### Next Milestones
 
@@ -2128,7 +2130,7 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 #### M37: Governance & Cost Center
 
-- Status: not started
+- Status: Completed
 - Big win: medium
 - Why:
   - the app already has resources, utilization, sanitizer, and vulnerability data; governance is the next natural synthesis point
@@ -2141,6 +2143,11 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
   - no heavyweight billing integration in the first pass
   - snapshot-first computation and bounded aggregation
   - avoid duplicating Health Report or Vulnerabilities views
+- What shipped:
+  - cached namespace governance rollups synthesized from Projects, Issues, Vulnerabilities, quotas/limit ranges, PDB coverage, and namespace utilization without adding new API calls
+  - dedicated Overview `Governance` view with severity-first sorting, search/filter integration, representative-resource `Enter` routing, and per-namespace governance/cost summary panes
+  - workload-level risk rollups that collapse pod ownership back to Deployments/StatefulSets/DaemonSets/Jobs/CronJobs where possible so operators see app-level hotspots instead of pod noise
+  - conservative idle-request cost proxying derived from existing request-vs-usage data, plus coverage-gap signals for missing requests/limits and policy surfaces
 
 ### Completed Priorities Record
 
@@ -2308,7 +2315,7 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 ### Recommended Remaining Order
 
-- M35 -> M36 -> M37
+- none; M33-M37 are complete
 
 ### Research Basis
 

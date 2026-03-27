@@ -104,6 +104,11 @@ pub fn view_icon(view: AppView) -> Icon {
             emoji: "🗂 ",
             plain: "",
         },
+        AppView::Governance => Icon {
+            nerd: "󱦗 ",
+            emoji: "⚖ ",
+            plain: "",
+        },
         AppView::Bookmarks => Icon {
             nerd: "󰃀 ",
             emoji: "⭐ ",

@@ -4,6 +4,7 @@ use crate::{
     app::{
         AppView, PodSortState, WorkloadSortState, filtered_pod_indices, filtered_workload_indices,
     },
+    governance::{compute_governance, filtered_governance_indices},
     k8s::dtos::{
         ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo, DaemonSetInfo,
         DeploymentInfo, EndpointInfo, GatewayClassInfo, GatewayInfo, GrpcRouteInfo,
@@ -584,6 +585,10 @@ pub fn filtered_indices_for_view(
         AppView::Projects => {
             let projects = compute_projects(snapshot);
             filtered_project_indices(&projects, query)
+        }
+        AppView::Governance => {
+            let summaries = compute_governance(snapshot);
+            filtered_governance_indices(&summaries, query)
         }
         AppView::Vulnerabilities => {
             let findings = compute_vulnerability_findings(snapshot);

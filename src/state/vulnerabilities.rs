@@ -64,18 +64,22 @@ struct AggregateFinding {
 }
 
 type FindingCacheValue = Arc<Vec<VulnerabilityFinding>>;
+type FindingCacheKey = (u64, usize);
 
-static FINDING_CACHE: LazyLock<Mutex<Option<(u64, FindingCacheValue)>>> =
+static FINDING_CACHE: LazyLock<Mutex<Option<(FindingCacheKey, FindingCacheValue)>>> =
     LazyLock::new(|| Mutex::new(None));
 
 pub fn compute_vulnerability_findings(snapshot: &ClusterSnapshot) -> FindingCacheValue {
-    let version = snapshot.snapshot_version;
+    let key = (
+        snapshot.snapshot_version,
+        std::ptr::from_ref(snapshot) as usize,
+    );
     {
         let guard = FINDING_CACHE
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some((cached_version, findings)) = guard.as_ref()
-            && *cached_version == version
+        if let Some((cached_key, findings)) = guard.as_ref()
+            && *cached_key == key
         {
             return Arc::clone(findings);
         }
@@ -86,7 +90,7 @@ pub fn compute_vulnerability_findings(snapshot: &ClusterSnapshot) -> FindingCach
         let mut guard = FINDING_CACHE
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        *guard = Some((version, Arc::clone(&findings)));
+        *guard = Some((key, Arc::clone(&findings)));
     }
     findings
 }
