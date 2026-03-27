@@ -232,6 +232,14 @@ pub fn refresh_options_for_view(
                 .union(RefreshScope::NETWORK)
                 .union(RefreshScope::SECURITY),
         ),
+        AppView::Governance => RefreshDispatch::new(
+            RefreshScope::CORE_OVERVIEW,
+            RefreshScope::CORE_OVERVIEW
+                .union(RefreshScope::METRICS)
+                .union(RefreshScope::LEGACY_SECONDARY)
+                .union(RefreshScope::NETWORK)
+                .union(RefreshScope::SECURITY),
+        ),
         AppView::Pods => RefreshDispatch::new(
             RefreshScope::PODS,
             RefreshScope::PODS.union(RefreshScope::METRICS),

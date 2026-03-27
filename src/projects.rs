@@ -79,18 +79,22 @@ impl ProjectSummary {
 }
 
 type ProjectCache = Arc<Vec<ProjectSummary>>;
+type ProjectCacheKey = (u64, usize);
 
-static PROJECT_CACHE: LazyLock<Mutex<Option<(u64, ProjectCache)>>> =
+static PROJECT_CACHE: LazyLock<Mutex<Option<(ProjectCacheKey, ProjectCache)>>> =
     LazyLock::new(|| Mutex::new(None));
 
 pub fn compute_projects(snapshot: &ClusterSnapshot) -> ProjectCache {
-    let version = snapshot.snapshot_version;
+    let key = (
+        snapshot.snapshot_version,
+        std::ptr::from_ref(snapshot) as usize,
+    );
     {
         let guard = PROJECT_CACHE
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some((cached_version, projects)) = guard.as_ref()
-            && *cached_version == version
+        if let Some((cached_key, projects)) = guard.as_ref()
+            && *cached_key == key
         {
             return Arc::clone(projects);
         }
@@ -101,7 +105,7 @@ pub fn compute_projects(snapshot: &ClusterSnapshot) -> ProjectCache {
         let mut guard = PROJECT_CACHE
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        *guard = Some((version, Arc::clone(&projects)));
+        *guard = Some((key, Arc::clone(&projects)));
     }
     projects
 }

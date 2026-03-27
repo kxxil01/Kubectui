@@ -15,6 +15,7 @@ fn tab_cycles_all_views_forward() {
     let expected = [
         // Overview
         AppView::Projects,
+        AppView::Governance,
         AppView::Bookmarks,
         AppView::Issues,
         AppView::HealthReport,

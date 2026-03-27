@@ -1142,6 +1142,14 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 content_focused,
             ),
+            AppView::Governance => views::governance::center::render_governance(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+                content_focused,
+            ),
             AppView::HealthReport => views::issue_center::render_health_report(
                 frame,
                 content,

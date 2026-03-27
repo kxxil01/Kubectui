@@ -101,6 +101,7 @@ pub enum AppView {
     // Overview
     Dashboard,
     Projects,
+    Governance,
     Bookmarks,
     HealthReport,
     Vulnerabilities,
@@ -172,6 +173,7 @@ impl AppView {
         match self {
             AppView::Dashboard => "dashboard",
             AppView::Projects => "projects",
+            AppView::Governance => "governance",
             AppView::Bookmarks => "bookmarks",
             AppView::HealthReport => "health_report",
             AppView::Vulnerabilities => "vulnerabilities",
@@ -233,6 +235,7 @@ impl AppView {
         match value {
             "dashboard" | "Dashboard" => Some(AppView::Dashboard),
             "projects" | "Projects" => Some(AppView::Projects),
+            "governance" | "Governance" | "CostCenter" | "cost_center" => Some(AppView::Governance),
             "bookmarks" | "Bookmarks" => Some(AppView::Bookmarks),
             "health_report" | "HealthReport" => Some(AppView::HealthReport),
             "vulnerabilities" | "Vulnerabilities" | "SecurityCenter" => {
@@ -305,10 +308,11 @@ impl AppView {
         }
     }
 
-    const ORDER: [AppView; 56] = [
+    const ORDER: [AppView; 57] = [
         // Overview
         AppView::Dashboard,
         AppView::Projects,
+        AppView::Governance,
         AppView::Bookmarks,
         AppView::Issues,
         AppView::HealthReport,
@@ -380,6 +384,7 @@ impl AppView {
         match self {
             AppView::Dashboard => "Dashboard",
             AppView::Projects => "Projects",
+            AppView::Governance => "Governance",
             AppView::Bookmarks => "Bookmarks",
             AppView::HealthReport => "Health Report",
             AppView::Vulnerabilities => "Vulnerabilities",
@@ -453,6 +458,7 @@ impl AppView {
         match self {
             AppView::Dashboard => "view.dashboard",
             AppView::Projects => "view.projects",
+            AppView::Governance => "view.governance",
             AppView::Bookmarks => "view.bookmarks",
             AppView::HealthReport => "view.health_report",
             AppView::Vulnerabilities => "view.vulnerabilities",
@@ -515,6 +521,7 @@ impl AppView {
         match self {
             AppView::Dashboard
             | AppView::Projects
+            | AppView::Governance
             | AppView::Bookmarks
             | AppView::Issues
             | AppView::HealthReport

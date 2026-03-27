@@ -302,6 +302,7 @@ impl AppView {
         match self {
             AppView::Dashboard
             | AppView::Projects
+            | AppView::Governance
             | AppView::Bookmarks
             | AppView::PortForwarding
             | AppView::HelmCharts
