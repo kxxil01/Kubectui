@@ -137,6 +137,138 @@ fn fail_context_switch(
     app.set_error(message);
 }
 
+struct WorkspaceRestoreRuntime<'a> {
+    coordinator: &'a mut UpdateCoordinator,
+    workload_log_sessions: &'a mut HashMap<u64, Vec<(String, String, String)>>,
+    exec_sessions: &'a mut HashMap<u64, ExecSessionHandle>,
+    node_debug_sessions: &'a mut HashMap<u64, NodeDebugSessionRuntime>,
+    node_debug_cleanup_tx: &'a tokio::sync::mpsc::Sender<NodeDebugCleanupAsyncResult>,
+    port_forwarder: &'a mut PortForwarderService,
+    global_state: &'a mut GlobalState,
+    client: &'a K8sClient,
+    refresh_tx: &'a tokio::sync::mpsc::Sender<RefreshAsyncResult>,
+    refresh_state: &'a mut RefreshRuntimeState,
+    snapshot_dirty: &'a mut bool,
+    events_tx: &'a tokio::sync::mpsc::Sender<EventsAsyncResult>,
+    events_state: &'a mut EventsFetchRuntimeState,
+    cached_snapshot: &'a kubectui::state::ClusterSnapshot,
+    extension_fetch_tx: &'a tokio::sync::mpsc::Sender<ExtensionFetchResult>,
+}
+
+async fn apply_workspace_snapshot_and_refresh(
+    app: &mut kubectui::app::AppState,
+    snapshot: &kubectui::workspaces::WorkspaceSnapshot,
+    runtime: &mut WorkspaceRestoreRuntime<'_>,
+) {
+    let previous_view = app.view();
+    app.pending_workspace_restore = None;
+    let follow_streams: Vec<(String, String, String)> = app
+        .workbench()
+        .tabs
+        .iter()
+        .filter_map(|tab| match &tab.state {
+            WorkbenchTabState::PodLogs(logs_tab) => {
+                let viewer = &logs_tab.viewer;
+                (viewer.follow_mode
+                    && !viewer.pod_name.is_empty()
+                    && !viewer.pod_namespace.is_empty()
+                    && !viewer.container_name.is_empty())
+                .then(|| {
+                    (
+                        viewer.pod_name.clone(),
+                        viewer.pod_namespace.clone(),
+                        viewer.container_name.clone(),
+                    )
+                })
+            }
+            _ => None,
+        })
+        .collect();
+    let workload_sessions_to_stop: Vec<u64> = app
+        .workbench()
+        .tabs
+        .iter()
+        .filter_map(|tab| match &tab.state {
+            WorkbenchTabState::WorkloadLogs(tab) => Some(tab.session_id),
+            _ => None,
+        })
+        .collect();
+    let exec_sessions_to_stop: Vec<u64> = app
+        .workbench()
+        .tabs
+        .iter()
+        .filter_map(|tab| match &tab.state {
+            WorkbenchTabState::Exec(tab) => Some(tab.session_id),
+            _ => None,
+        })
+        .collect();
+    for (pod_name, namespace, container_name) in follow_streams {
+        let _ = runtime
+            .coordinator
+            .stop_log_streaming(&pod_name, &namespace, &container_name)
+            .await;
+    }
+    for session_id in workload_sessions_to_stop {
+        if let Some(streams) = runtime.workload_log_sessions.remove(&session_id) {
+            for (pod_name, namespace, container_name) in streams {
+                let _ = runtime
+                    .coordinator
+                    .stop_log_streaming(&pod_name, &namespace, &container_name)
+                    .await;
+            }
+        }
+    }
+    for session_id in exec_sessions_to_stop {
+        if let Some(handle) = runtime.exec_sessions.remove(&session_id) {
+            let _ = handle.cancel_tx.send(());
+        }
+        cleanup_node_debug_session_if_needed(
+            session_id,
+            runtime.node_debug_sessions,
+            runtime.node_debug_cleanup_tx,
+        )
+        .await;
+    }
+    runtime.port_forwarder.stop_all().await;
+    app.tunnel_registry.update_tunnels(Vec::new());
+    app.apply_workspace_snapshot(snapshot);
+    if previous_view != app.view()
+        && !matches!(
+            app.view(),
+            kubectui::app::AppView::PortForwarding | kubectui::app::AppView::HelmCharts
+        )
+    {
+        request_refresh(
+            runtime.refresh_tx,
+            runtime.global_state,
+            runtime.client,
+            namespace_scope(app.get_namespace()).map(str::to_string),
+            refresh_options_for_view(app.view(), app.view().is_fluxcd(), false),
+            runtime.refresh_state,
+            runtime.snapshot_dirty,
+        );
+        if app.view() == AppView::Events {
+            request_events_refresh(
+                runtime.events_tx,
+                runtime.global_state,
+                runtime.client,
+                namespace_scope(app.get_namespace()).map(str::to_string),
+                runtime.refresh_state.context_generation,
+                runtime.events_state,
+                runtime.snapshot_dirty,
+            );
+        }
+    }
+    if app.view() == kubectui::app::AppView::Extensions {
+        spawn_extensions_fetch(
+            runtime.client,
+            app,
+            runtime.cached_snapshot,
+            runtime.extension_fetch_tx,
+        );
+    }
+}
+
 fn edit_yaml_in_external_editor(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     file_stem: &str,
@@ -622,6 +754,28 @@ fn build_ai_workflow_context(
                     )
                 })
                 .collect::<Vec<_>>();
+            lines.extend(
+                kubectui::state::vulnerabilities::compute_vulnerability_findings(snapshot)
+                    .iter()
+                    .filter(|finding| finding.resource_ref.as_ref() == Some(resource))
+                    .take(4)
+                    .map(|finding| {
+                        if finding.fixable_count > 0 {
+                            format!(
+                                "Vulnerabilities [{}]: {} total, {} fixable",
+                                finding.resource_kind,
+                                finding.counts.total(),
+                                finding.fixable_count
+                            )
+                        } else {
+                            format!(
+                                "Vulnerabilities [{}]: {} total",
+                                finding.resource_kind,
+                                finding.counts.total()
+                            )
+                        }
+                    }),
+            );
             if lines.is_empty() {
                 lines.push(
                     "No explicit findings were attached to this resource; prioritize any runtime symptoms that remain."
@@ -3666,11 +3820,7 @@ pub(crate) async fn run_app_inner(
                                 });
                                 let context = context.clone();
                                 let result = match tokio::task::spawn_blocking(move || {
-                                    run_ai_analysis(
-                                        &provider,
-                                        Some(system_prompt.as_str()),
-                                        &context,
-                                    )
+                                    run_ai_analysis(&provider, system_prompt.as_str(), &context)
                                 })
                                 .await
                                 {
@@ -3712,113 +3862,24 @@ pub(crate) async fn run_app_inner(
                         pending_palette_action = Some(AppAction::SelectNamespace(target_namespace));
                         continue;
                     }
-
-                    let previous_view = app.view();
-                    app.pending_workspace_restore = None;
-                    let follow_streams: Vec<(String, String, String)> = app
-                        .workbench()
-                        .tabs
-                        .iter()
-                        .filter_map(|tab| match &tab.state {
-                            WorkbenchTabState::PodLogs(logs_tab) => {
-                                let viewer = &logs_tab.viewer;
-                                (viewer.follow_mode
-                                    && !viewer.pod_name.is_empty()
-                                    && !viewer.pod_namespace.is_empty()
-                                    && !viewer.container_name.is_empty())
-                                .then(|| {
-                                    (
-                                        viewer.pod_name.clone(),
-                                        viewer.pod_namespace.clone(),
-                                        viewer.container_name.clone(),
-                                    )
-                                })
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    let workload_sessions_to_stop: Vec<u64> = app
-                        .workbench()
-                        .tabs
-                        .iter()
-                        .filter_map(|tab| match &tab.state {
-                            WorkbenchTabState::WorkloadLogs(tab) => Some(tab.session_id),
-                            _ => None,
-                        })
-                        .collect();
-                    let exec_sessions_to_stop: Vec<u64> = app
-                        .workbench()
-                        .tabs
-                        .iter()
-                        .filter_map(|tab| match &tab.state {
-                            WorkbenchTabState::Exec(tab) => Some(tab.session_id),
-                            _ => None,
-                        })
-                        .collect();
-                    for (pod_name, namespace, container_name) in follow_streams {
-                        let _ = coordinator
-                            .stop_log_streaming(&pod_name, &namespace, &container_name)
-                            .await;
-                    }
-                    for session_id in workload_sessions_to_stop {
-                        if let Some(streams) = workload_log_sessions.remove(&session_id) {
-                            for (pod_name, namespace, container_name) in streams {
-                                let _ = coordinator
-                                    .stop_log_streaming(&pod_name, &namespace, &container_name)
-                                    .await;
-                            }
-                        }
-                    }
-                    for session_id in exec_sessions_to_stop {
-                        if let Some(handle) = exec_sessions.remove(&session_id) {
-                            let _ = handle.cancel_tx.send(());
-                        }
-                        cleanup_node_debug_session_if_needed(
-                            session_id,
-                            &mut node_debug_sessions,
-                            &node_debug_cleanup_tx,
-                        )
-                        .await;
-                    }
-                    port_forwarder.stop_all().await;
-                    app.tunnel_registry.update_tunnels(Vec::new());
-                    app.apply_workspace_snapshot(&snapshot);
-                    if previous_view != app.view()
-                        && !matches!(
-                            app.view(),
-                            kubectui::app::AppView::PortForwarding
-                                | kubectui::app::AppView::HelmCharts
-                        )
-                    {
-                        request_refresh(
-                            &refresh_tx,
-                            &mut global_state,
-                            &client,
-                            namespace_scope(app.get_namespace()).map(str::to_string),
-                            refresh_options_for_view(app.view(), app.view().is_fluxcd(), false),
-                            &mut refresh_state,
-                            &mut snapshot_dirty,
-                        );
-                        if app.view() == AppView::Events {
-                            request_events_refresh(
-                                &events_tx,
-                                &mut global_state,
-                                &client,
-                                namespace_scope(app.get_namespace()).map(str::to_string),
-                                refresh_state.context_generation,
-                                &mut events_state,
-                                &mut snapshot_dirty,
-                            );
-                        }
-                    }
-                    if app.view() == kubectui::app::AppView::Extensions {
-                        spawn_extensions_fetch(
-                            &client,
-                            &mut app,
-                            &cached_snapshot,
-                            &extension_fetch_tx,
-                        );
-                    }
+                    let mut runtime = WorkspaceRestoreRuntime {
+                        coordinator: &mut coordinator,
+                        workload_log_sessions: &mut workload_log_sessions,
+                        exec_sessions: &mut exec_sessions,
+                        node_debug_sessions: &mut node_debug_sessions,
+                        node_debug_cleanup_tx: &node_debug_cleanup_tx,
+                        port_forwarder: &mut port_forwarder,
+                        global_state: &mut global_state,
+                        client: &client,
+                        refresh_tx: &refresh_tx,
+                        refresh_state: &mut refresh_state,
+                        snapshot_dirty: &mut snapshot_dirty,
+                        events_tx: &events_tx,
+                        events_state: &mut events_state,
+                        cached_snapshot: &cached_snapshot,
+                        extension_fetch_tx: &extension_fetch_tx,
+                    };
+                    apply_workspace_snapshot_and_refresh(&mut app, &snapshot, &mut runtime).await;
                     app.set_status(format!("Applied workspace: {name}"));
                 }
                 AppAction::ActivateWorkspaceBank(name) => {
@@ -3840,113 +3901,24 @@ pub(crate) async fn run_app_inner(
                         pending_palette_action = Some(AppAction::SelectNamespace(target_namespace));
                         continue;
                     }
-
-                    let previous_view = app.view();
-                    app.pending_workspace_restore = None;
-                    let follow_streams: Vec<(String, String, String)> = app
-                        .workbench()
-                        .tabs
-                        .iter()
-                        .filter_map(|tab| match &tab.state {
-                            WorkbenchTabState::PodLogs(logs_tab) => {
-                                let viewer = &logs_tab.viewer;
-                                (viewer.follow_mode
-                                    && !viewer.pod_name.is_empty()
-                                    && !viewer.pod_namespace.is_empty()
-                                    && !viewer.container_name.is_empty())
-                                .then(|| {
-                                    (
-                                        viewer.pod_name.clone(),
-                                        viewer.pod_namespace.clone(),
-                                        viewer.container_name.clone(),
-                                    )
-                                })
-                            }
-                            _ => None,
-                        })
-                        .collect();
-                    let workload_sessions_to_stop: Vec<u64> = app
-                        .workbench()
-                        .tabs
-                        .iter()
-                        .filter_map(|tab| match &tab.state {
-                            WorkbenchTabState::WorkloadLogs(tab) => Some(tab.session_id),
-                            _ => None,
-                        })
-                        .collect();
-                    let exec_sessions_to_stop: Vec<u64> = app
-                        .workbench()
-                        .tabs
-                        .iter()
-                        .filter_map(|tab| match &tab.state {
-                            WorkbenchTabState::Exec(tab) => Some(tab.session_id),
-                            _ => None,
-                        })
-                        .collect();
-                    for (pod_name, namespace, container_name) in follow_streams {
-                        let _ = coordinator
-                            .stop_log_streaming(&pod_name, &namespace, &container_name)
-                            .await;
-                    }
-                    for session_id in workload_sessions_to_stop {
-                        if let Some(streams) = workload_log_sessions.remove(&session_id) {
-                            for (pod_name, namespace, container_name) in streams {
-                                let _ = coordinator
-                                    .stop_log_streaming(&pod_name, &namespace, &container_name)
-                                    .await;
-                            }
-                        }
-                    }
-                    for session_id in exec_sessions_to_stop {
-                        if let Some(handle) = exec_sessions.remove(&session_id) {
-                            let _ = handle.cancel_tx.send(());
-                        }
-                        cleanup_node_debug_session_if_needed(
-                            session_id,
-                            &mut node_debug_sessions,
-                            &node_debug_cleanup_tx,
-                        )
-                        .await;
-                    }
-                    port_forwarder.stop_all().await;
-                    app.tunnel_registry.update_tunnels(Vec::new());
-                    app.apply_workspace_snapshot(&snapshot);
-                    if previous_view != app.view()
-                        && !matches!(
-                            app.view(),
-                            kubectui::app::AppView::PortForwarding
-                                | kubectui::app::AppView::HelmCharts
-                        )
-                    {
-                        request_refresh(
-                            &refresh_tx,
-                            &mut global_state,
-                            &client,
-                            namespace_scope(app.get_namespace()).map(str::to_string),
-                            refresh_options_for_view(app.view(), app.view().is_fluxcd(), false),
-                            &mut refresh_state,
-                            &mut snapshot_dirty,
-                        );
-                        if app.view() == AppView::Events {
-                            request_events_refresh(
-                                &events_tx,
-                                &mut global_state,
-                                &client,
-                                namespace_scope(app.get_namespace()).map(str::to_string),
-                                refresh_state.context_generation,
-                                &mut events_state,
-                                &mut snapshot_dirty,
-                            );
-                        }
-                    }
-                    if app.view() == kubectui::app::AppView::Extensions {
-                        spawn_extensions_fetch(
-                            &client,
-                            &mut app,
-                            &cached_snapshot,
-                            &extension_fetch_tx,
-                        );
-                    }
+                    let mut runtime = WorkspaceRestoreRuntime {
+                        coordinator: &mut coordinator,
+                        workload_log_sessions: &mut workload_log_sessions,
+                        exec_sessions: &mut exec_sessions,
+                        node_debug_sessions: &mut node_debug_sessions,
+                        node_debug_cleanup_tx: &node_debug_cleanup_tx,
+                        port_forwarder: &mut port_forwarder,
+                        global_state: &mut global_state,
+                        client: &client,
+                        refresh_tx: &refresh_tx,
+                        refresh_state: &mut refresh_state,
+                        snapshot_dirty: &mut snapshot_dirty,
+                        events_tx: &events_tx,
+                        events_state: &mut events_state,
+                        cached_snapshot: &cached_snapshot,
+                        extension_fetch_tx: &extension_fetch_tx,
+                    };
+                    apply_workspace_snapshot_and_refresh(&mut app, &snapshot, &mut runtime).await;
                     app.set_status(format!("Activated workspace bank: {name}"));
                 }
                 AppAction::NavigateTo(view) => {

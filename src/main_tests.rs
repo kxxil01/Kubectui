@@ -18,6 +18,7 @@ use kubectui::{
     extensions::AiWorkflowKind,
     k8s::dtos::{
         ConfigMapInfo, CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo,
+        VulnerabilityReportInfo, VulnerabilitySummaryCounts,
     },
     policy::DetailAction,
     state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
@@ -119,6 +120,45 @@ fn rollout_ai_context_uses_rollout_summary_when_available() {
             .workflow_lines
             .iter()
             .any(|line| line.contains("Progressing=True"))
+    );
+}
+
+#[test]
+fn triage_ai_context_includes_vulnerability_findings() {
+    let resource = ResourceRef::Deployment("api".to_string(), "prod".to_string());
+    let context = super::build_ai_analysis_context(
+        &AppState::default(),
+        &ClusterSnapshot {
+            snapshot_version: 9_001,
+            vulnerability_reports: vec![VulnerabilityReportInfo {
+                resource_kind: "Deployment".to_string(),
+                resource_name: "api".to_string(),
+                resource_namespace: "prod".to_string(),
+                namespace: "prod".to_string(),
+                fixable_count: 2,
+                counts: VulnerabilitySummaryCounts {
+                    critical: 1,
+                    high: 2,
+                    medium: 0,
+                    low: 0,
+                    unknown: 0,
+                },
+                ..VulnerabilityReportInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        },
+        &resource,
+        AiWorkflowKind::TriageFindings,
+    );
+
+    assert_eq!(context.workflow_title.as_deref(), Some("Triage Context"));
+    assert!(
+        context
+            .workflow_lines
+            .iter()
+            .any(|line| line.contains("Vulnerabilities [Deployment]: 3 total, 2 fixable")),
+        "{:?}",
+        context.workflow_lines
     );
 }
 

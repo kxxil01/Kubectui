@@ -98,7 +98,16 @@ fn apply(namespace: &str, yaml: &str) -> Result<(), String> {
 }
 
 fn delete_namespace(namespace: &str) {
+    if kubectl(["get", "namespace", namespace]).is_err() {
+        return;
+    }
     let _ = kubectl(["delete", "namespace", namespace, "--ignore-not-found=true"]);
+    let _ = kubectl([
+        "wait",
+        "--for=delete",
+        &format!("namespace/{namespace}"),
+        "--timeout=180s",
+    ]);
 }
 
 fn wait_for(namespace: &str, resource: &str, condition: &str) -> Result<(), String> {

@@ -29,7 +29,7 @@ pub struct HelmValuesDiffResult {
     pub diff: YamlDocumentDiffResult,
 }
 
-static HELM_CLI_INFO: OnceLock<Result<HelmCliInfo, String>> = OnceLock::new();
+static HELM_CLI_INFO: OnceLock<HelmCliInfo> = OnceLock::new();
 
 /// Reads configured Helm repositories from the local filesystem.
 ///
@@ -48,7 +48,13 @@ pub fn read_helm_repositories() -> Vec<HelmRepoInfo> {
 }
 
 pub fn helm_cli_info() -> Result<HelmCliInfo, String> {
-    HELM_CLI_INFO.get_or_init(detect_helm_cli).clone()
+    if let Some(info) = HELM_CLI_INFO.get() {
+        return Ok(info.clone());
+    }
+
+    let info = detect_helm_cli()?;
+    let _ = HELM_CLI_INFO.set(info.clone());
+    Ok(info)
 }
 
 pub async fn fetch_release_history(

@@ -168,6 +168,11 @@ fn collect_pod_spec_resource_refs(spec: Option<&PodSpec>) -> (Vec<String>, Vec<S
     )
 }
 
+fn template_labels(meta: Option<&ObjectMeta>) -> BTreeMap<String, String> {
+    meta.and_then(|meta| meta.labels.clone())
+        .unwrap_or_default()
+}
+
 /// Extracts the first container image from a pod spec.
 pub fn extract_image_from_pod_spec(pod_spec: Option<&PodSpec>) -> Option<String> {
     pod_spec
@@ -466,6 +471,8 @@ pub fn statefulset_to_info(ss: StatefulSet) -> StatefulSetInfo {
         .creation_timestamp
         .as_ref()
         .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+    let pod_template_labels =
+        template_labels(spec.and_then(|statefulset| statefulset.template.metadata.as_ref()));
     let pod_spec = spec.and_then(|s| s.template.spec.as_ref());
     let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
 
@@ -483,6 +490,7 @@ pub fn statefulset_to_info(ss: StatefulSet) -> StatefulSetInfo {
         pod_management_policy: spec
             .and_then(|s| s.pod_management_policy.clone())
             .unwrap_or_else(|| "OrderedReady".to_string()),
+        pod_template_labels,
         image: extract_image_from_pod_spec(pod_spec),
         referenced_config_maps,
         referenced_secrets,
@@ -505,6 +513,8 @@ pub fn daemonset_to_info(ds: DaemonSet) -> DaemonSetInfo {
     let desired_count = status.map(|s| s.desired_number_scheduled).unwrap_or(0);
     let ready_count = status.map(|s| s.number_ready).unwrap_or(0);
     let unavailable_count = status.and_then(|s| s.number_unavailable).unwrap_or(0);
+    let pod_template_labels =
+        template_labels(spec.and_then(|daemonset| daemonset.template.metadata.as_ref()));
     let pod_spec = spec.and_then(|s| s.template.spec.as_ref());
     let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
 
@@ -538,6 +548,7 @@ pub fn daemonset_to_info(ds: DaemonSet) -> DaemonSetInfo {
             .unwrap_or_default()
             .into_iter()
             .collect(),
+        pod_template_labels,
         status_message: if unavailable_count == 0 {
             "Ready".to_string()
         } else {
@@ -618,6 +629,7 @@ pub fn service_to_info(svc: Service) -> ServiceInfo {
             .spec
             .as_ref()
             .and_then(|spec| spec.external_name.clone()),
+        labels: svc.metadata.labels.clone().unwrap_or_default(),
         ports,
         selector: svc
             .spec
@@ -767,6 +779,7 @@ pub fn job_to_info(job: Job) -> JobInfo {
         .creation_timestamp
         .as_ref()
         .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+    let pod_template_labels = template_labels(spec.and_then(|job| job.template.metadata.as_ref()));
     let pod_spec = spec.and_then(|s| s.template.spec.as_ref());
     let (referenced_config_maps, referenced_secrets) = collect_pod_spec_resource_refs(pod_spec);
 
@@ -784,6 +797,7 @@ pub fn job_to_info(job: Job) -> JobInfo {
         parallelism,
         active_pods: active,
         failed_pods: failed,
+        pod_template_labels,
         referenced_config_maps,
         referenced_secrets,
         age: age_from_created_at(created_at, now),
@@ -817,6 +831,10 @@ pub fn cronjob_to_info(cj: CronJob) -> CronJobInfo {
         .unwrap_or_else(|| "<none>".to_string());
     let timezone = spec.and_then(|s| s.time_zone.clone());
     let suspend = spec.and_then(|s| s.suspend).unwrap_or(false);
+    let pod_template_labels = template_labels(
+        spec.and_then(|cronjob| cronjob.job_template.spec.as_ref())
+            .and_then(|job_spec| job_spec.template.metadata.as_ref()),
+    );
     let pod_spec = spec
         .and_then(|s| s.job_template.spec.as_ref())
         .and_then(|job_spec| job_spec.template.spec.as_ref());
@@ -847,6 +865,7 @@ pub fn cronjob_to_info(cj: CronJob) -> CronJobInfo {
             .and_then(|s| s.active.as_ref())
             .map(|v| v.len() as i32)
             .unwrap_or(0),
+        pod_template_labels,
         referenced_config_maps,
         referenced_secrets,
         age: age_from_created_at(created_at, now),
@@ -1190,6 +1209,7 @@ pub fn ingress_to_info(ing: Ingress) -> IngressInfo {
         class,
         hosts,
         address,
+        labels: ing.metadata.labels.clone().unwrap_or_default(),
         ports: vec!["80".to_string(), "443".to_string()],
         backend_services,
         routes,
