@@ -1036,6 +1036,7 @@ mod tests {
                     context: None,
                     namespace: "ops".into(),
                     view: crate::app::AppView::Pods,
+                    search_query: Some("checkout".into()),
                     collapsed_groups: Vec::new(),
                     workbench_open: true,
                     workbench_height: 12,
@@ -1061,6 +1062,7 @@ mod tests {
             &mut app
         ));
         assert_eq!(app.view(), crate::app::AppView::Pods);
+        assert_eq!(app.search_query(), "checkout");
         assert_eq!(app.get_namespace(), "ops");
         assert!(app.workbench().open);
         assert!(

@@ -59,6 +59,7 @@ const fn col_hidden(id: &'static str, label: &'static str, width: Constraint) ->
 fn view_info(view: AppView) -> (&'static str, Option<&'static [ColumnDef]>) {
     match view {
         AppView::Dashboard => ("dashboard", None),
+        AppView::Projects => ("projects", None),
         AppView::Bookmarks => ("bookmarks", None),
         AppView::Issues => ("issues", Some(ISSUE_COLUMNS)),
         AppView::HealthReport => ("health_report", Some(ISSUE_COLUMNS)),

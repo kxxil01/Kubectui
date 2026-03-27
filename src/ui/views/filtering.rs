@@ -12,6 +12,7 @@ use crate::{
         ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo,
         ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
     },
+    projects::{compute_projects, filtered_project_indices},
     state::{
         ClusterSnapshot,
         issues::{compute_issues, filtered_issue_indices},
@@ -519,6 +520,10 @@ pub fn filtered_indices_for_view(
     match view {
         AppView::Dashboard | AppView::Bookmarks | AppView::PortForwarding | AppView::Extensions => {
             Vec::new()
+        }
+        AppView::Projects => {
+            let projects = compute_projects(snapshot);
+            filtered_project_indices(&projects, query)
         }
         AppView::Vulnerabilities => {
             let findings = compute_vulnerability_findings(snapshot);

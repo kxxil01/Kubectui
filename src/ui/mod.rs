@@ -1089,6 +1089,14 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 content_focused,
             ),
+            AppView::Projects => views::projects::render_projects(
+                frame,
+                content,
+                cluster,
+                app.selected_idx(),
+                app.search_query(),
+                content_focused,
+            ),
             AppView::HealthReport => views::issue_center::render_health_report(
                 frame,
                 content,

@@ -18,6 +18,8 @@ pub struct WorkspaceSnapshot {
     pub context: Option<String>,
     pub namespace: String,
     pub view: AppView,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_query: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub collapsed_groups: Vec<NavGroup>,
     #[serde(default)]
@@ -44,6 +46,8 @@ pub struct WorkspaceBank {
     pub namespace: String,
     pub view: AppView,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_query: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub hotkey: Option<String>,
 }
 
@@ -53,6 +57,7 @@ impl WorkspaceBank {
             context: self.context.clone(),
             namespace: self.namespace.clone(),
             view: self.view,
+            search_query: self.search_query.clone(),
             collapsed_groups: Vec::new(),
             workbench_open: false,
             workbench_height: DEFAULT_WORKBENCH_HEIGHT,
@@ -208,12 +213,14 @@ mod tests {
             namespace: "payments".into(),
             view: AppView::Pods,
             hotkey: Some("alt+1".into()),
+            search_query: Some("checkout".into()),
         };
 
         let snapshot = bank.to_snapshot();
         assert_eq!(snapshot.context.as_deref(), Some("prod"));
         assert_eq!(snapshot.namespace, "payments");
         assert_eq!(snapshot.view, AppView::Pods);
+        assert_eq!(snapshot.search_query.as_deref(), Some("checkout"));
         assert!(!snapshot.workbench_open);
         assert!(!snapshot.action_history_tab);
     }

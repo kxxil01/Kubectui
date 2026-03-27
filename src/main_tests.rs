@@ -202,6 +202,7 @@ fn failed_context_switch_clears_pending_workspace_restore() {
         context: Some("prod".into()),
         namespace: "payments".into(),
         view: AppView::Pods,
+        search_query: Some("checkout".into()),
         collapsed_groups: Vec::new(),
         workbench_open: false,
         workbench_height: kubectui::workbench::DEFAULT_WORKBENCH_HEIGHT,

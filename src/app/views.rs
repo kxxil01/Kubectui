@@ -100,6 +100,7 @@ impl<'de> Deserialize<'de> for NavGroup {
 pub enum AppView {
     // Overview
     Dashboard,
+    Projects,
     Bookmarks,
     HealthReport,
     Vulnerabilities,
@@ -165,6 +166,7 @@ impl AppView {
     pub const fn persisted_key(self) -> &'static str {
         match self {
             AppView::Dashboard => "dashboard",
+            AppView::Projects => "projects",
             AppView::Bookmarks => "bookmarks",
             AppView::HealthReport => "health_report",
             AppView::Vulnerabilities => "vulnerabilities",
@@ -220,6 +222,7 @@ impl AppView {
     pub fn from_persisted_str(value: &str) -> Option<Self> {
         match value {
             "dashboard" | "Dashboard" => Some(AppView::Dashboard),
+            "projects" | "Projects" => Some(AppView::Projects),
             "bookmarks" | "Bookmarks" => Some(AppView::Bookmarks),
             "health_report" | "HealthReport" => Some(AppView::HealthReport),
             "vulnerabilities" | "Vulnerabilities" | "SecurityCenter" => {
@@ -287,9 +290,10 @@ impl AppView {
         }
     }
 
-    const ORDER: [AppView; 50] = [
+    const ORDER: [AppView; 51] = [
         // Overview
         AppView::Dashboard,
+        AppView::Projects,
         AppView::Bookmarks,
         AppView::Issues,
         AppView::HealthReport,
@@ -355,6 +359,7 @@ impl AppView {
     pub const fn label(self) -> &'static str {
         match self {
             AppView::Dashboard => "Dashboard",
+            AppView::Projects => "Projects",
             AppView::Bookmarks => "Bookmarks",
             AppView::HealthReport => "Health Report",
             AppView::Vulnerabilities => "Vulnerabilities",
@@ -422,6 +427,7 @@ impl AppView {
     pub const fn profiling_key(self) -> &'static str {
         match self {
             AppView::Dashboard => "view.dashboard",
+            AppView::Projects => "view.projects",
             AppView::Bookmarks => "view.bookmarks",
             AppView::HealthReport => "view.health_report",
             AppView::Vulnerabilities => "view.vulnerabilities",
@@ -478,6 +484,7 @@ impl AppView {
     pub const fn group(self) -> NavGroup {
         match self {
             AppView::Dashboard
+            | AppView::Projects
             | AppView::Bookmarks
             | AppView::Issues
             | AppView::HealthReport

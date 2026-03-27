@@ -10,6 +10,7 @@ fn tab_cycles_all_views_forward() {
     let mut app = AppState::default();
     let expected = [
         // Overview
+        AppView::Projects,
         AppView::Bookmarks,
         AppView::Issues,
         AppView::HealthReport,
@@ -1783,6 +1784,7 @@ fn config_round_trip_with_preferences() {
                 context: Some("prod".into()),
                 namespace: "payments".into(),
                 view: AppView::Pods,
+                search_query: Some("checkout".into()),
                 collapsed_groups: vec![NavGroup::FluxCD],
                 workbench_open: true,
                 workbench_height: 15,
@@ -1795,6 +1797,7 @@ fn config_round_trip_with_preferences() {
             context: Some("staging".into()),
             namespace: "ops".into(),
             view: AppView::Services,
+            search_query: Some("payments".into()),
             hotkey: Some("alt+2".into()),
         }],
         hotkeys: vec![HotkeyBinding {
@@ -1845,8 +1848,16 @@ fn config_round_trip_with_preferences() {
     );
     assert_eq!(prefs.workspaces.saved[0].snapshot.namespace, "payments");
     assert_eq!(prefs.workspaces.saved[0].snapshot.view, AppView::Pods);
+    assert_eq!(
+        prefs.workspaces.saved[0].snapshot.search_query.as_deref(),
+        Some("checkout")
+    );
     assert_eq!(prefs.workspaces.banks.len(), 1);
     assert_eq!(prefs.workspaces.banks[0].name, "ops services");
+    assert_eq!(
+        prefs.workspaces.banks[0].search_query.as_deref(),
+        Some("payments")
+    );
     assert_eq!(prefs.workspaces.banks[0].hotkey.as_deref(), Some("alt+2"));
     assert_eq!(prefs.workspaces.hotkeys.len(), 1);
     assert_eq!(prefs.workspaces.hotkeys[0].key, "alt+r");
