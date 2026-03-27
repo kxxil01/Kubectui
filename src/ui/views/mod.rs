@@ -12,6 +12,7 @@ pub mod events;
 pub mod extensions;
 pub mod filtering;
 pub mod flux;
+pub mod gateway_api;
 pub mod governance;
 pub mod helm;
 pub mod hpas;

@@ -20,9 +20,10 @@ use crate::k8s::{
     dtos::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ClusterVersionInfo, ConfigMapInfo,
         CronJobInfo, CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo,
-        FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
-        K8sEventInfo, LimitRangeInfo, NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo,
-        PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo,
+        FluxResourceInfo, GatewayClassInfo, GatewayInfo, GrpcRouteInfo, HelmReleaseInfo, HpaInfo,
+        HttpRouteInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo,
+        NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo,
+        PodInfo, PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo, ReferenceGrantInfo,
         ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
         SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
         VulnerabilityReportInfo,
@@ -161,6 +162,11 @@ pub struct ClusterSnapshot {
     pub endpoints: Vec<EndpointInfo>,
     pub ingresses: Vec<IngressInfo>,
     pub ingress_classes: Vec<IngressClassInfo>,
+    pub gateway_classes: Vec<GatewayClassInfo>,
+    pub gateways: Vec<GatewayInfo>,
+    pub http_routes: Vec<HttpRouteInfo>,
+    pub grpc_routes: Vec<GrpcRouteInfo>,
+    pub reference_grants: Vec<ReferenceGrantInfo>,
     pub network_policies: Vec<NetworkPolicyInfo>,
     pub config_maps: Vec<ConfigMapInfo>,
     pub secrets: Vec<SecretInfo>,
@@ -220,6 +226,11 @@ impl Default for ClusterSnapshot {
             endpoints: Vec::new(),
             ingresses: Vec::new(),
             ingress_classes: Vec::new(),
+            gateway_classes: Vec::new(),
+            gateways: Vec::new(),
+            http_routes: Vec::new(),
+            grpc_routes: Vec::new(),
+            reference_grants: Vec::new(),
             network_policies: Vec::new(),
             config_maps: Vec::new(),
             secrets: Vec::new(),
@@ -290,6 +301,11 @@ impl ClusterSnapshot {
             AppView::Endpoints => Some(self.endpoints.len()),
             AppView::Ingresses => Some(self.ingresses.len()),
             AppView::IngressClasses => Some(self.ingress_classes.len()),
+            AppView::GatewayClasses => Some(self.gateway_classes.len()),
+            AppView::Gateways => Some(self.gateways.len()),
+            AppView::HttpRoutes => Some(self.http_routes.len()),
+            AppView::GrpcRoutes => Some(self.grpc_routes.len()),
+            AppView::ReferenceGrants => Some(self.reference_grants.len()),
             AppView::NetworkPolicies => Some(self.network_policies.len()),
             AppView::ConfigMaps => Some(self.config_maps.len()),
             AppView::Secrets => Some(self.secrets.len()),
@@ -404,6 +420,19 @@ pub trait ClusterDataSource {
     async fn fetch_ingresses(&self, namespace: Option<&str>) -> Result<Vec<IngressInfo>>;
     /// Fetches IngressClasses.
     async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>>;
+    /// Fetches GatewayClasses when Gateway API is installed.
+    async fn fetch_gateway_classes(&self) -> Result<Vec<GatewayClassInfo>>;
+    /// Fetches Gateways when Gateway API is installed.
+    async fn fetch_gateways(&self, namespace: Option<&str>) -> Result<Vec<GatewayInfo>>;
+    /// Fetches HTTPRoutes when Gateway API is installed.
+    async fn fetch_http_routes(&self, namespace: Option<&str>) -> Result<Vec<HttpRouteInfo>>;
+    /// Fetches GRPCRoutes when Gateway API is installed.
+    async fn fetch_grpc_routes(&self, namespace: Option<&str>) -> Result<Vec<GrpcRouteInfo>>;
+    /// Fetches ReferenceGrants when Gateway API is installed.
+    async fn fetch_reference_grants(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ReferenceGrantInfo>>;
     /// Fetches NetworkPolicies.
     async fn fetch_network_policies(
         &self,
@@ -564,6 +593,29 @@ impl ClusterDataSource for K8sClient {
 
     async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
         K8sClient::fetch_ingress_classes(self).await
+    }
+
+    async fn fetch_gateway_classes(&self) -> Result<Vec<GatewayClassInfo>> {
+        K8sClient::fetch_gateway_classes(self).await
+    }
+
+    async fn fetch_gateways(&self, namespace: Option<&str>) -> Result<Vec<GatewayInfo>> {
+        K8sClient::fetch_gateways(self, namespace).await
+    }
+
+    async fn fetch_http_routes(&self, namespace: Option<&str>) -> Result<Vec<HttpRouteInfo>> {
+        K8sClient::fetch_http_routes(self, namespace).await
+    }
+
+    async fn fetch_grpc_routes(&self, namespace: Option<&str>) -> Result<Vec<GrpcRouteInfo>> {
+        K8sClient::fetch_grpc_routes(self, namespace).await
+    }
+
+    async fn fetch_reference_grants(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ReferenceGrantInfo>> {
+        K8sClient::fetch_reference_grants(self, namespace).await
     }
 
     async fn fetch_network_policies(
@@ -808,6 +860,11 @@ impl GlobalState {
             AppView::Endpoints
             | AppView::Ingresses
             | AppView::IngressClasses
+            | AppView::GatewayClasses
+            | AppView::Gateways
+            | AppView::HttpRoutes
+            | AppView::GrpcRoutes
+            | AppView::ReferenceGrants
             | AppView::NetworkPolicies => RefreshScope::NETWORK,
             AppView::ConfigMaps
             | AppView::Secrets
@@ -872,6 +929,11 @@ impl GlobalState {
             AppView::Endpoints => !self.snapshot.endpoints.is_empty(),
             AppView::Ingresses => !self.snapshot.ingresses.is_empty(),
             AppView::IngressClasses => !self.snapshot.ingress_classes.is_empty(),
+            AppView::GatewayClasses => !self.snapshot.gateway_classes.is_empty(),
+            AppView::Gateways => !self.snapshot.gateways.is_empty(),
+            AppView::HttpRoutes => !self.snapshot.http_routes.is_empty(),
+            AppView::GrpcRoutes => !self.snapshot.grpc_routes.is_empty(),
+            AppView::ReferenceGrants => !self.snapshot.reference_grants.is_empty(),
             AppView::NetworkPolicies => !self.snapshot.network_policies.is_empty(),
             AppView::PortForwarding => true,
             AppView::ConfigMaps => !self.snapshot.config_maps.is_empty(),
@@ -1728,6 +1790,29 @@ mod tests {
             self.bump(&self.fetch_counters.network_calls);
             Ok(vec![])
         }
+        async fn fetch_gateway_classes(&self) -> Result<Vec<GatewayClassInfo>> {
+            self.bump(&self.fetch_counters.network_calls);
+            Ok(vec![])
+        }
+        async fn fetch_gateways(&self, _namespace: Option<&str>) -> Result<Vec<GatewayInfo>> {
+            self.bump(&self.fetch_counters.network_calls);
+            Ok(vec![])
+        }
+        async fn fetch_http_routes(&self, _namespace: Option<&str>) -> Result<Vec<HttpRouteInfo>> {
+            self.bump(&self.fetch_counters.network_calls);
+            Ok(vec![])
+        }
+        async fn fetch_grpc_routes(&self, _namespace: Option<&str>) -> Result<Vec<GrpcRouteInfo>> {
+            self.bump(&self.fetch_counters.network_calls);
+            Ok(vec![])
+        }
+        async fn fetch_reference_grants(
+            &self,
+            _namespace: Option<&str>,
+        ) -> Result<Vec<ReferenceGrantInfo>> {
+            self.bump(&self.fetch_counters.network_calls);
+            Ok(vec![])
+        }
         async fn fetch_network_policies(
             &self,
             _namespace: Option<&str>,
@@ -2511,13 +2596,13 @@ mod tests {
                 "services",
                 RefreshScope::SERVICES.union(RefreshScope::NETWORK),
                 ExpectedFetchCounts {
-                    total: 5,
+                    total: 10,
                     nodes: 0,
                     pods: 0,
                     services: 1,
                     namespaces: 0,
                     workload_calls: 0,
-                    network_calls: 4,
+                    network_calls: 9,
                     config_calls: 0,
                     storage_calls: 0,
                     security_calls: 0,
@@ -2638,13 +2723,13 @@ mod tests {
                     .union(RefreshScope::LEGACY_SECONDARY)
                     .union(RefreshScope::FLUX),
                 ExpectedFetchCounts {
-                    total: 34,
+                    total: 39,
                     nodes: 1,
                     pods: 1,
                     services: 1,
                     namespaces: 1,
                     workload_calls: 7,
-                    network_calls: 4,
+                    network_calls: 9,
                     config_calls: 7,
                     storage_calls: 3,
                     security_calls: 6,

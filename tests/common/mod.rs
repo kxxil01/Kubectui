@@ -11,9 +11,10 @@ use kubectui::{
     k8s::dtos::{
         ClusterRoleBindingInfo, ClusterRoleInfo, ClusterVersionInfo, ConfigMapInfo, CronJobInfo,
         CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo,
-        FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo, IngressInfo, JobInfo,
-        K8sEventInfo, LimitRangeInfo, NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo,
-        PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo,
+        FluxResourceInfo, GatewayClassInfo, GatewayInfo, GrpcRouteInfo, HelmReleaseInfo, HpaInfo,
+        HttpRouteInfo, IngressClassInfo, IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo,
+        NamespaceInfo, NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo,
+        PodInfo, PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo, ReferenceGrantInfo,
         ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
         SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
         VulnerabilityReportInfo,
@@ -383,6 +384,24 @@ impl ClusterDataSource for MockDataSource {
         Ok(vec![])
     }
     async fn fetch_ingress_classes(&self) -> Result<Vec<IngressClassInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_gateway_classes(&self) -> Result<Vec<GatewayClassInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_gateways(&self, _namespace: Option<&str>) -> Result<Vec<GatewayInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_http_routes(&self, _namespace: Option<&str>) -> Result<Vec<HttpRouteInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_grpc_routes(&self, _namespace: Option<&str>) -> Result<Vec<GrpcRouteInfo>> {
+        Ok(vec![])
+    }
+    async fn fetch_reference_grants(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<ReferenceGrantInfo>> {
         Ok(vec![])
     }
     async fn fetch_network_policies(

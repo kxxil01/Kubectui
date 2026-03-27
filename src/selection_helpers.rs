@@ -118,6 +118,11 @@ pub fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<R
         | AppView::Endpoints
         | AppView::Ingresses
         | AppView::IngressClasses
+        | AppView::GatewayClasses
+        | AppView::Gateways
+        | AppView::HttpRoutes
+        | AppView::GrpcRoutes
+        | AppView::ReferenceGrants
         | AppView::NetworkPolicies
         | AppView::ConfigMaps
         | AppView::Secrets
@@ -241,6 +246,61 @@ pub fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<R
                 AppView::IngressClasses => Some(ResourceRef::IngressClass(
                     snapshot.ingress_classes[resource_idx].name.clone(),
                 )),
+                AppView::GatewayClasses => {
+                    let class = &snapshot.gateway_classes[resource_idx];
+                    Some(ResourceRef::CustomResource {
+                        name: class.name.clone(),
+                        namespace: None,
+                        group: "gateway.networking.k8s.io".to_string(),
+                        version: class.version.clone(),
+                        kind: "GatewayClass".to_string(),
+                        plural: "gatewayclasses".to_string(),
+                    })
+                }
+                AppView::Gateways => {
+                    let gateway = &snapshot.gateways[resource_idx];
+                    Some(ResourceRef::CustomResource {
+                        name: gateway.name.clone(),
+                        namespace: Some(gateway.namespace.clone()),
+                        group: "gateway.networking.k8s.io".to_string(),
+                        version: gateway.version.clone(),
+                        kind: "Gateway".to_string(),
+                        plural: "gateways".to_string(),
+                    })
+                }
+                AppView::HttpRoutes => {
+                    let route = &snapshot.http_routes[resource_idx];
+                    Some(ResourceRef::CustomResource {
+                        name: route.name.clone(),
+                        namespace: Some(route.namespace.clone()),
+                        group: "gateway.networking.k8s.io".to_string(),
+                        version: route.version.clone(),
+                        kind: "HTTPRoute".to_string(),
+                        plural: "httproutes".to_string(),
+                    })
+                }
+                AppView::GrpcRoutes => {
+                    let route = &snapshot.grpc_routes[resource_idx];
+                    Some(ResourceRef::CustomResource {
+                        name: route.name.clone(),
+                        namespace: Some(route.namespace.clone()),
+                        group: "gateway.networking.k8s.io".to_string(),
+                        version: route.version.clone(),
+                        kind: "GRPCRoute".to_string(),
+                        plural: "grpcroutes".to_string(),
+                    })
+                }
+                AppView::ReferenceGrants => {
+                    let grant = &snapshot.reference_grants[resource_idx];
+                    Some(ResourceRef::CustomResource {
+                        name: grant.name.clone(),
+                        namespace: Some(grant.namespace.clone()),
+                        group: "gateway.networking.k8s.io".to_string(),
+                        version: grant.version.clone(),
+                        kind: "ReferenceGrant".to_string(),
+                        plural: "referencegrants".to_string(),
+                    })
+                }
                 AppView::NetworkPolicies => {
                     let policy = &snapshot.network_policies[resource_idx];
                     Some(ResourceRef::NetworkPolicy(

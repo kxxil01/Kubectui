@@ -6,11 +6,12 @@ use crate::{
     },
     k8s::dtos::{
         ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo, DaemonSetInfo,
-        DeploymentInfo, EndpointInfo, HelmReleaseInfo, HelmRepoInfo, HpaInfo, IngressClassInfo,
-        IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo, NamespaceInfo, NetworkPolicyInfo,
-        NodeInfo, PodDisruptionBudgetInfo, PriorityClassInfo, PvInfo, PvcInfo, ReplicaSetInfo,
-        ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo, SecretInfo,
-        ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
+        DeploymentInfo, EndpointInfo, GatewayClassInfo, GatewayInfo, GrpcRouteInfo,
+        HelmReleaseInfo, HelmRepoInfo, HpaInfo, HttpRouteInfo, IngressClassInfo, IngressInfo,
+        JobInfo, K8sEventInfo, LimitRangeInfo, NamespaceInfo, NetworkPolicyInfo, NodeInfo,
+        PodDisruptionBudgetInfo, PriorityClassInfo, PvInfo, PvcInfo, ReferenceGrantInfo,
+        ReplicaSetInfo, ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
+        SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
     },
     projects::{compute_projects, filtered_project_indices},
     state::{
@@ -74,6 +75,65 @@ pub fn filtered_service_indices(
         |service| service.namespace.as_str(),
         |service| service.created_at.map(age_duration_now),
     )
+}
+
+pub fn filtered_gateway_class_indices(items: &[GatewayClassInfo], query: &str) -> Vec<usize> {
+    simple_filtered_indices(items, query, |class, needle| {
+        contains_ci(&class.name, needle) || contains_ci(&class.controller_name, needle)
+    })
+}
+
+pub fn filtered_gateway_indices(items: &[GatewayInfo], query: &str) -> Vec<usize> {
+    simple_filtered_indices(items, query, |gateway, needle| {
+        contains_ci(&gateway.name, needle)
+            || contains_ci(&gateway.namespace, needle)
+            || contains_ci(&gateway.gateway_class_name, needle)
+            || gateway
+                .addresses
+                .iter()
+                .any(|address| contains_ci(address, needle))
+    })
+}
+
+pub fn filtered_http_route_indices(items: &[HttpRouteInfo], query: &str) -> Vec<usize> {
+    simple_filtered_indices(items, query, |route, needle| {
+        contains_ci(&route.name, needle)
+            || contains_ci(&route.namespace, needle)
+            || route.hostnames.iter().any(|host| contains_ci(host, needle))
+            || route
+                .backend_refs
+                .iter()
+                .any(|backend| contains_ci(&backend.name, needle))
+    })
+}
+
+pub fn filtered_grpc_route_indices(items: &[GrpcRouteInfo], query: &str) -> Vec<usize> {
+    simple_filtered_indices(items, query, |route, needle| {
+        contains_ci(&route.name, needle)
+            || contains_ci(&route.namespace, needle)
+            || route.hostnames.iter().any(|host| contains_ci(host, needle))
+            || route
+                .backend_refs
+                .iter()
+                .any(|backend| contains_ci(&backend.name, needle))
+    })
+}
+
+pub fn filtered_reference_grant_indices(items: &[ReferenceGrantInfo], query: &str) -> Vec<usize> {
+    simple_filtered_indices(items, query, |grant, needle| {
+        contains_ci(&grant.name, needle)
+            || contains_ci(&grant.namespace, needle)
+            || grant.from.iter().any(|entry| {
+                contains_ci(&entry.kind, needle) || contains_ci(&entry.namespace, needle)
+            })
+            || grant.to.iter().any(|entry| {
+                contains_ci(&entry.kind, needle)
+                    || entry
+                        .name
+                        .as_deref()
+                        .is_some_and(|name| contains_ci(name, needle))
+            })
+    })
 }
 
 pub fn filtered_deployment_indices(
@@ -580,6 +640,13 @@ pub fn filtered_indices_for_view(
         AppView::Endpoints => filtered_endpoint_indices(&snapshot.endpoints, query),
         AppView::Ingresses => filtered_ingress_indices(&snapshot.ingresses, query),
         AppView::IngressClasses => filtered_ingress_class_indices(&snapshot.ingress_classes, query),
+        AppView::GatewayClasses => filtered_gateway_class_indices(&snapshot.gateway_classes, query),
+        AppView::Gateways => filtered_gateway_indices(&snapshot.gateways, query),
+        AppView::HttpRoutes => filtered_http_route_indices(&snapshot.http_routes, query),
+        AppView::GrpcRoutes => filtered_grpc_route_indices(&snapshot.grpc_routes, query),
+        AppView::ReferenceGrants => {
+            filtered_reference_grant_indices(&snapshot.reference_grants, query)
+        }
         AppView::NetworkPolicies => {
             filtered_network_policy_indices(&snapshot.network_policies, query)
         }

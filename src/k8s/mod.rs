@@ -6,6 +6,8 @@ pub mod dtos;
 pub mod events;
 pub mod exec;
 pub mod flux;
+pub mod gateway_api;
+pub mod gateway_semantics;
 pub mod helm;
 pub mod logs;
 pub mod node_debug;

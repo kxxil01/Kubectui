@@ -316,6 +316,36 @@ impl GlobalState {
             ),
             maybe_fetch(
                 fetch_network,
+                "gatewayclasses",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_gateway_classes()
+            ),
+            maybe_fetch(
+                fetch_network,
+                "gateways",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_gateways(namespace)
+            ),
+            maybe_fetch(
+                fetch_network,
+                "httproutes",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_http_routes(namespace)
+            ),
+            maybe_fetch(
+                fetch_network,
+                "grpcroutes",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_grpc_routes(namespace)
+            ),
+            maybe_fetch(
+                fetch_network,
+                "referencegrants",
+                &SECONDARY_FETCH_SEMAPHORE,
+                || client.fetch_reference_grants(namespace)
+            ),
+            maybe_fetch(
+                fetch_network,
                 "networkpolicies",
                 &SECONDARY_FETCH_SEMAPHORE,
                 || client.fetch_network_policies(namespace)
@@ -401,6 +431,11 @@ impl GlobalState {
                 endpoints_res,
                 ingresses_res,
                 ingress_classes_res,
+                gateway_classes_res,
+                gateways_res,
+                http_routes_res,
+                grpc_routes_res,
+                reference_grants_res,
                 network_policies_res,
                 config_maps_res,
                 secrets_res,
@@ -595,6 +630,41 @@ impl GlobalState {
                 &mut snap.ingress_classes,
                 ingress_classes_res,
                 "ingressclasses",
+                &mut errors,
+                &mut total_fetches,
+            );
+            apply_vec_fetch_result(
+                &mut snap.gateway_classes,
+                gateway_classes_res,
+                "gatewayclasses",
+                &mut errors,
+                &mut total_fetches,
+            );
+            apply_vec_fetch_result(
+                &mut snap.gateways,
+                gateways_res,
+                "gateways",
+                &mut errors,
+                &mut total_fetches,
+            );
+            apply_vec_fetch_result(
+                &mut snap.http_routes,
+                http_routes_res,
+                "httproutes",
+                &mut errors,
+                &mut total_fetches,
+            );
+            apply_vec_fetch_result(
+                &mut snap.grpc_routes,
+                grpc_routes_res,
+                "grpcroutes",
+                &mut errors,
+                &mut total_fetches,
+            );
+            apply_vec_fetch_result(
+                &mut snap.reference_grants,
+                reference_grants_res,
+                "referencegrants",
                 &mut errors,
                 &mut total_fetches,
             );

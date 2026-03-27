@@ -32,6 +32,11 @@ fn tab_cycles_all_views_forward() {
         AppView::Endpoints,
         AppView::Ingresses,
         AppView::IngressClasses,
+        AppView::GatewayClasses,
+        AppView::Gateways,
+        AppView::HttpRoutes,
+        AppView::GrpcRoutes,
+        AppView::ReferenceGrants,
         AppView::NetworkPolicies,
         AppView::PortForwarding,
         // Config

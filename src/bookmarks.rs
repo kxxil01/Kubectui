@@ -219,6 +219,43 @@ pub fn resource_exists(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> bo
             version,
             kind,
             plural,
+        } if group == "gateway.networking.k8s.io" => match kind.as_str() {
+            "GatewayClass" => snapshot.gateway_classes.iter().any(|item| {
+                item.name == *name && item.version == *version && plural == "gatewayclasses"
+            }),
+            "Gateway" => snapshot.gateways.iter().any(|item| {
+                item.name == *name
+                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && item.version == *version
+                    && plural == "gateways"
+            }),
+            "HTTPRoute" => snapshot.http_routes.iter().any(|item| {
+                item.name == *name
+                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && item.version == *version
+                    && plural == "httproutes"
+            }),
+            "GRPCRoute" => snapshot.grpc_routes.iter().any(|item| {
+                item.name == *name
+                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && item.version == *version
+                    && plural == "grpcroutes"
+            }),
+            "ReferenceGrant" => snapshot.reference_grants.iter().any(|item| {
+                item.name == *name
+                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && item.version == *version
+                    && plural == "referencegrants"
+            }),
+            _ => false,
+        },
+        ResourceRef::CustomResource {
+            name,
+            namespace,
+            group,
+            version,
+            kind,
+            plural,
         } => snapshot.flux_resources.iter().any(|item| {
             item.name == *name
                 && item.namespace == *namespace
@@ -312,6 +349,87 @@ pub fn bookmark_selected_index(
             .ingress_classes
             .iter()
             .position(|item| item.name == *name)?,
+        (
+            AppView::GatewayClasses,
+            ResourceRef::CustomResource {
+                name,
+                version,
+                kind,
+                plural,
+                ..
+            },
+        ) if kind == "GatewayClass" && plural == "gatewayclasses" => snapshot
+            .gateway_classes
+            .iter()
+            .position(|item| item.name == *name && item.version == *version)?,
+        (
+            AppView::Gateways,
+            ResourceRef::CustomResource {
+                name,
+                namespace,
+                version,
+                kind,
+                plural,
+                ..
+            },
+        ) if kind == "Gateway" && plural == "gateways" => {
+            snapshot.gateways.iter().position(|item| {
+                item.name == *name
+                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && item.version == *version
+            })?
+        }
+        (
+            AppView::HttpRoutes,
+            ResourceRef::CustomResource {
+                name,
+                namespace,
+                version,
+                kind,
+                plural,
+                ..
+            },
+        ) if kind == "HTTPRoute" && plural == "httproutes" => {
+            snapshot.http_routes.iter().position(|item| {
+                item.name == *name
+                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && item.version == *version
+            })?
+        }
+        (
+            AppView::GrpcRoutes,
+            ResourceRef::CustomResource {
+                name,
+                namespace,
+                version,
+                kind,
+                plural,
+                ..
+            },
+        ) if kind == "GRPCRoute" && plural == "grpcroutes" => {
+            snapshot.grpc_routes.iter().position(|item| {
+                item.name == *name
+                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && item.version == *version
+            })?
+        }
+        (
+            AppView::ReferenceGrants,
+            ResourceRef::CustomResource {
+                name,
+                namespace,
+                version,
+                kind,
+                plural,
+                ..
+            },
+        ) if kind == "ReferenceGrant" && plural == "referencegrants" => {
+            snapshot.reference_grants.iter().position(|item| {
+                item.name == *name
+                    && item.namespace == namespace.clone().unwrap_or_default()
+                    && item.version == *version
+            })?
+        }
         (AppView::NetworkPolicies, ResourceRef::NetworkPolicy(name, namespace)) => snapshot
             .network_policies
             .iter()

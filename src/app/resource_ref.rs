@@ -201,6 +201,31 @@ impl ResourceRef {
             ResourceRef::ClusterRole(_) => Some(AppView::ClusterRoles),
             ResourceRef::ClusterRoleBinding(_) => Some(AppView::ClusterRoleBindings),
             ResourceRef::HelmRelease(_, _) => Some(AppView::HelmReleases),
+            ResourceRef::CustomResource { group, kind, .. }
+                if group == "gateway.networking.k8s.io" && kind == "GatewayClass" =>
+            {
+                Some(AppView::GatewayClasses)
+            }
+            ResourceRef::CustomResource { group, kind, .. }
+                if group == "gateway.networking.k8s.io" && kind == "Gateway" =>
+            {
+                Some(AppView::Gateways)
+            }
+            ResourceRef::CustomResource { group, kind, .. }
+                if group == "gateway.networking.k8s.io" && kind == "HTTPRoute" =>
+            {
+                Some(AppView::HttpRoutes)
+            }
+            ResourceRef::CustomResource { group, kind, .. }
+                if group == "gateway.networking.k8s.io" && kind == "GRPCRoute" =>
+            {
+                Some(AppView::GrpcRoutes)
+            }
+            ResourceRef::CustomResource { group, kind, .. }
+                if group == "gateway.networking.k8s.io" && kind == "ReferenceGrant" =>
+            {
+                Some(AppView::ReferenceGrants)
+            }
             ResourceRef::CustomResource { group, .. } if group.ends_with(".fluxcd.io") => {
                 Some(AppView::FluxCDAll)
             }

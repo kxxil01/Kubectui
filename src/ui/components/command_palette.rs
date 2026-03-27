@@ -259,6 +259,47 @@ const COMMANDS: &[Command] = &[
         aliases: &["services", "service", "svc"],
     },
     Command {
+        view: AppView::Endpoints,
+        aliases: &["endpoints", "endpoint", "ep"],
+    },
+    Command {
+        view: AppView::Ingresses,
+        aliases: &["ingresses", "ingress", "ing"],
+    },
+    Command {
+        view: AppView::IngressClasses,
+        aliases: &["ingressclasses", "ingressclass", "ic"],
+    },
+    Command {
+        view: AppView::GatewayClasses,
+        aliases: &["gatewayclasses", "gatewayclass", "gwc", "gateway class"],
+    },
+    Command {
+        view: AppView::Gateways,
+        aliases: &["gateways", "gateway", "gw"],
+    },
+    Command {
+        view: AppView::HttpRoutes,
+        aliases: &["httproutes", "http route", "http routes", "hroute"],
+    },
+    Command {
+        view: AppView::GrpcRoutes,
+        aliases: &["grpcroutes", "grpc route", "grpc routes", "groute"],
+    },
+    Command {
+        view: AppView::ReferenceGrants,
+        aliases: &[
+            "referencegrants",
+            "referencegrant",
+            "grant",
+            "reference grant",
+        ],
+    },
+    Command {
+        view: AppView::NetworkPolicies,
+        aliases: &["networkpolicies", "networkpolicy", "netpol", "netpols"],
+    },
+    Command {
         view: AppView::ServiceAccounts,
         aliases: &["serviceaccounts", "serviceaccount", "sa"],
     },
@@ -971,6 +1012,18 @@ mod tests {
             p.filtered()
                 .contains(&PaletteEntry::Navigate(AppView::Services))
         );
+    }
+
+    #[test]
+    fn filtered_gateway_queries_match_gateway_views() {
+        let mut p = CommandPalette::default();
+        p.open();
+        for c in "gateway".chars() {
+            p.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let results = p.filtered();
+        assert!(results.contains(&PaletteEntry::Navigate(AppView::Gateways)));
+        assert!(results.contains(&PaletteEntry::Navigate(AppView::GatewayClasses)));
     }
 
     #[test]

@@ -4,6 +4,9 @@ use std::collections::HashSet;
 
 use crate::app::{AppView, ResourceRef};
 use crate::k8s::dtos::OwnerRefInfo;
+use crate::k8s::gateway_semantics::{
+    gateway_parent_attachment_allowed, reference_grant_allows_backend,
+};
 use crate::policy::RelationshipCapability;
 use crate::state::ClusterSnapshot;
 
@@ -151,6 +154,31 @@ pub fn resource_to_view(resource: &ResourceRef) -> Option<AppView> {
         ResourceRef::Endpoint(_, _) => Some(AppView::Endpoints),
         ResourceRef::Ingress(_, _) => Some(AppView::Ingresses),
         ResourceRef::IngressClass(_) => Some(AppView::IngressClasses),
+        ResourceRef::CustomResource { group, kind, .. }
+            if group == "gateway.networking.k8s.io" && kind == "GatewayClass" =>
+        {
+            Some(AppView::GatewayClasses)
+        }
+        ResourceRef::CustomResource { group, kind, .. }
+            if group == "gateway.networking.k8s.io" && kind == "Gateway" =>
+        {
+            Some(AppView::Gateways)
+        }
+        ResourceRef::CustomResource { group, kind, .. }
+            if group == "gateway.networking.k8s.io" && kind == "HTTPRoute" =>
+        {
+            Some(AppView::HttpRoutes)
+        }
+        ResourceRef::CustomResource { group, kind, .. }
+            if group == "gateway.networking.k8s.io" && kind == "GRPCRoute" =>
+        {
+            Some(AppView::GrpcRoutes)
+        }
+        ResourceRef::CustomResource { group, kind, .. }
+            if group == "gateway.networking.k8s.io" && kind == "ReferenceGrant" =>
+        {
+            Some(AppView::ReferenceGrants)
+        }
         ResourceRef::Pvc(_, _) => Some(AppView::PersistentVolumeClaims),
         ResourceRef::Pv(_) => Some(AppView::PersistentVolumes),
         ResourceRef::StorageClass(_) => Some(AppView::StorageClasses),
@@ -193,6 +221,7 @@ impl RelationshipCapability {
             RelationshipCapability::OwnerChain => "Owner Chain",
             RelationshipCapability::ServiceBackends => "Service Backends",
             RelationshipCapability::IngressBackends => "Ingress Backends",
+            RelationshipCapability::GatewayRoutes => "Gateway Topology",
             RelationshipCapability::StorageBindings => "Storage Bindings",
             RelationshipCapability::FluxLineage => "Flux Lineage",
             RelationshipCapability::RbacBindings => "RBAC Bindings",
@@ -769,6 +798,431 @@ pub fn resolve_ingress_backends_from_snapshot(
             vec![class_node]
         }
         _ => vec![],
+    }
+}
+
+pub fn resolve_gateway_topology_from_snapshot(
+    resource: &ResourceRef,
+    snapshot: &ClusterSnapshot,
+) -> Vec<RelationNode> {
+    match resource {
+        ResourceRef::CustomResource {
+            name,
+            group,
+            kind,
+            version,
+            ..
+        } if group == "gateway.networking.k8s.io" && kind == "GatewayClass" => {
+            let gateways = snapshot
+                .gateways
+                .iter()
+                .filter(|gateway| gateway.gateway_class_name == *name)
+                .map(|gateway| RelationNode {
+                    resource: Some(gateway_custom_resource_ref(
+                        &gateway.name,
+                        Some(&gateway.namespace),
+                        &gateway.version,
+                        "Gateway",
+                        "gateways",
+                    )),
+                    label: format!("Gateway {}", gateway.name),
+                    status: Some(format!("{} listener(s)", gateway.listeners.len())),
+                    namespace: Some(gateway.namespace.clone()),
+                    relation: RelationKind::Owned,
+                    not_found: false,
+                    children: Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            if gateways.is_empty() {
+                return Vec::new();
+            }
+            vec![RelationNode {
+                resource: Some(gateway_custom_resource_ref(
+                    name,
+                    None,
+                    version,
+                    "GatewayClass",
+                    "gatewayclasses",
+                )),
+                label: format!("GatewayClass {name}"),
+                status: None,
+                namespace: None,
+                relation: RelationKind::Root,
+                not_found: false,
+                children: gateways,
+            }]
+        }
+        ResourceRef::CustomResource {
+            name,
+            namespace,
+            group,
+            version,
+            kind,
+            ..
+        } if group == "gateway.networking.k8s.io" && kind == "Gateway" => {
+            let Some(namespace) = namespace.as_deref() else {
+                return Vec::new();
+            };
+            let Some(gateway) = snapshot
+                .gateways
+                .iter()
+                .find(|gateway| gateway.name == *name && gateway.namespace == namespace)
+            else {
+                return Vec::new();
+            };
+            let mut children = Vec::new();
+            for route in &snapshot.http_routes {
+                let matching_parent = route.parent_refs.iter().find(|parent| {
+                    let parent_namespace = parent.namespace.as_deref().unwrap_or(&route.namespace);
+                    parent.kind == "Gateway"
+                        && parent.name == gateway.name
+                        && parent_namespace == gateway.namespace
+                });
+                if let Some(parent) = matching_parent {
+                    let mut node = gateway_route_relation_node(
+                        "HTTPRoute",
+                        &route.name,
+                        &route.namespace,
+                        &route.version,
+                        "httproutes",
+                        route.backend_refs.as_slice(),
+                        snapshot,
+                    );
+                    if !gateway_parent_attachment_allowed(gateway, &route.namespace, parent) {
+                        node.status = Some(format!(
+                            "{}; cross-namespace attachment may be rejected",
+                            node.status.unwrap_or_default()
+                        ));
+                    }
+                    children.push(node);
+                }
+            }
+            for route in &snapshot.grpc_routes {
+                let matching_parent = route.parent_refs.iter().find(|parent| {
+                    let parent_namespace = parent.namespace.as_deref().unwrap_or(&route.namespace);
+                    parent.kind == "Gateway"
+                        && parent.name == gateway.name
+                        && parent_namespace == gateway.namespace
+                });
+                if let Some(parent) = matching_parent {
+                    let mut node = gateway_route_relation_node(
+                        "GRPCRoute",
+                        &route.name,
+                        &route.namespace,
+                        &route.version,
+                        "grpcroutes",
+                        route.backend_refs.as_slice(),
+                        snapshot,
+                    );
+                    if !gateway_parent_attachment_allowed(gateway, &route.namespace, parent) {
+                        node.status = Some(format!(
+                            "{}; cross-namespace attachment may be rejected",
+                            node.status.unwrap_or_default()
+                        ));
+                    }
+                    children.push(node);
+                }
+            }
+            vec![RelationNode {
+                resource: Some(gateway_custom_resource_ref(
+                    &gateway.name,
+                    Some(&gateway.namespace),
+                    version,
+                    "Gateway",
+                    "gateways",
+                )),
+                label: format!("Gateway {}", gateway.name),
+                status: Some(format!("{} listener(s)", gateway.listeners.len())),
+                namespace: Some(gateway.namespace.clone()),
+                relation: RelationKind::Root,
+                not_found: false,
+                children,
+            }]
+        }
+        ResourceRef::CustomResource {
+            name,
+            namespace,
+            group,
+            version,
+            kind,
+            ..
+        } if group == "gateway.networking.k8s.io"
+            && matches!(kind.as_str(), "HTTPRoute" | "GRPCRoute") =>
+        {
+            let Some(namespace) = namespace.as_deref() else {
+                return Vec::new();
+            };
+            let (parent_refs, backend_refs, plural) = if kind == "HTTPRoute" {
+                let Some(route) = snapshot
+                    .http_routes
+                    .iter()
+                    .find(|route| route.name == *name && route.namespace == namespace)
+                else {
+                    return Vec::new();
+                };
+                (
+                    route.parent_refs.as_slice(),
+                    route.backend_refs.as_slice(),
+                    "httproutes",
+                )
+            } else {
+                let Some(route) = snapshot
+                    .grpc_routes
+                    .iter()
+                    .find(|route| route.name == *name && route.namespace == namespace)
+                else {
+                    return Vec::new();
+                };
+                (
+                    route.parent_refs.as_slice(),
+                    route.backend_refs.as_slice(),
+                    "grpcroutes",
+                )
+            };
+
+            let mut children = parent_refs
+                .iter()
+                .filter(|parent| parent.kind == "Gateway")
+                .map(|parent| {
+                    let parent_namespace = parent.namespace.as_deref().unwrap_or(namespace);
+                    let gateway = snapshot.gateways.iter().find(|gateway| {
+                        gateway.name == parent.name && gateway.namespace == parent_namespace
+                    });
+                    RelationNode {
+                        resource: gateway.map(|gateway| {
+                            gateway_custom_resource_ref(
+                                &gateway.name,
+                                Some(&gateway.namespace),
+                                &gateway.version,
+                                "Gateway",
+                                "gateways",
+                            )
+                        }),
+                        label: format!("Gateway {}", parent.name),
+                        status: Some(
+                            match (
+                                parent.section_name.as_deref(),
+                                gateway.is_some_and(|gateway| {
+                                    !gateway_parent_attachment_allowed(gateway, namespace, parent)
+                                }),
+                            ) {
+                                (Some(section), true) => {
+                                    format!("{section}; cross-namespace attachment may be rejected")
+                                }
+                                (Some(section), false) => section.to_string(),
+                                (None, true) => {
+                                    "cross-namespace attachment may be rejected".to_string()
+                                }
+                                (None, false) => String::new(),
+                            },
+                        )
+                        .filter(|status| !status.is_empty()),
+                        namespace: Some(parent_namespace.to_string()),
+                        relation: RelationKind::SelectedBy,
+                        not_found: gateway.is_none(),
+                        children: Vec::new(),
+                    }
+                })
+                .collect::<Vec<_>>();
+            children.extend(
+                backend_refs.iter().map(|backend| {
+                    gateway_backend_relation_node(kind, namespace, backend, snapshot)
+                }),
+            );
+            vec![RelationNode {
+                resource: Some(gateway_custom_resource_ref(
+                    name,
+                    Some(namespace),
+                    version,
+                    kind,
+                    plural,
+                )),
+                label: format!("{kind} {name}"),
+                status: Some(format!("{} backend ref(s)", backend_refs.len())),
+                namespace: Some(namespace.to_string()),
+                relation: RelationKind::Root,
+                not_found: false,
+                children,
+            }]
+        }
+        ResourceRef::CustomResource {
+            name,
+            namespace,
+            group,
+            version,
+            kind,
+            ..
+        } if group == "gateway.networking.k8s.io" && kind == "ReferenceGrant" => {
+            let Some(namespace) = namespace.as_deref() else {
+                return Vec::new();
+            };
+            let Some(grant) = snapshot
+                .reference_grants
+                .iter()
+                .find(|grant| grant.name == *name && grant.namespace == namespace)
+            else {
+                return Vec::new();
+            };
+            let mut children = grant
+                .from
+                .iter()
+                .map(|entry| RelationNode {
+                    resource: None,
+                    label: format!("From {} {} in {}", entry.group, entry.kind, entry.namespace),
+                    status: None,
+                    namespace: Some(entry.namespace.clone()),
+                    relation: RelationKind::SelectedBy,
+                    not_found: false,
+                    children: Vec::new(),
+                })
+                .collect::<Vec<_>>();
+            children.extend(grant.to.iter().map(|entry| RelationNode {
+                resource: None,
+                label: format!(
+                    "To {} {}{}",
+                    entry.group,
+                    entry.kind,
+                    entry
+                        .name
+                        .as_deref()
+                        .map(|name| format!(" {name}"))
+                        .unwrap_or_default()
+                ),
+                status: None,
+                namespace: Some(grant.namespace.clone()),
+                relation: RelationKind::Backend,
+                not_found: false,
+                children: Vec::new(),
+            }));
+            vec![RelationNode {
+                resource: Some(gateway_custom_resource_ref(
+                    &grant.name,
+                    Some(&grant.namespace),
+                    version,
+                    "ReferenceGrant",
+                    "referencegrants",
+                )),
+                label: format!("ReferenceGrant {}", grant.name),
+                status: Some(format!("{} from, {} to", grant.from.len(), grant.to.len())),
+                namespace: Some(grant.namespace.clone()),
+                relation: RelationKind::Root,
+                not_found: false,
+                children,
+            }]
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn gateway_custom_resource_ref(
+    name: &str,
+    namespace: Option<&str>,
+    version: &str,
+    kind: &str,
+    plural: &str,
+) -> ResourceRef {
+    ResourceRef::CustomResource {
+        name: name.to_string(),
+        namespace: namespace.map(ToOwned::to_owned),
+        group: "gateway.networking.k8s.io".to_string(),
+        version: version.to_string(),
+        kind: kind.to_string(),
+        plural: plural.to_string(),
+    }
+}
+
+fn gateway_route_relation_node(
+    kind: &str,
+    name: &str,
+    namespace: &str,
+    version: &str,
+    plural: &str,
+    backend_refs: &[crate::k8s::dtos::GatewayBackendRefInfo],
+    snapshot: &ClusterSnapshot,
+) -> RelationNode {
+    RelationNode {
+        resource: Some(gateway_custom_resource_ref(
+            name,
+            Some(namespace),
+            version,
+            kind,
+            plural,
+        )),
+        label: format!("{kind} {name}"),
+        status: Some(format!("{} backend ref(s)", backend_refs.len())),
+        namespace: Some(namespace.to_string()),
+        relation: RelationKind::Owned,
+        not_found: false,
+        children: backend_refs
+            .iter()
+            .map(|backend| gateway_backend_relation_node(kind, namespace, backend, snapshot))
+            .collect(),
+    }
+}
+
+fn gateway_backend_relation_node(
+    route_kind: &str,
+    route_namespace: &str,
+    backend: &crate::k8s::dtos::GatewayBackendRefInfo,
+    snapshot: &ClusterSnapshot,
+) -> RelationNode {
+    let target_namespace = backend.namespace.as_deref().unwrap_or(route_namespace);
+    let cross_namespace = target_namespace != route_namespace;
+    let reference_grant_allowed = !cross_namespace
+        || reference_grant_allows_backend(
+            snapshot.reference_grants.as_slice(),
+            route_namespace,
+            route_kind,
+            backend,
+        );
+    let blocked_cross_namespace = cross_namespace && !reference_grant_allowed;
+    let service = if backend.kind == "Service" {
+        (!blocked_cross_namespace)
+            .then(|| {
+                snapshot.services.iter().find(|service| {
+                    service.name == backend.name && service.namespace == target_namespace
+                })
+            })
+            .flatten()
+    } else {
+        None
+    };
+    let pods = service
+        .map(|service| {
+            if service.selector.is_empty() {
+                let endpoint = snapshot.endpoints.iter().find(|endpoint| {
+                    endpoint.name == service.name && endpoint.namespace == service.namespace
+                });
+                endpoint
+                    .map(|endpoint| {
+                        pods_matching_endpoint_addresses(
+                            endpoint.addresses.as_slice(),
+                            target_namespace,
+                            snapshot,
+                        )
+                    })
+                    .unwrap_or_default()
+            } else {
+                pods_matching_selector(&service.selector, target_namespace, snapshot)
+            }
+        })
+        .unwrap_or_default();
+
+    RelationNode {
+        resource: service
+            .map(|service| ResourceRef::Service(service.name.clone(), service.namespace.clone())),
+        label: format!("{} {}", backend.kind, backend.name),
+        status: Some(if blocked_cross_namespace {
+            format!("cross-namespace from {route_kind} blocked by missing ReferenceGrant")
+        } else if cross_namespace {
+            format!("cross-namespace from {route_kind}")
+        } else {
+            format!("{} pod(s)", pods.len())
+        }),
+        namespace: Some(target_namespace.to_string()),
+        relation: RelationKind::Backend,
+        not_found: service.is_none() && !blocked_cross_namespace,
+        children: pods,
     }
 }
 
@@ -1537,6 +1991,9 @@ pub async fn resolve_relationships(
             RelationshipCapability::IngressBackends => {
                 resolve_ingress_backends_from_snapshot(resource, snapshot)
             }
+            RelationshipCapability::GatewayRoutes => {
+                resolve_gateway_topology_from_snapshot(resource, snapshot)
+            }
             RelationshipCapability::StorageBindings => {
                 resolve_storage_bindings_from_snapshot(resource, snapshot)
             }
@@ -2104,6 +2561,199 @@ mod tests {
         assert_eq!(result[0].label, "IngressClass nginx");
         assert_eq!(result[0].children.len(), 1);
         assert_eq!(result[0].children[0].label, "Ingress ing-1");
+    }
+
+    #[test]
+    fn resolve_gateway_route_blocks_cross_namespace_backend_without_reference_grant() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.http_routes = vec![HttpRouteInfo {
+            name: "frontend".into(),
+            namespace: "apps".into(),
+            version: "v1beta1".into(),
+            backend_refs: vec![GatewayBackendRefInfo {
+                group: "".into(),
+                kind: "Service".into(),
+                namespace: Some("backend".into()),
+                name: "api".into(),
+                port: Some(80),
+            }],
+            ..Default::default()
+        }];
+        snapshot.services = vec![ServiceInfo {
+            name: "api".into(),
+            namespace: "backend".into(),
+            selector: [("app".to_string(), "api".to_string())].into(),
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::CustomResource {
+            group: "gateway.networking.k8s.io".into(),
+            kind: "HTTPRoute".into(),
+            plural: "httproutes".into(),
+            version: "v1beta1".into(),
+            name: "frontend".into(),
+            namespace: Some("apps".into()),
+        };
+        let result = resolve_gateway_topology_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(
+            result[0].children[0].status.as_deref(),
+            Some("cross-namespace from HTTPRoute blocked by missing ReferenceGrant")
+        );
+        assert!(result[0].children[0].resource.is_none());
+        assert!(!result[0].children[0].not_found);
+    }
+
+    #[test]
+    fn resolve_gateway_route_preserves_route_version() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.http_routes = vec![HttpRouteInfo {
+            name: "frontend".into(),
+            namespace: "apps".into(),
+            version: "v1beta1".into(),
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::CustomResource {
+            group: "gateway.networking.k8s.io".into(),
+            kind: "HTTPRoute".into(),
+            plural: "httproutes".into(),
+            version: "v1beta1".into(),
+            name: "frontend".into(),
+            namespace: Some("apps".into()),
+        };
+        let result = resolve_gateway_topology_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        match result[0].resource.as_ref() {
+            Some(ResourceRef::CustomResource { version, .. }) => assert_eq!(version, "v1beta1"),
+            other => panic!("unexpected resource: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_gateway_root_deduplicates_routes_with_multiple_parent_refs_to_same_gateway() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.gateways = vec![GatewayInfo {
+            name: "edge".into(),
+            namespace: "shared".into(),
+            version: "v1".into(),
+            listeners: vec![
+                GatewayListenerInfo {
+                    name: "http".into(),
+                    protocol: "HTTP".into(),
+                    port: 80,
+                    ..Default::default()
+                },
+                GatewayListenerInfo {
+                    name: "public".into(),
+                    protocol: "HTTP".into(),
+                    port: 8080,
+                    allowed_routes_from: Some("All".into()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }];
+        snapshot.http_routes = vec![HttpRouteInfo {
+            name: "frontend".into(),
+            namespace: "apps".into(),
+            version: "v1".into(),
+            parent_refs: vec![
+                GatewayParentRefInfo {
+                    group: "gateway.networking.k8s.io".into(),
+                    kind: "Gateway".into(),
+                    name: "edge".into(),
+                    namespace: Some("shared".into()),
+                    section_name: Some("http".into()),
+                },
+                GatewayParentRefInfo {
+                    group: "gateway.networking.k8s.io".into(),
+                    kind: "Gateway".into(),
+                    name: "edge".into(),
+                    namespace: Some("shared".into()),
+                    section_name: Some("public".into()),
+                },
+            ],
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::CustomResource {
+            group: "gateway.networking.k8s.io".into(),
+            kind: "Gateway".into(),
+            plural: "gateways".into(),
+            version: "v1".into(),
+            name: "edge".into(),
+            namespace: Some("shared".into()),
+        };
+        let result = resolve_gateway_topology_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].children.len(), 1);
+        assert_eq!(result[0].children[0].label, "HTTPRoute frontend");
+    }
+
+    #[test]
+    fn resolve_gateway_root_marks_cross_namespace_attachment_warning() {
+        use crate::k8s::dtos::*;
+        use crate::state::ClusterSnapshot;
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.gateways = vec![GatewayInfo {
+            name: "edge".into(),
+            namespace: "shared".into(),
+            version: "v1".into(),
+            listeners: vec![GatewayListenerInfo {
+                name: "http".into(),
+                protocol: "HTTP".into(),
+                port: 80,
+                allowed_routes_from: Some("Selector".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        }];
+        snapshot.http_routes = vec![HttpRouteInfo {
+            name: "frontend".into(),
+            namespace: "apps".into(),
+            version: "v1".into(),
+            parent_refs: vec![GatewayParentRefInfo {
+                group: "gateway.networking.k8s.io".into(),
+                kind: "Gateway".into(),
+                name: "edge".into(),
+                namespace: Some("shared".into()),
+                section_name: Some("http".into()),
+            }],
+            ..Default::default()
+        }];
+
+        let resource = ResourceRef::CustomResource {
+            group: "gateway.networking.k8s.io".into(),
+            kind: "Gateway".into(),
+            plural: "gateways".into(),
+            version: "v1".into(),
+            name: "edge".into(),
+            namespace: Some("shared".into()),
+        };
+        let result = resolve_gateway_topology_from_snapshot(&resource, &snapshot);
+
+        assert_eq!(result.len(), 1);
+        assert!(
+            result[0].children[0]
+                .status
+                .as_deref()
+                .is_some_and(|status| status.contains("attachment may be rejected"))
+        );
     }
 
     #[test]
