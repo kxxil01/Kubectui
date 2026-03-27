@@ -195,6 +195,31 @@ pub fn view_icon(view: AppView) -> Icon {
             emoji: "🏷 ",
             plain: "",
         },
+        AppView::GatewayClasses => Icon {
+            nerd: "󰞒 ",
+            emoji: "🧭 ",
+            plain: "",
+        },
+        AppView::Gateways => Icon {
+            nerd: "󰞒 ",
+            emoji: "🚪 ",
+            plain: "",
+        },
+        AppView::HttpRoutes => Icon {
+            nerd: "󰖟 ",
+            emoji: "🌍 ",
+            plain: "",
+        },
+        AppView::GrpcRoutes => Icon {
+            nerd: "󰘦 ",
+            emoji: "📡 ",
+            plain: "",
+        },
+        AppView::ReferenceGrants => Icon {
+            nerd: "󰌆 ",
+            emoji: "🤝 ",
+            plain: "",
+        },
         AppView::NetworkPolicies => Icon {
             nerd: "󰒃 ",
             emoji: "🛡 ",

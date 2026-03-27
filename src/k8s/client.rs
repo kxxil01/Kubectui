@@ -35,7 +35,7 @@ use kube::{
 };
 use tower::{buffer::BufferLayer, retry::RetryLayer};
 
-use crate::k8s::{events, yaml};
+use crate::k8s::{events, gateway_api, yaml};
 use crate::{
     app::ResourceRef,
     authorization::{
@@ -59,10 +59,11 @@ pub use crate::k8s::{
     dtos::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ClusterVersionInfo, ConfigMapInfo,
         CronJobInfo, CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo,
-        DeploymentInfo, EndpointInfo, FluxResourceInfo, HelmReleaseInfo, HpaInfo, IngressClassInfo,
-        IngressInfo, JobInfo, K8sEventInfo, LimitRangeInfo, LimitSpec, NamespaceInfo,
-        NetworkPolicyInfo, NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo,
-        PodMetricsInfo, PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReplicaSetInfo,
+        DeploymentInfo, EndpointInfo, FluxResourceInfo, GatewayClassInfo, GatewayInfo,
+        GrpcRouteInfo, HelmReleaseInfo, HpaInfo, HttpRouteInfo, IngressClassInfo, IngressInfo,
+        JobInfo, K8sEventInfo, LimitRangeInfo, LimitSpec, NamespaceInfo, NetworkPolicyInfo,
+        NodeInfo, NodeMetricsInfo, PodDisruptionBudgetInfo, PodInfo, PodMetricsInfo,
+        PriorityClassInfo, PvInfo, PvcInfo, RbacRule, ReferenceGrantInfo, ReplicaSetInfo,
         ReplicationControllerInfo, ResourceQuotaInfo, RoleBindingInfo, RoleBindingSubject,
         RoleInfo, SecretInfo, ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
         VulnerabilityReportInfo, VulnerabilitySummaryCounts,
@@ -518,6 +519,25 @@ impl K8sClient {
         fetch_ingresses, Ingress, IngressInfo,
         crate::k8s::conversions::ingress_to_info, "ingresses"
     );
+    /// Fetches Gateway API Gateways when the CRD is installed.
+    pub async fn fetch_gateways(&self, namespace: Option<&str>) -> Result<Vec<GatewayInfo>> {
+        gateway_api::fetch_gateways(&self.client, namespace).await
+    }
+    /// Fetches Gateway API HTTPRoutes when the CRD is installed.
+    pub async fn fetch_http_routes(&self, namespace: Option<&str>) -> Result<Vec<HttpRouteInfo>> {
+        gateway_api::fetch_http_routes(&self.client, namespace).await
+    }
+    /// Fetches Gateway API GRPCRoutes when the CRD is installed.
+    pub async fn fetch_grpc_routes(&self, namespace: Option<&str>) -> Result<Vec<GrpcRouteInfo>> {
+        gateway_api::fetch_grpc_routes(&self.client, namespace).await
+    }
+    /// Fetches Gateway API ReferenceGrants when the CRD is installed.
+    pub async fn fetch_reference_grants(
+        &self,
+        namespace: Option<&str>,
+    ) -> Result<Vec<ReferenceGrantInfo>> {
+        gateway_api::fetch_reference_grants(&self.client, namespace).await
+    }
     fetch_namespaced!(
         /// Fetches NetworkPolicies.
         fetch_network_policies, NetworkPolicy, NetworkPolicyInfo,
@@ -565,6 +585,10 @@ impl K8sClient {
         fetch_ingress_classes, IngressClass, IngressClassInfo,
         crate::k8s::conversions::ingress_class_to_info, "ingress classes"
     );
+    /// Fetches Gateway API GatewayClasses when the CRD is installed.
+    pub async fn fetch_gateway_classes(&self) -> Result<Vec<GatewayClassInfo>> {
+        gateway_api::fetch_gateway_classes(&self.client).await
+    }
     fetch_cluster!(
         /// Fetches PersistentVolumes.
         fetch_pvs, PersistentVolume, PvInfo,
@@ -1669,7 +1693,7 @@ where
     }
 }
 
-fn is_forbidden_error(err: &kube::Error) -> bool {
+pub(crate) fn is_forbidden_error(err: &kube::Error) -> bool {
     matches!(err, kube::Error::Api(response) if response.is_forbidden())
 }
 
@@ -1794,7 +1818,7 @@ const FLUX_RESOURCE_KIND_SPECS: &[FluxResourceKindSpec] = &[
     },
 ];
 
-fn is_missing_api_error(err: &kube::Error) -> bool {
+pub(crate) fn is_missing_api_error(err: &kube::Error) -> bool {
     if let kube::Error::Api(response) = err
         && response.is_not_found()
     {

@@ -980,6 +980,51 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 content_focused,
             ),
+            AppView::GatewayClasses => views::gateway_api::render_gateway_classes(
+                frame,
+                content,
+                cluster,
+                app.bookmarks(),
+                app.selected_idx(),
+                app.search_query(),
+                content_focused,
+            ),
+            AppView::Gateways => views::gateway_api::render_gateways(
+                frame,
+                content,
+                cluster,
+                app.bookmarks(),
+                app.selected_idx(),
+                app.search_query(),
+                content_focused,
+            ),
+            AppView::HttpRoutes => views::gateway_api::render_http_routes(
+                frame,
+                content,
+                cluster,
+                app.bookmarks(),
+                app.selected_idx(),
+                app.search_query(),
+                content_focused,
+            ),
+            AppView::GrpcRoutes => views::gateway_api::render_grpc_routes(
+                frame,
+                content,
+                cluster,
+                app.bookmarks(),
+                app.selected_idx(),
+                app.search_query(),
+                content_focused,
+            ),
+            AppView::ReferenceGrants => views::gateway_api::render_reference_grants(
+                frame,
+                content,
+                cluster,
+                app.bookmarks(),
+                app.selected_idx(),
+                app.search_query(),
+                content_focused,
+            ),
             AppView::NetworkPolicies => views::network_policies::render_network_policies(
                 frame,
                 content,
@@ -1912,10 +1957,11 @@ mod tests {
             dtos::{
                 ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
                 CustomResourceDefinitionInfo, CustomResourceInfo, DaemonSetInfo, DeploymentInfo,
-                FluxResourceInfo, HelmReleaseRevisionInfo, IngressClassInfo, IngressInfo, JobInfo,
+                FluxResourceInfo, GatewayClassInfo, GatewayInfo, GrpcRouteInfo,
+                HelmReleaseRevisionInfo, HttpRouteInfo, IngressClassInfo, IngressInfo, JobInfo,
                 LimitRangeInfo, NetworkPolicyInfo, NodeInfo, PodDisruptionBudgetInfo, PodInfo,
-                PvInfo, PvcInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo, ServiceAccountInfo,
-                ServiceInfo, StatefulSetInfo, StorageClassInfo,
+                PvInfo, PvcInfo, ReferenceGrantInfo, ResourceQuotaInfo, RoleBindingInfo, RoleInfo,
+                ServiceAccountInfo, ServiceInfo, StatefulSetInfo, StorageClassInfo,
             },
             helm::HelmHistoryResult,
             rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind},
@@ -2628,6 +2674,90 @@ mod tests {
             is_default: true,
             ..IngressClassInfo::default()
         });
+        snapshot.gateway_classes.push(GatewayClassInfo {
+            name: "istio".to_string(),
+            version: "v1".to_string(),
+            controller_name: "istio.io/gateway-controller".to_string(),
+            accepted: Some(true),
+            ..GatewayClassInfo::default()
+        });
+        snapshot.gateways.push(GatewayInfo {
+            name: "edge".to_string(),
+            namespace: "default".to_string(),
+            version: "v1".to_string(),
+            gateway_class_name: "istio".to_string(),
+            addresses: vec!["10.0.0.11".to_string()],
+            listeners: vec![crate::k8s::dtos::GatewayListenerInfo {
+                name: "http".to_string(),
+                protocol: "HTTP".to_string(),
+                port: 80,
+                hostname: Some("app.example.test".to_string()),
+                allowed_routes_from: Some("All".to_string()),
+                allowed_routes_selector: None,
+                attached_routes: 1,
+                ready: Some(true),
+            }],
+            ..GatewayInfo::default()
+        });
+        snapshot.http_routes.push(HttpRouteInfo {
+            name: "frontend".to_string(),
+            namespace: "default".to_string(),
+            version: "v1".to_string(),
+            hostnames: vec!["app.example.test".to_string()],
+            parent_refs: vec![crate::k8s::dtos::GatewayParentRefInfo {
+                group: "gateway.networking.k8s.io".to_string(),
+                kind: "Gateway".to_string(),
+                name: "edge".to_string(),
+                namespace: Some("default".to_string()),
+                section_name: Some("http".to_string()),
+            }],
+            backend_refs: vec![crate::k8s::dtos::GatewayBackendRefInfo {
+                group: "".to_string(),
+                kind: "Service".to_string(),
+                name: "frontend".to_string(),
+                namespace: Some("default".to_string()),
+                port: Some(8080),
+            }],
+            rule_count: 1,
+            ..HttpRouteInfo::default()
+        });
+        snapshot.grpc_routes.push(GrpcRouteInfo {
+            name: "grpc-api".to_string(),
+            namespace: "default".to_string(),
+            version: "v1".to_string(),
+            parent_refs: vec![crate::k8s::dtos::GatewayParentRefInfo {
+                group: "gateway.networking.k8s.io".to_string(),
+                kind: "Gateway".to_string(),
+                name: "edge".to_string(),
+                namespace: Some("default".to_string()),
+                section_name: Some("grpc".to_string()),
+            }],
+            backend_refs: vec![crate::k8s::dtos::GatewayBackendRefInfo {
+                group: "".to_string(),
+                kind: "Service".to_string(),
+                name: "grpc-api".to_string(),
+                namespace: Some("default".to_string()),
+                port: Some(9090),
+            }],
+            rule_count: 1,
+            ..GrpcRouteInfo::default()
+        });
+        snapshot.reference_grants.push(ReferenceGrantInfo {
+            name: "allow-cross-namespace".to_string(),
+            namespace: "default".to_string(),
+            version: "v1beta1".to_string(),
+            from: vec![crate::k8s::dtos::ReferenceGrantFromInfo {
+                group: "gateway.networking.k8s.io".to_string(),
+                kind: "HTTPRoute".to_string(),
+                namespace: "edge".to_string(),
+            }],
+            to: vec![crate::k8s::dtos::ReferenceGrantToInfo {
+                group: "".to_string(),
+                kind: "Service".to_string(),
+                name: Some("frontend".to_string()),
+            }],
+            ..ReferenceGrantInfo::default()
+        });
         snapshot.network_policies.push(NetworkPolicyInfo {
             name: "deny-all".to_string(),
             namespace: "default".to_string(),
@@ -2639,6 +2769,11 @@ mod tests {
 
         draw(&app_with_view(AppView::Ingresses), &snapshot);
         draw(&app_with_view(AppView::IngressClasses), &snapshot);
+        draw(&app_with_view(AppView::GatewayClasses), &snapshot);
+        draw(&app_with_view(AppView::Gateways), &snapshot);
+        draw(&app_with_view(AppView::HttpRoutes), &snapshot);
+        draw(&app_with_view(AppView::GrpcRoutes), &snapshot);
+        draw(&app_with_view(AppView::ReferenceGrants), &snapshot);
         draw(&app_with_view(AppView::NetworkPolicies), &snapshot);
     }
 

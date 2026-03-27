@@ -8,7 +8,10 @@ use std::{
 use crate::{
     app::ResourceRef,
     k8s::{
-        dtos::{AlertSeverity, IngressInfo, JobInfo, LabelSelectorInfo, PodInfo, ServiceInfo},
+        dtos::{
+            AlertSeverity, GatewayBackendRefInfo, IngressInfo, JobInfo, LabelSelectorInfo, PodInfo,
+            ServiceInfo,
+        },
         selectors::selector_matches_pairs,
     },
     state::{
@@ -32,6 +35,8 @@ pub struct ProjectSummary {
     pub pods: usize,
     pub services: usize,
     pub ingresses: usize,
+    pub http_routes: usize,
+    pub grpc_routes: usize,
     pub issue_count: usize,
     pub highest_severity: AlertSeverity,
     pub representative: Option<ResourceRef>,
@@ -39,6 +44,7 @@ pub struct ProjectSummary {
     pub sample_workloads: Vec<String>,
     pub sample_services: Vec<String>,
     pub sample_ingresses: Vec<String>,
+    pub sample_routes: Vec<String>,
 }
 
 impl ProjectSummary {
@@ -59,6 +65,10 @@ impl ProjectSummary {
                 .any(|name| contains_ci(name, query))
             || self
                 .sample_ingresses
+                .iter()
+                .any(|name| contains_ci(name, query))
+            || self
+                .sample_routes
                 .iter()
                 .any(|name| contains_ci(name, query))
     }
@@ -130,9 +140,12 @@ struct ProjectAccumulator {
     cronjobs: BTreeSet<String>,
     services: BTreeSet<String>,
     ingresses: BTreeSet<String>,
+    http_routes: BTreeSet<String>,
+    grpc_routes: BTreeSet<String>,
     sample_workloads: BTreeSet<String>,
     sample_services: BTreeSet<String>,
     sample_ingresses: BTreeSet<String>,
+    sample_routes: BTreeSet<String>,
     pod_count: usize,
     issue_count: usize,
     highest_severity: AlertSeverity,
@@ -244,6 +257,37 @@ impl ProjectAccumulator {
         }
     }
 
+    fn add_gateway_route(&mut self, resource: &ResourceRef) {
+        let ResourceRef::CustomResource {
+            name,
+            namespace: Some(namespace),
+            group,
+            kind,
+            ..
+        } = resource
+        else {
+            return;
+        };
+        if group != "gateway.networking.k8s.io" {
+            return;
+        }
+        self.add_namespace(namespace);
+        match kind.as_str() {
+            "HTTPRoute" => {
+                self.http_routes.insert(name.clone());
+                self.sample_routes.insert(format!("HTTPRoute/{name}"));
+            }
+            "GRPCRoute" => {
+                self.grpc_routes.insert(name.clone());
+                self.sample_routes.insert(format!("GRPCRoute/{name}"));
+            }
+            _ => return,
+        }
+        if self.representative.is_none() {
+            self.representative = Some(resource.clone());
+        }
+    }
+
     fn add_issue(&mut self, severity: AlertSeverity, message: String) {
         self.issue_count += 1;
         if severity_rank(severity) > severity_rank(self.highest_severity) {
@@ -269,6 +313,8 @@ impl ProjectAccumulator {
             pods: self.pod_count,
             services: self.services.len(),
             ingresses: self.ingresses.len(),
+            http_routes: self.http_routes.len(),
+            grpc_routes: self.grpc_routes.len(),
             issue_count: self.issue_count,
             highest_severity: self.highest_severity,
             representative: self.representative,
@@ -276,6 +322,7 @@ impl ProjectAccumulator {
             sample_workloads: self.sample_workloads.into_iter().take(4).collect(),
             sample_services: self.sample_services.into_iter().take(4).collect(),
             sample_ingresses: self.sample_ingresses.into_iter().take(4).collect(),
+            sample_routes: self.sample_routes.into_iter().take(4).collect(),
         }
     }
 }
@@ -294,9 +341,12 @@ impl Default for ProjectAccumulator {
             cronjobs: BTreeSet::new(),
             services: BTreeSet::new(),
             ingresses: BTreeSet::new(),
+            http_routes: BTreeSet::new(),
+            grpc_routes: BTreeSet::new(),
             sample_workloads: BTreeSet::new(),
             sample_services: BTreeSet::new(),
             sample_ingresses: BTreeSet::new(),
+            sample_routes: BTreeSet::new(),
             pod_count: 0,
             issue_count: 0,
             highest_severity: AlertSeverity::Info,
@@ -504,6 +554,56 @@ fn build_projects(snapshot: &ClusterSnapshot) -> Vec<ProjectSummary> {
         } else {
             continue;
         };
+    }
+
+    for route in &snapshot.http_routes {
+        let resource = ResourceRef::CustomResource {
+            name: route.name.clone(),
+            namespace: Some(route.namespace.clone()),
+            group: "gateway.networking.k8s.io".to_string(),
+            version: route.version.clone(),
+            kind: "HTTPRoute".to_string(),
+            plural: "httproutes".to_string(),
+        };
+        if let Some(identity) = identity_from_map(&route.namespace, &route.labels) {
+            let project = project_mut(&mut projects, &identity);
+            project.add_gateway_route(&resource);
+            resource_projects.insert(resource_key(&resource), identity.key);
+        } else if let Some(project_key) = route_backend_project(
+            &route.namespace,
+            route.backend_refs.iter(),
+            &service_projects,
+        ) {
+            if let Some(project) = projects.get_mut(&project_key) {
+                project.add_gateway_route(&resource);
+            }
+            resource_projects.insert(resource_key(&resource), project_key);
+        }
+    }
+
+    for route in &snapshot.grpc_routes {
+        let resource = ResourceRef::CustomResource {
+            name: route.name.clone(),
+            namespace: Some(route.namespace.clone()),
+            group: "gateway.networking.k8s.io".to_string(),
+            version: route.version.clone(),
+            kind: "GRPCRoute".to_string(),
+            plural: "grpcroutes".to_string(),
+        };
+        if let Some(identity) = identity_from_map(&route.namespace, &route.labels) {
+            let project = project_mut(&mut projects, &identity);
+            project.add_gateway_route(&resource);
+            resource_projects.insert(resource_key(&resource), identity.key);
+        } else if let Some(project_key) = route_backend_project(
+            &route.namespace,
+            route.backend_refs.iter(),
+            &service_projects,
+        ) {
+            if let Some(project) = projects.get_mut(&project_key) {
+                project.add_gateway_route(&resource);
+            }
+            resource_projects.insert(resource_key(&resource), project_key);
+        }
     }
 
     for issue in compute_issues(snapshot).iter() {
@@ -741,6 +841,28 @@ fn ingress_project(
         .flatten()
 }
 
+fn route_backend_project<'a>(
+    namespace: &str,
+    backend_refs: impl Iterator<Item = &'a GatewayBackendRefInfo>,
+    service_projects: &HashMap<(String, String), String>,
+) -> Option<String> {
+    let matching = backend_refs
+        .filter_map(|backend| {
+            if backend.kind != "Service" {
+                return None;
+            }
+            let service_namespace = backend.namespace.as_deref().unwrap_or(namespace);
+            service_projects
+                .get(&(service_namespace.to_string(), backend.name.clone()))
+                .cloned()
+        })
+        .collect::<BTreeSet<_>>();
+
+    (matching.len() == 1)
+        .then(|| matching.iter().next().cloned())
+        .flatten()
+}
+
 fn resource_key(resource: &ResourceRef) -> String {
     match resource.namespace() {
         Some(namespace) => format!("{}:{namespace}:{}", resource.kind(), resource.name()),
@@ -771,8 +893,8 @@ fn truncate_issue(message: &str) -> String {
 mod tests {
     use super::*;
     use crate::k8s::dtos::{
-        CronJobInfo, DaemonSetInfo, DeploymentInfo, IngressInfo, JobInfo, OwnerRefInfo, PodInfo,
-        ServiceInfo, StatefulSetInfo,
+        CronJobInfo, DaemonSetInfo, DeploymentInfo, GatewayBackendRefInfo, GrpcRouteInfo,
+        HttpRouteInfo, IngressInfo, JobInfo, OwnerRefInfo, PodInfo, ServiceInfo, StatefulSetInfo,
     };
 
     #[test]
@@ -867,6 +989,8 @@ mod tests {
             pods: 2,
             services: 1,
             ingresses: 0,
+            http_routes: 0,
+            grpc_routes: 0,
             issue_count: 0,
             highest_severity: AlertSeverity::Info,
             representative: None,
@@ -874,6 +998,7 @@ mod tests {
             sample_workloads: vec!["Deployment/api".into()],
             sample_services: vec!["api".into()],
             sample_ingresses: Vec::new(),
+            sample_routes: Vec::new(),
         };
 
         assert!(project.matches_query("payments"));
@@ -978,6 +1103,106 @@ mod tests {
         assert_eq!(project.services, 1);
         assert_eq!(project.ingresses, 1);
         assert_eq!(project.pods, 0);
+    }
+
+    #[test]
+    fn infers_gateway_route_projects_from_backend_service() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 51,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.services.push(ServiceInfo {
+            name: "api".into(),
+            namespace: "payments".into(),
+            selector: BTreeMap::from([("app.kubernetes.io/part-of".into(), "checkout".into())]),
+            ..ServiceInfo::default()
+        });
+        snapshot.http_routes.push(HttpRouteInfo {
+            name: "frontend".into(),
+            namespace: "payments".into(),
+            version: "v1".into(),
+            backend_refs: vec![GatewayBackendRefInfo {
+                group: "".into(),
+                kind: "Service".into(),
+                namespace: None,
+                name: "api".into(),
+                port: Some(80),
+            }],
+            ..HttpRouteInfo::default()
+        });
+
+        let projects = compute_projects(&snapshot);
+        assert_eq!(projects.len(), 1);
+        let project = &projects[0];
+        assert_eq!(project.name, "checkout");
+        assert_eq!(project.http_routes, 1);
+        assert!(
+            project
+                .sample_routes
+                .iter()
+                .any(|entry| entry == "HTTPRoute/frontend")
+        );
+    }
+
+    #[test]
+    fn infers_labeled_grpc_route_projects_without_service_ownership() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 52,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.grpc_routes.push(GrpcRouteInfo {
+            name: "grpc-api".into(),
+            namespace: "payments".into(),
+            version: "v1".into(),
+            labels: BTreeMap::from([("app.kubernetes.io/part-of".into(), "checkout".into())]),
+            ..GrpcRouteInfo::default()
+        });
+
+        let projects = compute_projects(&snapshot);
+        assert_eq!(projects.len(), 1);
+        let project = &projects[0];
+        assert_eq!(project.name, "checkout");
+        assert_eq!(project.grpc_routes, 1);
+        assert!(
+            project
+                .sample_routes
+                .iter()
+                .any(|entry| entry == "GRPCRoute/grpc-api")
+        );
+    }
+
+    #[test]
+    fn ignores_non_service_gateway_backend_refs_for_project_inference() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 53,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.services.push(ServiceInfo {
+            name: "api".into(),
+            namespace: "payments".into(),
+            selector: BTreeMap::from([("app.kubernetes.io/part-of".into(), "checkout".into())]),
+            ..ServiceInfo::default()
+        });
+        snapshot.http_routes.push(HttpRouteInfo {
+            name: "frontend".into(),
+            namespace: "payments".into(),
+            version: "v1".into(),
+            backend_refs: vec![GatewayBackendRefInfo {
+                group: "example.com".into(),
+                kind: "BackendPolicy".into(),
+                namespace: None,
+                name: "api".into(),
+                port: None,
+            }],
+            ..HttpRouteInfo::default()
+        });
+
+        let projects = compute_projects(&snapshot);
+        let project = projects
+            .iter()
+            .find(|project| project.name == "checkout")
+            .expect("service-backed project");
+        assert_eq!(project.http_routes, 0);
     }
 
     #[test]

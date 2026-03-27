@@ -285,6 +285,11 @@ pub fn refresh_options_for_view(
         AppView::Endpoints
         | AppView::Ingresses
         | AppView::IngressClasses
+        | AppView::GatewayClasses
+        | AppView::Gateways
+        | AppView::HttpRoutes
+        | AppView::GrpcRoutes
+        | AppView::ReferenceGrants
         | AppView::NetworkPolicies => {
             RefreshDispatch::new(RefreshScope::NETWORK, RefreshScope::NETWORK)
         }

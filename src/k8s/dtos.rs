@@ -657,6 +657,122 @@ pub struct IngressInfo {
     pub created_at: Option<AppTimestamp>,
 }
 
+/// Simplified Gateway listener status used by Gateway list and traffic diagnostics.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GatewayListenerInfo {
+    pub name: String,
+    pub protocol: String,
+    pub port: i32,
+    pub hostname: Option<String>,
+    pub allowed_routes_from: Option<String>,
+    pub allowed_routes_selector: Option<LabelSelectorInfo>,
+    pub attached_routes: usize,
+    pub ready: Option<bool>,
+}
+
+/// ParentRef summary shared by Gateway API route DTOs.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GatewayParentRefInfo {
+    pub group: String,
+    pub kind: String,
+    pub name: String,
+    pub namespace: Option<String>,
+    pub section_name: Option<String>,
+}
+
+/// BackendRef summary shared by Gateway API route DTOs.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GatewayBackendRefInfo {
+    pub group: String,
+    pub kind: String,
+    pub name: String,
+    pub namespace: Option<String>,
+    pub port: Option<i32>,
+}
+
+/// Lightweight GatewayClass view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GatewayClassInfo {
+    pub name: String,
+    pub version: String,
+    pub controller_name: String,
+    pub accepted: Option<bool>,
+    pub age: Option<Duration>,
+    pub created_at: Option<AppTimestamp>,
+}
+
+/// Lightweight Gateway view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GatewayInfo {
+    pub name: String,
+    pub namespace: String,
+    pub version: String,
+    pub gateway_class_name: String,
+    pub addresses: Vec<String>,
+    pub listeners: Vec<GatewayListenerInfo>,
+    pub labels: BTreeMap<String, String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<AppTimestamp>,
+}
+
+/// Lightweight HTTPRoute view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct HttpRouteInfo {
+    pub name: String,
+    pub namespace: String,
+    pub version: String,
+    pub hostnames: Vec<String>,
+    pub parent_refs: Vec<GatewayParentRefInfo>,
+    pub backend_refs: Vec<GatewayBackendRefInfo>,
+    pub rule_count: usize,
+    pub labels: BTreeMap<String, String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<AppTimestamp>,
+}
+
+/// Lightweight GRPCRoute view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct GrpcRouteInfo {
+    pub name: String,
+    pub namespace: String,
+    pub version: String,
+    pub hostnames: Vec<String>,
+    pub parent_refs: Vec<GatewayParentRefInfo>,
+    pub backend_refs: Vec<GatewayBackendRefInfo>,
+    pub rule_count: usize,
+    pub labels: BTreeMap<String, String>,
+    pub age: Option<Duration>,
+    pub created_at: Option<AppTimestamp>,
+}
+
+/// Simplified ReferenceGrant "from" entry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ReferenceGrantFromInfo {
+    pub group: String,
+    pub kind: String,
+    pub namespace: String,
+}
+
+/// Simplified ReferenceGrant "to" entry.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ReferenceGrantToInfo {
+    pub group: String,
+    pub kind: String,
+    pub name: Option<String>,
+}
+
+/// Lightweight ReferenceGrant view.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct ReferenceGrantInfo {
+    pub name: String,
+    pub namespace: String,
+    pub version: String,
+    pub from: Vec<ReferenceGrantFromInfo>,
+    pub to: Vec<ReferenceGrantToInfo>,
+    pub age: Option<Duration>,
+    pub created_at: Option<AppTimestamp>,
+}
+
 /// Lightweight ConfigMap view.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ConfigMapInfo {
