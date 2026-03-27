@@ -48,6 +48,11 @@ Current milestone status:
 - Milestone 30: completed
 - Milestone 31: completed
 - Milestone 32: completed
+- Milestone 33: not started
+- Milestone 34: not started
+- Milestone 35: not started
+- Milestone 36: not started
+- Milestone 37: not started
 - Phase 8 (Watch-Backed Caches): completed
 
 Completion notes:
@@ -88,6 +93,7 @@ Completion notes:
 - Milestone 30 shipped (PR #63): bounded resource creation on the canonical editor/apply path with built-in Deployment, Deployment + Service, and ConfigMap templates, upfront validated inputs, command-palette template discovery, external-editor handoff, multi-document server-side apply, conservative manifest discovery fallback, and regression coverage for dialog routing, palette behavior, validation, and editor-command parsing.
 - Milestone 31 shipped (PR #64): canonical traffic debugging on the detail/workbench path for Pods, Services, Endpoints, and Ingresses with service endpoint audits, ingress backend trace summaries, DNS guidance, selectorless/manual endpoint handling, port-forward tunnel diagnostics, palette/help/detail-view `t` integration, and regression coverage for routing, rendering, and service-to-backend correctness.
 - Milestone 32 shipped (PR #66): guarded node debug shell flow on the canonical detail/exec path with namespace + profile selection, API-native debug pod launch on the target node, explicit host-namespace and privilege warnings, automatic pod cleanup on close/restore/context switch/shutdown, and action-history coverage that now records success only after shell attach is established. The final hardening pass also fixed orphan cleanup on failed launch readiness, stopped defaulting to a nonexistent `default` namespace when the cluster does not have one, and aligned attach-failure semantics for both node debug and Pod debug shells.
+- 2026-03-27 release-prep pass shipped: README now reflects the post-roadmap feature surface, `CHANGELOG.md` captures the roadmap-completion release, and the `?` help overlay now advertises the broader action palette surface accurately.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
 - 2026-03-18 kube 3.1 metadata watch adoption: namespace discovery and the Namespaces view now use metadata-only `Namespace` payloads end-to-end. The canonical watch path uses `metadata_watcher()` for cluster-scoped namespace updates, polling uses `list_metadata()` for namespace fetches, and namespace status is derived consistently from metadata (`Active` vs `Terminating`) so the picker and namespace view stay live with lower API payload cost.
@@ -129,7 +135,8 @@ Verification status for completed milestones:
 - Latest M31 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Service / Traffic Debugging. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `249.650ms -> 239.788ms`, `-9.862ms`; `sidebar` `21.075ms -> 20.036ms`; `header` `14.183ms -> 14.035ms`). GitHub PR checks for PR #64 also passed: `Format`, `Clippy`, `Test`, `perf-gate`, `Build (ubuntu-latest)`, and `Build (macos-latest)`.
 - Latest M32 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Node Shell / Node Debug. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `254.084ms -> 248.616ms`, `-5.468ms`; `sidebar` `21.536ms -> 20.920ms`; `header` `15.319ms -> 14.470ms`).
 - Latest M23 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping both AI assistant hooks and specialized AI workflows. The final clean 5-run render-profile comparison for Phase 3 vs clean `origin/main` stayed positive on the required medians (`render` `252.801ms -> 251.295ms`, `-1.506ms`; `sidebar` `21.438ms -> 21.220ms`; `header` `14.600ms -> 14.608ms`).
-- remaining validation gap is live-cluster smoke behavior under real kube context and RBAC
+- Latest stabilization verification on 2026-03-27: targeted suites for AI, workspaces, Helm, rollout, advanced logs, sanitizer, vulnerabilities, and NetworkPolicy analysis all pass locally (`cargo test --all-targets --all-features ai:: -- --nocapture`, `workspaces`, `helm`, `rollout`, `log_investigation`, `issues::`, `vulnerabilities`, `network_policy`).
+- remaining validation gap is live-cluster smoke behavior under a disposable local cluster; this machine currently has no local `kind` binary and no `kind-*` kube context, so local-cluster smoke validation is still blocked by environment rather than app behavior
 
 ---
 
@@ -1999,7 +2006,7 @@ M0-M32 are complete.
 
 Recommended near-term order:
 
-- No remaining planned milestones.
+- M33 -> M34 -> M35
 
 Do not start next with:
 
@@ -2011,21 +2018,111 @@ Do not start next with:
 
 ## Remaining Backlog Priority Order
 
-The planned milestone roadmap is complete. Any follow-up work from here should be treated as new roadmap expansion, not unfinished milestone carryover.
+The original milestone roadmap is complete. Any follow-up work from here is new roadmap expansion, not unfinished carryover. The next set should optimize for release confidence first, then operator workflow leverage, then modern Kubernetes surface area, while preserving the current performance budget.
 
 ### Big Win Priority Order
 
-- No remaining planned milestones.
+- M33: Release Hardening & Smoke Automation
+- M34: Projects / Application Scopes
+- M35: Gateway API & Modern Traffic Surface
+- M36: Guided Runbooks & Incident Packs
+- M37: Governance & Cost Center
 
 ### Why this order
 
-- M28 is now shipped and validated; it amplifies the rest of the operator workflow surface by making repeat layouts and jumps cheap.
-- M29 is now shipped on the canonical diagnostics path, using cluster-side Trivy Operator reports rather than embedding a local scanner.
-- M30 is now shipped on the canonical editor/apply path and keeps resource creation out of the hot render/refresh loop.
-- M31 and M32 are now shipped and validated on the canonical workbench/action/history paths.
-- M23 is now shipped end-to-end, so future prioritization is about new roadmap expansion rather than unfinished milestone sequencing.
+- M33 comes first because the roadmap is broad now; confidence, repeatable smoke coverage, and release hygiene will pay back every future feature and lower regression risk more than adding another surface immediately.
+- M34 comes next because application/project scoping is a proven onboarding and troubleshooting accelerator in current tools, especially for multi-namespace or multi-cluster operators.
+- M35 follows because Gateway API is a growing production surface and KubecTUI already has strong service, ingress, and traffic-debug foundations to build on without introducing a second traffic model.
+- M36 should build on the now-shipped M23 extension and AI substrate instead of inventing a separate automation stack.
+- M37 is valuable, but it should follow once release confidence, scope compression, and modern traffic support are stronger.
 
-### Candidate Milestones
+### Next Milestones
+
+#### M33: Release Hardening & Smoke Automation
+
+- Status: not started
+- Big win: highest
+- Why:
+  - the app now has a large operational surface and needs repeatable release confidence, not just feature coverage
+  - reduces regression risk across workbench, action, and async flows without touching hot render paths
+  - gives us a safe path to validate risky workflows on disposable clusters instead of shared environments
+- Scope:
+  - disposable local-cluster smoke harness for high-risk workflows
+  - release checklist and regression matrix for newest operator flows
+  - tighter docs/onboarding/release packaging
+  - explicit verification commands for cluster-backed features
+- Guardrails:
+  - keep smoke tooling outside the render/input hot path
+  - prefer deterministic scripts and fixtures over flaky end-to-end orchestration
+  - no shared-cluster mutation requirement for routine validation
+
+#### M34: Projects / Application Scopes
+
+- Status: not started
+- Big win: very high
+- Why:
+  - application-centric grouping is one of the clearest workflow wins in current Kubernetes tools for onboarding, troubleshooting, and multi-namespace clarity
+  - KubecTUI already has relationships, health, rollout, traffic, and logs; a project scope would make those surfaces more useful together
+- Scope:
+  - named project/application scopes built from labels and native resources
+  - project summary view spanning workloads, services, traffic, health, and recent issues
+  - saved project jumps integrated with workspaces/banks
+  - RBAC-respecting, cluster-native grouping with no required CRD
+- Guardrails:
+  - no second navigation model parallel to AppView
+  - keep project computation snapshot-based and bounded
+  - preserve single-resource detail/workbench flows as the canonical deep path
+
+#### M35: Gateway API & Modern Traffic Surface
+
+- Status: not started
+- Big win: high
+- Why:
+  - Gateway API is increasingly part of real operator traffic debugging, and KubecTUI currently stops at Services, Endpoints, and Ingress
+  - extends the shipped traffic-debug and relationship foundations directly
+- Scope:
+  - GatewayClass, Gateway, HTTPRoute, TCPRoute, and ReferenceGrant views where available
+  - gateway-to-route-to-service trace on the existing traffic-debug path
+  - status/condition surfacing and attachment diagnostics
+  - fallbacks when Gateway API CRDs are absent
+- Guardrails:
+  - no graph-canvas UI
+  - no duplicate traffic analyzer separate from the current workbench path
+  - graceful feature absence when CRDs are not installed
+
+#### M36: Guided Runbooks & Incident Packs
+
+- Status: not started
+- Big win: medium-high
+- Why:
+  - KubecTUI now has workspaces, AI workflows, logs, rollout control, Helm, traffic debug, and diagnostics; the next leverage step is stitching them into reusable operator flows
+  - should reuse the shipped extension/action substrate rather than add a separate automation framework
+- Scope:
+  - saved guided incident packs for common failures
+  - extension-backed step sequences and verification checklists
+  - optional AI-generated summaries on top of deterministic runbook steps
+- Guardrails:
+  - no autonomous cluster mutation
+  - deterministic steps first, AI second
+  - reuse workspaces, extensions, action history, and AI tabs as first-class paths
+
+#### M37: Governance & Cost Center
+
+- Status: not started
+- Big win: medium
+- Why:
+  - the app already has resources, utilization, sanitizer, and vulnerability data; governance is the next natural synthesis point
+  - useful for day-2 ownership without disrupting core incident workflows
+- Scope:
+  - namespace and workload governance summary
+  - request/limit, policy, vulnerability, and hygiene rollups
+  - optional cost-oriented views derived from existing utilization/request data
+- Guardrails:
+  - no heavyweight billing integration in the first pass
+  - snapshot-first computation and bounded aggregation
+  - avoid duplicating Health Report or Vulnerabilities views
+
+### Completed Priorities Record
 
 #### M26: Rollout Control Center
 
@@ -2152,7 +2249,7 @@ The planned milestone roadmap is complete. Any follow-up work from here should b
 
 #### M23: Extension System & AI Assistant Hooks
 
-- Status: Completed (PR #69 + this PR)
+- Status: Completed (PR #69 + PR #70)
 - Big win: strategic
 - Why:
   - turned KubecTUI into an extensible operator workspace instead of a fixed action set
@@ -2191,7 +2288,7 @@ The planned milestone roadmap is complete. Any follow-up work from here should b
 
 ### Recommended Remaining Order
 
-- All roadmap milestones are complete.
+- M33 -> M34 -> M35 -> M36 -> M37
 
 ### Research Basis
 
