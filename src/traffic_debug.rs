@@ -6,8 +6,10 @@ use crate::{
     app::ResourceRef,
     k8s::{
         dtos::{
-            EndpointInfo, IngressInfo, IngressRouteInfo, PodInfo, ServiceInfo, ServicePortInfo,
+            EndpointInfo, GatewayBackendRefInfo, GatewayInfo, GatewayParentRefInfo, GrpcRouteInfo,
+            HttpRouteInfo, IngressInfo, IngressRouteInfo, PodInfo, ServiceInfo, ServicePortInfo,
         },
+        gateway_semantics::{gateway_parent_attachment_allowed, reference_grant_allows_backend},
         portforward::{PortForwardTunnelInfo, TunnelState},
         relationships::{RelationKind, RelationNode},
     },
@@ -38,6 +40,45 @@ pub fn analyze_resource(
             let ingress = find_ingress(snapshot, name, namespace)?;
             Ok(analyze_ingress(ingress, snapshot, tunnels))
         }
+        ResourceRef::CustomResource {
+            name,
+            namespace,
+            group,
+            kind,
+            ..
+        } if group == "gateway.networking.k8s.io" && kind == "Gateway" => {
+            let namespace = namespace
+                .as_deref()
+                .ok_or_else(|| format!("Gateway '{name}' is missing namespace context."))?;
+            let gateway = find_gateway(snapshot, name, namespace)?;
+            Ok(analyze_gateway(gateway, snapshot, tunnels))
+        }
+        ResourceRef::CustomResource {
+            name,
+            namespace,
+            group,
+            kind,
+            ..
+        } if group == "gateway.networking.k8s.io" && kind == "HTTPRoute" => {
+            let namespace = namespace
+                .as_deref()
+                .ok_or_else(|| format!("HTTPRoute '{name}' is missing namespace context."))?;
+            let route = find_http_route(snapshot, name, namespace)?;
+            Ok(analyze_http_route(route, snapshot, tunnels))
+        }
+        ResourceRef::CustomResource {
+            name,
+            namespace,
+            group,
+            kind,
+            ..
+        } if group == "gateway.networking.k8s.io" && kind == "GRPCRoute" => {
+            let namespace = namespace
+                .as_deref()
+                .ok_or_else(|| format!("GRPCRoute '{name}' is missing namespace context."))?;
+            let route = find_grpc_route(snapshot, name, namespace)?;
+            Ok(analyze_grpc_route(route, snapshot, tunnels))
+        }
         ResourceRef::Endpoint(name, namespace) => {
             let endpoint = find_endpoint(snapshot, name, namespace)?;
             Ok(analyze_endpoint(endpoint, snapshot, tunnels))
@@ -47,7 +88,7 @@ pub fn analyze_resource(
             Ok(analyze_pod(pod, snapshot, tunnels))
         }
         _ => Err(
-            "Traffic debugging is available for Services, Endpoints, Ingresses, and Pods."
+            "Traffic debugging is available for Services, Endpoints, Ingresses, Gateways, HTTPRoutes, GRPCRoutes, and Pods."
                 .to_string(),
         ),
     }
@@ -63,7 +104,9 @@ fn analyze_service(
         .iter()
         .find(|ep| ep.name == service.name && ep.namespace == service.namespace);
     let backends = service_backends(service, snapshot);
-    let route_refs = ingress_routes_for_service(snapshot, &service.namespace, &service.name);
+    let ingress_route_refs =
+        ingress_routes_for_service(snapshot, &service.namespace, &service.name);
+    let gateway_route_refs = gateway_routes_for_service(snapshot, service);
     let tunnel_refs = tunnel_refs_for_service(service, &backends, tunnels);
     let isolated = isolated_ingress_backend_count(&backends, snapshot);
 
@@ -100,8 +143,9 @@ fn analyze_service(
         resolution_summary,
         service_port_summary(service, &backends),
         format!(
-            "Ingress routes: {}. Port-forward tunnels to backend pods: {}.",
-            route_refs.len(),
+            "Traffic entrypoints: {} ingress route(s), {} gateway route(s). Port-forward tunnels to backend pods: {}.",
+            ingress_route_refs.len(),
+            gateway_route_refs.len(),
             tunnel_refs.len()
         ),
     ];
@@ -122,13 +166,23 @@ fn analyze_service(
         section("DNS hints", service_dns_nodes(service)),
         backends_section_for_service(service, endpoint, &backends),
     ];
-    if !route_refs.is_empty() {
+    if !ingress_route_refs.is_empty() {
         tree.push(section(
             "Ingress routes",
-            route_refs
+            ingress_route_refs
                 .iter()
                 .take(MAX_RENDERED_BACKENDS)
                 .map(route_ref_node)
+                .collect(),
+        ));
+    }
+    if !gateway_route_refs.is_empty() {
+        tree.push(section(
+            "Gateway routes",
+            gateway_route_refs
+                .iter()
+                .take(MAX_RENDERED_BACKENDS)
+                .map(gateway_service_route_node)
                 .collect(),
         ));
     }
@@ -210,6 +264,235 @@ fn analyze_ingress(
             &tunnel_refs,
             route_refs.len(),
             "No active port-forward targets any backend pod on this ingress path.",
+        ),
+    ));
+
+    TrafficDebugAnalysis {
+        summary_lines,
+        tree,
+    }
+}
+
+fn analyze_gateway(
+    gateway: &GatewayInfo,
+    snapshot: &ClusterSnapshot,
+    tunnels: &TunnelRegistry,
+) -> TrafficDebugAnalysis {
+    let route_refs = gateway_route_refs(snapshot, gateway);
+    let backend_services = route_refs
+        .iter()
+        .flat_map(|route| {
+            route.resolution_set.iter().filter_map(|resolution| {
+                resolution
+                    .service
+                    .map(|service| (service.namespace.as_str(), service.name.as_str()))
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    let backend_pods = route_refs
+        .iter()
+        .flat_map(|route| {
+            route
+                .resolution_set
+                .iter()
+                .flat_map(|resolution| resolution.backends.iter())
+                .map(|pod| (pod.namespace.as_str(), pod.name.as_str()))
+        })
+        .collect::<BTreeSet<_>>();
+    let tunnel_refs = tunnel_refs_for_gateway_routes(&route_refs, tunnels);
+    let blocked_cross_namespace = route_refs
+        .iter()
+        .filter(|route| route.cross_namespace_parent_blocked)
+        .count();
+
+    let mut summary_lines = vec![
+        format!(
+            "Gateway {}/{} class={} listeners={} attached routes={}.",
+            gateway.namespace,
+            gateway.name,
+            gateway.gateway_class_name,
+            gateway.listeners.len(),
+            route_refs.len()
+        ),
+        format!(
+            "Backend reachability intent: {} backend service(s), {} backend pod(s), {} active tunnel(s).",
+            backend_services.len(),
+            backend_pods.len(),
+            tunnel_refs.len()
+        ),
+        format!(
+            "Published addresses: {}.",
+            if gateway.addresses.is_empty() {
+                "none yet".to_string()
+            } else {
+                gateway.addresses.join(", ")
+            }
+        ),
+    ];
+    if blocked_cross_namespace > 0 {
+        summary_lines.push(format!(
+            "{blocked_cross_namespace} attached route(s) cross namespaces without listener allowedRoutes coverage. Control-plane attachment may still be rejected."
+        ));
+    }
+
+    let mut tree = vec![section("Listeners", gateway_listener_nodes(gateway))];
+    tree.push(section(
+        "Attached routes",
+        if route_refs.is_empty() {
+            vec![leaf(
+                "No HTTPRoute or GRPCRoute currently targets this Gateway.",
+            )]
+        } else {
+            route_refs
+                .iter()
+                .take(MAX_RENDERED_BACKENDS)
+                .map(gateway_route_node)
+                .collect()
+        },
+    ));
+    tree.push(section(
+        "Port-forward diagnostics",
+        tunnel_nodes(
+            &tunnel_refs,
+            backend_pods.len(),
+            "No active port-forward targets a backend pod behind this Gateway.",
+        ),
+    ));
+
+    TrafficDebugAnalysis {
+        summary_lines,
+        tree,
+    }
+}
+
+fn analyze_http_route(
+    route: &HttpRouteInfo,
+    snapshot: &ClusterSnapshot,
+    tunnels: &TunnelRegistry,
+) -> TrafficDebugAnalysis {
+    analyze_gateway_route(
+        GatewayRouteAnalysisInput {
+            route_kind: "HTTPRoute",
+            route_version: route.version.as_str(),
+            route_name: route.name.as_str(),
+            namespace: route.namespace.as_str(),
+            hostnames: route.hostnames.as_slice(),
+            parent_refs: route.parent_refs.as_slice(),
+            backend_refs: route.backend_refs.as_slice(),
+        },
+        snapshot,
+        tunnels,
+    )
+}
+
+fn analyze_grpc_route(
+    route: &GrpcRouteInfo,
+    snapshot: &ClusterSnapshot,
+    tunnels: &TunnelRegistry,
+) -> TrafficDebugAnalysis {
+    analyze_gateway_route(
+        GatewayRouteAnalysisInput {
+            route_kind: "GRPCRoute",
+            route_version: route.version.as_str(),
+            route_name: route.name.as_str(),
+            namespace: route.namespace.as_str(),
+            hostnames: route.hostnames.as_slice(),
+            parent_refs: route.parent_refs.as_slice(),
+            backend_refs: route.backend_refs.as_slice(),
+        },
+        snapshot,
+        tunnels,
+    )
+}
+
+fn analyze_gateway_route(
+    route: GatewayRouteAnalysisInput<'_>,
+    snapshot: &ClusterSnapshot,
+    tunnels: &TunnelRegistry,
+) -> TrafficDebugAnalysis {
+    let parent_gateways = route_parent_gateways(snapshot, route.namespace, route.parent_refs);
+    let backend_resolutions = route
+        .backend_refs
+        .iter()
+        .map(|backend| {
+            resolve_gateway_backend(snapshot, route.namespace, route.route_kind, backend)
+        })
+        .collect::<Vec<_>>();
+    let resolved_services = backend_resolutions
+        .iter()
+        .filter(|resolution| resolution.service.is_some())
+        .count();
+    let blocked_cross_namespace = backend_resolutions
+        .iter()
+        .filter(|resolution| resolution.cross_namespace && !resolution.reference_grant_allowed)
+        .count();
+    let total_backends = backend_resolutions
+        .iter()
+        .map(|resolution| resolution.backends.len())
+        .sum::<usize>();
+    let tunnel_refs = tunnel_refs_for_gateway_backend_resolutions(&backend_resolutions, tunnels);
+
+    let mut summary_lines = vec![
+        format!(
+            "{} {}/{} attaches to {} parent gateway(s) and references {} backend(s).",
+            route.route_kind,
+            route.namespace,
+            route.route_name,
+            parent_gateways.len(),
+            route.backend_refs.len()
+        ),
+        format!(
+            "Backend resolution: {resolved_services}/{} backend service(s) resolved, {} backend pod(s), {} active tunnel(s).",
+            route.backend_refs.len(),
+            total_backends,
+            tunnel_refs.len()
+        ),
+        format!(
+            "Hostnames: {}.",
+            if route.hostnames.is_empty() {
+                "<match-all>".to_string()
+            } else {
+                route.hostnames.join(", ")
+            }
+        ),
+    ];
+    if blocked_cross_namespace > 0 {
+        summary_lines.push(format!(
+            "{blocked_cross_namespace} backend reference(s) cross namespaces without a matching ReferenceGrant."
+        ));
+    }
+
+    let mut tree = vec![section(
+        "Parent gateways",
+        if parent_gateways.is_empty() {
+            vec![leaf(
+                "No parent Gateway currently resolves from this route.",
+            )]
+        } else {
+            parent_gateways
+                .iter()
+                .map(parent_gateway_node)
+                .collect::<Vec<_>>()
+        },
+    )];
+    tree.push(section(
+        "Backend trace",
+        if backend_resolutions.is_empty() {
+            vec![leaf("No backendRefs are declared on this route.")]
+        } else {
+            backend_resolutions
+                .iter()
+                .take(MAX_RENDERED_BACKENDS)
+                .map(|resolution| gateway_backend_node(route.route_kind, resolution))
+                .collect()
+        },
+    ));
+    tree.push(section(
+        "Port-forward diagnostics",
+        tunnel_nodes(
+            &tunnel_refs,
+            total_backends,
+            "No active port-forward targets any backend pod on this route.",
         ),
     ));
 
@@ -718,6 +1001,439 @@ fn ingress_host_nodes(ingress: &IngressInfo) -> Vec<RelationNode> {
     nodes
 }
 
+fn gateway_listener_nodes(gateway: &GatewayInfo) -> Vec<RelationNode> {
+    if gateway.listeners.is_empty() {
+        return vec![leaf("No listeners are declared on this Gateway.")];
+    }
+    gateway
+        .listeners
+        .iter()
+        .map(|listener| {
+            let mut children = vec![
+                leaf(&format!(
+                    "Protocol {} port {}",
+                    listener.protocol, listener.port
+                )),
+                leaf(&format!(
+                    "Allowed routes {}",
+                    listener
+                        .allowed_routes_from
+                        .as_deref()
+                        .unwrap_or("Same (default)")
+                )),
+                leaf(&format!("Attached routes {}", listener.attached_routes)),
+            ];
+            if let Some(hostname) = &listener.hostname {
+                children.push(leaf(&format!("Hostname {}", hostname)));
+            }
+            RelationNode {
+                resource: Some(ResourceRef::CustomResource {
+                    name: gateway.name.clone(),
+                    namespace: Some(gateway.namespace.clone()),
+                    group: "gateway.networking.k8s.io".to_string(),
+                    version: gateway.version.clone(),
+                    kind: "Gateway".to_string(),
+                    plural: "gateways".to_string(),
+                }),
+                label: format!("Listener {}", listener.name),
+                status: listener.ready.map(|ready| {
+                    if ready {
+                        "Programmed".to_string()
+                    } else {
+                        "Pending".to_string()
+                    }
+                }),
+                namespace: Some(gateway.namespace.clone()),
+                relation: RelationKind::Backend,
+                not_found: false,
+                children,
+            }
+        })
+        .collect()
+}
+
+fn gateway_route_refs<'a>(
+    snapshot: &'a ClusterSnapshot,
+    gateway: &'a GatewayInfo,
+) -> Vec<GatewayRouteRef<'a>> {
+    let mut refs = snapshot
+        .http_routes
+        .iter()
+        .filter_map(|route| {
+            gateway_route_ref_for(
+                GatewayRouteAnalysisInput {
+                    route_kind: "HTTPRoute",
+                    route_version: route.version.as_str(),
+                    route_name: route.name.as_str(),
+                    namespace: route.namespace.as_str(),
+                    hostnames: route.hostnames.as_slice(),
+                    parent_refs: route.parent_refs.as_slice(),
+                    backend_refs: route.backend_refs.as_slice(),
+                },
+                gateway,
+                snapshot,
+            )
+        })
+        .collect::<Vec<_>>();
+    refs.extend(snapshot.grpc_routes.iter().filter_map(|route| {
+        gateway_route_ref_for(
+            GatewayRouteAnalysisInput {
+                route_kind: "GRPCRoute",
+                route_version: route.version.as_str(),
+                route_name: route.name.as_str(),
+                namespace: route.namespace.as_str(),
+                hostnames: route.hostnames.as_slice(),
+                parent_refs: route.parent_refs.as_slice(),
+                backend_refs: route.backend_refs.as_slice(),
+            },
+            gateway,
+            snapshot,
+        )
+    }));
+    refs
+}
+
+fn gateway_route_ref_for<'a>(
+    route: GatewayRouteAnalysisInput<'a>,
+    gateway: &'a GatewayInfo,
+    snapshot: &'a ClusterSnapshot,
+) -> Option<GatewayRouteRef<'a>> {
+    let matching_parent_refs = route
+        .parent_refs
+        .iter()
+        .filter(|parent| {
+            let parent_namespace = parent.namespace.as_deref().unwrap_or(route.namespace);
+            parent.kind == "Gateway"
+                && parent.name == gateway.name
+                && parent_namespace == gateway.namespace
+        })
+        .collect::<Vec<_>>();
+    if matching_parent_refs.is_empty() {
+        return None;
+    }
+    let parent_ref = matching_parent_refs
+        .iter()
+        .copied()
+        .find(|parent| gateway_parent_attachment_allowed(gateway, route.namespace, parent))
+        .unwrap_or(matching_parent_refs[0]);
+    let cross_namespace_parent_blocked = route.namespace != gateway.namespace
+        && matching_parent_refs
+            .iter()
+            .all(|parent| !gateway_parent_attachment_allowed(gateway, route.namespace, parent));
+    let resolutions = route
+        .backend_refs
+        .iter()
+        .map(|backend| {
+            resolve_gateway_backend(snapshot, route.namespace, route.route_kind, backend)
+        })
+        .collect();
+    Some(GatewayRouteRef {
+        route_kind: route.route_kind,
+        route_version: route.route_version,
+        route_name: route.route_name,
+        route_namespace: route.namespace,
+        hostnames: route.hostnames,
+        parent_ref,
+        resolution_set: resolutions,
+        cross_namespace_parent_blocked,
+    })
+}
+
+fn route_parent_gateways<'a>(
+    snapshot: &'a ClusterSnapshot,
+    route_namespace: &str,
+    parent_refs: &'a [GatewayParentRefInfo],
+) -> Vec<GatewayParentGatewayRef<'a>> {
+    parent_refs
+        .iter()
+        .filter(|parent| parent.kind == "Gateway")
+        .map(|parent| {
+            let namespace = parent.namespace.as_deref().unwrap_or(route_namespace);
+            let gateway = snapshot
+                .gateways
+                .iter()
+                .find(|gateway| gateway.name == parent.name && gateway.namespace == namespace);
+            GatewayParentGatewayRef {
+                parent,
+                namespace: namespace.to_string(),
+                gateway,
+            }
+        })
+        .collect()
+}
+
+fn parent_gateway_node(parent: &GatewayParentGatewayRef<'_>) -> RelationNode {
+    let mut children = Vec::new();
+    if let Some(section_name) = &parent.parent.section_name {
+        children.push(leaf(&format!("Listener section {}", section_name)));
+    }
+    if let Some(gateway) = parent.gateway {
+        children.push(leaf(&format!(
+            "Addresses {}",
+            if gateway.addresses.is_empty() {
+                "none".to_string()
+            } else {
+                gateway.addresses.join(", ")
+            }
+        )));
+    } else {
+        children.push(leaf("Gateway is missing from the current snapshot."));
+    }
+
+    let mut node = leaf_with_resource(
+        &format!("Gateway {}", parent.parent.name),
+        parent.gateway.map(|gateway| ResourceRef::CustomResource {
+            name: gateway.name.clone(),
+            namespace: Some(gateway.namespace.clone()),
+            group: "gateway.networking.k8s.io".to_string(),
+            version: gateway.version.clone(),
+            kind: "Gateway".to_string(),
+            plural: "gateways".to_string(),
+        }),
+        parent
+            .gateway
+            .map(|gateway| gateway.gateway_class_name.clone()),
+        Some(parent.namespace.clone()),
+    );
+    node.children = children;
+    node
+}
+
+fn resolve_gateway_backend<'a>(
+    snapshot: &'a ClusterSnapshot,
+    route_namespace: &str,
+    route_kind: &str,
+    backend_ref: &'a GatewayBackendRefInfo,
+) -> GatewayBackendResolution<'a> {
+    let target_namespace = backend_ref.namespace.as_deref().unwrap_or(route_namespace);
+    let cross_namespace = target_namespace != route_namespace;
+    let reference_grant_allowed = !cross_namespace
+        || reference_grant_allows_backend(
+            snapshot.reference_grants.as_slice(),
+            route_namespace,
+            route_kind,
+            backend_ref,
+        );
+    let blocked_cross_namespace = cross_namespace && !reference_grant_allowed;
+    let service = if backend_ref.kind == "Service" {
+        (!blocked_cross_namespace)
+            .then(|| {
+                snapshot.services.iter().find(|service| {
+                    service.namespace == target_namespace && service.name == backend_ref.name
+                })
+            })
+            .flatten()
+    } else {
+        None
+    };
+    let endpoint = service.and_then(|service| {
+        snapshot.endpoints.iter().find(|endpoint| {
+            endpoint.namespace == service.namespace && endpoint.name == service.name
+        })
+    });
+    let backends = service
+        .map(|service| service_backends(service, snapshot))
+        .unwrap_or_default();
+
+    GatewayBackendResolution {
+        backend_ref,
+        target_namespace: target_namespace.to_string(),
+        cross_namespace,
+        reference_grant_allowed,
+        blocked_cross_namespace,
+        service,
+        endpoint,
+        backends,
+    }
+}
+
+fn gateway_route_node(route_ref: &GatewayRouteRef<'_>) -> RelationNode {
+    let mut children = vec![leaf(&format!(
+        "Hostnames {}",
+        if route_ref.hostnames.is_empty() {
+            "<match-all>".to_string()
+        } else {
+            route_ref.hostnames.join(", ")
+        }
+    ))];
+    children.push(leaf(&format!(
+        "Parent Gateway {}{}",
+        route_ref.parent_ref.name,
+        route_ref
+            .parent_ref
+            .section_name
+            .as_deref()
+            .map(|section| format!(" section {}", section))
+            .unwrap_or_default()
+    )));
+    if route_ref.cross_namespace_parent_blocked {
+        children.push(leaf(
+            "Cross-namespace attachment may be rejected because the listener does not advertise allowedRoutes for other namespaces.",
+        ));
+    }
+    let backend_nodes = route_ref
+        .resolution_set
+        .iter()
+        .map(|resolution| gateway_backend_node(route_ref.route_kind, resolution))
+        .collect::<Vec<_>>();
+    children.push(section("Backend refs", backend_nodes));
+
+    RelationNode {
+        resource: Some(ResourceRef::CustomResource {
+            name: route_ref.route_name.to_string(),
+            namespace: Some(route_ref.route_namespace.to_string()),
+            group: "gateway.networking.k8s.io".to_string(),
+            version: route_ref.route_version.to_string(),
+            kind: route_ref.route_kind.to_string(),
+            plural: if route_ref.route_kind == "HTTPRoute" {
+                "httproutes".to_string()
+            } else {
+                "grpcroutes".to_string()
+            },
+        }),
+        label: format!("{} {}", route_ref.route_kind, route_ref.route_name),
+        status: Some(format!("{} backend ref(s)", route_ref.resolution_set.len())),
+        namespace: Some(route_ref.route_namespace.to_string()),
+        relation: RelationKind::Backend,
+        not_found: false,
+        children,
+    }
+}
+
+fn gateway_service_route_node(route_ref: &GatewayServiceRouteRef<'_>) -> RelationNode {
+    let mut children = vec![leaf(&format!(
+        "Hostnames {}",
+        if route_ref.hostnames.is_empty() {
+            "<match-all>".to_string()
+        } else {
+            route_ref.hostnames.join(", ")
+        }
+    ))];
+    if route_ref.parent_gateways.is_empty() {
+        children.push(leaf(
+            "No parent Gateway currently resolves from this route.",
+        ));
+    } else {
+        children.extend(route_ref.parent_gateways.iter().map(parent_gateway_node));
+    }
+    if route_ref.blocked_cross_namespace_backend {
+        children.push(leaf(
+            "This Service backendRef crosses namespaces without a matching ReferenceGrant.",
+        ));
+    } else {
+        children.push(leaf("This route currently targets the selected Service."));
+    }
+
+    RelationNode {
+        resource: Some(ResourceRef::CustomResource {
+            name: route_ref.route_name.to_string(),
+            namespace: Some(route_ref.route_namespace.to_string()),
+            group: "gateway.networking.k8s.io".to_string(),
+            version: route_ref.route_version.to_string(),
+            kind: route_ref.route_kind.to_string(),
+            plural: gateway_route_plural(route_ref.route_kind).to_string(),
+        }),
+        label: format!("{} {}", route_ref.route_kind, route_ref.route_name),
+        status: Some(if route_ref.blocked_cross_namespace_backend {
+            "selected Service blocked by missing ReferenceGrant".to_string()
+        } else {
+            format!("{} parent gateway(s)", route_ref.parent_gateways.len())
+        }),
+        namespace: Some(route_ref.route_namespace.to_string()),
+        relation: RelationKind::Backend,
+        not_found: false,
+        children,
+    }
+}
+
+fn gateway_route_plural(route_kind: &str) -> &'static str {
+    if route_kind == "HTTPRoute" {
+        "httproutes"
+    } else {
+        "grpcroutes"
+    }
+}
+
+fn gateway_backend_node(
+    route_kind: &str,
+    resolution: &GatewayBackendResolution<'_>,
+) -> RelationNode {
+    let mut children = Vec::new();
+    if resolution.cross_namespace {
+        children.push(leaf(&format!(
+            "Cross-namespace target from {route_kind} namespace to {}.",
+            resolution.target_namespace
+        )));
+        children.push(leaf(&format!(
+            "ReferenceGrant {}.",
+            if resolution.reference_grant_allowed {
+                "present"
+            } else {
+                "missing"
+            }
+        )));
+    }
+    if resolution.blocked_cross_namespace {
+        children.push(leaf(
+            "Cross-namespace backend is not resolved because no matching ReferenceGrant allows it.",
+        ));
+    }
+    if let Some(endpoint) = resolution.endpoint {
+        children.push(leaf(&format!(
+            "Endpoints {} address(es)",
+            endpoint.addresses.len()
+        )));
+    }
+    if resolution.service.is_none() && !resolution.blocked_cross_namespace {
+        children.push(leaf(
+            "Referenced backend Service does not exist in the current snapshot.",
+        ));
+    } else if resolution.service.is_some() && resolution.backends.is_empty() {
+        children.push(leaf("Backend Service resolved, but no backend pod matches its selector in the current snapshot."));
+    } else if resolution.service.is_some() {
+        let mut backend_nodes = resolution
+            .backends
+            .iter()
+            .take(MAX_RENDERED_BACKENDS)
+            .map(|pod| {
+                if let Some(service) = resolution.service {
+                    pod_backend_node(pod, service.port_mappings.as_slice())
+                } else {
+                    pod_backend_node(pod, &[])
+                }
+            })
+            .collect::<Vec<_>>();
+        if resolution.backends.len() > MAX_RENDERED_BACKENDS {
+            backend_nodes.push(leaf(&format!(
+                "... {} additional backend pod(s) omitted",
+                resolution.backends.len() - MAX_RENDERED_BACKENDS
+            )));
+        }
+        children.push(section("Backend pods", backend_nodes));
+    }
+
+    let label = format!(
+        "{} {}{}",
+        resolution.backend_ref.kind,
+        resolution.backend_ref.name,
+        resolution
+            .backend_ref
+            .port
+            .map(|port| format!(":{port}"))
+            .unwrap_or_default()
+    );
+    let mut node = leaf_with_resource(
+        &label,
+        resolution
+            .service
+            .map(|service| ResourceRef::Service(service.name.clone(), service.namespace.clone())),
+        resolution.service.map(|service| service.type_.clone()),
+        Some(resolution.target_namespace.clone()),
+    );
+    node.children = children;
+    node
+}
+
 fn service_dns_nodes(service: &ServiceInfo) -> Vec<RelationNode> {
     let mut nodes = vec![
         leaf(&format!("Short name {}", service.name)),
@@ -912,6 +1628,130 @@ fn tunnel_refs_for_route_refs<'a>(
         .collect()
 }
 
+fn tunnel_refs_for_gateway_routes<'a>(
+    route_refs: &[GatewayRouteRef<'a>],
+    tunnels: &'a TunnelRegistry,
+) -> Vec<PortForwardTunnelInfo> {
+    let backend_names = route_refs
+        .iter()
+        .flat_map(|route| {
+            route.resolution_set.iter().flat_map(|resolution| {
+                resolution
+                    .backends
+                    .iter()
+                    .map(|pod| (pod.namespace.as_str(), pod.name.as_str()))
+            })
+        })
+        .collect::<BTreeSet<_>>();
+    tunnels
+        .ordered_tunnels()
+        .into_iter()
+        .filter(|tunnel| {
+            backend_names.contains(&(
+                tunnel.target.namespace.as_str(),
+                tunnel.target.pod_name.as_str(),
+            ))
+        })
+        .take(MAX_RENDERED_TUNNELS)
+        .cloned()
+        .collect()
+}
+
+fn tunnel_refs_for_gateway_backend_resolutions<'a>(
+    resolutions: &[GatewayBackendResolution<'a>],
+    tunnels: &'a TunnelRegistry,
+) -> Vec<PortForwardTunnelInfo> {
+    let backend_names = resolutions
+        .iter()
+        .flat_map(|resolution| {
+            resolution
+                .backends
+                .iter()
+                .map(|pod| (pod.namespace.as_str(), pod.name.as_str()))
+        })
+        .collect::<BTreeSet<_>>();
+    tunnels
+        .ordered_tunnels()
+        .into_iter()
+        .filter(|tunnel| {
+            backend_names.contains(&(
+                tunnel.target.namespace.as_str(),
+                tunnel.target.pod_name.as_str(),
+            ))
+        })
+        .take(MAX_RENDERED_TUNNELS)
+        .cloned()
+        .collect()
+}
+
+fn gateway_routes_for_service<'a>(
+    snapshot: &'a ClusterSnapshot,
+    service: &'a ServiceInfo,
+) -> Vec<GatewayServiceRouteRef<'a>> {
+    let mut refs = snapshot
+        .http_routes
+        .iter()
+        .filter_map(|route| {
+            gateway_service_route_ref(
+                GatewayRouteAnalysisInput {
+                    route_kind: "HTTPRoute",
+                    route_version: route.version.as_str(),
+                    route_name: route.name.as_str(),
+                    namespace: route.namespace.as_str(),
+                    hostnames: route.hostnames.as_slice(),
+                    parent_refs: route.parent_refs.as_slice(),
+                    backend_refs: route.backend_refs.as_slice(),
+                },
+                service,
+                snapshot,
+            )
+        })
+        .collect::<Vec<_>>();
+    refs.extend(snapshot.grpc_routes.iter().filter_map(|route| {
+        gateway_service_route_ref(
+            GatewayRouteAnalysisInput {
+                route_kind: "GRPCRoute",
+                route_version: route.version.as_str(),
+                route_name: route.name.as_str(),
+                namespace: route.namespace.as_str(),
+                hostnames: route.hostnames.as_slice(),
+                parent_refs: route.parent_refs.as_slice(),
+                backend_refs: route.backend_refs.as_slice(),
+            },
+            service,
+            snapshot,
+        )
+    }));
+    refs
+}
+
+fn gateway_service_route_ref<'a>(
+    route: GatewayRouteAnalysisInput<'a>,
+    service: &'a ServiceInfo,
+    snapshot: &'a ClusterSnapshot,
+) -> Option<GatewayServiceRouteRef<'a>> {
+    let matching_backend = route.backend_refs.iter().find(|backend| {
+        backend.kind == "Service"
+            && backend.name == service.name
+            && backend.namespace.as_deref().unwrap_or(route.namespace) == service.namespace
+    })?;
+    let resolution = resolve_gateway_backend(
+        snapshot,
+        route.namespace,
+        route.route_kind,
+        matching_backend,
+    );
+    Some(GatewayServiceRouteRef {
+        route_kind: route.route_kind,
+        route_version: route.route_version,
+        route_name: route.route_name,
+        route_namespace: route.namespace,
+        hostnames: route.hostnames,
+        parent_gateways: route_parent_gateways(snapshot, route.namespace, route.parent_refs),
+        blocked_cross_namespace_backend: resolution.blocked_cross_namespace,
+    })
+}
+
 fn pod_backend_node(pod: &PodInfo, mappings: &[ServicePortInfo]) -> RelationNode {
     let matched_ports = mappings
         .iter()
@@ -1010,6 +1850,42 @@ fn find_ingress<'a>(
         .ok_or_else(|| format!("Ingress '{namespace}/{name}' is no longer in the snapshot."))
 }
 
+fn find_gateway<'a>(
+    snapshot: &'a ClusterSnapshot,
+    name: &str,
+    namespace: &str,
+) -> Result<&'a GatewayInfo, String> {
+    snapshot
+        .gateways
+        .iter()
+        .find(|gateway| gateway.name == name && gateway.namespace == namespace)
+        .ok_or_else(|| format!("Gateway '{namespace}/{name}' is no longer in the snapshot."))
+}
+
+fn find_http_route<'a>(
+    snapshot: &'a ClusterSnapshot,
+    name: &str,
+    namespace: &str,
+) -> Result<&'a HttpRouteInfo, String> {
+    snapshot
+        .http_routes
+        .iter()
+        .find(|route| route.name == name && route.namespace == namespace)
+        .ok_or_else(|| format!("HTTPRoute '{namespace}/{name}' is no longer in the snapshot."))
+}
+
+fn find_grpc_route<'a>(
+    snapshot: &'a ClusterSnapshot,
+    name: &str,
+    namespace: &str,
+) -> Result<&'a GrpcRouteInfo, String> {
+    snapshot
+        .grpc_routes
+        .iter()
+        .find(|route| route.name == name && route.namespace == namespace)
+        .ok_or_else(|| format!("GRPCRoute '{namespace}/{name}' is no longer in the snapshot."))
+}
+
 fn find_endpoint<'a>(
     snapshot: &'a ClusterSnapshot,
     name: &str,
@@ -1076,12 +1952,70 @@ struct IngressRouteRef<'a> {
     backends: Vec<&'a PodInfo>,
 }
 
+#[derive(Debug, Clone)]
+struct GatewayRouteRef<'a> {
+    route_kind: &'static str,
+    route_version: &'a str,
+    route_name: &'a str,
+    route_namespace: &'a str,
+    hostnames: &'a [String],
+    parent_ref: &'a GatewayParentRefInfo,
+    resolution_set: Vec<GatewayBackendResolution<'a>>,
+    cross_namespace_parent_blocked: bool,
+}
+
+#[derive(Debug, Clone)]
+struct GatewayParentGatewayRef<'a> {
+    parent: &'a GatewayParentRefInfo,
+    namespace: String,
+    gateway: Option<&'a GatewayInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct GatewayBackendResolution<'a> {
+    backend_ref: &'a GatewayBackendRefInfo,
+    target_namespace: String,
+    cross_namespace: bool,
+    reference_grant_allowed: bool,
+    blocked_cross_namespace: bool,
+    service: Option<&'a ServiceInfo>,
+    endpoint: Option<&'a EndpointInfo>,
+    backends: Vec<&'a PodInfo>,
+}
+
+#[derive(Debug, Clone)]
+struct GatewayServiceRouteRef<'a> {
+    route_kind: &'static str,
+    route_version: &'a str,
+    route_name: &'a str,
+    route_namespace: &'a str,
+    hostnames: &'a [String],
+    parent_gateways: Vec<GatewayParentGatewayRef<'a>>,
+    blocked_cross_namespace_backend: bool,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GatewayRouteAnalysisInput<'a> {
+    route_kind: &'static str,
+    route_version: &'a str,
+    route_name: &'a str,
+    namespace: &'a str,
+    hostnames: &'a [String],
+    parent_refs: &'a [GatewayParentRefInfo],
+    backend_refs: &'a [GatewayBackendRefInfo],
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::{
         k8s::{
-            dtos::{ContainerPortInfo, IngressInfo, IngressRouteInfo},
+            dtos::{
+                ContainerPortInfo, GatewayBackendRefInfo, GatewayInfo, GatewayListenerInfo,
+                GatewayParentRefInfo, HttpRouteInfo, IngressInfo, IngressRouteInfo,
+                LabelSelectorInfo, ReferenceGrantFromInfo, ReferenceGrantInfo,
+                ReferenceGrantToInfo,
+            },
             portforward::{PortForwardTarget, PortForwardTunnelInfo, TunnelState},
         },
         state::ClusterSnapshot,
@@ -1173,6 +2107,50 @@ mod tests {
             target: PortForwardTarget::new(namespace, pod_name, 8080),
             local_addr: SocketAddr::from_str("127.0.0.1:18080").unwrap(),
             state: TunnelState::Active,
+        }
+    }
+
+    fn gateway() -> GatewayInfo {
+        GatewayInfo {
+            name: "edge".to_string(),
+            namespace: "shared".to_string(),
+            version: "v1beta1".to_string(),
+            gateway_class_name: "istio".to_string(),
+            listeners: vec![GatewayListenerInfo {
+                name: "http".to_string(),
+                protocol: "HTTP".to_string(),
+                port: 80,
+                hostname: Some("app.example.test".to_string()),
+                attached_routes: 1,
+                ready: Some(true),
+                allowed_routes_from: Some("Same".to_string()),
+                allowed_routes_selector: None,
+            }],
+            ..GatewayInfo::default()
+        }
+    }
+
+    fn http_route(namespace: &str) -> HttpRouteInfo {
+        HttpRouteInfo {
+            name: "frontend".to_string(),
+            namespace: namespace.to_string(),
+            version: "v1beta1".to_string(),
+            hostnames: vec!["app.example.test".to_string()],
+            parent_refs: vec![GatewayParentRefInfo {
+                group: "gateway.networking.k8s.io".to_string(),
+                kind: "Gateway".to_string(),
+                namespace: Some("shared".to_string()),
+                name: "edge".to_string(),
+                section_name: Some("http".to_string()),
+            }],
+            backend_refs: vec![GatewayBackendRefInfo {
+                group: "".to_string(),
+                kind: "Service".to_string(),
+                namespace: Some("backend".to_string()),
+                name: "api".to_string(),
+                port: Some(80),
+            }],
+            ..HttpRouteInfo::default()
         }
     }
 
@@ -1313,5 +2291,195 @@ mod tests {
         .unwrap();
 
         assert!(analysis.summary_lines[0].contains("selected by 1 Service"));
+    }
+
+    #[test]
+    fn gateway_route_analysis_blocks_cross_namespace_backend_without_reference_grant() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.gateways.push(gateway());
+        snapshot.http_routes.push(http_route("apps"));
+        snapshot.services.push(ServiceInfo {
+            name: "api".to_string(),
+            namespace: "backend".to_string(),
+            type_: "ClusterIP".to_string(),
+            selector: BTreeMap::from([("app".to_string(), "api".to_string())]),
+            ..ServiceInfo::default()
+        });
+        snapshot.pods.push(pod("api-0", "backend", "10.42.0.8"));
+
+        let analysis = analyze_resource(
+            &ResourceRef::CustomResource {
+                name: "frontend".to_string(),
+                namespace: Some("apps".to_string()),
+                group: "gateway.networking.k8s.io".to_string(),
+                version: "v1beta1".to_string(),
+                kind: "HTTPRoute".to_string(),
+                plural: "httproutes".to_string(),
+            },
+            &snapshot,
+            &TunnelRegistry::new(),
+        )
+        .unwrap();
+
+        assert!(
+            analysis
+                .summary_lines
+                .iter()
+                .any(|line| line.contains("without a matching ReferenceGrant"))
+        );
+        let backend_section = analysis
+            .tree
+            .iter()
+            .find(|node| node.label == "Backend trace")
+            .unwrap();
+        let backend_node = &backend_section.children[0];
+        assert_eq!(backend_node.label, "Service api:80");
+        assert!(
+            backend_node
+                .children
+                .iter()
+                .any(|child| child.label.contains("no matching ReferenceGrant"))
+        );
+        assert!(
+            backend_node
+                .children
+                .iter()
+                .all(|child| child.label != "Backend pods")
+        );
+    }
+
+    #[test]
+    fn gateway_route_refs_preserve_route_version_and_reference_grant_status() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.gateways.push(gateway());
+        snapshot.http_routes.push(http_route("apps"));
+        snapshot.reference_grants.push(ReferenceGrantInfo {
+            name: "grant".to_string(),
+            namespace: "backend".to_string(),
+            version: "v1alpha2".to_string(),
+            from: vec![ReferenceGrantFromInfo {
+                group: "gateway.networking.k8s.io".to_string(),
+                kind: "HTTPRoute".to_string(),
+                namespace: "apps".to_string(),
+            }],
+            to: vec![ReferenceGrantToInfo {
+                group: "".to_string(),
+                kind: "Service".to_string(),
+                name: Some("api".to_string()),
+            }],
+            ..ReferenceGrantInfo::default()
+        });
+
+        let route_refs = gateway_route_refs(&snapshot, &snapshot.gateways[0]);
+        assert_eq!(route_refs.len(), 1);
+        assert_eq!(route_refs[0].route_version, "v1beta1");
+        assert!(route_refs[0].resolution_set[0].reference_grant_allowed);
+        assert!(!route_refs[0].resolution_set[0].blocked_cross_namespace);
+    }
+
+    #[test]
+    fn gateway_route_refs_allow_cross_namespace_parent_without_section_when_any_listener_allows_it()
+    {
+        let mut snapshot = ClusterSnapshot::default();
+        let mut gateway = gateway();
+        gateway.listeners[0].allowed_routes_from = Some("All".to_string());
+        snapshot.gateways.push(gateway);
+
+        let mut route = http_route("apps");
+        route.parent_refs[0].section_name = None;
+        snapshot.http_routes.push(route);
+
+        let route_refs = gateway_route_refs(&snapshot, &snapshot.gateways[0]);
+        assert_eq!(route_refs.len(), 1);
+        assert!(!route_refs[0].cross_namespace_parent_blocked);
+    }
+
+    #[test]
+    fn gateway_route_refs_treat_selector_policy_as_non_widening_without_namespace_metadata() {
+        let mut snapshot = ClusterSnapshot::default();
+        let mut gateway = gateway();
+        gateway.listeners[0].allowed_routes_from = Some("Selector".to_string());
+        gateway.listeners[0].allowed_routes_selector = Some(LabelSelectorInfo {
+            match_labels: BTreeMap::from([("team".to_string(), "edge".to_string())]),
+            match_expressions: Vec::new(),
+        });
+        snapshot.gateways.push(gateway);
+        snapshot.http_routes.push(http_route("apps"));
+
+        let route_refs = gateway_route_refs(&snapshot, &snapshot.gateways[0]);
+        assert_eq!(route_refs.len(), 1);
+        assert!(route_refs[0].cross_namespace_parent_blocked);
+    }
+
+    #[test]
+    fn gateway_route_refs_prefer_allowed_parent_when_same_gateway_is_referenced_twice() {
+        let mut snapshot = ClusterSnapshot::default();
+        let mut gateway = gateway();
+        gateway.listeners.push(GatewayListenerInfo {
+            name: "public".to_string(),
+            protocol: "HTTP".to_string(),
+            port: 8080,
+            hostname: None,
+            allowed_routes_from: Some("All".to_string()),
+            allowed_routes_selector: None,
+            attached_routes: 1,
+            ready: Some(true),
+        });
+        snapshot.gateways.push(gateway);
+
+        let mut route = http_route("apps");
+        route.parent_refs = vec![
+            GatewayParentRefInfo {
+                section_name: Some("http".to_string()),
+                ..route.parent_refs[0].clone()
+            },
+            GatewayParentRefInfo {
+                section_name: Some("public".to_string()),
+                ..route.parent_refs[0].clone()
+            },
+        ];
+        snapshot.http_routes.push(route);
+
+        let route_refs = gateway_route_refs(&snapshot, &snapshot.gateways[0]);
+        assert_eq!(route_refs.len(), 1);
+        assert_eq!(
+            route_refs[0].parent_ref.section_name.as_deref(),
+            Some("public")
+        );
+        assert!(!route_refs[0].cross_namespace_parent_blocked);
+    }
+
+    #[test]
+    fn service_analysis_includes_gateway_routes_for_selected_service() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.services.push(ServiceInfo {
+            name: "api".to_string(),
+            namespace: "backend".to_string(),
+            type_: "ClusterIP".to_string(),
+            selector: BTreeMap::from([("app".to_string(), "api".to_string())]),
+            ..ServiceInfo::default()
+        });
+        snapshot.gateways.push(gateway());
+        snapshot.http_routes.push(http_route("apps"));
+
+        let analysis = analyze_resource(
+            &ResourceRef::Service("api".to_string(), "backend".to_string()),
+            &snapshot,
+            &TunnelRegistry::new(),
+        )
+        .unwrap();
+
+        assert!(
+            analysis
+                .summary_lines
+                .iter()
+                .any(|line| line.contains("1 gateway route(s)"))
+        );
+        assert!(
+            analysis
+                .tree
+                .iter()
+                .any(|section| section.label == "Gateway routes")
+        );
     }
 }

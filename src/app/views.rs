@@ -119,6 +119,11 @@ pub enum AppView {
     Endpoints,
     Ingresses,
     IngressClasses,
+    GatewayClasses,
+    Gateways,
+    HttpRoutes,
+    GrpcRoutes,
+    ReferenceGrants,
     NetworkPolicies,
     PortForwarding,
     // Config
@@ -183,6 +188,11 @@ impl AppView {
             AppView::Endpoints => "endpoints",
             AppView::Ingresses => "ingresses",
             AppView::IngressClasses => "ingress_classes",
+            AppView::GatewayClasses => "gateway_classes",
+            AppView::Gateways => "gateways",
+            AppView::HttpRoutes => "http_routes",
+            AppView::GrpcRoutes => "grpc_routes",
+            AppView::ReferenceGrants => "reference_grants",
             AppView::NetworkPolicies => "network_policies",
             AppView::PortForwarding => "port_forwarding",
             AppView::ConfigMaps => "config_maps",
@@ -243,6 +253,11 @@ impl AppView {
             "endpoints" | "Endpoints" => Some(AppView::Endpoints),
             "ingresses" | "Ingresses" => Some(AppView::Ingresses),
             "ingress_classes" | "IngressClasses" => Some(AppView::IngressClasses),
+            "gateway_classes" | "GatewayClasses" => Some(AppView::GatewayClasses),
+            "gateways" | "Gateways" => Some(AppView::Gateways),
+            "http_routes" | "HttpRoutes" | "HTTPRoutes" => Some(AppView::HttpRoutes),
+            "grpc_routes" | "GrpcRoutes" | "GRPCRoutes" => Some(AppView::GrpcRoutes),
+            "reference_grants" | "ReferenceGrants" => Some(AppView::ReferenceGrants),
             "network_policies" | "NetworkPolicies" => Some(AppView::NetworkPolicies),
             "port_forwarding" | "PortForwarding" => Some(AppView::PortForwarding),
             "config_maps" | "ConfigMaps" => Some(AppView::ConfigMaps),
@@ -290,7 +305,7 @@ impl AppView {
         }
     }
 
-    const ORDER: [AppView; 51] = [
+    const ORDER: [AppView; 56] = [
         // Overview
         AppView::Dashboard,
         AppView::Projects,
@@ -315,6 +330,11 @@ impl AppView {
         AppView::Endpoints,
         AppView::Ingresses,
         AppView::IngressClasses,
+        AppView::GatewayClasses,
+        AppView::Gateways,
+        AppView::HttpRoutes,
+        AppView::GrpcRoutes,
+        AppView::ReferenceGrants,
         AppView::NetworkPolicies,
         AppView::PortForwarding,
         // Config
@@ -376,6 +396,11 @@ impl AppView {
             AppView::Endpoints => "Endpoints",
             AppView::Ingresses => "Ingresses",
             AppView::IngressClasses => "Ingress Classes",
+            AppView::GatewayClasses => "Gateway Classes",
+            AppView::Gateways => "Gateways",
+            AppView::HttpRoutes => "HTTP Routes",
+            AppView::GrpcRoutes => "gRPC Routes",
+            AppView::ReferenceGrants => "Reference Grants",
             AppView::NetworkPolicies => "Network Policies",
             AppView::PortForwarding => "Port Forwarding",
             AppView::ConfigMaps => "Config Maps",
@@ -444,6 +469,11 @@ impl AppView {
             AppView::Endpoints => "view.endpoints",
             AppView::Ingresses => "view.ingresses",
             AppView::IngressClasses => "view.ingress_classes",
+            AppView::GatewayClasses => "view.gateway_classes",
+            AppView::Gateways => "view.gateways",
+            AppView::HttpRoutes => "view.http_routes",
+            AppView::GrpcRoutes => "view.grpc_routes",
+            AppView::ReferenceGrants => "view.reference_grants",
             AppView::NetworkPolicies => "view.network_policies",
             AppView::PortForwarding => "view.port_forwarding",
             AppView::ConfigMaps => "view.config_maps",
@@ -502,6 +532,11 @@ impl AppView {
             | AppView::Endpoints
             | AppView::Ingresses
             | AppView::IngressClasses
+            | AppView::GatewayClasses
+            | AppView::Gateways
+            | AppView::HttpRoutes
+            | AppView::GrpcRoutes
+            | AppView::ReferenceGrants
             | AppView::NetworkPolicies
             | AppView::PortForwarding => NavGroup::Network,
             AppView::ConfigMaps

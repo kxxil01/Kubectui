@@ -434,6 +434,48 @@ impl ClusterDataSource for PerfMockDataSource {
         Ok(Vec::new())
     }
 
+    async fn fetch_gateway_classes(&self) -> Result<Vec<kubectui::k8s::dtos::GatewayClassInfo>> {
+        self.bump();
+        self.maybe_delay().await;
+        Ok(Vec::new())
+    }
+
+    async fn fetch_gateways(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<kubectui::k8s::dtos::GatewayInfo>> {
+        self.bump();
+        self.maybe_delay().await;
+        Ok(Vec::new())
+    }
+
+    async fn fetch_http_routes(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<kubectui::k8s::dtos::HttpRouteInfo>> {
+        self.bump();
+        self.maybe_delay().await;
+        Ok(Vec::new())
+    }
+
+    async fn fetch_grpc_routes(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<kubectui::k8s::dtos::GrpcRouteInfo>> {
+        self.bump();
+        self.maybe_delay().await;
+        Ok(Vec::new())
+    }
+
+    async fn fetch_reference_grants(
+        &self,
+        _namespace: Option<&str>,
+    ) -> Result<Vec<kubectui::k8s::dtos::ReferenceGrantInfo>> {
+        self.bump();
+        self.maybe_delay().await;
+        Ok(Vec::new())
+    }
+
     async fn fetch_network_policies(
         &self,
         _namespace: Option<&str>,

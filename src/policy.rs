@@ -30,6 +30,7 @@ pub enum RelationshipCapability {
     OwnerChain,
     ServiceBackends,
     IngressBackends,
+    GatewayRoutes,
     StorageBindings,
     FluxLineage,
     RbacBindings,
@@ -321,6 +322,11 @@ impl AppView {
             | AppView::Endpoints
             | AppView::Ingresses
             | AppView::IngressClasses
+            | AppView::GatewayClasses
+            | AppView::Gateways
+            | AppView::HttpRoutes
+            | AppView::GrpcRoutes
+            | AppView::ReferenceGrants
             | AppView::NetworkPolicies
             | AppView::ConfigMaps
             | AppView::Secrets
@@ -365,6 +371,11 @@ impl AppView {
             | AppView::Pods => RELATIONSHIPS_OWNER_CHAIN,
             AppView::Services | AppView::Endpoints => RELATIONSHIPS_SERVICE_BACKENDS,
             AppView::Ingresses | AppView::IngressClasses => RELATIONSHIPS_INGRESS_BACKENDS,
+            AppView::GatewayClasses
+            | AppView::Gateways
+            | AppView::HttpRoutes
+            | AppView::GrpcRoutes
+            | AppView::ReferenceGrants => &[RelationshipCapability::GatewayRoutes],
             AppView::PersistentVolumeClaims
             | AppView::PersistentVolumes
             | AppView::StorageClasses => RELATIONSHIPS_STORAGE,
@@ -492,13 +503,20 @@ impl ResourceRef {
                     | ResourceRef::NetworkPolicy(_, _)
             ),
             DetailAction::CheckNetworkConnectivity => matches!(self, ResourceRef::Pod(_, _)),
-            DetailAction::ViewTrafficDebug => matches!(
-                self,
-                ResourceRef::Pod(_, _)
-                    | ResourceRef::Service(_, _)
-                    | ResourceRef::Endpoint(_, _)
-                    | ResourceRef::Ingress(_, _)
-            ),
+            DetailAction::ViewTrafficDebug => {
+                matches!(
+                    self,
+                    ResourceRef::Pod(_, _)
+                        | ResourceRef::Service(_, _)
+                        | ResourceRef::Endpoint(_, _)
+                        | ResourceRef::Ingress(_, _)
+                ) || matches!(
+                    self,
+                    ResourceRef::CustomResource { group, kind, .. }
+                        if group == "gateway.networking.k8s.io"
+                            && matches!(kind.as_str(), "Gateway" | "HTTPRoute" | "GRPCRoute")
+                )
+            }
             DetailAction::NodeDebugShell => matches!(self, ResourceRef::Node(_)),
             DetailAction::ViewRelationships => {
                 crate::k8s::relationships::resource_has_relationships(self)

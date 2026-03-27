@@ -188,8 +188,11 @@ fn render_project_summary(frame: &mut Frame, area: Rect, project: &ProjectSummar
         project.cronjobs
     )));
     lines.push(Line::from(format!(
-        "Traffic: {} service(s), {} ingress(es) • Pods: {}",
-        project.services, project.ingresses, project.pods
+        "Traffic: {} service(s), {} ingress(es), {} gateway route(s) • Pods: {}",
+        project.services,
+        project.ingresses,
+        project.http_routes + project.grpc_routes,
+        project.pods
     )));
     lines.push(Line::from(format!(
         "Health: {} issue(s) • Highest severity: {}",
@@ -213,6 +216,12 @@ fn render_project_summary(frame: &mut Frame, area: Rect, project: &ProjectSummar
         lines.push(Line::from(format!(
             "Ingresses: {}",
             project.sample_ingresses.join(", ")
+        )));
+    }
+    if !project.sample_routes.is_empty() {
+        lines.push(Line::from(format!(
+            "Gateway routes: {}",
+            project.sample_routes.join(", ")
         )));
     }
 
