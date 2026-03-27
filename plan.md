@@ -48,7 +48,7 @@ Current milestone status:
 - Milestone 30: completed
 - Milestone 31: completed
 - Milestone 32: completed
-- Milestone 33: not started
+- Milestone 33: completed
 - Milestone 34: not started
 - Milestone 35: not started
 - Milestone 36: not started
@@ -93,6 +93,7 @@ Completion notes:
 - Milestone 30 shipped (PR #63): bounded resource creation on the canonical editor/apply path with built-in Deployment, Deployment + Service, and ConfigMap templates, upfront validated inputs, command-palette template discovery, external-editor handoff, multi-document server-side apply, conservative manifest discovery fallback, and regression coverage for dialog routing, palette behavior, validation, and editor-command parsing.
 - Milestone 31 shipped (PR #64): canonical traffic debugging on the detail/workbench path for Pods, Services, Endpoints, and Ingresses with service endpoint audits, ingress backend trace summaries, DNS guidance, selectorless/manual endpoint handling, port-forward tunnel diagnostics, palette/help/detail-view `t` integration, and regression coverage for routing, rendering, and service-to-backend correctness.
 - Milestone 32 shipped (PR #66): guarded node debug shell flow on the canonical detail/exec path with namespace + profile selection, API-native debug pod launch on the target node, explicit host-namespace and privilege warnings, automatic pod cleanup on close/restore/context switch/shutdown, and action-history coverage that now records success only after shell attach is established. The final hardening pass also fixed orphan cleanup on failed launch readiness, stopped defaulting to a nonexistent `default` namespace when the cluster does not have one, and aligned attach-failure semantics for both node debug and Pod debug shells.
+- Milestone 33 shipped: disposable `kind`-backed smoke automation for rollout control, ephemeral debug containers, Helm history/rollback, and NetworkPolicy intent validation; canonical `scripts/kind_smoke.sh`; release checklist docs; CI `kind-smoke` coverage; and release-script hardening that moves version bumps onto a release PR branch and separates post-merge tag publication into `scripts/publish_release_tag.sh` so release prep no longer bypasses the repo branch/PR policy.
 - 2026-03-27 release-prep pass shipped: README now reflects the post-roadmap feature surface, `CHANGELOG.md` captures the roadmap-completion release, and the `?` help overlay now advertises the broader action palette surface accurately.
 - Phase 8 (Watch-Backed Caches, PR #21) shipped: replaced steady-state polling with Kubernetes watch streams for 10 core resources (Pods, Deployments, ReplicaSets, StatefulSets, DaemonSets, Services, Nodes, ReplicationControllers, Jobs, CronJobs). `WatchManager` with session-keyed stale-event rejection, `ResourceStore<T>` with HashMap-keyed O(1) apply/delete, `define_watcher!` macro generating all watch infrastructure, auto-refresh narrowing (watched scopes stripped from polling), equality-guarded snapshot updates to skip no-change version bumps, extracted 31 DTO conversions to shared `conversions.rs` module. Manual refresh still does full relist for drift protection. Non-watched resources (metrics, Flux, RBAC, etc.) continue polling unchanged.
 - 2026-03-18 kube 3.1 watch bootstrap optimization: the canonical watch path now selects kube-runtime `streaming_lists()` only for clusters advertising Kubernetes `v1.34+`, where upstream documents WatchList / streaming lists as beta and enabled by default. Older or unknown clusters stay on `ListWatch`, but now use `any_semantic()` to reduce recovery relist cost without sacrificing compatibility.
@@ -136,7 +137,7 @@ Verification status for completed milestones:
 - Latest M32 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping Node Shell / Node Debug. The clean 5-run render-profile comparison vs clean `origin/main` remained positive on the required medians (`render` `254.084ms -> 248.616ms`, `-5.468ms`; `sidebar` `21.536ms -> 20.920ms`; `header` `15.319ms -> 14.470ms`).
 - Latest M23 verification on 2026-03-26: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo test --all-targets --all-features` all pass locally after shipping both AI assistant hooks and specialized AI workflows. The final clean 5-run render-profile comparison for Phase 3 vs clean `origin/main` stayed positive on the required medians (`render` `252.801ms -> 251.295ms`, `-1.506ms`; `sidebar` `21.438ms -> 21.220ms`; `header` `14.600ms -> 14.608ms`).
 - Latest stabilization verification on 2026-03-27: targeted suites for AI, workspaces, Helm, rollout, advanced logs, sanitizer, vulnerabilities, and NetworkPolicy analysis all pass locally (`cargo test --all-targets --all-features ai:: -- --nocapture`, `workspaces`, `helm`, `rollout`, `log_investigation`, `issues::`, `vulnerabilities`, `network_policy`).
-- remaining validation gap is live-cluster smoke behavior under a disposable local cluster; this machine currently has no local `kind` binary and no `kind-*` kube context, so local-cluster smoke validation is still blocked by environment rather than app behavior
+- Latest M33 verification on 2026-03-27: `bash -n scripts/kind_smoke.sh`, `bash -n scripts/release.sh`, `bash -n scripts/publish_release_tag.sh`, `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, `cargo test --test kind_smoke -- --ignored --nocapture --test-threads=1`, and `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture` all pass locally after shipping release hardening and disposable-cluster smoke automation. The ignored smoke suite is now gated behind `KUBECTUI_KIND_SMOKE=1` and a `kind-*` kube context, so routine local/CI validation can compile the suite safely while real cluster-backed smoke runs stay explicit and deterministic.
 
 ---
 
@@ -1992,7 +1993,7 @@ This is the execution order.
 
 ## P5 (Next)
 
-- Milestone 23: Extension System & AI Assistant Hooks
+- Milestone 34: Projects / Application Scopes
 
 ## Continuous
 
@@ -2002,11 +2003,11 @@ This is the execution order.
 
 ## What We Should Start Right Now
 
-M0-M32 are complete.
+M0-M33 are complete.
 
 Recommended near-term order:
 
-- M33 -> M34 -> M35
+- M34 -> M35 -> M36
 
 Do not start next with:
 
@@ -2040,7 +2041,7 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 #### M33: Release Hardening & Smoke Automation
 
-- Status: not started
+- Status: completed
 - Big win: highest
 - Why:
   - the app now has a large operational surface and needs repeatable release confidence, not just feature coverage
@@ -2055,6 +2056,11 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
   - keep smoke tooling outside the render/input hot path
   - prefer deterministic scripts and fixtures over flaky end-to-end orchestration
   - no shared-cluster mutation requirement for routine validation
+- Shipped scope:
+  - ignored `kind`-backed smoke suite covering rollout pause/resume/undo, ephemeral debug-container launch, Helm history/rollback, and NetworkPolicy intent/connectivity checks
+  - canonical `scripts/kind_smoke.sh` entrypoint that can create/reuse a disposable `kind` cluster and run the smoke lane deterministically
+  - CI `kind-smoke` job and release checklist documenting the required pre-release matrix
+  - hardened release flow that creates a release PR branch via `scripts/release.sh` and publishes tags separately with `scripts/publish_release_tag.sh`
 
 #### M34: Projects / Application Scopes
 
@@ -2288,7 +2294,7 @@ The original milestone roadmap is complete. Any follow-up work from here is new 
 
 ### Recommended Remaining Order
 
-- M33 -> M34 -> M35 -> M36 -> M37
+- M34 -> M35 -> M36 -> M37
 
 ### Research Basis
 
