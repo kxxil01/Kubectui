@@ -191,6 +191,41 @@ impl AppState {
                     _ => AppAction::None,
                 }
             }
+            WorkbenchTabState::Runbook(tab) => match key.code {
+                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    tab.select_next();
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.select_previous();
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.select_top();
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    tab.select_bottom();
+                    AppAction::None
+                }
+                KeyCode::PageDown => {
+                    for _ in 0..10 {
+                        tab.select_next();
+                    }
+                    AppAction::None
+                }
+                KeyCode::PageUp => {
+                    for _ in 0..10 {
+                        tab.select_previous();
+                    }
+                    AppAction::None
+                }
+                KeyCode::Char('d') => AppAction::RunbookToggleStepDone,
+                KeyCode::Char('s') => AppAction::RunbookToggleStepSkipped,
+                KeyCode::Enter => AppAction::RunbookExecuteSelectedStep,
+                _ => AppAction::None,
+            },
             WorkbenchTabState::HelmHistory(tab) => {
                 if tab.rollback_pending {
                     return AppAction::None;
@@ -1171,6 +1206,7 @@ impl AppState {
                 ..
             })
             | WorkbenchTabState::ResourceEvents(_)
+            | WorkbenchTabState::Runbook(_)
             | WorkbenchTabState::Relations(_)
             | WorkbenchTabState::NetworkPolicy(_)
             | WorkbenchTabState::TrafficDebug(_) => true,
@@ -1275,6 +1311,9 @@ impl AppState {
                 }
                 CommandPaletteAction::ExecuteExtension(id, resource) => {
                     AppAction::ExecuteExtension { id, resource }
+                }
+                CommandPaletteAction::OpenRunbook(id, resource) => {
+                    AppAction::OpenRunbook { id, resource }
                 }
                 CommandPaletteAction::ToggleColumn(column_id) => {
                     self.toggle_column_visibility(&column_id);

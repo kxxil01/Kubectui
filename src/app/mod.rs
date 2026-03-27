@@ -158,6 +158,13 @@ pub enum AppAction {
     ApplyNextWorkspace,
     ApplyWorkspace(String),
     ActivateWorkspaceBank(String),
+    OpenRunbook {
+        id: String,
+        resource: Option<ResourceRef>,
+    },
+    RunbookExecuteSelectedStep,
+    RunbookToggleStepDone,
+    RunbookToggleStepSkipped,
     OpenResourceTemplateDialog(crate::resource_templates::ResourceTemplateKind),
     SubmitResourceTemplateDialog,
     ToggleBookmark,

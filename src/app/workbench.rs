@@ -5,12 +5,13 @@ use crate::{
     network_policy_analysis::NetworkPolicyAnalysis,
     policy::DetailAction,
     resource_diff::ResourceDiffResult,
+    runbooks::LoadedRunbook,
     traffic_debug::TrafficDebugAnalysis,
     ui::components::scale_dialog::ScaleTargetKind,
     workbench::{
         AiAnalysisTabState, ConnectivityTabState, ConnectivityTargetOption,
         ExtensionOutputTabState, HelmHistoryTabState, NetworkPolicyTabState, ResourceDiffTabState,
-        RolloutTabState, TrafficDebugTabState,
+        RolloutTabState, RunbookTabState, TrafficDebugTabState,
     },
 };
 
@@ -248,6 +249,14 @@ impl AppState {
         }
         self.workbench
             .open_tab(WorkbenchTabState::TrafficDebug(tab));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_runbook_tab(&mut self, runbook: LoadedRunbook, resource: Option<ResourceRef>) {
+        self.workbench
+            .open_tab(WorkbenchTabState::Runbook(Box::new(RunbookTabState::new(
+                runbook, resource,
+            ))));
         self.focus = Focus::Workbench;
     }
 

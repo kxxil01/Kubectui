@@ -51,7 +51,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("c", "Context picker"),
             (
                 ":",
-                "Action palette (views, actions, workspaces, banks, templates, AI, columns)",
+                "Action palette (views, actions, runbooks, workspaces, banks, templates, AI, columns)",
             ),
             ("r", "Refresh data"),
             ("Ctrl+y", "Copy resource name"),
@@ -83,6 +83,15 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("n", "Sort by name"),
             ("a / 1", "Sort by age"),
             ("0", "Clear sort"),
+        ],
+    ),
+    (
+        "Runbooks",
+        &[
+            (":", "Open incident packs and guided runbooks"),
+            ("Enter", "Run or toggle the selected step"),
+            ("d", "Mark step done"),
+            ("s", "Skip or unskip the selected step"),
         ],
     ),
     (
