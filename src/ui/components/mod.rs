@@ -151,15 +151,15 @@ pub fn default_theme() -> Theme {
 #[inline]
 fn nav_group_bit(group: NavGroup) -> u16 {
     match group {
-        NavGroup::Overview => 1 << 0,
-        NavGroup::Workloads => 1 << 1,
-        NavGroup::Network => 1 << 2,
-        NavGroup::Config => 1 << 3,
-        NavGroup::Storage => 1 << 4,
-        NavGroup::Helm => 1 << 5,
-        NavGroup::FluxCD => 1 << 6,
-        NavGroup::AccessControl => 1 << 7,
-        NavGroup::CustomResources => 1 << 8,
+        NavGroup::Overview => 0,
+        NavGroup::Workloads => 1 << 0,
+        NavGroup::Network => 1 << 1,
+        NavGroup::Config => 1 << 2,
+        NavGroup::Storage => 1 << 3,
+        NavGroup::Helm => 1 << 4,
+        NavGroup::FluxCD => 1 << 5,
+        NavGroup::AccessControl => 1 << 6,
+        NavGroup::CustomResources => 1 << 7,
     }
 }
 
