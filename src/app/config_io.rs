@@ -94,7 +94,7 @@ pub fn load_config_from_path(path: &Path) -> AppState {
                 .iter()
                 .filter_map(|group| nav_group_from_config(group))
                 .collect();
-            app.sync_collapsed_to_active_view();
+            app.sync_sidebar_cursor_to_view();
         }
         app.preferences = cfg.preferences;
         app.cluster_preferences = cfg.clusters;

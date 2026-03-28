@@ -109,7 +109,7 @@ impl AppState {
             return;
         }
         self.sidebar_cursor = (self.sidebar_cursor + 1) % rows.len();
-        self.auto_expand_collapsed_group_at_cursor();
+        self.sync_sidebar_expansion_to_cursor();
     }
 
     pub fn sidebar_cursor_up(&mut self) {
@@ -122,19 +122,66 @@ impl AppState {
         } else {
             self.sidebar_cursor - 1
         };
-        self.auto_expand_collapsed_group_at_cursor();
+        self.sync_sidebar_expansion_to_cursor();
     }
 
-    /// If the sidebar cursor is on a collapsed group header, expand it so
-    /// its child views become visible during j/k navigation.
-    fn auto_expand_collapsed_group_at_cursor(&mut self) {
+    fn sync_sidebar_expansion_to_cursor(&mut self) {
         let rows = sidebar_rows(&self.collapsed_groups);
-        if let Some(SidebarItem::Group(g)) = rows.get(self.sidebar_cursor)
-            && self.collapsed_groups.contains(g)
-        {
-            self.collapsed_groups.remove(g);
-            self.needs_config_save = true;
+        let current_item = rows.get(self.sidebar_cursor).copied();
+        let expanded_group = current_item.and_then(Self::sidebar_item_group);
+        self.set_expanded_group(expanded_group, current_item, true);
+    }
+
+    fn sidebar_item_group(item: SidebarItem) -> Option<NavGroup> {
+        match item {
+            SidebarItem::Group(group) => Some(group),
+            SidebarItem::View(view) => sidebar::group_for_view(view),
         }
+    }
+
+    fn normalize_expanded_group(expanded_group: Option<NavGroup>) -> Option<NavGroup> {
+        match expanded_group {
+            Some(NavGroup::Overview) | None => None,
+            Some(group) => Some(group),
+        }
+    }
+
+    fn set_expanded_group(
+        &mut self,
+        expanded_group: Option<NavGroup>,
+        preserve_item: Option<SidebarItem>,
+        mark_dirty: bool,
+    ) {
+        let expanded_group = Self::normalize_expanded_group(expanded_group);
+        let collapsed_groups: HashSet<_> = sidebar::all_groups()
+            .filter(|group| *group != NavGroup::Overview && Some(*group) != expanded_group)
+            .collect();
+
+        if self.collapsed_groups != collapsed_groups {
+            self.collapsed_groups = collapsed_groups;
+            if mark_dirty {
+                self.needs_config_save = true;
+            }
+        }
+
+        let rows = sidebar_rows(&self.collapsed_groups);
+        if let Some(item) = preserve_item
+            && let Some(idx) = rows.iter().position(|row| *row == item)
+        {
+            self.sidebar_cursor = idx;
+            return;
+        }
+
+        if let Some(group) = preserve_item.and_then(Self::sidebar_item_group)
+            && let Some(idx) = rows
+                .iter()
+                .position(|row| *row == SidebarItem::Group(group))
+        {
+            self.sidebar_cursor = idx;
+            return;
+        }
+
+        self.sidebar_cursor = self.sidebar_cursor.min(rows.len().saturating_sub(1));
     }
 
     pub fn sidebar_activate(&mut self) -> AppAction {
@@ -151,26 +198,39 @@ impl AppState {
 
     pub(super) fn sync_sidebar_cursor_to_view(&mut self) {
         let rows = sidebar_rows(&self.collapsed_groups);
-        if let Some(idx) = rows.iter().position(|r| *r == SidebarItem::View(self.view)) {
+        if let Some(idx) = rows
+            .iter()
+            .position(|row| *row == SidebarItem::View(self.view))
+        {
             self.sidebar_cursor = idx;
+            return;
         }
+
+        if let Some(group) = sidebar::group_for_view(self.view)
+            && let Some(idx) = rows
+                .iter()
+                .position(|row| *row == SidebarItem::Group(group))
+        {
+            self.sidebar_cursor = idx;
+            return;
+        }
+
+        self.sidebar_cursor = self.sidebar_cursor.min(rows.len().saturating_sub(1));
     }
 
     pub fn sync_collapsed_to_active_view(&mut self) {
-        if let Some(active_group) = sidebar::group_for_view(self.view) {
-            self.collapsed_groups.remove(&active_group);
-        }
-        self.sync_sidebar_cursor_to_view();
+        self.set_expanded_group(
+            sidebar::group_for_view(self.view),
+            Some(SidebarItem::View(self.view)),
+            true,
+        );
     }
 
     pub fn toggle_nav_group(&mut self, group: NavGroup) {
         if self.collapsed_groups.contains(&group) {
-            self.collapsed_groups.remove(&group);
+            self.set_expanded_group(Some(group), Some(SidebarItem::Group(group)), true);
         } else {
-            self.collapsed_groups.insert(group);
+            self.set_expanded_group(None, Some(SidebarItem::Group(group)), true);
         }
-        let rows = sidebar_rows(&self.collapsed_groups);
-        self.sidebar_cursor = self.sidebar_cursor.min(rows.len().saturating_sub(1));
-        self.needs_config_save = true;
     }
 }
