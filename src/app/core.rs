@@ -17,15 +17,7 @@ impl Default for AppState {
             context_picker: ContextPicker::default(),
             command_palette: CommandPalette::default(),
             help_overlay: crate::ui::components::help_overlay::HelpOverlay::default(),
-            collapsed_groups: {
-                let mut collapsed = HashSet::new();
-                for group in sidebar::all_groups() {
-                    if group != NavGroup::Overview {
-                        collapsed.insert(group);
-                    }
-                }
-                collapsed
-            },
+            collapsed_groups: sidebar::all_groups().collect(),
             sidebar_cursor: 0,
             focus: Focus::Sidebar,
             extension_instances: Vec::new(),

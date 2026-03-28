@@ -934,6 +934,65 @@ fn view_switch_resets_selection_index() {
     assert_eq!(app.selected_idx(), 0);
 }
 
+#[test]
+fn sidebar_cursor_expands_only_highlighted_group() {
+    let mut app = AppState::default();
+
+    while sidebar_rows(&app.collapsed_groups)[app.sidebar_cursor]
+        != SidebarItem::Group(NavGroup::Workloads)
+    {
+        app.sidebar_cursor_down();
+    }
+
+    assert!(!app.collapsed_groups.contains(&NavGroup::Workloads));
+    assert!(app.collapsed_groups.contains(&NavGroup::Network));
+    assert!(sidebar_rows(&app.collapsed_groups).contains(&SidebarItem::View(AppView::Pods)));
+    assert!(!sidebar_rows(&app.collapsed_groups).contains(&SidebarItem::View(AppView::Services)));
+
+    while sidebar_rows(&app.collapsed_groups)[app.sidebar_cursor]
+        != SidebarItem::Group(NavGroup::Network)
+    {
+        app.sidebar_cursor_down();
+    }
+
+    assert!(app.collapsed_groups.contains(&NavGroup::Workloads));
+    assert!(!app.collapsed_groups.contains(&NavGroup::Network));
+    assert!(!sidebar_rows(&app.collapsed_groups).contains(&SidebarItem::View(AppView::Pods)));
+    assert!(sidebar_rows(&app.collapsed_groups).contains(&SidebarItem::View(AppView::Services)));
+}
+
+#[test]
+fn tab_navigation_expands_only_active_view_group() {
+    let mut app = AppState::default();
+
+    for _ in 0..10 {
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+    }
+
+    assert_eq!(app.view(), AppView::Pods);
+    assert!(!app.collapsed_groups.contains(&NavGroup::Workloads));
+    assert!(app.collapsed_groups.contains(&NavGroup::Network));
+
+    for _ in 0..8 {
+        app.handle_key_event(KeyEvent::from(KeyCode::Tab));
+    }
+
+    assert_eq!(app.view(), AppView::Services);
+    assert!(app.collapsed_groups.contains(&NavGroup::Workloads));
+    assert!(!app.collapsed_groups.contains(&NavGroup::Network));
+}
+
+#[test]
+fn overview_views_are_top_level_not_grouped() {
+    let rows = sidebar_rows(&AppState::default().collapsed_groups);
+
+    assert_eq!(rows[0], SidebarItem::View(AppView::Dashboard));
+    assert_eq!(rows[1], SidebarItem::View(AppView::Projects));
+    assert_eq!(rows[9], SidebarItem::View(AppView::Events));
+    assert_eq!(rows[10], SidebarItem::Group(NavGroup::Workloads));
+    assert!(!rows.contains(&SidebarItem::Group(NavGroup::Overview)));
+}
+
 /// Verifies rapid tab switching remains stable.
 #[test]
 fn rapid_tab_switching_is_stable() {
@@ -1986,6 +2045,35 @@ fn config_backward_compat_no_prefs() {
     // All groups collapsed except Overview (default view's group).
     assert!(!loaded.collapsed_groups.contains(&NavGroup::Overview));
     assert!(loaded.collapsed_groups.contains(&NavGroup::Workloads));
+}
+
+#[test]
+fn apply_workspace_snapshot_reopens_active_group() {
+    let mut app = AppState::default();
+    let snapshot = WorkspaceSnapshot {
+        context: Some("prod".into()),
+        namespace: "payments".into(),
+        view: AppView::Pods,
+        search_query: Some("checkout".into()),
+        collapsed_groups: sidebar::all_groups()
+            .filter(|group| *group != NavGroup::Workloads)
+            .collect(),
+        workbench_open: false,
+        workbench_height: 15,
+        workbench_maximized: false,
+        action_history_tab: false,
+    };
+
+    app.apply_workspace_snapshot(&snapshot);
+
+    assert_eq!(app.view(), AppView::Pods);
+    assert_eq!(app.search_query(), "checkout");
+    assert!(!app.collapsed_groups.contains(&NavGroup::Workloads));
+    assert!(app.collapsed_groups.contains(&NavGroup::Network));
+    assert_eq!(
+        sidebar_rows(&app.collapsed_groups)[app.sidebar_cursor],
+        SidebarItem::View(AppView::Pods)
+    );
 }
 
 #[test]
