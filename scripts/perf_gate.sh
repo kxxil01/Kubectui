@@ -4,6 +4,7 @@ set -euo pipefail
 RUNS="${PERF_GATE_RUNS:-5}"
 OUT_DIR="${PERF_GATE_OUT_DIR:-target/perf-gate}"
 SUMMARY_PATH="target/profiles/tests/render-frame-summary.txt"
+FOLDED_PATH="target/profiles/tests/render-flamegraph.folded"
 
 RENDER_MAX_MS="${PERF_GATE_RENDER_MAX_MS:-10000}"
 SIDEBAR_MAX_MS="${PERF_GATE_SIDEBAR_MAX_MS:-2500}"
@@ -54,6 +55,32 @@ extract_total_ms() {
   ' "$summary_file"
 }
 
+folded_metric_pattern() {
+  local metric="$1"
+  case "$metric" in
+    render)
+      echo '^render [0-9]+$'
+      ;;
+    *)
+      printf '^render;%s [0-9]+$\n' "$metric"
+      ;;
+  esac
+}
+
+extract_total_ms_from_folded() {
+  local metric="$1"
+  local folded_file="$2"
+  local pattern
+  pattern="$(folded_metric_pattern "$metric")"
+
+  awk -v pattern="$pattern" '
+    $0 ~ pattern {
+      printf "%.3f\n", $NF / 1000
+      exit
+    }
+  ' "$folded_file"
+}
+
 median_from_file() {
   local values_file="$1"
   sort -n "$values_file" | awk '
@@ -101,13 +128,21 @@ for run in $(seq 1 "$RUNS"); do
     echo "missing profiling summary at $SUMMARY_PATH" >&2
     exit 1
   fi
+  if [[ ! -f "$FOLDED_PATH" ]]; then
+    echo "missing folded profile at $FOLDED_PATH" >&2
+    exit 1
+  fi
 
   cp "$SUMMARY_PATH" "$OUT_DIR/render-frame-summary-run-${run}.txt"
+  cp "$FOLDED_PATH" "$OUT_DIR/render-flamegraph-run-${run}.folded"
 
   for metric in "${METRICS[@]}"; do
     value="$(extract_total_ms "$metric" "$SUMMARY_PATH")"
     if [[ -z "$value" ]]; then
-      echo "failed to parse metric '$metric' from $SUMMARY_PATH" >&2
+      value="$(extract_total_ms_from_folded "$metric" "$FOLDED_PATH")"
+    fi
+    if [[ -z "$value" ]]; then
+      echo "failed to parse metric '$metric' from $SUMMARY_PATH and $FOLDED_PATH" >&2
       exit 1
     fi
     echo "$value" >> "$(metric_file "$metric")"
