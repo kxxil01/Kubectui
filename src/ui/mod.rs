@@ -18,7 +18,9 @@ use ratatui::{
 };
 use std::{
     borrow::Cow,
+    cell::RefCell,
     collections::HashMap,
+    hash::{Hash, Hasher},
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -666,6 +668,66 @@ fn truncate_error(msg: &str, max_len: usize) -> &str {
     &msg[..end]
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ViewRenderKey {
+    view: AppView,
+    area: Rect,
+    snapshot_version: u64,
+    selected_idx: usize,
+    query_hash: u64,
+    focused: bool,
+    theme_index: u8,
+    icon_mode: u8,
+    namespace_hash: u64,
+    sort_variant: u64,
+    bookmark_hash: u64,
+    visible_columns_hash: u64,
+}
+
+thread_local! {
+    static VIEW_RENDERED_STATE: RefCell<Option<(ViewRenderKey, usize)>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn hash_str(value: &str) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[inline]
+fn constraint_signature(constraint: ratatui::layout::Constraint) -> u64 {
+    match constraint {
+        Constraint::Min(value) => (1_u64 << 32) | u64::from(value),
+        Constraint::Max(value) => (2_u64 << 32) | u64::from(value),
+        Constraint::Length(value) => (3_u64 << 32) | u64::from(value),
+        Constraint::Percentage(value) => (4_u64 << 32) | u64::from(value),
+        Constraint::Ratio(num, den) => (5_u64 << 32) ^ (u64::from(num) << 16) ^ u64::from(den),
+        Constraint::Fill(value) => (6_u64 << 32) | u64::from(value),
+    }
+}
+
+fn visible_columns_signature(columns: &[crate::columns::ColumnDef]) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    for column in columns {
+        column.id.hash(&mut hasher);
+        constraint_signature(column.default_width).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn bookmark_render_hash(bookmarks: &[BookmarkEntry]) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    for bookmark in bookmarks {
+        bookmark.resource.kind().hash(&mut hasher);
+        bookmark.resource.name().hash(&mut hasher);
+        bookmark.resource.namespace().hash(&mut hasher);
+        bookmark.bookmarked_at_unix.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 #[derive(Clone, Copy)]
 enum PodColumnKind {
     Name,
@@ -861,9 +923,39 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         );
     }
 
+    let visible_columns = resolve_visible_columns(app);
     let content_focused = app.focus == Focus::Content;
+    let view_cache_key = ViewRenderKey {
+        view: app.view(),
+        area: content,
+        snapshot_version: cluster.snapshot_version,
+        selected_idx: app.selected_idx(),
+        query_hash: hash_str(app.search_query()),
+        focused: content_focused,
+        theme_index: crate::ui::theme::active_theme_index(),
+        icon_mode: crate::icons::active_icon_mode() as u8,
+        namespace_hash: hash_str(app.get_namespace()),
+        sort_variant: app
+            .workload_sort()
+            .map_or(0, |sort| sort.cache_variant())
+            .wrapping_add(app.pod_sort().map_or(0, |sort| sort.cache_variant()) << 8),
+        bookmark_hash: bookmark_render_hash(app.bookmarks()),
+        visible_columns_hash: visible_columns_signature(visible_columns.as_ref()),
+    };
+    let frame_count = frame.count();
+    let view_skipped = VIEW_RENDERED_STATE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some((ref cached_key, ref mut prev_frame)) = *cache
+            && *cached_key == view_cache_key
+            && frame_count == *prev_frame + 1
+        {
+            *prev_frame = frame_count;
+            return true;
+        }
+        false
+    });
 
-    {
+    if !view_skipped {
         let _view_scope = profiling::span_scope(app.view().profiling_key());
         match app.view() {
             AppView::Dashboard => {
@@ -877,23 +969,20 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
-                resolve_visible_columns(app).as_ref(),
+                visible_columns.as_ref(),
                 content_focused,
             ),
-            AppView::Pods => {
-                let visible_columns = resolve_visible_columns(app);
-                render_pods_widget(
-                    frame,
-                    content,
-                    cluster,
-                    app.bookmarks(),
-                    app.selected_idx(),
-                    app.search_query(),
-                    app.pod_sort(),
-                    visible_columns.as_ref(),
-                    content_focused,
-                );
-            }
+            AppView::Pods => render_pods_widget(
+                frame,
+                content,
+                cluster,
+                app.bookmarks(),
+                app.selected_idx(),
+                app.search_query(),
+                app.pod_sort(),
+                visible_columns.as_ref(),
+                content_focused,
+            ),
             AppView::ReplicaSets => views::replicasets::render_replicasets(
                 frame,
                 content,
@@ -1322,6 +1411,10 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 views::extensions::render_extensions(frame, content, cluster, app, content_focused)
             }
         }
+
+        VIEW_RENDERED_STATE.with(|cell| {
+            *cell.borrow_mut() = Some((view_cache_key, frame_count));
+        });
     }
 
     // Toast notifications take priority over regular status messages
