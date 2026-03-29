@@ -18,7 +18,9 @@ use ratatui::{
 };
 use std::{
     borrow::Cow,
+    cell::RefCell,
     collections::HashMap,
+    hash::{Hash, Hasher},
     sync::{Arc, LazyLock, Mutex},
 };
 
@@ -666,6 +668,66 @@ fn truncate_error(msg: &str, max_len: usize) -> &str {
     &msg[..end]
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ViewRenderKey {
+    view: AppView,
+    area: Rect,
+    snapshot_version: u64,
+    selected_idx: usize,
+    query_hash: u64,
+    focused: bool,
+    theme_index: u8,
+    icon_mode: u8,
+    namespace_hash: u64,
+    sort_variant: u64,
+    bookmark_hash: u64,
+    visible_columns_hash: u64,
+}
+
+thread_local! {
+    static VIEW_RENDERED_STATE: RefCell<Option<(ViewRenderKey, usize)>> =
+        const { RefCell::new(None) };
+}
+
+#[inline]
+fn hash_str(value: &str) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    value.hash(&mut hasher);
+    hasher.finish()
+}
+
+#[inline]
+fn constraint_signature(constraint: ratatui::layout::Constraint) -> u64 {
+    match constraint {
+        Constraint::Min(value) => (1_u64 << 32) | u64::from(value),
+        Constraint::Max(value) => (2_u64 << 32) | u64::from(value),
+        Constraint::Length(value) => (3_u64 << 32) | u64::from(value),
+        Constraint::Percentage(value) => (4_u64 << 32) | u64::from(value),
+        Constraint::Ratio(num, den) => (5_u64 << 32) ^ (u64::from(num) << 16) ^ u64::from(den),
+        Constraint::Fill(value) => (6_u64 << 32) | u64::from(value),
+    }
+}
+
+fn visible_columns_signature(columns: &[crate::columns::ColumnDef]) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    for column in columns {
+        column.id.hash(&mut hasher);
+        constraint_signature(column.default_width).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
+fn bookmark_render_hash(bookmarks: &[BookmarkEntry]) -> u64 {
+    let mut hasher = std::hash::DefaultHasher::new();
+    for bookmark in bookmarks {
+        bookmark.resource.kind().hash(&mut hasher);
+        bookmark.resource.name().hash(&mut hasher);
+        bookmark.resource.namespace().hash(&mut hasher);
+        bookmark.bookmarked_at_unix.hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 #[derive(Clone, Copy)]
 enum PodColumnKind {
     Name,
@@ -861,9 +923,39 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         );
     }
 
+    let visible_columns = resolve_visible_columns(app);
     let content_focused = app.focus == Focus::Content;
+    let view_cache_key = ViewRenderKey {
+        view: app.view(),
+        area: content,
+        snapshot_version: cluster.snapshot_version,
+        selected_idx: app.selected_idx(),
+        query_hash: hash_str(app.search_query()),
+        focused: content_focused,
+        theme_index: crate::ui::theme::active_theme_index(),
+        icon_mode: crate::icons::active_icon_mode() as u8,
+        namespace_hash: hash_str(app.get_namespace()),
+        sort_variant: app
+            .workload_sort()
+            .map_or(0, |sort| sort.cache_variant())
+            .wrapping_add(app.pod_sort().map_or(0, |sort| sort.cache_variant()) << 8),
+        bookmark_hash: bookmark_render_hash(app.bookmarks()),
+        visible_columns_hash: visible_columns_signature(visible_columns.as_ref()),
+    };
+    let frame_count = frame.count();
+    let view_skipped = VIEW_RENDERED_STATE.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some((ref cached_key, ref mut prev_frame)) = *cache
+            && *cached_key == view_cache_key
+            && frame_count == *prev_frame + 1
+        {
+            *prev_frame = frame_count;
+            return true;
+        }
+        false
+    });
 
-    {
+    if !view_skipped {
         let _view_scope = profiling::span_scope(app.view().profiling_key());
         match app.view() {
             AppView::Dashboard => {
@@ -877,23 +969,20 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
-                resolve_visible_columns(app).as_ref(),
+                visible_columns.as_ref(),
                 content_focused,
             ),
-            AppView::Pods => {
-                let visible_columns = resolve_visible_columns(app);
-                render_pods_widget(
-                    frame,
-                    content,
-                    cluster,
-                    app.bookmarks(),
-                    app.selected_idx(),
-                    app.search_query(),
-                    app.pod_sort(),
-                    visible_columns.as_ref(),
-                    content_focused,
-                );
-            }
+            AppView::Pods => render_pods_widget(
+                frame,
+                content,
+                cluster,
+                app.bookmarks(),
+                app.selected_idx(),
+                app.search_query(),
+                app.pod_sort(),
+                visible_columns.as_ref(),
+                content_focused,
+            ),
             AppView::ReplicaSets => views::replicasets::render_replicasets(
                 frame,
                 content,
@@ -1322,6 +1411,10 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 views::extensions::render_extensions(frame, content, cluster, app, content_focused)
             }
         }
+
+        VIEW_RENDERED_STATE.with(|cell| {
+            *cell.borrow_mut() = Some((view_cache_key, frame_count));
+        });
     }
 
     // Toast notifications take priority over regular status messages
@@ -1953,14 +2046,17 @@ pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {
 }
 #[cfg(test)]
 mod tests {
+    use std::sync::{LazyLock, Mutex};
+
     use jiff::ToSpan;
 
     use super::resource_table_title;
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, style::Color};
 
     use crate::{
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
         bookmarks::BookmarkEntry,
+        icons::IconMode,
         k8s::{
             dtos::{
                 ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
@@ -1980,9 +2076,21 @@ mod tests {
 
     use super::*;
 
+    static RENDER_INVALIDATION_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
     fn draw(app: &AppState, snapshot: &ClusterSnapshot) {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, app, snapshot))
+            .expect("render should not panic");
+    }
+
+    fn draw_in_terminal(
+        terminal: &mut Terminal<TestBackend>,
+        app: &AppState,
+        snapshot: &ClusterSnapshot,
+    ) {
         terminal
             .draw(|frame| render(frame, app, snapshot))
             .expect("render should not panic");
@@ -1996,12 +2104,7 @@ mod tests {
             .expect("render should not panic");
     }
 
-    fn render_to_string(app: &AppState, snapshot: &ClusterSnapshot) -> String {
-        let backend = TestBackend::new(120, 40);
-        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
-        terminal
-            .draw(|frame| render(frame, app, snapshot))
-            .expect("render should not panic");
+    fn terminal_to_string(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         let mut out = String::new();
         for y in 0..buffer.area.height {
@@ -2011,6 +2114,70 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    fn render_to_string(app: &AppState, snapshot: &ClusterSnapshot) -> String {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        draw_in_terminal(&mut terminal, app, snapshot);
+        terminal_to_string(&terminal)
+    }
+
+    fn cell_colors(terminal: &Terminal<TestBackend>, x: u16, y: u16) -> (Color, Color) {
+        let cell = &terminal.backend().buffer()[(x, y)];
+        (cell.fg, cell.bg)
+    }
+
+    fn cells_with_colors(
+        terminal: &Terminal<TestBackend>,
+        fg: Color,
+        bg: Color,
+    ) -> Vec<(u16, u16)> {
+        let buffer = terminal.backend().buffer();
+        let mut cells = Vec::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = &buffer[(x, y)];
+                if cell.fg == fg && cell.bg == bg {
+                    cells.push((x, y));
+                }
+            }
+        }
+        cells
+    }
+
+    fn pods_snapshot_for_render_tests() -> ClusterSnapshot {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Ready;
+        snapshot.pods.push(PodInfo {
+            name: "alpha-pod".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "beta-pod".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        snapshot
+    }
+
+    struct ThemeResetGuard(u8);
+
+    impl Drop for ThemeResetGuard {
+        fn drop(&mut self) {
+            crate::ui::theme::set_active_theme(self.0);
+        }
+    }
+
+    struct IconResetGuard(IconMode);
+
+    impl Drop for IconResetGuard {
+        fn drop(&mut self) {
+            crate::icons::set_icon_mode(self.0);
+        }
     }
 
     fn app_with_view(view: AppView) -> AppState {
@@ -2334,6 +2501,112 @@ mod tests {
         });
 
         draw_with_size(&app, &snapshot, 96, 20);
+    }
+
+    #[test]
+    fn render_invalidates_when_theme_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        crate::ui::theme::set_active_theme(0);
+
+        let app = app_with_view(AppView::Dashboard);
+        let snapshot = ClusterSnapshot::default();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = cell_colors(&terminal, 0, 0);
+
+        crate::ui::theme::set_active_theme(4);
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = cell_colors(&terminal, 0, 0);
+
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn render_invalidates_when_icon_mode_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::icons::set_icon_mode(IconMode::Nerd);
+
+        let app = app_with_view(AppView::Pods);
+        let snapshot = pods_snapshot_for_render_tests();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+
+        crate::icons::set_icon_mode(IconMode::Plain);
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert_ne!(before, after);
+        assert!(after.contains("KubecTUI"));
+    }
+
+    #[test]
+    fn render_invalidates_when_search_query_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Pods);
+        let snapshot = pods_snapshot_for_render_tests();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+        assert!(before.contains("Pods (2)"));
+        assert!(!before.contains("No pods match the search query"));
+
+        app.search_query = "nomatch".to_string();
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(after.contains("No pods match the search query"));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn render_invalidates_when_selection_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Pods);
+        let snapshot = pods_snapshot_for_render_tests();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let theme = default_theme();
+        let before = cells_with_colors(&terminal, theme.selection_fg, theme.selection_bg);
+        assert!(
+            !before.is_empty(),
+            "selected row should use the selection style"
+        );
+
+        app.selected_idx = 1;
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = cells_with_colors(&terminal, theme.selection_fg, theme.selection_bg);
+
+        assert!(!after.is_empty(), "selected row should remain highlighted");
+        assert_ne!(before, after);
     }
 
     #[test]
