@@ -4,7 +4,7 @@ use std::borrow::Cow;
 use std::sync::{LazyLock, Mutex};
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Cell, Gauge, LineGauge, Paragraph, Row, Table, Wrap},
@@ -746,7 +746,8 @@ fn render_overcommit_governance(
         .style(Style::default().bg(theme.bg));
 
     if res.total_running_pods == 0 && res.total_cpu_allocatable_m == 0 {
-        let msg = Paragraph::new(Span::styled("  No data available", theme.inactive_style()))
+        let msg = Paragraph::new(Span::styled("No data available", theme.inactive_style()))
+            .alignment(Alignment::Center)
             .block(block);
         frame.render_widget(msg, area);
         return;
@@ -855,11 +856,9 @@ fn render_consumer_panel(
         .style(Style::default().bg(theme.bg));
 
     if consumers.is_empty() {
-        let msg = Paragraph::new(Span::styled(
-            "  No metrics available",
-            theme.inactive_style(),
-        ))
-        .block(block);
+        let msg = Paragraph::new(Span::styled("No metrics available", theme.inactive_style()))
+            .alignment(Alignment::Center)
+            .block(block);
         frame.render_widget(msg, area);
         return;
     }
@@ -914,9 +913,10 @@ fn render_namespace_utilization(
             .all(|n| n.cpu_usage_m == 0 && n.mem_usage_mib == 0)
     {
         let msg = Paragraph::new(Span::styled(
-            "  No metrics available (metrics-server not detected)",
+            "No metrics available (metrics-server not detected)",
             theme.inactive_style(),
         ))
+        .alignment(Alignment::Center)
         .block(block);
         frame.render_widget(msg, area);
         return;

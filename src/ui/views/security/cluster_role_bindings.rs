@@ -300,7 +300,7 @@ fn render_subjects(
 ) -> Vec<Line<'static>> {
     if subjects.is_empty() {
         return vec![Line::from(Span::styled(
-            "  No subjects",
+            "No subjects",
             theme.inactive_style(),
         ))];
     }
