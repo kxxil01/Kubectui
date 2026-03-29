@@ -2046,14 +2046,17 @@ pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {
 }
 #[cfg(test)]
 mod tests {
+    use std::sync::{LazyLock, Mutex};
+
     use jiff::ToSpan;
 
     use super::resource_table_title;
-    use ratatui::{Terminal, backend::TestBackend};
+    use ratatui::{Terminal, backend::TestBackend, style::Color};
 
     use crate::{
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
         bookmarks::BookmarkEntry,
+        icons::IconMode,
         k8s::{
             dtos::{
                 ClusterRoleBindingInfo, ClusterRoleInfo, ConfigMapInfo, CronJobInfo,
@@ -2073,9 +2076,21 @@ mod tests {
 
     use super::*;
 
+    static RENDER_INVALIDATION_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
     fn draw(app: &AppState, snapshot: &ClusterSnapshot) {
         let backend = TestBackend::new(120, 40);
         let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        terminal
+            .draw(|frame| render(frame, app, snapshot))
+            .expect("render should not panic");
+    }
+
+    fn draw_in_terminal(
+        terminal: &mut Terminal<TestBackend>,
+        app: &AppState,
+        snapshot: &ClusterSnapshot,
+    ) {
         terminal
             .draw(|frame| render(frame, app, snapshot))
             .expect("render should not panic");
@@ -2089,12 +2104,7 @@ mod tests {
             .expect("render should not panic");
     }
 
-    fn render_to_string(app: &AppState, snapshot: &ClusterSnapshot) -> String {
-        let backend = TestBackend::new(120, 40);
-        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
-        terminal
-            .draw(|frame| render(frame, app, snapshot))
-            .expect("render should not panic");
+    fn terminal_to_string(terminal: &Terminal<TestBackend>) -> String {
         let buffer = terminal.backend().buffer();
         let mut out = String::new();
         for y in 0..buffer.area.height {
@@ -2104,6 +2114,70 @@ mod tests {
             out.push('\n');
         }
         out
+    }
+
+    fn render_to_string(app: &AppState, snapshot: &ClusterSnapshot) -> String {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        draw_in_terminal(&mut terminal, app, snapshot);
+        terminal_to_string(&terminal)
+    }
+
+    fn cell_colors(terminal: &Terminal<TestBackend>, x: u16, y: u16) -> (Color, Color) {
+        let cell = &terminal.backend().buffer()[(x, y)];
+        (cell.fg, cell.bg)
+    }
+
+    fn cells_with_colors(
+        terminal: &Terminal<TestBackend>,
+        fg: Color,
+        bg: Color,
+    ) -> Vec<(u16, u16)> {
+        let buffer = terminal.backend().buffer();
+        let mut cells = Vec::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                let cell = &buffer[(x, y)];
+                if cell.fg == fg && cell.bg == bg {
+                    cells.push((x, y));
+                }
+            }
+        }
+        cells
+    }
+
+    fn pods_snapshot_for_render_tests() -> ClusterSnapshot {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Ready;
+        snapshot.pods.push(PodInfo {
+            name: "alpha-pod".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "beta-pod".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        snapshot
+    }
+
+    struct ThemeResetGuard(u8);
+
+    impl Drop for ThemeResetGuard {
+        fn drop(&mut self) {
+            crate::ui::theme::set_active_theme(self.0);
+        }
+    }
+
+    struct IconResetGuard(IconMode);
+
+    impl Drop for IconResetGuard {
+        fn drop(&mut self) {
+            crate::icons::set_icon_mode(self.0);
+        }
     }
 
     fn app_with_view(view: AppView) -> AppState {
@@ -2427,6 +2501,112 @@ mod tests {
         });
 
         draw_with_size(&app, &snapshot, 96, 20);
+    }
+
+    #[test]
+    fn render_invalidates_when_theme_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        crate::ui::theme::set_active_theme(0);
+
+        let app = app_with_view(AppView::Dashboard);
+        let snapshot = ClusterSnapshot::default();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = cell_colors(&terminal, 0, 0);
+
+        crate::ui::theme::set_active_theme(4);
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = cell_colors(&terminal, 0, 0);
+
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn render_invalidates_when_icon_mode_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::icons::set_icon_mode(IconMode::Nerd);
+
+        let app = app_with_view(AppView::Pods);
+        let snapshot = pods_snapshot_for_render_tests();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+
+        crate::icons::set_icon_mode(IconMode::Plain);
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert_ne!(before, after);
+        assert!(after.contains("KubecTUI"));
+    }
+
+    #[test]
+    fn render_invalidates_when_search_query_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Pods);
+        let snapshot = pods_snapshot_for_render_tests();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+        assert!(before.contains("Pods (2)"));
+        assert!(!before.contains("No pods match the search query"));
+
+        app.search_query = "nomatch".to_string();
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(after.contains("No pods match the search query"));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn render_invalidates_when_selection_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Pods);
+        let snapshot = pods_snapshot_for_render_tests();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let theme = default_theme();
+        let before = cells_with_colors(&terminal, theme.selection_fg, theme.selection_bg);
+        assert!(
+            !before.is_empty(),
+            "selected row should use the selection style"
+        );
+
+        app.selected_idx = 1;
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = cells_with_colors(&terminal, theme.selection_fg, theme.selection_bg);
+
+        assert!(!after.is_empty(), "selected row should remain highlighted");
+        assert_ne!(before, after);
     }
 
     #[test]
