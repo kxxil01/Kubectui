@@ -1,5 +1,6 @@
 //! Reusable UI widgets and building blocks.
 use std::{
+    cell::RefCell,
     collections::{HashMap, HashSet, VecDeque},
     sync::{Arc, LazyLock, Mutex},
 };
@@ -66,6 +67,11 @@ type HeaderCacheValue = Arc<Line<'static>>;
 static HEADER_LINE_CACHE: LazyLock<Mutex<Option<(HeaderCacheKey, HeaderCacheValue)>>> =
     LazyLock::new(|| Mutex::new(None));
 
+thread_local! {
+    static HEADER_RENDERED: RefCell<Option<(Rect, HeaderCacheKey, usize)>> =
+        const { RefCell::new(None) };
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct StatusBarCacheKey {
     theme_index: u8,
@@ -76,6 +82,11 @@ struct StatusBarCacheKey {
 type StatusBarCacheValue = Arc<Line<'static>>;
 static STATUS_BAR_LINE_CACHE: LazyLock<Mutex<Option<(StatusBarCacheKey, StatusBarCacheValue)>>> =
     LazyLock::new(|| Mutex::new(None));
+
+thread_local! {
+    static STATUS_RENDERED: RefCell<Option<(Rect, StatusBarCacheKey, usize)>> =
+        const { RefCell::new(None) };
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct SidebarCacheKey {
@@ -89,6 +100,18 @@ struct SidebarCacheKey {
 }
 
 type SidebarCacheValue = Arc<Vec<Line<'static>>>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SidebarSkipKey {
+    area: Rect,
+    theme_index: u8,
+    icon_mode: u8,
+    active: AppView,
+    sidebar_cursor: usize,
+    collapsed_mask: u16,
+    sidebar_active: bool,
+    counts_hash: u64,
+}
 
 pub struct SidebarRenderData<'a> {
     pub collapsed: &'a HashSet<NavGroup>,
@@ -142,6 +165,11 @@ impl SidebarLineCache {
 
 static SIDEBAR_LINE_CACHE: LazyLock<Mutex<SidebarLineCache>> =
     LazyLock::new(|| Mutex::new(SidebarLineCache::default()));
+
+thread_local! {
+    static SIDEBAR_RENDERED: RefCell<Option<(SidebarSkipKey, usize)>> =
+        const { RefCell::new(None) };
+}
 
 /// Global theme singleton — reads from the active theme setting.
 pub fn default_theme() -> Theme {
@@ -375,16 +403,32 @@ pub fn render_header(
     cluster_meta: &str,
     health: ConnectionHealth,
 ) {
-    let theme = default_theme();
     let theme_index = crate::ui::theme::active_theme_index();
-    let text = cached_header_line(
-        theme_index,
-        crate::icons::active_icon_mode() as u8,
-        title,
-        cluster_meta,
-        health,
-        &theme,
-    );
+    let icon_mode = crate::icons::active_icon_mode() as u8;
+    let frame_count = frame.count();
+
+    let skip = HEADER_RENDERED.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some((cached_area, ref cached_key, ref mut prev_frame)) = *cache
+            && cached_area == area
+            && cached_key.theme_index == theme_index
+            && cached_key.icon_mode == icon_mode
+            && cached_key.title == title
+            && cached_key.cluster_meta == cluster_meta
+            && cached_key.health == health
+            && frame_count == *prev_frame + 1
+        {
+            *prev_frame = frame_count;
+            return true;
+        }
+        false
+    });
+    if skip {
+        return;
+    }
+
+    let theme = default_theme();
+    let text = cached_header_line(theme_index, icon_mode, title, cluster_meta, health, &theme);
 
     frame.render_widget(
         Paragraph::new((*text).clone())
@@ -398,6 +442,20 @@ pub fn render_header(
             .alignment(Alignment::Left),
         area,
     );
+
+    HEADER_RENDERED.with(|cell| {
+        *cell.borrow_mut() = Some((
+            area,
+            HeaderCacheKey {
+                theme_index,
+                icon_mode,
+                title: title.to_string(),
+                cluster_meta: cluster_meta.to_string(),
+                health,
+            },
+            frame_count,
+        ));
+    });
 }
 
 /// Renders the tab navigation bar for all primary app views.
@@ -446,9 +504,38 @@ pub fn render_sidebar(
     use crate::app::Focus;
     use ratatui::layout::Margin;
 
-    let theme = default_theme();
     let theme_index = crate::ui::theme::active_theme_index();
+    let icon_mode = crate::icons::active_icon_mode() as u8;
     let sidebar_active = data.focus == Focus::Sidebar;
+    let frame_count = frame.count();
+
+    let skip_key = SidebarSkipKey {
+        area,
+        theme_index,
+        icon_mode,
+        active,
+        sidebar_cursor,
+        collapsed_mask: collapsed_mask(data.collapsed),
+        sidebar_active,
+        counts_hash: data.counts_hash,
+    };
+
+    let skip = SIDEBAR_RENDERED.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some((ref cached_key, ref mut prev_frame)) = *cache
+            && *cached_key == skip_key
+            && frame_count == *prev_frame + 1
+        {
+            *prev_frame = frame_count;
+            return true;
+        }
+        false
+    });
+    if skip {
+        return;
+    }
+
+    let theme = default_theme();
 
     let border_style = if sidebar_active {
         theme.border_style()
@@ -476,12 +563,36 @@ pub fn render_sidebar(
         }
         buf.set_line(inner.x, inner.y + i as u16, line, inner.width);
     }
+
+    SIDEBAR_RENDERED.with(|cell| {
+        *cell.borrow_mut() = Some((skip_key, frame_count));
+    });
 }
 
 /// Renders the bottom status bar with context-aware styling.
 pub fn render_status_bar(frame: &mut Frame, area: Rect, message: &str, is_error: bool) {
-    let theme = default_theme();
     let theme_index = crate::ui::theme::active_theme_index();
+    let frame_count = frame.count();
+
+    let skip = STATUS_RENDERED.with(|cell| {
+        let mut cache = cell.borrow_mut();
+        if let Some((cached_area, ref cached_key, ref mut prev_frame)) = *cache
+            && cached_area == area
+            && cached_key.theme_index == theme_index
+            && cached_key.message == message
+            && cached_key.is_error == is_error
+            && frame_count == *prev_frame + 1
+        {
+            *prev_frame = frame_count;
+            return true;
+        }
+        false
+    });
+    if skip {
+        return;
+    }
+
+    let theme = default_theme();
     let text = cached_status_line(theme_index, message, is_error, &theme);
 
     let block = Block::default()
@@ -496,6 +607,18 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, message: &str, is_error:
 
     let widget = Paragraph::new((*text).clone()).block(block);
     frame.render_widget(widget, area);
+
+    STATUS_RENDERED.with(|cell| {
+        *cell.borrow_mut() = Some((
+            area,
+            StatusBarCacheKey {
+                theme_index,
+                message: message.to_string(),
+                is_error,
+            },
+            frame_count,
+        ));
+    });
 }
 
 /// Returns a styled bordered block with rounded corners using the default theme.
