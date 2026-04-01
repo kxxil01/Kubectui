@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, LazyLock, Mutex},
+};
 
 use crate::{
     app::{AppView, ResourceRef},
@@ -14,7 +17,43 @@ pub struct GlobalResourceSearchEntry {
     pub aliases: Vec<String>,
 }
 
+type GlobalSearchCacheKey = (u64, usize);
+type GlobalSearchCacheValue = Arc<Vec<GlobalResourceSearchEntry>>;
+
+#[allow(clippy::type_complexity)]
+static GLOBAL_SEARCH_CACHE: LazyLock<
+    Mutex<Option<(GlobalSearchCacheKey, GlobalSearchCacheValue)>>,
+> = LazyLock::new(|| Mutex::new(None));
+
 pub fn collect_global_resource_search_entries(
+    snapshot: &ClusterSnapshot,
+) -> GlobalSearchCacheValue {
+    let key = (
+        snapshot.snapshot_version,
+        std::ptr::from_ref(snapshot) as usize,
+    );
+    {
+        let guard = GLOBAL_SEARCH_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some((cached_key, entries)) = guard.as_ref()
+            && *cached_key == key
+        {
+            return Arc::clone(entries);
+        }
+    }
+
+    let entries = Arc::new(build_global_resource_search_entries(snapshot));
+    {
+        let mut guard = GLOBAL_SEARCH_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        *guard = Some((key, Arc::clone(&entries)));
+    }
+    entries
+}
+
+fn build_global_resource_search_entries(
     snapshot: &ClusterSnapshot,
 ) -> Vec<GlobalResourceSearchEntry> {
     let mut entries = Vec::with_capacity(
@@ -454,12 +493,10 @@ fn push_flux_entry(
     let kind = resource.kind().to_string();
     let name = resource.name().to_string();
     let namespace = resource.namespace().map(str::to_string);
-    let mut aliases = vec![kind.to_ascii_lowercase(), name.to_ascii_lowercase()];
+    let mut aliases = base_aliases(&resource, view);
     if let Some(namespace) = namespace.as_deref() {
-        aliases.push(namespace.to_ascii_lowercase());
-        aliases.push(format!("{namespace}/{name}").to_ascii_lowercase());
+        aliases.push(format!("{kind} {namespace}/{name}").to_ascii_lowercase());
     }
-    aliases.push(view.label().to_ascii_lowercase());
     let subtitle = match namespace {
         Some(namespace) => format!("{kind} · {namespace}"),
         None => kind.to_string(),
@@ -575,14 +612,15 @@ mod tests {
     use super::collect_global_resource_search_entries;
     use crate::{
         app::ResourceRef,
-        k8s::dtos::{DeploymentInfo, NamespaceInfo, PodInfo},
+        k8s::dtos::{DeploymentInfo, FluxResourceInfo, NamespaceInfo, PodInfo},
         state::ClusterSnapshot,
     };
-    use std::collections::BTreeMap;
+    use std::{collections::BTreeMap, sync::Arc};
 
     #[test]
     fn global_search_indexes_namespaced_resources_and_labels() {
         let mut snapshot = ClusterSnapshot::default();
+        snapshot.snapshot_version = 1;
         snapshot.pods.push(PodInfo {
             name: "api-0".into(),
             namespace: "prod".into(),
@@ -608,6 +646,7 @@ mod tests {
     #[test]
     fn global_search_indexes_cluster_scoped_resources() {
         let mut snapshot = ClusterSnapshot::default();
+        snapshot.snapshot_version = 2;
         snapshot.namespace_list.push(NamespaceInfo {
             name: "platform".into(),
             labels: BTreeMap::from([("team".into(), "platform".into())]),
@@ -630,5 +669,68 @@ mod tests {
             entry.resource == ResourceRef::Deployment("api".into(), "platform".into())
                 && entry.aliases.iter().any(|alias| alias == "app=api")
         }));
+    }
+
+    #[test]
+    fn global_search_flux_entries_include_kind_name_aliases() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.snapshot_version = 3;
+        snapshot.flux_resources.push(FluxResourceInfo {
+            name: "backend".into(),
+            namespace: Some("flux-system".into()),
+            kind: "HelmRelease".into(),
+            group: "helm.toolkit.fluxcd.io".into(),
+            version: "v2".into(),
+            plural: "helmreleases".into(),
+            ..FluxResourceInfo::default()
+        });
+
+        let entries = collect_global_resource_search_entries(&snapshot);
+        let entry = entries
+            .iter()
+            .find(|entry| {
+                entry.resource
+                    == ResourceRef::CustomResource {
+                        name: "backend".into(),
+                        namespace: Some("flux-system".into()),
+                        group: "helm.toolkit.fluxcd.io".into(),
+                        version: "v2".into(),
+                        kind: "HelmRelease".into(),
+                        plural: "helmreleases".into(),
+                    }
+            })
+            .expect("flux entry");
+
+        assert!(
+            entry
+                .aliases
+                .iter()
+                .any(|alias| alias == "helmrelease backend")
+        );
+        assert!(
+            entry
+                .aliases
+                .iter()
+                .any(|alias| alias == "helmrelease flux-system/backend")
+        );
+    }
+
+    #[test]
+    fn global_search_cache_reuses_entries_for_same_snapshot_version() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.snapshot_version = 9;
+        snapshot.pods.push(PodInfo {
+            name: "api-0".into(),
+            namespace: "prod".into(),
+            ..PodInfo::default()
+        });
+
+        let first = collect_global_resource_search_entries(&snapshot);
+        let second = collect_global_resource_search_entries(&snapshot);
+        assert!(Arc::ptr_eq(&first, &second));
+
+        snapshot.snapshot_version = 10;
+        let third = collect_global_resource_search_entries(&snapshot);
+        assert!(!Arc::ptr_eq(&first, &third));
     }
 }

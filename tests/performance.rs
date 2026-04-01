@@ -15,6 +15,7 @@ use async_trait::async_trait;
 use common::{make_node, make_pod, make_service};
 use kubectui::{
     app::{AppState, AppView},
+    global_search::collect_global_resource_search_entries,
     k8s::dtos::{
         ClusterRoleBindingInfo, ClusterRoleInfo, CronJobInfo, DaemonSetInfo, DeploymentInfo,
         JobInfo, LimitRangeInfo, LimitSpec, NodeInfo, PodDisruptionBudgetInfo, PodInfo,
@@ -170,6 +171,45 @@ fn benchmark_search_keystroke_under_5ms() {
     let elapsed = start.elapsed();
 
     assert!(elapsed.as_millis() < 5, "{}ms", elapsed.as_millis());
+}
+
+/// Verifies cached global search index lookups stay cheap on repeated palette opens.
+#[test]
+#[ignore = "Optional performance run"]
+fn benchmark_global_search_index_cache_hit_under_10ms() {
+    let mut snapshot = ClusterSnapshot {
+        snapshot_version: 1,
+        ..ClusterSnapshot::default()
+    };
+    for i in 0..2_000 {
+        snapshot.pods.push(make_pod(
+            &format!("pod-{i}"),
+            if i % 2 == 0 { "prod" } else { "dev" },
+            "Running",
+        ));
+        snapshot.services.push(make_service(
+            &format!("svc-{i}"),
+            if i % 2 == 0 { "prod" } else { "dev" },
+            "ClusterIP",
+        ));
+        snapshot.deployments.push(DeploymentInfo {
+            name: format!("deploy-{i}"),
+            namespace: if i % 2 == 0 { "prod" } else { "dev" }.to_string(),
+            ..DeploymentInfo::default()
+        });
+    }
+
+    let warmed = collect_global_resource_search_entries(&snapshot);
+    assert!(!warmed.is_empty());
+
+    let start = Instant::now();
+    for _ in 0..1_000 {
+        let entries = collect_global_resource_search_entries(&snapshot);
+        assert_eq!(entries.len(), warmed.len());
+    }
+    let elapsed = start.elapsed();
+
+    assert!(elapsed.as_millis() < 10, "{}ms", elapsed.as_millis());
 }
 
 #[derive(Clone, Default)]

@@ -279,25 +279,6 @@ pub fn collect_activity_entries(app: &AppState) -> Vec<PaletteActivityEntry> {
     let mut seen_resource_targets = HashSet::new();
     let mut seen_views = HashSet::new();
 
-    for tab in &app.workbench().tabs {
-        let key = tab.state.key();
-        if !seen_workbench_tabs.insert(key.clone()) {
-            continue;
-        }
-        let title = tab.state.title();
-        entries.push(PaletteActivityEntry {
-            title: title.clone(),
-            subtitle: "Open workbench tab".to_string(),
-            aliases: vec![
-                title.to_ascii_lowercase(),
-                "workbench".to_string(),
-                tab.state.kind().title().to_ascii_lowercase(),
-            ],
-            badge_label: "Tab".to_string(),
-            target: PaletteActivityTarget::WorkbenchTab(key),
-        });
-    }
-
     for entry in app.action_history().entries() {
         let Some(target) = entry.target.as_ref() else {
             continue;
@@ -366,6 +347,25 @@ pub fn collect_activity_entries(app: &AppState) -> Vec<PaletteActivityEntry> {
                 });
             }
         }
+    }
+
+    for tab in &app.workbench().tabs {
+        let key = tab.state.key();
+        if !seen_workbench_tabs.insert(key.clone()) {
+            continue;
+        }
+        let title = tab.state.title();
+        entries.push(PaletteActivityEntry {
+            title: title.clone(),
+            subtitle: "Open workbench tab".to_string(),
+            aliases: vec![
+                title.to_ascii_lowercase(),
+                "workbench".to_string(),
+                tab.state.kind().title().to_ascii_lowercase(),
+            ],
+            badge_label: "Tab".to_string(),
+            target: PaletteActivityTarget::WorkbenchTab(key),
+        });
     }
 
     entries
@@ -2111,6 +2111,35 @@ mod tests {
                 &entry.target,
                 PaletteActivityTarget::WorkbenchTab(candidate) if candidate == &key
             ) && entry.badge_label == "Tab"
+        }));
+    }
+
+    #[test]
+    fn empty_query_activity_prioritizes_history_before_open_tabs() {
+        let mut app = AppState::default();
+        for idx in 0..(MAX_ACTIVITY_RESULTS + 4) {
+            let resource = ResourceRef::Pod(format!("pod-{idx}"), "prod".into());
+            app.workbench_mut()
+                .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(resource)));
+        }
+        app.record_action_pending(
+            ActionKind::Restart,
+            AppView::Deployments,
+            Some(ResourceRef::Deployment("api".into(), "prod".into())),
+            "Deployment api",
+            "Restart requested",
+        );
+
+        let mut palette = CommandPalette::default();
+        palette.set_activity_entries(collect_activity_entries(&app));
+
+        let filtered = palette.filtered();
+        assert!(filtered.iter().take(MAX_ACTIVITY_RESULTS).any(|entry| {
+            matches!(
+                entry,
+                PaletteEntry::Activity(PaletteActivityEntry { subtitle, badge_label, .. })
+                    if subtitle == "Restart requested" && badge_label == "Pending"
+            )
         }));
     }
 }

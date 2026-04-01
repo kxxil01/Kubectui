@@ -567,7 +567,8 @@ fn refresh_palette_resources(
     snapshot: &kubectui::state::ClusterSnapshot,
 ) {
     let entries = kubectui::global_search::collect_global_resource_search_entries(snapshot)
-        .into_iter()
+        .iter()
+        .cloned()
         .map(
             |entry| kubectui::ui::components::command_palette::PaletteResourceEntry {
                 resource: entry.resource,
