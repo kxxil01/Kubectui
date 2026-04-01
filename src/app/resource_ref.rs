@@ -234,10 +234,22 @@ impl ResourceRef {
             {
                 Some(AppView::ReferenceGrants)
             }
-            ResourceRef::CustomResource { group, .. } if group.ends_with(".fluxcd.io") => {
-                Some(AppView::FluxCDAll)
-            }
-            ResourceRef::CustomResource { .. } => None,
+            ResourceRef::CustomResource { group, kind, .. } => flux_primary_view(group, kind),
         }
+    }
+}
+
+fn flux_primary_view(group: &str, kind: &str) -> Option<AppView> {
+    match (group, kind) {
+        ("notification.toolkit.fluxcd.io", "AlertProvider") => Some(AppView::FluxCDAlertProviders),
+        ("notification.toolkit.fluxcd.io", "Alert") => Some(AppView::FluxCDAlerts),
+        ("notification.toolkit.fluxcd.io", "Receiver") => Some(AppView::FluxCDReceivers),
+        ("helm.toolkit.fluxcd.io", "HelmRelease") => Some(AppView::FluxCDHelmReleases),
+        ("source.toolkit.fluxcd.io", "HelmRepository") => Some(AppView::FluxCDHelmRepositories),
+        ("kustomize.toolkit.fluxcd.io", "Kustomization") => Some(AppView::FluxCDKustomizations),
+        ("source.toolkit.fluxcd.io", _) => Some(AppView::FluxCDSources),
+        ("image.toolkit.fluxcd.io", _) => Some(AppView::FluxCDImages),
+        (group, _) if group.ends_with(".fluxcd.io") => Some(AppView::FluxCDAll),
+        _ => None,
     }
 }

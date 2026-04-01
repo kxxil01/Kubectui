@@ -282,6 +282,12 @@ pub fn collect_activity_entries(app: &AppState) -> Vec<PaletteActivityEntry> {
                 entry.message.to_ascii_lowercase(),
                 target.resource.kind().to_ascii_lowercase(),
                 target.resource.name().to_ascii_lowercase(),
+                target
+                    .resource
+                    .namespace()
+                    .unwrap_or_default()
+                    .to_ascii_lowercase(),
+                target.resource.summary_label().to_ascii_lowercase(),
             ],
             badge_label: entry.status.label().to_string(),
             target: PaletteActivityTarget::Resource(target.resource.clone()),
@@ -2006,6 +2012,28 @@ mod tests {
         assert_eq!(matching.len(), 1);
         assert_eq!(matching[0].badge_label, "Pending");
         assert_eq!(matching[0].subtitle, "Restart requested");
+    }
+
+    #[test]
+    fn collect_activity_entries_action_history_aliases_include_namespace() {
+        let mut app = AppState::default();
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        app.record_action_pending(
+            ActionKind::Restart,
+            AppView::Pods,
+            Some(resource),
+            "Pod api-0",
+            "Restart requested",
+        );
+
+        let entries = collect_activity_entries(&app);
+        let entry = entries
+            .iter()
+            .find(|entry| matches!(entry.target, PaletteActivityTarget::Resource(_)))
+            .expect("resource activity entry");
+
+        assert!(entry.aliases.iter().any(|alias| alias == "prod"));
+        assert!(entry.aliases.iter().any(|alias| alias == "pod/prod/api-0"));
     }
 
     #[test]

@@ -547,10 +547,9 @@ pub fn prepare_resource_target(
         ));
     };
 
-    app.view = view;
+    app.navigate_to_view(view);
     app.focus = kubectui::app::Focus::Content;
-    app.selected_idx = 0;
-    app.apply_sort_from_preferences(kubectui::columns::view_key(view));
+    app.extension_in_instances = false;
     if let Some(selected_idx) = bookmark_selected_index(
         view,
         snapshot,

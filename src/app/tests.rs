@@ -1105,6 +1105,42 @@ fn resource_ref_helpers_work_for_each_variant() {
     assert_eq!(cr_cluster.kind(), "ClusterWidget");
     assert_eq!(cr_cluster.name(), "global");
     assert_eq!(cr_cluster.namespace(), None);
+
+    let flux_helm_release = ResourceRef::CustomResource {
+        name: "backend".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "helm.toolkit.fluxcd.io".to_string(),
+        version: "v2".to_string(),
+        kind: "HelmRelease".to_string(),
+        plural: "helmreleases".to_string(),
+    };
+    assert_eq!(
+        flux_helm_release.primary_view(),
+        Some(AppView::FluxCDHelmReleases)
+    );
+
+    let flux_kustomization = ResourceRef::CustomResource {
+        name: "apps".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "kustomize.toolkit.fluxcd.io".to_string(),
+        version: "v1".to_string(),
+        kind: "Kustomization".to_string(),
+        plural: "kustomizations".to_string(),
+    };
+    assert_eq!(
+        flux_kustomization.primary_view(),
+        Some(AppView::FluxCDKustomizations)
+    );
+
+    let flux_helm_chart = ResourceRef::CustomResource {
+        name: "podinfo".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "source.toolkit.fluxcd.io".to_string(),
+        version: "v1".to_string(),
+        kind: "HelmChart".to_string(),
+        plural: "helmcharts".to_string(),
+    };
+    assert_eq!(flux_helm_chart.primary_view(), Some(AppView::FluxCDSources));
 }
 
 #[test]

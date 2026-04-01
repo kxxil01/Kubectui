@@ -126,7 +126,6 @@ KubecTUI already has:
 The remaining highest-leverage gaps are:
 
 - multi-cluster operator flow is still second-class
-- resource/activity finding is still too view-local
 - RBAC troubleshooting lacks a first-class access review surface
 - the extension substrate is not yet packaged and inspectable as a product feature
 - synthetic endpoint validation and local sandbox control are still script- or operator-driven outside the app
@@ -261,7 +260,7 @@ The next set should optimize for operator workflow leverage first, then cross-cl
 
 ### Recommended Remaining Order
 
-- M39 -> M40 -> M41 -> M42 -> M43 -> M38
+- M40 -> M41 -> M42 -> M43 -> M38
 
 ### Research Basis
 
