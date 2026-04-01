@@ -49,18 +49,32 @@ This file governs `/Users/ilham/Developer/Kubectui` and all subdirectories.
   Filter indices cached via `cached_filter_indices_with_variant` with MRU fast path.
 - **Filtering**: `contains_ci` uses SIMD-friendly `eq_ignore_ascii_case` — benchmarked at
   12µs for 2000 pods (0.09% of 16ms frame budget). First-byte rejection tested slower.
+- **Shared ordinary-table render path**: `render_resource_table()` now owns the common
+  empty-state, windowing, title, table-frame, and striped-row path for the high-overlap
+  workload/resource tables instead of each view reassembling that flow independently.
+- **Structural split pass**: `src/app/mod.rs` now carries app types plus module wiring while
+  behavior lives in focused submodules (`core`, `navigation`, `preferences`, `workbench`), and
+  startup/bootstrap helper code no longer lives inline in `src/main.rs`.
+- **Frame-skip render caching**: the canonical render path now skips unchanged header, sidebar,
+  status, and main-content regions when their render inputs are stable, with same-terminal
+  regression coverage for theme, icon, search, and selection invalidation.
 
-### Refactoring Completed (2026-03-18)
+### Refactoring Completed (through 2026-03-29)
 - PR #39: Unified 11 derived-cell caches, 30 fetch methods → 2 macros, metadata helper (-659 lines)
 - PR #40: Column registry const fn helpers (-845 lines)
 - PR #41: Unified view_key/columns_for_view into single view_info() (-18 lines)
-- Total: -1,522 lines removed, zero behavior changes
+- 2026-03-19: structural split of app state/tests/startup helpers into focused modules
+- 2026-03-29: perf-gate parsing hardened so `header`/`status` can fall back to folded spans when they drop out of the summary
+- Core refactor track shipped without changing the canonical runtime path
 
 ### Remaining Opportunities
-1. **Generic view render template** (~500-800 lines): 15+ workload views share ~80% render
-   boilerplate (table window, scrollbar, header, row styling). Shared `render_resource_table()`.
-2. **Split app/mod.rs** (3877 lines): Group 101 AppAction variants into sub-enums, extract key routing.
-3. **Split main.rs** (4667 lines): Extract async task spawning, event routing, workbench lifecycle.
+1. **Split `main.rs` event-loop surface** (`src/main.rs` is ~5917 lines): extract async task
+   orchestration, event routing, and workbench lifecycle out of the root binary entrypoint.
+2. **Decompose `AppAction` and input routing**: `src/app/mod.rs` is small now, but the canonical
+   action enum and keyboard routing surface are still broad; group them without forking behavior.
+3. **Extend shared render helpers to the remaining specialized views**: Pods and split-pane
+   overview/diagnostic surfaces still keep custom hot paths; consolidate repeated framing only
+   where it preserves one canonical implementation.
 
 ## Performance Validation Protocol (Required)
 Use median-based checks (not single-run decisions).
@@ -96,4 +110,3 @@ Run all of the following:
 - Keep commits scoped to one measurable objective.
 - Ask before any destructive git action.
 - Ask before force-push (never default to force).
-
