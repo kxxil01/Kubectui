@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use super::views::AppView;
 
 /// Logical pointer to a resource selected in the current view.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ResourceRef {
     Node(String),
     Pod(String, String),

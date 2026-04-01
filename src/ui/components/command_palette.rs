@@ -8,23 +8,28 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
 };
-use std::cell::RefCell;
+use std::{cell::RefCell, collections::HashSet};
 
-use crate::app::{AppView, ResourceRef};
+use crate::app::{AppState, AppView, RecentJumpTarget, ResourceRef};
 use crate::extensions::LoadedExtensionAction;
 use crate::policy::{DetailAction, ResourceActionContext};
 use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::LoadedRunbook;
+use crate::workbench::WorkbenchTabKey;
 use crate::workspaces::display_hotkey;
 
 const TEMPLATE_INTENT_ALIASES: &[&str] =
     &["create", "new", "template", "scaffold", "apply", "manifest"];
+const MAX_ACTIVITY_RESULTS: usize = 16;
+const MAX_RESOURCE_RESULTS: usize = 40;
 
 /// Actions emitted by the command palette.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CommandPaletteAction {
     None,
     Navigate(AppView),
+    JumpToResource(ResourceRef),
+    ActivateWorkbenchTab(WorkbenchTabKey),
     Execute(DetailAction, ResourceRef),
     ExecuteExtension(String, ResourceRef),
     OpenRunbook(String, Option<ResourceRef>),
@@ -38,6 +43,8 @@ pub enum CommandPaletteAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteEntry {
+    Activity(PaletteActivityEntry),
+    Resource(PaletteResourceEntry),
     Navigate(AppView),
     Action(DetailAction),
     ExtensionAction(PaletteExtensionAction),
@@ -54,6 +61,31 @@ pub enum PaletteEntry {
         label: String,
         visible: bool,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PaletteActivityTarget {
+    Navigate(AppView),
+    Resource(ResourceRef),
+    WorkbenchTab(WorkbenchTabKey),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteActivityEntry {
+    pub title: String,
+    pub subtitle: String,
+    pub aliases: Vec<String>,
+    pub badge_label: String,
+    pub target: PaletteActivityTarget,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteResourceEntry {
+    pub resource: ResourceRef,
+    pub title: String,
+    pub subtitle: String,
+    pub aliases: Vec<String>,
+    pub badge_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -207,6 +239,98 @@ pub fn action_entries_for_resource(resource: Option<&ResourceActionContext>) -> 
             aliases,
         })
         .collect()
+}
+
+pub fn collect_activity_entries(app: &AppState) -> Vec<PaletteActivityEntry> {
+    let mut entries = Vec::new();
+    let mut seen_workbench_tabs = HashSet::new();
+    let mut seen_resource_targets = HashSet::new();
+    let mut seen_views = HashSet::new();
+
+    for tab in &app.workbench().tabs {
+        let key = tab.state.key();
+        if !seen_workbench_tabs.insert(key.clone()) {
+            continue;
+        }
+        let title = tab.state.title();
+        entries.push(PaletteActivityEntry {
+            title: title.clone(),
+            subtitle: "Open workbench tab".to_string(),
+            aliases: vec![
+                title.to_ascii_lowercase(),
+                "workbench".to_string(),
+                tab.state.kind().title().to_ascii_lowercase(),
+            ],
+            badge_label: "Tab".to_string(),
+            target: PaletteActivityTarget::WorkbenchTab(key),
+        });
+    }
+
+    for entry in app.action_history().entries() {
+        let Some(target) = entry.target.as_ref() else {
+            continue;
+        };
+        if !seen_resource_targets.insert(target.resource.clone()) {
+            continue;
+        }
+        let title = format!("{} {}", entry.kind.label(), entry.resource_label);
+        entries.push(PaletteActivityEntry {
+            title: title.clone(),
+            subtitle: entry.message.clone(),
+            aliases: vec![
+                title.to_ascii_lowercase(),
+                entry.message.to_ascii_lowercase(),
+                target.resource.kind().to_ascii_lowercase(),
+                target.resource.name().to_ascii_lowercase(),
+            ],
+            badge_label: entry.status.label().to_string(),
+            target: PaletteActivityTarget::Resource(target.resource.clone()),
+        });
+    }
+
+    for jump in app.recent_jumps() {
+        match &jump.target {
+            RecentJumpTarget::Resource(resource) => {
+                if !seen_resource_targets.insert(resource.clone()) {
+                    continue;
+                }
+                let title = resource.summary_label();
+                entries.push(PaletteActivityEntry {
+                    title: title.clone(),
+                    subtitle: "Recent resource jump".to_string(),
+                    aliases: vec![
+                        title.to_ascii_lowercase(),
+                        resource.kind().to_ascii_lowercase(),
+                        resource.name().to_ascii_lowercase(),
+                        resource
+                            .namespace()
+                            .unwrap_or_default()
+                            .to_ascii_lowercase(),
+                    ],
+                    badge_label: "Recent".to_string(),
+                    target: PaletteActivityTarget::Resource(resource.clone()),
+                });
+            }
+            RecentJumpTarget::View(view) => {
+                if !seen_views.insert(*view) {
+                    continue;
+                }
+                entries.push(PaletteActivityEntry {
+                    title: view.label().to_string(),
+                    subtitle: "Recent view jump".to_string(),
+                    aliases: vec![
+                        view.label().to_ascii_lowercase(),
+                        view.group().label().to_ascii_lowercase(),
+                        "recent".to_string(),
+                    ],
+                    badge_label: "Recent".to_string(),
+                    target: PaletteActivityTarget::Navigate(*view),
+                });
+            }
+        }
+    }
+
+    entries
 }
 
 /// All navigable commands — each maps a set of aliases to a target view.
@@ -426,6 +550,31 @@ fn fuzzy_match(haystack: &str, needle: &str) -> bool {
     true
 }
 
+fn ranked_alias_score(aliases: &[String], query: &str) -> Option<(u8, usize, String)> {
+    let query = query.trim().to_ascii_lowercase();
+    if query.is_empty() {
+        return Some((u8::MAX, 0, String::new()));
+    }
+
+    aliases
+        .iter()
+        .filter_map(|alias| {
+            let alias_lower = alias.to_ascii_lowercase();
+            if alias_lower == query {
+                Some((0, alias_lower.len(), alias_lower))
+            } else if alias_lower.starts_with(&query) {
+                Some((1, alias_lower.len(), alias_lower))
+            } else if let Some(position) = alias_lower.find(&query) {
+                Some((2, position, alias_lower))
+            } else if fuzzy_match(&alias_lower, &query) {
+                Some((3, alias_lower.len(), alias_lower))
+            } else {
+                None
+            }
+        })
+        .min()
+}
+
 /// Modal command palette for jumping directly to any view.
 #[derive(Debug, Clone, Default)]
 pub struct CommandPalette {
@@ -433,6 +582,8 @@ pub struct CommandPalette {
     selected_index: usize,
     is_open: bool,
     cached_filtered: RefCell<Option<Vec<PaletteEntry>>>,
+    activity_entries: Vec<PaletteActivityEntry>,
+    resource_entries: Vec<PaletteResourceEntry>,
     resource_context: Option<ResourceActionContext>,
     /// Column toggle info for current view: (id, label, currently_visible).
     columns_info: Option<Vec<(String, String, bool)>>,
@@ -459,8 +610,20 @@ impl CommandPalette {
         self.is_open = false;
         self.resource_context = None;
         self.columns_info = None;
+        self.activity_entries.clear();
+        self.resource_entries.clear();
         self.extension_actions.clear();
         self.runbooks.clear();
+    }
+
+    pub fn set_activity_entries(&mut self, entries: Vec<PaletteActivityEntry>) {
+        self.activity_entries = entries;
+        self.cached_filtered.borrow_mut().take();
+    }
+
+    pub fn set_resource_entries(&mut self, entries: Vec<PaletteResourceEntry>) {
+        self.resource_entries = entries;
+        self.cached_filtered.borrow_mut().take();
     }
 
     pub fn set_columns_info(&mut self, info: Option<Vec<(String, String, bool)>>) {
@@ -536,6 +699,20 @@ impl CommandPalette {
                 let entries = self.filtered();
                 if let Some(entry) = entries.get(self.selected_index) {
                     match entry {
+                        PaletteEntry::Activity(entry) => match &entry.target {
+                            PaletteActivityTarget::Navigate(view) => {
+                                CommandPaletteAction::Navigate(*view)
+                            }
+                            PaletteActivityTarget::Resource(resource) => {
+                                CommandPaletteAction::JumpToResource(resource.clone())
+                            }
+                            PaletteActivityTarget::WorkbenchTab(key) => {
+                                CommandPaletteAction::ActivateWorkbenchTab(key.clone())
+                            }
+                        },
+                        PaletteEntry::Resource(entry) => {
+                            CommandPaletteAction::JumpToResource(entry.resource.clone())
+                        }
                         PaletteEntry::Navigate(view) => CommandPaletteAction::Navigate(*view),
                         PaletteEntry::Action(action) => {
                             if let Some(resource) = &self.resource_context {
@@ -618,6 +795,54 @@ impl CommandPalette {
         }
 
         let mut result = Vec::new();
+        let q_lower = self.query.to_ascii_lowercase();
+
+        let mut matched_activities: Vec<_> = self
+            .activity_entries
+            .iter()
+            .filter_map(|entry| {
+                let score = if q_lower.is_empty() {
+                    Some((u8::MAX, 0, entry.title.to_ascii_lowercase()))
+                } else {
+                    ranked_alias_score(&entry.aliases, &q_lower)
+                }?;
+                Some((score, entry.clone()))
+            })
+            .collect();
+        matched_activities.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.title.cmp(&right.1.title))
+                .then_with(|| left.1.subtitle.cmp(&right.1.subtitle))
+        });
+        result.extend(
+            matched_activities
+                .into_iter()
+                .take(MAX_ACTIVITY_RESULTS)
+                .map(|(_, entry)| PaletteEntry::Activity(entry)),
+        );
+
+        if !q_lower.is_empty() {
+            let mut matched_resources: Vec<_> = self
+                .resource_entries
+                .iter()
+                .filter_map(|entry| {
+                    ranked_alias_score(&entry.aliases, &q_lower).map(|score| (score, entry.clone()))
+                })
+                .collect();
+            matched_resources.sort_by(|left, right| {
+                left.0
+                    .cmp(&right.0)
+                    .then_with(|| left.1.title.cmp(&right.1.title))
+                    .then_with(|| left.1.subtitle.cmp(&right.1.subtitle))
+            });
+            result.extend(
+                matched_resources
+                    .into_iter()
+                    .take(MAX_RESOURCE_RESULTS)
+                    .map(|(_, entry)| PaletteEntry::Resource(entry)),
+            );
+        }
 
         // Actions section (only if resource context exists)
         if let Some(resource) = &self.resource_context {
@@ -666,8 +891,6 @@ impl CommandPalette {
                 }
             }
         }
-
-        let q_lower = self.query.to_ascii_lowercase();
 
         if self.query.is_empty()
             || fuzzy_match("workspace", &q_lower)
@@ -804,7 +1027,7 @@ impl CommandPalette {
         let search_content = if self.query.is_empty() {
             Line::from(vec![
                 Span::styled("  ", theme.inactive_style()),
-                Span::styled("scale, logs, pods, deploy…", theme.inactive_style()),
+                Span::styled("pods, api, history, rollout…", theme.inactive_style()),
             ])
         } else {
             Line::from(vec![
@@ -836,6 +1059,8 @@ impl CommandPalette {
                 theme.inactive_style(),
             ))));
         } else {
+            let mut seen_activity = false;
+            let mut seen_resource = false;
             let mut seen_action = false;
             let mut seen_extension = false;
             let mut seen_runbook = false;
@@ -847,6 +1072,20 @@ impl CommandPalette {
 
             for (selectable_idx, entry) in matches.iter().enumerate() {
                 match entry {
+                    PaletteEntry::Activity(_) if !seen_activity => {
+                        seen_activity = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Recent Activity ──",
+                            theme.muted_style(),
+                        ))));
+                    }
+                    PaletteEntry::Resource(_) if !seen_resource => {
+                        seen_resource = true;
+                        items.push(ListItem::new(Line::from(Span::styled(
+                            " ── Resources ──",
+                            theme.muted_style(),
+                        ))));
+                    }
                     PaletteEntry::Action(_) if !seen_action => {
                         seen_action = true;
                         items.push(ListItem::new(Line::from(Span::styled(
@@ -933,13 +1172,27 @@ impl CommandPalette {
                     continue;
                 }
 
-                let (name, right_label) = match entry {
-                    PaletteEntry::Navigate(view) => {
-                        (view.label().to_string(), view.group().label().to_string())
-                    }
-                    PaletteEntry::Action(action) => {
-                        (action.label().to_string(), action.key_hint().to_string())
-                    }
+                let (name, right_label, subtitle) = match entry {
+                    PaletteEntry::Activity(entry) => (
+                        entry.title.clone(),
+                        entry.badge_label.clone(),
+                        Some(entry.subtitle.clone()),
+                    ),
+                    PaletteEntry::Resource(entry) => (
+                        entry.title.clone(),
+                        entry.badge_label.clone(),
+                        Some(entry.subtitle.clone()),
+                    ),
+                    PaletteEntry::Navigate(view) => (
+                        view.label().to_string(),
+                        view.group().label().to_string(),
+                        None,
+                    ),
+                    PaletteEntry::Action(action) => (
+                        action.label().to_string(),
+                        action.key_hint().to_string(),
+                        None,
+                    ),
                     PaletteEntry::ExtensionAction(action) => (
                         action.title.clone(),
                         action
@@ -947,6 +1200,7 @@ impl CommandPalette {
                             .as_deref()
                             .map(display_hotkey)
                             .unwrap_or_else(|| action.badge_label.clone()),
+                        None,
                     ),
                     PaletteEntry::Runbook(runbook) => (
                         runbook.title.clone(),
@@ -955,20 +1209,26 @@ impl CommandPalette {
                             .as_deref()
                             .map(display_hotkey)
                             .unwrap_or_else(|| "Runbook".to_string()),
+                        None,
                     ),
-                    PaletteEntry::SaveWorkspace => {
-                        ("Save current workspace".to_string(), "[W]".to_string())
-                    }
-                    PaletteEntry::Template(kind) => {
-                        (format!("Create {}", kind.label()), "Template".to_string())
-                    }
-                    PaletteEntry::Workspace(name) => (name.clone(), "Workspace".to_string()),
+                    PaletteEntry::SaveWorkspace => (
+                        "Save current workspace".to_string(),
+                        "[W]".to_string(),
+                        None,
+                    ),
+                    PaletteEntry::Template(kind) => (
+                        format!("Create {}", kind.label()),
+                        "Template".to_string(),
+                        None,
+                    ),
+                    PaletteEntry::Workspace(name) => (name.clone(), "Workspace".to_string(), None),
                     PaletteEntry::WorkspaceBank { name, hotkey } => (
                         name.clone(),
                         hotkey
                             .as_deref()
                             .map(display_hotkey)
                             .unwrap_or_else(|| "Bank".to_string()),
+                        None,
                     ),
                     PaletteEntry::ColumnToggle { .. } => unreachable!(),
                 };
@@ -986,12 +1246,24 @@ impl CommandPalette {
                         ),
                         Span::styled(format!("  {right_label}"), theme.inactive_style()),
                     ])));
+                    if let Some(subtitle) = subtitle {
+                        items.push(ListItem::new(Line::from(vec![
+                            Span::styled("   ", theme.inactive_style()),
+                            Span::styled(subtitle, theme.inactive_style()),
+                        ])));
+                    }
                 } else {
                     items.push(ListItem::new(Line::from(vec![
                         Span::styled("   ", theme.inactive_style()),
                         Span::styled(name, Style::default().fg(theme.fg_dim)),
                         Span::styled(format!("  {right_label}"), theme.inactive_style()),
                     ])));
+                    if let Some(subtitle) = subtitle {
+                        items.push(ListItem::new(Line::from(vec![
+                            Span::styled("   ", theme.inactive_style()),
+                            Span::styled(subtitle, theme.inactive_style()),
+                        ])));
+                    }
                 }
             }
         }
@@ -1034,7 +1306,10 @@ fn query_indicates_template_intent(query: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action_history::ActionKind;
+    use crate::app::AppState;
     use crate::policy::ResourceActionContext;
+    use crate::workbench::{PodLogsTabState, WorkbenchTabState};
 
     fn ctx(resource: ResourceRef, node_unschedulable: Option<bool>) -> ResourceActionContext {
         ResourceActionContext {
@@ -1612,5 +1887,142 @@ mod tests {
             palette.handle_key(KeyEvent::from(KeyCode::Enter)),
             CommandPaletteAction::OpenRunbook("pod_failure".into(), Some(resource))
         );
+    }
+
+    #[test]
+    fn palette_includes_global_resource_entries() {
+        let mut palette = CommandPalette::default();
+        palette.set_resource_entries(vec![PaletteResourceEntry {
+            resource: ResourceRef::Deployment("api".into(), "prod".into()),
+            title: "api".into(),
+            subtitle: "Deployment · prod".into(),
+            aliases: vec![
+                "api".into(),
+                "deployment".into(),
+                "prod/api".into(),
+                "team=platform".into(),
+            ],
+            badge_label: "Deployments".into(),
+        }]);
+        palette.open();
+        for c in "platform".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        assert!(palette.filtered().iter().any(|entry| matches!(
+            entry,
+            PaletteEntry::Resource(resource)
+                if resource.resource == ResourceRef::Deployment("api".into(), "prod".into())
+        )));
+    }
+
+    #[test]
+    fn enter_can_jump_to_global_resource_result() {
+        let mut palette = CommandPalette::default();
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        palette.set_resource_entries(vec![PaletteResourceEntry {
+            resource: resource.clone(),
+            title: "api-0".into(),
+            subtitle: "Pod · prod".into(),
+            aliases: vec!["api-0".into(), "prod/api-0".into(), "pod".into()],
+            badge_label: "Pods".into(),
+        }]);
+        palette.open();
+        for c in "api-0".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        assert_eq!(
+            palette.handle_key(KeyEvent::from(KeyCode::Enter)),
+            CommandPaletteAction::JumpToResource(resource)
+        );
+    }
+
+    #[test]
+    fn enter_can_activate_workbench_activity() {
+        let mut palette = CommandPalette::default();
+        let key = WorkbenchTabKey::ResourceEvents(ResourceRef::Pod("api-0".into(), "prod".into()));
+        palette.set_activity_entries(vec![PaletteActivityEntry {
+            title: "Events prod/api-0".into(),
+            subtitle: "Open workbench tab".into(),
+            aliases: vec!["timeline".into(), "events api-0".into()],
+            badge_label: "Tab".into(),
+            target: PaletteActivityTarget::WorkbenchTab(key.clone()),
+        }]);
+        palette.open();
+        for c in "timeline".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        assert_eq!(
+            palette.handle_key(KeyEvent::from(KeyCode::Enter)),
+            CommandPaletteAction::ActivateWorkbenchTab(key)
+        );
+    }
+
+    #[test]
+    fn collect_activity_entries_includes_recent_view_jumps() {
+        let mut app = AppState::default();
+        app.record_recent_view_jump(AppView::Pods);
+        app.record_recent_view_jump(AppView::Services);
+
+        let entries = collect_activity_entries(&app);
+
+        assert!(entries.iter().any(|entry| {
+            matches!(
+                entry.target,
+                PaletteActivityTarget::Navigate(AppView::Services)
+            ) && entry.subtitle == "Recent view jump"
+        }));
+        assert!(entries.iter().any(|entry| {
+            matches!(entry.target, PaletteActivityTarget::Navigate(AppView::Pods))
+        }));
+    }
+
+    #[test]
+    fn collect_activity_entries_prefers_action_history_target_over_duplicate_recent_jump() {
+        let mut app = AppState::default();
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        app.record_action_pending(
+            ActionKind::Restart,
+            AppView::Pods,
+            Some(resource.clone()),
+            "Pod api-0",
+            "Restart requested",
+        );
+        app.record_recent_resource_jump(resource.clone());
+
+        let entries = collect_activity_entries(&app);
+        let matching: Vec<_> = entries
+            .iter()
+            .filter(|entry| {
+                matches!(
+                    &entry.target,
+                    PaletteActivityTarget::Resource(candidate) if candidate == &resource
+                )
+            })
+            .collect();
+
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].badge_label, "Pending");
+        assert_eq!(matching[0].subtitle, "Restart requested");
+    }
+
+    #[test]
+    fn collect_activity_entries_includes_open_workbench_tabs() {
+        let mut app = AppState::default();
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        let key = WorkbenchTabKey::PodLogs(resource.clone());
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(resource)));
+
+        let entries = collect_activity_entries(&app);
+
+        assert!(entries.iter().any(|entry| {
+            matches!(
+                &entry.target,
+                PaletteActivityTarget::WorkbenchTab(candidate) if candidate == &key
+            ) && entry.badge_label == "Tab"
+        }));
     }
 }

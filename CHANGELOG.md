@@ -13,12 +13,18 @@ Planning archive sync.
 
 ### Post-Roadmap Follow-Ups
 
+- 2026-04-01 M39: shipped global resource search in the command palette across kind/name/namespace/labels, plus recent-activity switching across workbench tabs, action history, and recent jumps.
 - 2026-03-29 render-frame skip pass: unchanged header, sidebar, status, and main-content regions now reuse the canonical render path when inputs are stable, with regression coverage for theme, icon mode, search, and selection invalidation.
 - 2026-03-29 perf-gate hardening: `scripts/perf_gate.sh` now falls back to folded profile data when `header` or `status` spans are omitted from `render-frame-summary.txt`.
 - 2026-03-29 empty-state consistency cleanup: remaining dashboard and RBAC/security empty states now use the canonical centered empty-state renderer instead of manual padding.
 
 ### Validation Archive
 
+- Latest local verification pass on 2026-04-01:
+  - `cargo fmt --all`
+  - `cargo clippy --all-targets --all-features -- -D warnings`
+  - `cargo test --all-targets --all-features`
+  - `cargo test --test performance benchmark_search_keystroke_under_5ms -- --ignored --nocapture`
 - Latest local verification pass on 2026-03-29:
   - `cargo fmt --all`
   - `cargo clippy --all-targets --all-features -- -D warnings`

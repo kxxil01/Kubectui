@@ -10,17 +10,18 @@ This plan does not aim to copy Lens, OpenLens, or Freelens visually. It adopts t
 
 ## Implementation Progress
 
-- Roadmap delivery through M37 is complete.
-- M38 through M43 are the active expansion backlog.
+- Roadmap delivery through M39 is complete.
+- M40 through M43 plus deferred M38 are the active expansion backlog.
 - Phase 8 (watch-backed caches) is complete.
 - Historical shipped scope, milestone archive, and completed priority records now live in [CHANGELOG.md](CHANGELOG.md).
 
 Recent shipped follow-ups after roadmap completion:
 
+- 2026-04-01 M39 shipped: the command palette now supports global resource search by kind/name/namespace/labels plus recent-activity switching across workbench tabs, action history, and recent jumps.
 - 2026-03-29 render-frame skip pass: the canonical render path now skips unchanged header, sidebar, status, and main-content regions when render inputs are stable, with same-terminal invalidation coverage for theme, icon mode, search, and selection.
 - 2026-03-29 perf-gate hardening: `scripts/perf_gate.sh` now falls back to the folded profile for `header` and `status` when those spans drop out of `render-frame-summary.txt`.
 - 2026-03-29 empty-state consistency pass: the remaining dashboard and RBAC/security empty states now use the canonical centered empty-state path instead of manual left-padding strings.
-- Latest local verification on 2026-03-29: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `scripts/perf_gate.sh` all pass.
+- Latest local verification on 2026-04-01: `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, `cargo test --all-targets --all-features`, and `cargo test --test performance benchmark_search_keystroke_under_5ms -- --ignored --nocapture` all pass.
 
 ---
 
@@ -138,7 +139,7 @@ The original milestone roadmap is complete through M37. This document now tracks
 
 Active sequencing rule:
 
-- continue `M38 -> M39 -> M40 -> M41 -> M42 -> M43` unless a materially higher-leverage operator gap appears
+- continue `M40 -> M41 -> M42 -> M43 -> M38` unless a materially higher-leverage operator gap appears
 - do not rebuild completed surfaces on parallel paths when the canonical workbench/action/detail flow already exists
 - keep new work snapshot-based, keyboard-first, and within the current performance budget
 
@@ -157,56 +158,20 @@ The next set should optimize for operator workflow leverage first, then cross-cl
 
 ### Big Win Priority Order
 
-- M38: Multi-Cluster Workspaces & Compare
-- M39: Global Resource Search & Activity Switcher
 - M40: RBAC Access Review & Reverse Lookup
 - M41: Extension Packaging & Catalog
 - M42: Synthetic Service Checks & Benchmarks
 - M43: Local Sandbox Cluster Control
+- M38: Multi-Cluster Workspaces & Compare
 
 ### Why this order
 
-- M38 is the highest leverage workflow gap left after Projects, Workspaces, Governance, and Gateway API. Operators still bounce between clusters manually, and the current bank/workspace model is single-cluster at a time.
-- M39 compounds M38 and the existing workbench by shrinking “find the thing first” latency across views, resources, and recent activities.
-- M40 follows because the product now has broad operational power but still lacks a first-class “what can this subject do / why is this denied” surface that K9s-class operators expect.
-- M41 comes after that because the extension substrate already exists; the next value is making it installable, inspectable, and shareable without weakening the canonical runtime path.
-- M42 and M43 are valuable but more specialized. They should come after the higher-frequency operator workflow gaps above.
+- M40 follows because the product now has broad operational power but still lacks a first-class “what can this subject do / why is this denied” surface that operators expect on shared clusters.
+- M41 comes next because the extension substrate already exists; the next leverage is making it installable, inspectable, and shareable without weakening the canonical runtime path.
+- M42 and M43 stay ahead of multi-cluster because they add bounded operator leverage without forcing a cross-cutting state-model expansion.
+- M38 moves to the end because it is the broadest state and lifecycle expansion left. It should land after the single-cluster findability, authz, extension, and local-validation surfaces are stronger and more stable.
 
 ### Next Milestones
-
-#### M38: Multi-Cluster Workspaces & Compare
-
-- Status: not started
-- Big win: highest
-- Why:
-  - KubecTUI now has strong single-cluster workflows, but operators still need to pivot between prod/staging/dev or between regional clusters quickly.
-  - current workspaces and banks are cluster-local jumps, not a first-class multi-cluster operating surface.
-- Scope:
-  - multi-cluster workspace banks and recent-cluster switching
-  - side-by-side compare for selected overview/resource surfaces where data is structurally comparable
-  - explicit cluster badges throughout navigation, workbench, and action history
-  - cluster-scoped saved jumps without cross-cluster state leakage
-- Guardrails:
-  - no hidden parallel refresh storm across every kubeconfig context
-  - no second state tree separate from the existing snapshot/workbench model
-  - compare views must stay bounded, text-first, and keyboard-native
-
-#### M39: Global Resource Search & Activity Switcher
-
-- Status: not started
-- Big win: very high
-- Why:
-  - the app now spans many views and workbench tabs; the remaining friction is often locating the right object or returning to the right recent activity.
-  - command-palette discovery is good, but it is still action-first rather than global-resource-first.
-- Scope:
-  - global cross-view resource search by kind/name/namespace/labels
-  - recent-activity switcher spanning workbench tabs, action history, and recent jumps
-  - cross-cluster resource jump when M38 lands
-  - optional fuzzy search ranking with explicit deterministic tie-breaking
-- Guardrails:
-  - keep search snapshot-based and cached
-  - no blocking full-scan recomputation on every keystroke beyond the existing bounded filtering model
-  - preserve the current palette as the canonical action launcher
 
 #### M40: RBAC Access Review & Reverse Lookup
 
@@ -276,9 +241,27 @@ The next set should optimize for operator workflow leverage first, then cross-cl
   - no remote managed-cluster lifecycle actions
   - fail closed when the current context is not clearly a supported local sandbox
 
+#### M38: Multi-Cluster Workspaces & Compare
+
+- Status: not started
+- Big win: highest
+- Why:
+  - KubecTUI now has strong single-cluster workflows, but operators still need to pivot between prod/staging/dev or between regional clusters quickly.
+  - current workspaces and banks are cluster-local jumps, not a first-class multi-cluster operating surface.
+  - this is now intentionally sequenced last because it is the broadest remaining state-model and lifecycle change.
+- Scope:
+  - multi-cluster workspace banks and recent-cluster switching
+  - side-by-side compare for selected overview/resource surfaces where data is structurally comparable
+  - explicit cluster badges throughout navigation, workbench, and action history
+  - cluster-scoped saved jumps without cross-cluster state leakage
+- Guardrails:
+  - no hidden parallel refresh storm across every kubeconfig context
+  - no second state tree separate from the existing snapshot/workbench model
+  - compare views must stay bounded, text-first, and keyboard-native
+
 ### Recommended Remaining Order
 
-- M38 -> M39 -> M40 -> M41 -> M42 -> M43
+- M39 -> M40 -> M41 -> M42 -> M43 -> M38
 
 ### Research Basis
 

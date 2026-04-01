@@ -2239,3 +2239,49 @@ fn sidebar_icons_do_not_use_replacement_glyphs() {
     assert!(!AppView::Endpoints.icon().contains('\u{fffd}'));
     assert!(!AppView::Endpoints.sidebar_text().contains('\u{fffd}'));
 }
+
+#[test]
+fn recent_resource_jumps_dedupe_and_move_to_front() {
+    let mut app = AppState::default();
+    let pod = ResourceRef::Pod("api-0".into(), "prod".into());
+    let deployment = ResourceRef::Deployment("api".into(), "prod".into());
+
+    app.record_recent_resource_jump(pod.clone());
+    app.record_recent_resource_jump(deployment.clone());
+    app.record_recent_resource_jump(pod.clone());
+
+    let targets: Vec<_> = app
+        .recent_jumps()
+        .iter()
+        .map(|entry| &entry.target)
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            &RecentJumpTarget::Resource(pod),
+            &RecentJumpTarget::Resource(deployment)
+        ]
+    );
+}
+
+#[test]
+fn recent_jumps_stay_bounded() {
+    let mut app = AppState::default();
+    for idx in 0..(MAX_RECENT_JUMPS + 5) {
+        app.record_recent_view_jump(if idx % 2 == 0 {
+            AppView::Pods
+        } else {
+            AppView::Deployments
+        });
+        app.record_recent_resource_jump(ResourceRef::Pod(format!("api-{idx}"), "prod".into()));
+    }
+
+    assert!(app.recent_jumps().len() <= MAX_RECENT_JUMPS);
+    assert_eq!(
+        app.recent_jumps().front().map(|entry| &entry.target),
+        Some(&RecentJumpTarget::Resource(ResourceRef::Pod(
+            format!("api-{}", MAX_RECENT_JUMPS + 4),
+            "prod".into()
+        )))
+    );
+}

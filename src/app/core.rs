@@ -30,6 +30,7 @@ impl Default for AppState {
             pod_sort: None,
             tunnel_registry: crate::state::port_forward::TunnelRegistry::new(),
             action_history: ActionHistoryState::default(),
+            recent_jumps: Default::default(),
             preferences: None,
             cluster_preferences: None,
             current_context_name: None,
@@ -83,6 +84,31 @@ impl AppState {
 
     pub fn action_history(&self) -> &ActionHistoryState {
         &self.action_history
+    }
+
+    pub fn recent_jumps(&self) -> &std::collections::VecDeque<RecentJumpEntry> {
+        &self.recent_jumps
+    }
+
+    pub fn record_recent_view_jump(&mut self, view: AppView) {
+        self.push_recent_jump(RecentJumpEntry {
+            target: RecentJumpTarget::View(view),
+        });
+    }
+
+    pub fn record_recent_resource_jump(&mut self, resource: ResourceRef) {
+        self.push_recent_jump(RecentJumpEntry {
+            target: RecentJumpTarget::Resource(resource),
+        });
+    }
+
+    fn push_recent_jump(&mut self, entry: RecentJumpEntry) {
+        self.recent_jumps
+            .retain(|existing| existing.target != entry.target);
+        self.recent_jumps.push_front(entry);
+        while self.recent_jumps.len() > MAX_RECENT_JUMPS {
+            self.recent_jumps.pop_back();
+        }
     }
 
     pub fn open_action_history_tab(&mut self, focus: bool) {

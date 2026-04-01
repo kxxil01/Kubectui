@@ -23,6 +23,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         AppAction::RefreshData => true,
         AppAction::FluxReconcile => true,
         AppAction::OpenDetail(_) => true,
+        AppAction::JumpToResource(_) => true,
+        AppAction::ActivateWorkbenchTab(_) => true,
         AppAction::OpenRunbook { .. }
         | AppAction::RunbookExecuteSelectedStep
         | AppAction::RunbookToggleStepDone

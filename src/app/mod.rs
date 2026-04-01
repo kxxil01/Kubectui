@@ -22,7 +22,7 @@ pub use sort::{
 };
 pub use views::{AppView, NavGroup};
 
-use std::{collections::HashMap, collections::HashSet, time::Instant};
+use std::{collections::HashMap, collections::HashSet, collections::VecDeque, time::Instant};
 
 use crate::{
     action_history::{ActionHistoryState, ActionHistoryTarget, ActionKind, ActionStatus},
@@ -36,10 +36,12 @@ use crate::{
     workbench::{
         ActionHistoryTabState, DecodedSecretTabState, ExecTabState, PodLogsTabState,
         PortForwardTabState, ResourceEventsTabState, ResourceYamlTabState, WorkbenchState,
-        WorkbenchTabState, WorkloadLogsTabState,
+        WorkbenchTabKey, WorkbenchTabState, WorkloadLogsTabState,
     },
     workspaces::WorkspaceSnapshot,
 };
+
+pub const MAX_RECENT_JUMPS: usize = 32;
 
 /// Actions emitted by input handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +61,8 @@ pub enum AppAction {
     OpenCommandPalette,
     CloseCommandPalette,
     NavigateTo(AppView),
+    JumpToResource(ResourceRef),
+    ActivateWorkbenchTab(WorkbenchTabKey),
     ToggleNavGroup(NavGroup),
     EscapePressed,
     LogsViewerOpen,
@@ -248,6 +252,17 @@ pub struct Toast {
     pub created_at: Instant,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum RecentJumpTarget {
+    View(AppView),
+    Resource(ResourceRef),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecentJumpEntry {
+    pub target: RecentJumpTarget,
+}
+
 #[derive(Debug, Clone)]
 pub struct AppState {
     /// The currently active top-level view (e.g. Pods, Deployments).
@@ -291,6 +306,8 @@ pub struct AppState {
     pub tunnel_registry: crate::state::port_forward::TunnelRegistry,
     /// Canonical mutation/action history.
     pub action_history: ActionHistoryState,
+    /// Recent view/resource jumps used by the activity switcher.
+    pub recent_jumps: VecDeque<RecentJumpEntry>,
     /// Global user preferences for view sort/column customization.
     pub preferences: Option<UserPreferences>,
     /// Per-cluster preference overrides, keyed by kube context name.

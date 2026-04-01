@@ -562,6 +562,31 @@ fn refresh_palette_runbooks(
     app.command_palette.set_runbooks(runbooks, selected);
 }
 
+fn refresh_palette_resources(
+    app: &mut kubectui::app::AppState,
+    snapshot: &kubectui::state::ClusterSnapshot,
+) {
+    let entries = kubectui::global_search::collect_global_resource_search_entries(snapshot)
+        .into_iter()
+        .map(
+            |entry| kubectui::ui::components::command_palette::PaletteResourceEntry {
+                resource: entry.resource,
+                title: entry.title,
+                subtitle: entry.subtitle,
+                aliases: entry.aliases,
+                badge_label: entry.view.label().to_string(),
+            },
+        )
+        .collect();
+    app.command_palette.set_resource_entries(entries);
+}
+
+fn refresh_palette_activity(app: &mut kubectui::app::AppState) {
+    app.command_palette.set_activity_entries(
+        kubectui::ui::components::command_palette::collect_activity_entries(app),
+    );
+}
+
 fn truncate_ai_block(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -3690,6 +3715,8 @@ pub(crate) async fn run_app_inner(
                     };
                     app.refresh_palette_columns();
                     app.refresh_palette_workspaces();
+                    refresh_palette_activity(&mut app);
+                    refresh_palette_resources(&mut app, &cached_snapshot);
                     refresh_palette_extensions(&mut app, &cached_snapshot, &extension_registry);
                     refresh_palette_runbooks(&mut app, &cached_snapshot, &runbook_registry);
                     app.command_palette.open_with_context(resource_ctx);
@@ -4195,6 +4222,7 @@ pub(crate) async fn run_app_inner(
                 }
                 AppAction::NavigateTo(view) => {
                     app.command_palette.close();
+                    app.record_recent_view_jump(view);
                     app.navigate_to_view(view);
                     app.focus = kubectui::app::Focus::Content;
                     app.extension_in_instances = false;
@@ -4371,6 +4399,30 @@ pub(crate) async fn run_app_inner(
                             &cached_snapshot,
                             &extension_fetch_tx,
                         );
+                    }
+                }
+                AppAction::JumpToResource(resource) => {
+                    app.command_palette.close();
+                    match prepare_resource_target(&mut app, &cached_snapshot, &resource) {
+                        Ok(()) => {
+                            open_detail_for_resource(
+                                &mut app,
+                                &cached_snapshot,
+                                &client,
+                                &detail_tx,
+                                resource,
+                                &mut detail_request_seq,
+                            );
+                        }
+                        Err(err) => app.set_error(err),
+                    }
+                }
+                AppAction::ActivateWorkbenchTab(key) => {
+                    app.command_palette.close();
+                    if app.workbench.activate_tab(&key) {
+                        app.focus = kubectui::app::Focus::Workbench;
+                    } else {
+                        app.set_error("Selected workbench activity is no longer available.".into());
                     }
                 }
                 AppAction::OpenDetail(resource) => {

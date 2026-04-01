@@ -1306,6 +1306,12 @@ impl AppState {
             return match self.command_palette.handle_key(key) {
                 CommandPaletteAction::None => AppAction::None,
                 CommandPaletteAction::Navigate(view) => AppAction::NavigateTo(view),
+                CommandPaletteAction::JumpToResource(resource) => {
+                    AppAction::JumpToResource(resource)
+                }
+                CommandPaletteAction::ActivateWorkbenchTab(key) => {
+                    AppAction::ActivateWorkbenchTab(key)
+                }
                 CommandPaletteAction::Execute(action, resource) => {
                     AppAction::PaletteAction { action, resource }
                 }
