@@ -498,6 +498,9 @@ impl AppState {
         self.selected_idx = 0;
         self.extension_in_instances = false;
         self.current_namespace = snapshot.namespace.clone();
+        if self.view != snapshot.view {
+            self.record_recent_view_jump(snapshot.view);
+        }
         self.view = snapshot.view;
         self.collapsed_groups = snapshot.collapsed_groups.iter().copied().collect();
         self.sync_collapsed_to_active_view();
@@ -512,6 +515,7 @@ impl AppState {
             self.workbench
                 .close_tab_by_key(&crate::workbench::WorkbenchTabKey::ActionHistory);
         }
+        self.sync_action_history_selection();
         self.focus = Focus::Content;
         self.sync_workbench_focus();
         self.needs_config_save = true;

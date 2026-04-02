@@ -82,7 +82,7 @@ impl WorkbenchTabKind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WorkbenchTabKey {
     ActionHistory,
     ResourceYaml(ResourceRef),

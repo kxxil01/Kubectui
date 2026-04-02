@@ -178,6 +178,10 @@ mod tests {
             status: ActionStatus::Succeeded,
             resource_label: "test".to_string(),
             message: format!("{} completed", kind.label()),
+            scope: crate::app::ActivityScope {
+                context: Some("test-context".to_string()),
+                namespace: "default".to_string(),
+            },
             target: Some(ActionHistoryTarget {
                 view: AppView::Pods,
                 resource: resource.clone(),
@@ -194,6 +198,10 @@ mod tests {
             status: ActionStatus::Succeeded,
             resource_label: "test".to_string(),
             message: format!("{} completed", kind.label()),
+            scope: crate::app::ActivityScope {
+                context: Some("test-context".to_string()),
+                namespace: "default".to_string(),
+            },
             target: None,
             started_at: ts(started_minutes),
             finished_at: Some(ts(started_minutes + 1)),

@@ -51,7 +51,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("c", "Context picker"),
             (
                 ":",
-                "Action palette (views, actions, runbooks, workspaces, banks, templates, AI, columns)",
+                "Action palette (resources, recent activity, views, actions, runbooks, workspaces, banks, templates, AI, columns)",
             ),
             ("r", "Refresh data"),
             ("Ctrl+y", "Copy resource name"),

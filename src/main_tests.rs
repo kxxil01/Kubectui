@@ -7,18 +7,18 @@ use super::{
     ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
     apply_extension_fetch_result, fail_context_switch, map_palette_detail_action,
     mutation_refresh_options, normalize_recent_events, palette_action_requires_loaded_detail,
-    parse_editor_command, prepare_bookmark_target, queued_refresh_requires_two_phase,
-    refresh_options_for_view, selected_extension_crd, selected_flux_reconcile_resource,
-    selected_resource, workbench_follow_streams_to_stop,
+    parse_editor_command, prepare_bookmark_target, prepare_resource_target,
+    queued_refresh_requires_two_phase, refresh_options_for_view, selected_extension_crd,
+    selected_flux_reconcile_resource, selected_resource, workbench_follow_streams_to_stop,
 };
 use kubectui::{
     action_history::ActionKind,
-    app::{AppAction, AppState, AppView, DetailViewState, ResourceRef},
+    app::{AppAction, AppState, AppView, DetailViewState, ResourceRef, SidebarItem},
     bookmarks::BookmarkEntry,
     extensions::AiWorkflowKind,
     k8s::dtos::{
         ConfigMapInfo, CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo,
-        VulnerabilityReportInfo, VulnerabilitySummaryCounts,
+        PodInfo, VulnerabilityReportInfo, VulnerabilitySummaryCounts,
     },
     policy::DetailAction,
     state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
@@ -382,6 +382,66 @@ fn prepare_bookmark_target_navigates_to_resource_view() {
     assert_eq!(app.view, AppView::Secrets);
     assert_eq!(app.selected_idx, 0);
     assert!(app.search_query.is_empty());
+}
+
+#[test]
+fn prepare_resource_target_syncs_sidebar_to_target_view() {
+    let mut app = AppState::default();
+    app.view = AppView::Governance;
+    app.focus = kubectui::app::Focus::Sidebar;
+    app.collapsed_groups = kubectui::app::sidebar::all_groups().collect();
+    app.sidebar_cursor = 0;
+    app.search_query = "stale".to_string();
+
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let mut snapshot = ClusterSnapshot::default();
+    snapshot.pods.push(PodInfo {
+        name: "api-0".to_string(),
+        namespace: "prod".to_string(),
+        ..PodInfo::default()
+    });
+
+    prepare_resource_target(&mut app, &snapshot, &resource).expect("resource target");
+
+    assert_eq!(app.view, AppView::Pods);
+    assert_eq!(app.focus, kubectui::app::Focus::Content);
+    assert!(app.search_query.is_empty());
+    assert!(
+        !app.collapsed_groups
+            .contains(&kubectui::app::NavGroup::Workloads)
+    );
+    let rows = kubectui::app::sidebar_rows(&app.collapsed_groups);
+    assert_eq!(
+        rows.get(app.sidebar_cursor),
+        Some(&SidebarItem::View(AppView::Pods))
+    );
+}
+
+#[test]
+fn prepare_resource_target_routes_flux_resources_to_specific_view() {
+    let mut app = AppState::default();
+    let resource = ResourceRef::CustomResource {
+        name: "apps".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "kustomize.toolkit.fluxcd.io".to_string(),
+        version: "v1".to_string(),
+        kind: "Kustomization".to_string(),
+        plural: "kustomizations".to_string(),
+    };
+    let mut snapshot = ClusterSnapshot::default();
+    snapshot.flux_resources.push(FluxResourceInfo {
+        name: "apps".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "kustomize.toolkit.fluxcd.io".to_string(),
+        version: "v1".to_string(),
+        kind: "Kustomization".to_string(),
+        plural: "kustomizations".to_string(),
+        ..FluxResourceInfo::default()
+    });
+
+    prepare_resource_target(&mut app, &snapshot, &resource).expect("flux resource target");
+
+    assert_eq!(app.view, AppView::FluxCDKustomizations);
 }
 
 #[test]

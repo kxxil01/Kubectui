@@ -205,17 +205,19 @@ fn render_action_history_tab(
     tab: &crate::workbench::ActionHistoryTabState,
 ) {
     let theme = default_theme();
-    let entries = app.action_history().entries();
+    let entries = app.visible_action_history_entries();
 
     if entries.is_empty() {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![Span::styled(
-                    " No mutation history yet",
+                    " No mutation history for the active workspace",
                     theme.section_title_style(),
                 )]),
                 Line::from(""),
-                Line::from("  Mutating actions will appear here with pending/success/error state."),
+                Line::from(
+                    "  Mutating actions for the current context and namespace will appear here.",
+                ),
                 Line::from("  Use [Enter] on a jumpable row to reopen the affected resource."),
             ])
             .wrap(Wrap { trim: false }),
@@ -224,13 +226,14 @@ fn render_action_history_tab(
         return;
     }
 
-    let window = centered_window(entries.len(), tab.selected, area.height.max(1) as usize);
+    let selected = tab.selected.min(entries.len().saturating_sub(1));
+    let window = centered_window(entries.len(), selected, area.height.max(1) as usize);
     let lines: Vec<Line> = entries
         .iter()
         .enumerate()
         .skip(window.start)
         .take(window.end.saturating_sub(window.start))
-        .map(|(idx, entry)| render_action_history_line(entry, idx == tab.selected, &theme))
+        .map(|(idx, entry)| render_action_history_line(entry, idx == selected, &theme))
         .collect();
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);

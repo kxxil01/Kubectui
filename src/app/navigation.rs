@@ -6,6 +6,7 @@ impl AppState {
         self.selected_idx = 0;
         self.search_query.clear();
         self.is_search_mode = false;
+        self.sync_action_history_selection();
     }
 
     pub fn get_namespace(&self) -> &str {
@@ -79,6 +80,9 @@ impl AppState {
     }
 
     pub fn navigate_to_view(&mut self, view: AppView) {
+        if self.view != view {
+            self.record_recent_view_jump(view);
+        }
         self.view = view;
         self.selected_idx = 0;
         self.search_query.clear();
