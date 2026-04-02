@@ -507,14 +507,17 @@ impl AppState {
         self.apply_sort_from_preferences(crate::columns::view_key(self.view));
         self.workbench.close_tabs_for_workspace_restore();
         self.workbench
-            .set_open_and_height(snapshot.workbench_open, snapshot.workbench_height);
-        self.workbench.maximized = snapshot.workbench_open && snapshot.workbench_maximized;
+            .set_open_and_height(false, snapshot.workbench_height);
+        self.workbench.maximized = false;
         if snapshot.action_history_tab {
             self.open_action_history_tab(snapshot.workbench_open);
         } else {
             self.workbench
                 .close_tab_by_key(&crate::workbench::WorkbenchTabKey::ActionHistory);
         }
+        self.workbench.open = snapshot.workbench_open && !self.workbench.tabs.is_empty();
+        self.workbench.maximized =
+            self.workbench.open && snapshot.workbench_maximized && !self.workbench.tabs.is_empty();
         self.sync_action_history_selection();
         self.focus = Focus::Content;
         self.sync_workbench_focus();
