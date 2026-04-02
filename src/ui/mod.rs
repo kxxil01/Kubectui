@@ -3,6 +3,7 @@
 pub mod components;
 mod filter_cache;
 pub mod profiling;
+mod render_cache;
 pub mod theme;
 pub mod views;
 
@@ -33,12 +34,13 @@ use crate::{
     icons::view_icon,
     policy::ViewAction,
     state::{
-        ClusterSnapshot, ViewLoadState,
+        ClusterSnapshot, DataPhase, ViewLoadState,
         alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
     },
     time::{AppTimestamp, age_seconds_since, now_unix_seconds},
     ui::{
         components::{content_block, default_theme},
+        render_cache::mark_area_skipped,
         theme::Theme,
     },
 };
@@ -46,7 +48,6 @@ use filter_cache::{
     DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
     cached_filter_indices_with_variant, data_fingerprint,
 };
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SidebarCountsCacheKey {
     snapshot_version: u64,
@@ -678,10 +679,15 @@ struct ViewRenderKey {
     focused: bool,
     theme_index: u8,
     icon_mode: u8,
+    context_hash: u64,
     namespace_hash: u64,
     sort_variant: u64,
     bookmark_hash: u64,
     visible_columns_hash: u64,
+    phase: DataPhase,
+    view_load_state: ViewLoadState,
+    transient_hash: u64,
+    freshness_bucket: i64,
 }
 
 thread_local! {
@@ -726,6 +732,13 @@ fn bookmark_render_hash(bookmarks: &[BookmarkEntry]) -> u64 {
         bookmark.bookmarked_at_unix.hash(&mut hasher);
     }
     hasher.finish()
+}
+
+fn active_view_transient_hash(view: AppView, cluster: &ClusterSnapshot) -> u64 {
+    match view {
+        AppView::Events => cluster.events_last_error.as_deref().map_or(0, hash_str),
+        _ => 0,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -934,6 +947,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         focused: content_focused,
         theme_index: crate::ui::theme::active_theme_index(),
         icon_mode: crate::icons::active_icon_mode() as u8,
+        context_hash: app.current_context_name.as_deref().map_or(0, hash_str),
         namespace_hash: hash_str(app.get_namespace()),
         sort_variant: app
             .workload_sort()
@@ -941,19 +955,28 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .wrapping_add(app.pod_sort().map_or(0, |sort| sort.cache_variant()) << 8),
         bookmark_hash: bookmark_render_hash(app.bookmarks()),
         visible_columns_hash: visible_columns_signature(visible_columns.as_ref()),
+        phase: cluster.phase,
+        view_load_state: cluster.view_load_state(app.view()),
+        transient_hash: active_view_transient_hash(app.view(), cluster),
+        // Keep age-sensitive cells advancing without disabling stable-frame skipping.
+        freshness_bucket: now_unix_seconds() / 60,
     };
     let frame_count = frame.count();
-    let view_skipped = VIEW_RENDERED_STATE.with(|cell| {
-        let mut cache = cell.borrow_mut();
-        if let Some((ref cached_key, ref mut prev_frame)) = *cache
-            && *cached_key == view_cache_key
-            && frame_count == *prev_frame + 1
-        {
-            *prev_frame = frame_count;
-            return true;
-        }
-        false
-    });
+    let view_skipped = {
+        let buffer = frame.buffer_mut();
+        VIEW_RENDERED_STATE.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            if let Some((cached_key, prev_frame)) = cache.as_mut()
+                && *cached_key == view_cache_key
+                && frame_count == *prev_frame + 1
+            {
+                mark_area_skipped(buffer, content);
+                *prev_frame = frame_count;
+                return true;
+            }
+            false
+        })
+    };
 
     if !view_skipped {
         let _view_scope = profiling::span_scope(app.view().profiling_key());
@@ -1282,7 +1305,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
-                resolve_visible_columns(app).as_ref(),
+                visible_columns.as_ref(),
                 content_focused,
             ),
             AppView::StatefulSets => views::statefulsets::render_statefulsets(
@@ -2527,6 +2550,64 @@ mod tests {
     }
 
     #[test]
+    fn render_repaints_sidebar_on_same_terminal_when_state_is_unchanged() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let app = app_with_view(AppView::Pods);
+        let snapshot = pods_snapshot_for_render_tests();
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+        assert!(before.contains("Dashboard"));
+        assert!(before.contains("Pods (2)"));
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(after.contains("Dashboard"));
+        assert!(after.contains("Pods (2)"));
+        assert_eq!(before, after);
+    }
+
+    #[test]
+    fn render_repaints_on_fresh_terminal_when_cached_state_matches() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let app = app_with_view(AppView::Pods);
+        let snapshot = pods_snapshot_for_render_tests();
+
+        let mut first_terminal =
+            Terminal::new(TestBackend::new(120, 40)).expect("first terminal should initialize");
+        draw_in_terminal(&mut first_terminal, &app, &snapshot);
+        let first = terminal_to_string(&first_terminal);
+        assert!(first.contains("Dashboard"));
+        assert!(first.contains("Pods (2)"));
+
+        let mut second_terminal =
+            Terminal::new(TestBackend::new(120, 40)).expect("second terminal should initialize");
+        draw_in_terminal(&mut second_terminal, &app, &snapshot);
+        let second = terminal_to_string(&second_terminal);
+
+        assert!(second.contains("Dashboard"));
+        assert!(second.contains("Pods (2)"));
+        assert_eq!(first, second);
+    }
+
+    #[test]
     fn render_invalidates_when_icon_mode_changes_on_same_terminal() {
         let _render_lock = RENDER_INVALIDATION_TEST_LOCK
             .lock()
@@ -2575,6 +2656,34 @@ mod tests {
         let after = terminal_to_string(&terminal);
 
         assert!(after.contains("No pods match the search query"));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn render_invalidates_when_view_load_state_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let app = app_with_view(AppView::Pods);
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Ready;
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+        assert!(before.contains("No pods available"));
+
+        snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Loading;
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(after.contains("Loading pods..."));
         assert_ne!(before, after);
     }
 

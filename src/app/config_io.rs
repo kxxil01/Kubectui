@@ -22,8 +22,6 @@ pub(super) struct AppConfig {
     /// Auto-refresh interval in seconds (0 = disabled, default = 30).
     #[serde(default = "default_refresh_interval")]
     refresh_interval_secs: u64,
-    #[serde(default)]
-    workbench_open: bool,
     #[serde(default = "default_workbench_height")]
     workbench_height: u16,
     #[serde(default)]
@@ -88,7 +86,7 @@ pub fn load_config_from_path(path: &Path) -> AppState {
         }
         app.refresh_interval_secs = cfg.refresh_interval_secs;
         app.workbench
-            .set_open_and_height(cfg.workbench_open, cfg.workbench_height);
+            .set_open_and_height(false, cfg.workbench_height);
         if let Some(groups) = cfg.collapsed_nav_groups {
             app.collapsed_groups = groups
                 .iter()
@@ -119,7 +117,6 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
         theme: Some(theme_name.to_string()),
         icon_mode: Some(crate::icons::icon_mode_name(crate::icons::active_icon_mode()).to_string()),
         refresh_interval_secs: app.refresh_interval_secs,
-        workbench_open: app.workbench.open,
         workbench_height: app.workbench.height,
         collapsed_nav_groups: Some(collapsed_nav_groups),
         preferences: app.preferences.clone(),

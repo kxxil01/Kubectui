@@ -834,7 +834,7 @@ fn test_namespace_persistence() {
 
     let loaded = load_config_from_path(&path);
     assert_eq!(loaded.get_namespace(), "demo");
-    assert!(loaded.workbench.open);
+    assert!(!loaded.workbench.open);
     assert_eq!(loaded.workbench.height, 15);
 
     let _ = std::fs::remove_file(path);
@@ -2101,6 +2101,8 @@ fn config_backward_compat_no_prefs() {
     let loaded = load_config_from_path(&path);
     assert!(loaded.preferences.is_none());
     assert!(loaded.cluster_preferences.is_none());
+    assert!(!loaded.workbench.open);
+    assert_eq!(loaded.workbench.height, 14);
     // All groups collapsed except Overview (default view's group).
     assert!(!loaded.collapsed_groups.contains(&NavGroup::Overview));
     assert!(loaded.collapsed_groups.contains(&NavGroup::Workloads));
@@ -2133,6 +2135,34 @@ fn apply_workspace_snapshot_reopens_active_group() {
         sidebar_rows(&app.collapsed_groups)[app.sidebar_cursor],
         SidebarItem::View(AppView::Pods)
     );
+}
+
+#[test]
+fn apply_workspace_snapshot_keeps_workbench_closed_without_restored_tabs() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::ActionHistory(Default::default()));
+    app.workbench.open = true;
+    app.workbench.maximized = true;
+
+    let snapshot = WorkspaceSnapshot {
+        context: Some("prod".into()),
+        namespace: "payments".into(),
+        view: AppView::Pods,
+        search_query: None,
+        collapsed_groups: Vec::new(),
+        workbench_open: true,
+        workbench_height: 15,
+        workbench_maximized: true,
+        action_history_tab: false,
+    };
+
+    app.apply_workspace_snapshot(&snapshot);
+
+    assert!(!app.workbench.open);
+    assert!(!app.workbench.maximized);
+    assert!(app.workbench.tabs.is_empty());
+    assert_eq!(app.workbench.height, 15);
 }
 
 #[test]
