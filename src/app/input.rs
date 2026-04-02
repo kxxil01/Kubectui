@@ -24,7 +24,7 @@ impl AppState {
             return AppAction::ToggleWorkbench;
         }
 
-        let action_history_len = self.action_history.entries().len();
+        let action_history_len = self.visible_action_history_entries().len();
         let Some(tab) = self.workbench.active_tab_mut() else {
             return AppAction::None;
         };

@@ -2372,3 +2372,51 @@ fn navigate_to_view_records_recent_view_jump_for_current_scope() {
         }
     );
 }
+
+#[test]
+fn visible_action_history_entries_filter_to_active_scope() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+        "Pod api-0",
+        "Restart requested",
+    );
+
+    app.current_context_name = Some("staging".into());
+    app.current_namespace = "default".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("web-0".into(), "default".into())),
+        "Pod web-0",
+        "Restart requested",
+    );
+
+    let entries = app.visible_action_history_entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].resource_label, "Pod web-0");
+}
+
+#[test]
+fn selected_action_history_target_ignores_stale_scope_rows() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+        "Pod api-0",
+        "Restart requested",
+    );
+
+    app.current_context_name = Some("staging".into());
+    app.current_namespace = "default".into();
+    app.open_action_history_tab(true);
+
+    assert!(app.selected_action_history_target().is_none());
+}

@@ -205,17 +205,19 @@ fn render_action_history_tab(
     tab: &crate::workbench::ActionHistoryTabState,
 ) {
     let theme = default_theme();
-    let entries = app.action_history().entries();
+    let entries = app.visible_action_history_entries();
 
     if entries.is_empty() {
         frame.render_widget(
             Paragraph::new(vec![
                 Line::from(vec![Span::styled(
-                    " No mutation history yet",
+                    " No mutation history for the active workspace",
                     theme.section_title_style(),
                 )]),
                 Line::from(""),
-                Line::from("  Mutating actions will appear here with pending/success/error state."),
+                Line::from(
+                    "  Mutating actions for the current context and namespace will appear here.",
+                ),
                 Line::from("  Use [Enter] on a jumpable row to reopen the affected resource."),
             ])
             .wrap(Wrap { trim: false }),

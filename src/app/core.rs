@@ -93,6 +93,22 @@ impl AppState {
         &self.action_history
     }
 
+    pub fn visible_action_history_entries(
+        &self,
+    ) -> Vec<&crate::action_history::ActionHistoryEntry> {
+        let current_scope = self.activity_scope();
+        self.action_history
+            .entries()
+            .iter()
+            .filter(|entry| {
+                entry
+                    .target
+                    .as_ref()
+                    .is_none_or(|target| target.scope == current_scope)
+            })
+            .collect()
+    }
+
     pub fn recent_jumps(&self) -> &std::collections::VecDeque<RecentJumpEntry> {
         &self.recent_jumps
     }
@@ -194,8 +210,9 @@ impl AppState {
         let WorkbenchTabState::ActionHistory(history_tab) = &tab.state else {
             return None;
         };
-        self.action_history
+        self.visible_action_history_entries()
             .get(history_tab.selected)
+            .copied()
             .and_then(|entry| entry.target.as_ref())
     }
 
