@@ -181,6 +181,10 @@ mod tests {
             target: Some(ActionHistoryTarget {
                 view: AppView::Pods,
                 resource: resource.clone(),
+                scope: crate::app::ActivityScope {
+                    context: Some("test-context".to_string()),
+                    namespace: "default".to_string(),
+                },
             }),
             started_at: ts(started_minutes),
             finished_at: finished_minutes.map(ts),

@@ -272,11 +272,15 @@ pub fn collect_activity_entries(app: &AppState) -> Vec<PaletteActivityEntry> {
     let mut seen_workbench_tabs = HashSet::new();
     let mut seen_resource_targets = HashSet::new();
     let mut seen_views = HashSet::new();
+    let current_scope = app.activity_scope();
 
     for entry in app.action_history().entries() {
         let Some(target) = entry.target.as_ref() else {
             continue;
         };
+        if target.scope != current_scope {
+            continue;
+        }
         if !seen_resource_targets.insert(target.resource.clone()) {
             continue;
         }
@@ -302,6 +306,9 @@ pub fn collect_activity_entries(app: &AppState) -> Vec<PaletteActivityEntry> {
     }
 
     for jump in app.recent_jumps() {
+        if jump.scope != current_scope {
+            continue;
+        }
         match &jump.target {
             RecentJumpTarget::Resource(resource) => {
                 if !seen_resource_targets.insert(resource.clone()) {
@@ -2036,6 +2043,49 @@ mod tests {
         }));
         assert!(entries.iter().any(|entry| {
             matches!(entry.target, PaletteActivityTarget::Navigate(AppView::Pods))
+        }));
+    }
+
+    #[test]
+    fn collect_activity_entries_filters_recent_items_to_current_scope() {
+        let mut app = AppState::default();
+        app.current_context_name = Some("prod".into());
+        app.set_namespace("payments".into());
+        app.record_recent_resource_jump(ResourceRef::Pod("api-0".into(), "payments".into()));
+        app.record_action_pending(
+            ActionKind::Restart,
+            AppView::Pods,
+            Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+            "Pod api-0",
+            "Restart requested",
+        );
+
+        app.current_context_name = Some("staging".into());
+        app.set_namespace("default".into());
+        app.record_recent_resource_jump(ResourceRef::Pod("web-0".into(), "default".into()));
+        app.record_action_pending(
+            ActionKind::Restart,
+            AppView::Pods,
+            Some(ResourceRef::Pod("web-0".into(), "default".into())),
+            "Pod web-0",
+            "Restart requested",
+        );
+
+        let entries = collect_activity_entries(&app);
+
+        assert!(entries.iter().any(|entry| {
+            matches!(
+                &entry.target,
+                PaletteActivityTarget::Resource(resource)
+                    if resource == &ResourceRef::Pod("web-0".into(), "default".into())
+            )
+        }));
+        assert!(!entries.iter().any(|entry| {
+            matches!(
+                &entry.target,
+                PaletteActivityTarget::Resource(resource)
+                    if resource == &ResourceRef::Pod("api-0".into(), "payments".into())
+            )
         }));
     }
 

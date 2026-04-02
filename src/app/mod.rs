@@ -258,8 +258,15 @@ pub enum RecentJumpTarget {
     Resource(ResourceRef),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ActivityScope {
+    pub context: Option<String>,
+    pub namespace: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RecentJumpEntry {
+    pub scope: ActivityScope,
     pub target: RecentJumpTarget,
 }
 

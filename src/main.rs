@@ -4212,7 +4212,6 @@ pub(crate) async fn run_app_inner(
                 }
                 AppAction::NavigateTo(view) => {
                     app.command_palette.close();
-                    app.record_recent_view_jump(view);
                     app.navigate_to_view(view);
                     app.focus = kubectui::app::Focus::Content;
                     app.extension_in_instances = false;
@@ -4435,8 +4434,7 @@ pub(crate) async fn run_app_inner(
                         );
                         continue;
                     };
-                    app.view = target.view;
-                    app.selected_idx = 0;
+                    app.navigate_to_view(target.view);
                     app.focus = kubectui::app::Focus::Content;
                     app.extension_in_instances = false;
                     open_detail_for_resource(

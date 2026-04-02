@@ -498,6 +498,9 @@ impl AppState {
         self.selected_idx = 0;
         self.extension_in_instances = false;
         self.current_namespace = snapshot.namespace.clone();
+        if self.view != snapshot.view {
+            self.record_recent_view_jump(snapshot.view);
+        }
         self.view = snapshot.view;
         self.collapsed_groups = snapshot.collapsed_groups.iter().copied().collect();
         self.sync_collapsed_to_active_view();

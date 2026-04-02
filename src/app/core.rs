@@ -45,6 +45,13 @@ impl Default for AppState {
 }
 
 impl AppState {
+    pub fn activity_scope(&self) -> ActivityScope {
+        ActivityScope {
+            context: self.current_context_name.clone(),
+            namespace: self.current_namespace.clone(),
+        }
+    }
+
     pub fn view(&self) -> AppView {
         self.view
     }
@@ -92,19 +99,21 @@ impl AppState {
 
     pub fn record_recent_view_jump(&mut self, view: AppView) {
         self.push_recent_jump(RecentJumpEntry {
+            scope: self.activity_scope(),
             target: RecentJumpTarget::View(view),
         });
     }
 
     pub fn record_recent_resource_jump(&mut self, resource: ResourceRef) {
         self.push_recent_jump(RecentJumpEntry {
+            scope: self.activity_scope(),
             target: RecentJumpTarget::Resource(resource),
         });
     }
 
     fn push_recent_jump(&mut self, entry: RecentJumpEntry) {
         self.recent_jumps
-            .retain(|existing| existing.target != entry.target);
+            .retain(|existing| existing.scope != entry.scope || existing.target != entry.target);
         self.recent_jumps.push_front(entry);
         while self.recent_jumps.len() > MAX_RECENT_JUMPS {
             self.recent_jumps.pop_back();
@@ -141,6 +150,7 @@ impl AppState {
         let target = resource.map(|resource| ActionHistoryTarget {
             view: origin_view,
             resource,
+            scope: self.activity_scope(),
         });
         let id = self
             .action_history

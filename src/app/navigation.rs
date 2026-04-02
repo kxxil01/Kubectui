@@ -79,6 +79,9 @@ impl AppState {
     }
 
     pub fn navigate_to_view(&mut self, view: AppView) {
+        if self.view != view {
+            self.record_recent_view_jump(view);
+        }
         self.view = view;
         self.selected_idx = 0;
         self.search_query.clear();

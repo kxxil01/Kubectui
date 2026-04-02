@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::time::{AppTimestamp, now};
 
-use crate::app::{AppView, ResourceRef};
+use crate::app::{ActivityScope, AppView, ResourceRef};
 
 pub const MAX_ACTION_HISTORY_ENTRIES: usize = 128;
 
@@ -72,6 +72,7 @@ impl ActionStatus {
 pub struct ActionHistoryTarget {
     pub view: AppView,
     pub resource: ResourceRef,
+    pub scope: ActivityScope,
 }
 
 #[derive(Debug, Clone)]
@@ -169,6 +170,10 @@ mod tests {
         ActionHistoryTarget {
             view: AppView::Pods,
             resource: ResourceRef::Pod("pod-0".to_string(), "default".to_string()),
+            scope: ActivityScope {
+                context: Some("test-context".to_string()),
+                namespace: "default".to_string(),
+            },
         }
     }
 

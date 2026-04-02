@@ -2113,6 +2113,38 @@ fn apply_workspace_snapshot_reopens_active_group() {
 }
 
 #[test]
+fn apply_workspace_snapshot_records_recent_view_jump_in_restored_scope() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "default".into();
+    app.view = AppView::Dashboard;
+
+    let snapshot = WorkspaceSnapshot {
+        context: Some("prod".into()),
+        namespace: "payments".into(),
+        view: AppView::Pods,
+        search_query: None,
+        collapsed_groups: Vec::new(),
+        workbench_open: false,
+        workbench_height: 15,
+        workbench_maximized: false,
+        action_history_tab: false,
+    };
+
+    app.apply_workspace_snapshot(&snapshot);
+
+    let recent = app.recent_jumps().front().expect("recent jump");
+    assert_eq!(recent.target, RecentJumpTarget::View(AppView::Pods));
+    assert_eq!(
+        recent.scope,
+        ActivityScope {
+            context: Some("prod".into()),
+            namespace: "payments".into(),
+        }
+    );
+}
+
+#[test]
 fn save_and_cycle_pod_log_presets_round_trip() {
     use crate::events::input::apply_action;
     use crate::log_investigation::{LogEntry, LogQueryMode};
@@ -2319,5 +2351,24 @@ fn recent_jumps_stay_bounded() {
             format!("api-{}", MAX_RECENT_JUMPS + 4),
             "prod".into()
         )))
+    );
+}
+
+#[test]
+fn navigate_to_view_records_recent_view_jump_for_current_scope() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+
+    app.navigate_to_view(AppView::Pods);
+
+    let recent = app.recent_jumps().front().expect("recent jump");
+    assert_eq!(recent.target, RecentJumpTarget::View(AppView::Pods));
+    assert_eq!(
+        recent.scope,
+        ActivityScope {
+            context: Some("prod".into()),
+            namespace: "payments".into(),
+        }
     );
 }
