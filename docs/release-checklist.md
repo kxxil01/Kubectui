@@ -37,6 +37,6 @@ Optional follow-up checks when credentials are present:
    - or `scripts/release.sh <exact-version>`
 2. Merge the generated release PR to `main`
 3. From clean updated `main`, publish the tag:
-   - `scripts/publish_release_tag.sh`
+   - `scripts/release.sh publish`
 
 The publish step pushes only the tag. It does not push `main`.
