@@ -9,7 +9,7 @@ This is a Rust TUI application for Kubernetes operations (ratatui + kube-rs).
 - **Lint**: `cargo clippy --all-targets --all-features -- -D warnings`
 - **Format**: `cargo fmt --all`
 - **Performance**: `cargo test --test performance profile_render_path_and_emit_reports -- --ignored --nocapture`
-- **Release**: `./scripts/release.sh patch|minor|major|publish`
+- **Release**: `./scripts/release.sh ship patch|minor|major` or `./scripts/release.sh publish`
 
 ## Key Paths
 
