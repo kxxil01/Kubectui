@@ -3,7 +3,10 @@
 use crate::k8s::flux::flux_reconcile_support;
 use crate::{
     app::{AppView, DetailViewState, ResourceRef, WorkloadSortColumn},
-    authorization::{ActionAuthorizationMap, detail_action_requires_authorization},
+    authorization::{
+        ActionAccessReview, ActionAuthorizationMap, detail_action_requires_authorization,
+        detail_action_requires_strict_authorization,
+    },
 };
 
 /// Shared list-level actions that are view-dependent.
@@ -46,6 +49,7 @@ pub enum DetailAction {
     ViewDecodedSecret,
     ToggleBookmark,
     ViewEvents,
+    ViewAccessReview,
     Logs,
     Exec,
     DebugContainer,
@@ -79,7 +83,7 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 28] = [
+    pub const ORDER: [DetailAction; 29] = [
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
         DetailAction::ViewRollout,
@@ -87,6 +91,7 @@ impl DetailAction {
         DetailAction::ViewDecodedSecret,
         DetailAction::ToggleBookmark,
         DetailAction::ViewEvents,
+        DetailAction::ViewAccessReview,
         DetailAction::Logs,
         DetailAction::Exec,
         DetailAction::DebugContainer,
@@ -119,6 +124,7 @@ impl DetailAction {
             DetailAction::ViewDecodedSecret => "[o]",
             DetailAction::ToggleBookmark => "[B]",
             DetailAction::ViewEvents => "[v]",
+            DetailAction::ViewAccessReview => "[A]",
             DetailAction::Logs => "[l]",
             DetailAction::Exec => "[x]",
             DetailAction::DebugContainer => "[g]",
@@ -150,6 +156,7 @@ impl DetailAction {
             DetailAction::ViewDecodedSecret => "Decoded",
             DetailAction::ToggleBookmark => "Bookmark",
             DetailAction::ViewEvents => "Events",
+            DetailAction::ViewAccessReview => "Access",
             DetailAction::Logs => "Logs",
             DetailAction::Exec => "Exec",
             DetailAction::DebugContainer => "Debug",
@@ -456,6 +463,7 @@ impl ResourceRef {
             ),
             DetailAction::ViewHelmHistory => matches!(self, ResourceRef::HelmRelease(_, _)),
             DetailAction::ViewEvents => self.supports_events_tab(),
+            DetailAction::ViewAccessReview => true,
             DetailAction::ViewDecodedSecret => matches!(self, ResourceRef::Secret(_, _)),
             DetailAction::ToggleBookmark => true,
             DetailAction::Logs => matches!(
@@ -565,6 +573,20 @@ fn supports_action_borrowed(
     true
 }
 
+fn supports_action_without_authorization_borrowed(
+    resource: &ResourceRef,
+    node_unschedulable: Option<bool>,
+    cronjob_suspended: Option<bool>,
+    cronjob_history_logs_available: bool,
+    action: DetailAction,
+) -> bool {
+    if matches!(action, DetailAction::Logs) && matches!(resource, ResourceRef::CronJob(_, _)) {
+        return cronjob_history_logs_available;
+    }
+
+    resource.supports_detail_action(action, node_unschedulable, cronjob_suspended)
+}
+
 impl ResourceActionContext {
     pub fn supports_action(&self, action: DetailAction) -> bool {
         supports_action_borrowed(
@@ -575,6 +597,33 @@ impl ResourceActionContext {
             &self.action_authorizations,
             action,
         )
+    }
+
+    pub fn access_review_entries(&self) -> Vec<ActionAccessReview> {
+        DetailAction::ORDER
+            .into_iter()
+            .filter(|action| *action != DetailAction::ViewAccessReview)
+            .filter(|action| {
+                supports_action_without_authorization_borrowed(
+                    &self.resource,
+                    self.node_unschedulable,
+                    self.cronjob_suspended,
+                    self.cronjob_history_logs_available,
+                    *action,
+                )
+            })
+            .map(|action| ActionAccessReview {
+                action,
+                authorization: detail_action_requires_authorization(action).then(|| {
+                    self.action_authorizations
+                        .get(&action)
+                        .copied()
+                        .unwrap_or(crate::authorization::DetailActionAuthorization::Unknown)
+                }),
+                strict: detail_action_requires_strict_authorization(action),
+                checks: self.resource.authorization_checks(action),
+            })
+            .collect()
     }
 }
 
@@ -613,6 +662,7 @@ impl DetailViewState {
                 | DetailAction::ViewHelmHistory
                 | DetailAction::ToggleBookmark
                 | DetailAction::ViewEvents
+                | DetailAction::ViewAccessReview
                 | DetailAction::Logs
                 | DetailAction::Exec
                 | DetailAction::DebugContainer
@@ -696,6 +746,7 @@ mod tests {
             ..DetailViewState::default()
         };
 
+        assert!(detail.supports_action(DetailAction::ViewAccessReview));
         assert!(detail.supports_action(DetailAction::Logs));
         assert!(detail.supports_action(DetailAction::DebugContainer));
         assert!(detail.supports_action(DetailAction::PortForward));
@@ -719,6 +770,7 @@ mod tests {
             ..DetailViewState::default()
         };
 
+        assert!(detail.supports_action(DetailAction::ViewAccessReview));
         assert!(detail.supports_action(DetailAction::Scale));
         assert!(detail.supports_action(DetailAction::Restart));
         assert!(detail.supports_action(DetailAction::ViewRollout));
@@ -736,6 +788,7 @@ mod tests {
             ..DetailViewState::default()
         };
 
+        assert!(detail.supports_action(DetailAction::ViewAccessReview));
         assert!(detail.supports_action(DetailAction::NodeDebugShell));
         assert!(detail.supports_action(DetailAction::Cordon));
         assert!(detail.supports_action(DetailAction::Drain));
@@ -1258,6 +1311,48 @@ mod tests {
             &auths,
             DetailAction::Logs
         ));
+    }
+
+    #[test]
+    fn access_review_lists_supported_actions_even_when_denied() {
+        let resource = ResourceRef::Deployment("api".to_string(), "ns".to_string());
+        let mut auths = ActionAuthorizationMap::new();
+        auths.insert(DetailAction::Scale, DetailActionAuthorization::Denied);
+        auths.insert(DetailAction::ViewYaml, DetailActionAuthorization::Allowed);
+
+        let ctx = ResourceActionContext {
+            resource: resource.clone(),
+            node_unschedulable: None,
+            cronjob_suspended: None,
+            cronjob_history_logs_available: false,
+            action_authorizations: auths,
+        };
+
+        let entries = ctx.access_review_entries();
+        let scale = entries
+            .iter()
+            .find(|entry| entry.action == DetailAction::Scale)
+            .expect("scale review entry");
+        assert_eq!(scale.authorization, Some(DetailActionAuthorization::Denied));
+        assert!(scale.strict);
+        assert_eq!(
+            scale.checks,
+            resource.authorization_checks(DetailAction::Scale)
+        );
+
+        let events = entries
+            .iter()
+            .find(|entry| entry.action == DetailAction::ViewEvents)
+            .expect("events review entry");
+        assert_eq!(
+            events.authorization,
+            Some(DetailActionAuthorization::Unknown)
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.action == DetailAction::ViewAccessReview)
+        );
     }
 
     #[test]

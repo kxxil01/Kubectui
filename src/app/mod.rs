@@ -98,6 +98,7 @@ pub enum AppAction {
     OpenHelmValuesDiff,
     OpenDecodedSecret,
     OpenResourceEvents,
+    OpenAccessReview,
     OpenActionHistory,
     OpenExec,
     DebugContainerDialogOpen,

@@ -169,6 +169,16 @@ const ACTION_ALIASES: &[(DetailAction, &[&str])] = &[
     ),
     (DetailAction::ToggleBookmark, &["bookmark", "pin", "save"]),
     (DetailAction::ViewEvents, &["events", "event"]),
+    (
+        DetailAction::ViewAccessReview,
+        &[
+            "access",
+            "rbac",
+            "permissions",
+            "authorization",
+            "why denied",
+        ],
+    ),
     (DetailAction::Logs, &["logs", "log"]),
     (DetailAction::Exec, &["exec", "shell", "terminal"]),
     (

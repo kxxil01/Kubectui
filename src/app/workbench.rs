@@ -1,5 +1,6 @@
 use super::*;
 use crate::{
+    authorization::ActionAccessReview,
     k8s::helm::HelmHistoryResult,
     k8s::rollout::RolloutInspection,
     network_policy_analysis::NetworkPolicyAnalysis,
@@ -9,7 +10,7 @@ use crate::{
     traffic_debug::TrafficDebugAnalysis,
     ui::components::scale_dialog::ScaleTargetKind,
     workbench::{
-        AiAnalysisTabState, ConnectivityTabState, ConnectivityTargetOption,
+        AccessReviewTabState, AiAnalysisTabState, ConnectivityTabState, ConnectivityTargetOption,
         ExtensionOutputTabState, HelmHistoryTabState, NetworkPolicyTabState, ResourceDiffTabState,
         RolloutTabState, RunbookTabState, TrafficDebugTabState,
     },
@@ -114,6 +115,23 @@ impl AppState {
         tab.pending_request_id = pending_request_id;
         self.workbench
             .open_tab(WorkbenchTabState::ResourceYaml(tab));
+        self.focus = Focus::Workbench;
+    }
+
+    pub fn open_access_review_tab(
+        &mut self,
+        resource: ResourceRef,
+        context_name: Option<String>,
+        namespace_scope: String,
+        entries: Vec<ActionAccessReview>,
+    ) {
+        self.workbench
+            .open_tab(WorkbenchTabState::AccessReview(AccessReviewTabState::new(
+                resource,
+                context_name,
+                namespace_scope,
+                entries,
+            )));
         self.focus = Focus::Workbench;
     }
 

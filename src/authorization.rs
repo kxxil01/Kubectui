@@ -13,6 +13,14 @@ pub enum DetailActionAuthorization {
 
 pub type ActionAuthorizationMap = BTreeMap<DetailAction, DetailActionAuthorization>;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ActionAccessReview {
+    pub action: DetailAction,
+    pub authorization: Option<DetailActionAuthorization>,
+    pub strict: bool,
+    pub checks: Vec<ResourceAccessCheck>,
+}
+
 impl DetailActionAuthorization {
     pub const fn from_allowed(allowed: Option<bool>) -> Self {
         match allowed {
@@ -146,6 +154,7 @@ impl ResourceRef {
                 )],
                 _ => self.base_access_checks("get"),
             },
+            DetailAction::ViewAccessReview => Vec::new(),
             DetailAction::ViewRollout
             | DetailAction::ViewHelmHistory
             | DetailAction::ViewTrafficDebug

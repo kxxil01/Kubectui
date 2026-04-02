@@ -63,6 +63,37 @@ impl AppState {
                 KeyCode::Enter => AppAction::ActionHistoryOpenSelected,
                 _ => AppAction::None,
             },
+            WorkbenchTabState::AccessReview(tab) => {
+                let max_scroll = tab.line_count().saturating_sub(1);
+                match key.code {
+                    KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        tab.scroll = tab.scroll.saturating_sub(1);
+                        AppAction::None
+                    }
+                    KeyCode::Char('g') => {
+                        tab.scroll = 0;
+                        AppAction::None
+                    }
+                    KeyCode::Char('G') => {
+                        tab.scroll = max_scroll;
+                        AppAction::None
+                    }
+                    KeyCode::PageDown => {
+                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
+                        AppAction::None
+                    }
+                    KeyCode::PageUp => {
+                        tab.scroll = tab.scroll.saturating_sub(10);
+                        AppAction::None
+                    }
+                    _ => AppAction::None,
+                }
+            }
             WorkbenchTabState::ResourceYaml(tab) => {
                 let max_scroll = tab
                     .yaml
@@ -1194,6 +1225,7 @@ impl AppState {
 
         let allow_plain_r = match &tab.state {
             WorkbenchTabState::ActionHistory(_)
+            | WorkbenchTabState::AccessReview(_)
             | WorkbenchTabState::ResourceYaml(_)
             | WorkbenchTabState::ResourceDiff(_)
             | WorkbenchTabState::Rollout(crate::workbench::RolloutTabState {
@@ -1592,6 +1624,17 @@ impl AppState {
                     && self.view == AppView::HelmReleases) =>
             {
                 AppAction::OpenHelmHistory
+            }
+            KeyCode::Char('A')
+                if (self.detail_view.as_ref().is_some_and(|detail| {
+                    detail.supports_action(DetailAction::ViewAccessReview)
+                }) || (self.detail_view.is_none() && self.focus == Focus::Content))
+                    && !self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(DetailViewState::has_confirmation_dialog) =>
+            {
+                AppAction::OpenAccessReview
             }
             KeyCode::Char('N')
                 if self.detail_view.as_ref().is_some_and(|detail| {

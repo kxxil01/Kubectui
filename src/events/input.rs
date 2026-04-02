@@ -29,7 +29,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         | AppAction::RunbookExecuteSelectedStep
         | AppAction::RunbookToggleStepDone
         | AppAction::RunbookToggleStepSkipped => true,
-        AppAction::OpenNetworkPolicyView
+        AppAction::OpenAccessReview
+        | AppAction::OpenNetworkPolicyView
         | AppAction::OpenNetworkConnectivity
         | AppAction::OpenTrafficDebug => true,
         AppAction::CloseDetail => {
