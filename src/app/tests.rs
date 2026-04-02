@@ -2420,3 +2420,28 @@ fn selected_action_history_target_ignores_stale_scope_rows() {
 
     assert!(app.selected_action_history_target().is_none());
 }
+
+#[test]
+fn visible_action_history_entries_hide_completed_rows_from_old_scope() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+    let entry_id = app.record_action_pending(
+        ActionKind::Delete,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+        "Pod api-0",
+        "Delete requested",
+    );
+    app.complete_action_history(
+        entry_id,
+        ActionStatus::Succeeded,
+        "Deleted Pod api-0",
+        false,
+    );
+
+    app.current_context_name = Some("staging".into());
+    app.current_namespace = "default".into();
+
+    assert!(app.visible_action_history_entries().is_empty());
+}

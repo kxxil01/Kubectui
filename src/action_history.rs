@@ -72,7 +72,6 @@ impl ActionStatus {
 pub struct ActionHistoryTarget {
     pub view: AppView,
     pub resource: ResourceRef,
-    pub scope: ActivityScope,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +81,7 @@ pub struct ActionHistoryEntry {
     pub status: ActionStatus,
     pub resource_label: String,
     pub message: String,
+    pub scope: ActivityScope,
     pub target: Option<ActionHistoryTarget>,
     pub started_at: AppTimestamp,
     pub finished_at: Option<AppTimestamp>,
@@ -108,6 +108,7 @@ impl ActionHistoryState {
         kind: ActionKind,
         resource_label: impl Into<String>,
         message: impl Into<String>,
+        scope: ActivityScope,
         target: Option<ActionHistoryTarget>,
     ) -> u64 {
         let id = self.next_id;
@@ -118,6 +119,7 @@ impl ActionHistoryState {
             status: ActionStatus::Pending,
             resource_label: resource_label.into(),
             message: message.into(),
+            scope,
             target,
             started_at: now(),
             finished_at: None,
@@ -170,18 +172,28 @@ mod tests {
         ActionHistoryTarget {
             view: AppView::Pods,
             resource: ResourceRef::Pod("pod-0".to_string(), "default".to_string()),
-            scope: ActivityScope {
-                context: Some("test-context".to_string()),
-                namespace: "default".to_string(),
-            },
+        }
+    }
+
+    fn scope() -> ActivityScope {
+        ActivityScope {
+            context: Some("test-context".to_string()),
+            namespace: "default".to_string(),
         }
     }
 
     #[test]
     fn record_pending_prepends_newest_entry() {
         let mut state = ActionHistoryState::default();
-        let first = state.record_pending(ActionKind::Delete, "Pod a", "Deleting Pod a", None);
-        let second = state.record_pending(ActionKind::Scale, "Deployment b", "Scaling b", None);
+        let first =
+            state.record_pending(ActionKind::Delete, "Pod a", "Deleting Pod a", scope(), None);
+        let second = state.record_pending(
+            ActionKind::Scale,
+            "Deployment b",
+            "Scaling b",
+            scope(),
+            None,
+        );
 
         assert_ne!(first, second);
         assert_eq!(
@@ -198,6 +210,7 @@ mod tests {
             ActionKind::Restart,
             "Deployment api",
             "Requesting restart",
+            scope(),
             Some(target()),
         );
 
@@ -217,6 +230,7 @@ mod tests {
             ActionKind::Delete,
             "Pod api-0",
             "Deleting Pod",
+            scope(),
             Some(target()),
         );
 
@@ -224,6 +238,7 @@ mod tests {
 
         let entry = state.get(0).expect("entry");
         assert!(entry.target.is_none());
+        assert_eq!(entry.scope, scope());
     }
 
     #[test]
@@ -245,6 +260,7 @@ mod tests {
                 ActionKind::ApplyYaml,
                 format!("Resource {idx}"),
                 "Applying YAML",
+                scope(),
                 None,
             );
         }

@@ -100,12 +100,7 @@ impl AppState {
         self.action_history
             .entries()
             .iter()
-            .filter(|entry| {
-                entry
-                    .target
-                    .as_ref()
-                    .is_none_or(|target| target.scope == current_scope)
-            })
+            .filter(|entry| entry.scope == current_scope)
             .collect()
     }
 
@@ -163,14 +158,14 @@ impl AppState {
     ) -> u64 {
         self.open_action_history_tab(false);
         let affected_resource = resource.clone();
+        let scope = self.activity_scope();
         let target = resource.map(|resource| ActionHistoryTarget {
             view: origin_view,
             resource,
-            scope: self.activity_scope(),
         });
         let id = self
             .action_history
-            .record_pending(kind, resource_label, message, target);
+            .record_pending(kind, resource_label, message, scope, target);
         self.rebuild_timeline_for(affected_resource.as_ref());
         id
     }

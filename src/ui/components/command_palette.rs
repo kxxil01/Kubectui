@@ -278,7 +278,7 @@ pub fn collect_activity_entries(app: &AppState) -> Vec<PaletteActivityEntry> {
         let Some(target) = entry.target.as_ref() else {
             continue;
         };
-        if target.scope != current_scope {
+        if entry.scope != current_scope {
             continue;
         }
         if !seen_resource_targets.insert(target.resource.clone()) {
