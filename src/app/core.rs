@@ -104,6 +104,21 @@ impl AppState {
             .collect()
     }
 
+    pub fn sync_action_history_selection(&mut self) {
+        let current_scope = self.activity_scope();
+        let total = self
+            .action_history
+            .entries()
+            .iter()
+            .filter(|entry| entry.scope == current_scope)
+            .count();
+        for tab in &mut self.workbench.tabs {
+            if let WorkbenchTabState::ActionHistory(history_tab) = &mut tab.state {
+                history_tab.selected = history_tab.selected.min(total.saturating_sub(1));
+            }
+        }
+    }
+
     pub fn recent_jumps(&self) -> &std::collections::VecDeque<RecentJumpEntry> {
         &self.recent_jumps
     }
@@ -205,8 +220,10 @@ impl AppState {
         let WorkbenchTabState::ActionHistory(history_tab) = &tab.state else {
             return None;
         };
-        self.visible_action_history_entries()
-            .get(history_tab.selected)
+        let entries = self.visible_action_history_entries();
+        let selected = history_tab.selected.min(entries.len().saturating_sub(1));
+        entries
+            .get(selected)
             .copied()
             .and_then(|entry| entry.target.as_ref())
     }

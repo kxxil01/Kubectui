@@ -6,6 +6,7 @@ impl AppState {
         self.selected_idx = 0;
         self.search_query.clear();
         self.is_search_mode = false;
+        self.sync_action_history_selection();
     }
 
     pub fn get_namespace(&self) -> &str {

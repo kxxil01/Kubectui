@@ -515,6 +515,7 @@ impl AppState {
             self.workbench
                 .close_tab_by_key(&crate::workbench::WorkbenchTabKey::ActionHistory);
         }
+        self.sync_action_history_selection();
         self.focus = Focus::Content;
         self.sync_workbench_focus();
         self.needs_config_save = true;

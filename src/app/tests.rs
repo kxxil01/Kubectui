@@ -2445,3 +2445,56 @@ fn visible_action_history_entries_hide_completed_rows_from_old_scope() {
 
     assert!(app.visible_action_history_entries().is_empty());
 }
+
+#[test]
+fn action_history_selection_clamps_when_scope_changes() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+        "Pod api-0",
+        "Restart requested",
+    );
+
+    app.current_context_name = Some("staging".into());
+    app.current_namespace = "default".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("web-0".into(), "default".into())),
+        "Pod web-0",
+        "Restart requested",
+    );
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("web-1".into(), "default".into())),
+        "Pod web-1",
+        "Restart requested",
+    );
+    app.open_action_history_tab(true);
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::ActionHistory(history_tab) = &mut tab.state
+    {
+        history_tab.selected = 1;
+    }
+
+    app.current_context_name = Some("prod".into());
+    app.set_namespace("payments".into());
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("action history tab should stay open");
+    };
+    let WorkbenchTabState::ActionHistory(history_tab) = &tab.state else {
+        panic!("active tab should be action history");
+    };
+    assert_eq!(history_tab.selected, 0);
+    assert_eq!(
+        app.selected_action_history_target()
+            .map(|target| target.resource.clone()),
+        Some(ResourceRef::Pod("api-0".into(), "payments".into()))
+    );
+}

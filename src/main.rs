@@ -3283,6 +3283,7 @@ pub(crate) async fn run_app_inner(
 
                             client = new_client;
                             app.current_context_name = Some(ctx.clone());
+                            app.sync_action_history_selection();
                             if let Some(snapshot) = app
                                 .pending_workspace_restore
                                 .take()

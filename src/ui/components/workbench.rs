@@ -226,13 +226,14 @@ fn render_action_history_tab(
         return;
     }
 
-    let window = centered_window(entries.len(), tab.selected, area.height.max(1) as usize);
+    let selected = tab.selected.min(entries.len().saturating_sub(1));
+    let window = centered_window(entries.len(), selected, area.height.max(1) as usize);
     let lines: Vec<Line> = entries
         .iter()
         .enumerate()
         .skip(window.start)
         .take(window.end.saturating_sub(window.start))
-        .map(|(idx, entry)| render_action_history_line(entry, idx == tab.selected, &theme))
+        .map(|(idx, entry)| render_action_history_line(entry, idx == selected, &theme))
         .collect();
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
