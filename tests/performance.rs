@@ -28,6 +28,7 @@ use kubectui::{
     },
     ui::{
         self,
+        components::command_palette::CommandPalette,
         views::filtering::{filtered_node_indices, filtered_service_indices},
     },
 };
@@ -173,10 +174,10 @@ fn benchmark_search_keystroke_under_5ms() {
     assert!(elapsed.as_millis() < 5, "{}ms", elapsed.as_millis());
 }
 
-/// Verifies cached global search index lookups stay cheap on repeated palette opens.
+/// Verifies cached palette resource refreshes stay cheap on repeated palette opens.
 #[test]
 #[ignore = "Optional performance run"]
-fn benchmark_global_search_index_cache_hit_under_10ms() {
+fn benchmark_palette_resource_refresh_cache_hit_under_10ms() {
     let mut snapshot = ClusterSnapshot {
         snapshot_version: 1,
         ..ClusterSnapshot::default()
@@ -201,14 +202,17 @@ fn benchmark_global_search_index_cache_hit_under_10ms() {
 
     let warmed = collect_global_resource_search_entries(&snapshot);
     assert!(!warmed.is_empty());
+    let mut palette = CommandPalette::default();
 
     let start = Instant::now();
     for _ in 0..1_000 {
         let entries = collect_global_resource_search_entries(&snapshot);
-        assert_eq!(entries.len(), warmed.len());
+        palette.set_resource_entries(entries);
     }
     let elapsed = start.elapsed();
 
+    assert!(!palette.filtered().is_empty());
+    assert_eq!(warmed.len(), 6_000);
     assert!(elapsed.as_millis() < 10, "{}ms", elapsed.as_millis());
 }
 

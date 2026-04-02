@@ -566,20 +566,9 @@ fn refresh_palette_resources(
     app: &mut kubectui::app::AppState,
     snapshot: &kubectui::state::ClusterSnapshot,
 ) {
-    let entries = kubectui::global_search::collect_global_resource_search_entries(snapshot)
-        .iter()
-        .cloned()
-        .map(
-            |entry| kubectui::ui::components::command_palette::PaletteResourceEntry {
-                resource: entry.resource,
-                title: entry.title,
-                subtitle: entry.subtitle,
-                aliases: entry.aliases,
-                badge_label: entry.view.label().to_string(),
-            },
-        )
-        .collect();
-    app.command_palette.set_resource_entries(entries);
+    app.command_palette.set_resource_entries(
+        kubectui::global_search::collect_global_resource_search_entries(snapshot),
+    );
 }
 
 fn refresh_palette_activity(app: &mut kubectui::app::AppState) {

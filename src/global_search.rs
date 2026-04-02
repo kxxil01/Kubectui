@@ -11,10 +11,10 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GlobalResourceSearchEntry {
     pub resource: ResourceRef,
-    pub view: AppView,
     pub title: String,
     pub subtitle: String,
     pub aliases: Vec<String>,
+    pub badge_label: String,
 }
 
 type GlobalSearchCacheKey = (u64, usize);
@@ -503,10 +503,10 @@ fn push_flux_entry(
     };
     entries.push(GlobalResourceSearchEntry {
         resource,
-        view,
         title: name,
         subtitle,
         aliases,
+        badge_label: view.label().to_string(),
     });
 }
 
@@ -531,8 +531,8 @@ fn push_cluster_entry(
                 .unwrap_or_default()
         ),
         resource,
-        view,
         aliases,
+        badge_label: view.label().to_string(),
     });
 }
 
@@ -548,8 +548,8 @@ fn push_namespaced_entry(
         title: resource.name().to_string(),
         subtitle: format!("{} · {namespace}", resource.kind()),
         resource,
-        view,
         aliases,
+        badge_label: view.label().to_string(),
     });
 }
 

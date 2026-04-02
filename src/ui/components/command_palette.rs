@@ -8,10 +8,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
-use std::{cell::RefCell, collections::HashSet};
+use std::{cell::RefCell, collections::HashSet, sync::Arc};
 
 use crate::app::{AppState, AppView, RecentJumpTarget, ResourceRef};
 use crate::extensions::LoadedExtensionAction;
+use crate::global_search::GlobalResourceSearchEntry;
 use crate::policy::{DetailAction, ResourceActionContext};
 use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::LoadedRunbook;
@@ -111,14 +112,7 @@ pub struct PaletteActivityEntry {
     pub target: PaletteActivityTarget,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PaletteResourceEntry {
-    pub resource: ResourceRef,
-    pub title: String,
-    pub subtitle: String,
-    pub aliases: Vec<String>,
-    pub badge_label: String,
-}
+pub type PaletteResourceEntry = GlobalResourceSearchEntry;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteExtensionAction {
@@ -786,7 +780,7 @@ pub struct CommandPalette {
     is_open: bool,
     cached_filtered: RefCell<Option<Vec<PaletteEntry>>>,
     activity_entries: Vec<PaletteActivityEntry>,
-    resource_entries: Vec<PaletteResourceEntry>,
+    resource_entries: Arc<Vec<PaletteResourceEntry>>,
     resource_context: Option<ResourceActionContext>,
     /// Column toggle info for current view: (id, label, currently_visible).
     columns_info: Option<Vec<(String, String, bool)>>,
@@ -814,7 +808,7 @@ impl CommandPalette {
         self.resource_context = None;
         self.columns_info = None;
         self.activity_entries.clear();
-        self.resource_entries.clear();
+        self.resource_entries = Arc::default();
         self.extension_actions.clear();
         self.runbooks.clear();
     }
@@ -824,8 +818,8 @@ impl CommandPalette {
         self.cached_filtered.borrow_mut().take();
     }
 
-    pub fn set_resource_entries(&mut self, entries: Vec<PaletteResourceEntry>) {
-        self.resource_entries = entries;
+    pub fn set_resource_entries(&mut self, entries: impl Into<Arc<Vec<PaletteResourceEntry>>>) {
+        self.resource_entries = entries.into();
         self.cached_filtered.borrow_mut().take();
     }
 
