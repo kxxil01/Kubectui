@@ -29,7 +29,8 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         | AppAction::RunbookExecuteSelectedStep
         | AppAction::RunbookToggleStepDone
         | AppAction::RunbookToggleStepSkipped => true,
-        AppAction::OpenNetworkPolicyView
+        AppAction::OpenAccessReview
+        | AppAction::OpenNetworkPolicyView
         | AppAction::OpenNetworkConnectivity
         | AppAction::OpenTrafficDebug => true,
         AppAction::CloseDetail => {
@@ -745,6 +746,8 @@ mod tests {
                 node_unschedulable: None,
                 cronjob_suspended: None,
                 cronjob_history_logs_available: false,
+                effective_logs_resource: None,
+                effective_logs_authorization: None,
                 action_authorizations: Default::default(),
             }));
         let changed = apply_action(

@@ -14,7 +14,9 @@ use kubectui::{
 
 use crate::async_types::{DetailAsyncResult, RelationsAsyncResult, ResourceDiffAsyncResult};
 use crate::next_request_id;
-use crate::selection_helpers::{detail_action_block_message, selected_resource};
+use crate::selection_helpers::{
+    detail_action_block_message, selected_resource, selected_resource_context,
+};
 
 /// Spawns an async detail-view fetch for a resource.
 fn spawn_detail_fetch(
@@ -269,6 +271,45 @@ pub async fn handle_open_resource_events(
     if let Some(request_id) = pending_request_id {
         spawn_detail_fetch(detail_tx, client, snapshot, resource, request_id);
     }
+    false
+}
+
+/// Handles `AppAction::OpenAccessReview`.
+pub async fn handle_open_access_review(
+    app: &mut AppState,
+    client: &K8sClient,
+    snapshot: &ClusterSnapshot,
+) -> bool {
+    let resource_ctx = if let Some(resource_ctx) = app
+        .detail_view
+        .as_ref()
+        .and_then(|detail| detail.resource_action_context())
+    {
+        resource_ctx
+    } else if let Some(mut resource_ctx) = selected_resource_context(app, snapshot) {
+        resource_ctx.action_authorizations = client
+            .fetch_detail_action_authorizations(&resource_ctx.resource)
+            .await;
+        if let Some(log_resource) = resource_ctx.effective_logs_resource.as_ref() {
+            resource_ctx.effective_logs_authorization = client
+                .is_detail_action_authorized(log_resource, DetailAction::Logs)
+                .await;
+        }
+        resource_ctx
+    } else {
+        app.set_error("No resource selected for access review.".to_string());
+        return true;
+    };
+
+    let resource = resource_ctx.resource.clone();
+    let entries = resource_ctx.access_review_entries();
+    app.detail_view = None;
+    app.open_access_review_tab(
+        resource,
+        app.current_context_name.clone(),
+        app.current_namespace.clone(),
+        entries,
+    );
     false
 }
 

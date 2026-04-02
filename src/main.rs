@@ -4586,6 +4586,17 @@ pub(crate) async fn run_app_inner(
                         continue;
                     }
                 }
+                AppAction::OpenAccessReview => {
+                    if action::detail_tabs::handle_open_access_review(
+                        &mut app,
+                        &client,
+                        &cached_snapshot,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                }
                 AppAction::LogsViewerOpen => {
                     let resource = app
                         .detail_view

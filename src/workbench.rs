@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 use crate::{
     action_history::ActionHistoryState,
     app::{LogsViewerState, ResourceRef},
+    authorization::ActionAccessReview,
     icons::tab_icon,
     k8s::{
         client::EventInfo,
@@ -38,6 +39,7 @@ pub const MAX_TIMELINE_EVENTS: usize = 200;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WorkbenchTabKind {
     ActionHistory,
+    AccessReview,
     ResourceYaml,
     ResourceDiff,
     Rollout,
@@ -61,6 +63,7 @@ impl WorkbenchTabKind {
     pub const fn title(self) -> &'static str {
         match self {
             WorkbenchTabKind::ActionHistory => "History",
+            WorkbenchTabKind::AccessReview => "Access",
             WorkbenchTabKind::ResourceYaml => "YAML",
             WorkbenchTabKind::ResourceDiff => "Drift",
             WorkbenchTabKind::Rollout => "Rollout",
@@ -85,6 +88,7 @@ impl WorkbenchTabKind {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum WorkbenchTabKey {
     ActionHistory,
+    AccessReview(ResourceRef),
     ResourceYaml(ResourceRef),
     ResourceDiff(ResourceRef),
     Rollout(ResourceRef),
@@ -297,6 +301,42 @@ impl ActionHistoryTabState {
 
     pub fn select_bottom(&mut self, total: usize) {
         self.selected = total.saturating_sub(1);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct AccessReviewTabState {
+    pub resource: ResourceRef,
+    pub context_name: Option<String>,
+    pub namespace_scope: String,
+    pub entries: Vec<ActionAccessReview>,
+    pub scroll: usize,
+}
+
+impl AccessReviewTabState {
+    pub fn new(
+        resource: ResourceRef,
+        context_name: Option<String>,
+        namespace_scope: String,
+        entries: Vec<ActionAccessReview>,
+    ) -> Self {
+        Self {
+            resource,
+            context_name,
+            namespace_scope,
+            entries,
+            scroll: 0,
+        }
+    }
+
+    pub fn line_count(&self) -> usize {
+        let header_lines = 4usize;
+        let entry_lines = self
+            .entries
+            .iter()
+            .map(|entry| 2 + entry.checks.len().max(1))
+            .sum::<usize>();
+        header_lines + entry_lines
     }
 }
 
@@ -1646,6 +1686,7 @@ impl RelationsTabState {
 #[derive(Debug, Clone)]
 pub enum WorkbenchTabState {
     ActionHistory(ActionHistoryTabState),
+    AccessReview(AccessReviewTabState),
     ResourceYaml(ResourceYamlTabState),
     ResourceDiff(ResourceDiffTabState),
     Rollout(RolloutTabState),
@@ -1669,6 +1710,7 @@ impl WorkbenchTabState {
     pub const fn kind(&self) -> WorkbenchTabKind {
         match self {
             Self::ActionHistory(_) => WorkbenchTabKind::ActionHistory,
+            Self::AccessReview(_) => WorkbenchTabKind::AccessReview,
             Self::ResourceYaml(_) => WorkbenchTabKind::ResourceYaml,
             Self::ResourceDiff(_) => WorkbenchTabKind::ResourceDiff,
             Self::Rollout(_) => WorkbenchTabKind::Rollout,
@@ -1692,6 +1734,7 @@ impl WorkbenchTabState {
     pub fn key(&self) -> WorkbenchTabKey {
         match self {
             Self::ActionHistory(_) => WorkbenchTabKey::ActionHistory,
+            Self::AccessReview(tab) => WorkbenchTabKey::AccessReview(tab.resource.clone()),
             Self::ResourceYaml(tab) => WorkbenchTabKey::ResourceYaml(tab.resource.clone()),
             Self::ResourceDiff(tab) => WorkbenchTabKey::ResourceDiff(tab.resource.clone()),
             Self::Rollout(tab) => WorkbenchTabKey::Rollout(tab.resource.clone()),
@@ -1719,6 +1762,9 @@ impl WorkbenchTabState {
         let icon = tab_icon(kind_label).active();
         match self {
             Self::ActionHistory(_) => format!("{icon}{kind_label}"),
+            Self::AccessReview(tab) => {
+                format!("{icon}{kind_label} {}", resource_title(&tab.resource))
+            }
             Self::ResourceYaml(tab) => {
                 format!("{icon}{kind_label} {}", resource_title(&tab.resource))
             }

@@ -345,6 +345,9 @@ fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'sta
     if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewRollout)) {
         bindings.push(("O", "View rollout control center"));
     }
+    if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewAccessReview)) {
+        bindings.push(("A", "Open RBAC access review for this resource"));
+    }
     if detail.is_some_and(|detail| detail.supports_action(DetailAction::NodeDebugShell)) {
         bindings.push(("g", "Launch node debug shell"));
     } else if detail.is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) {
