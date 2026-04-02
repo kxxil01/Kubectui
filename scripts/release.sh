@@ -66,14 +66,19 @@ ensure_main_synced() {
 
 ensure_tag_absent() {
   local tag="$1"
-  git rev-parse "$tag" >/dev/null 2>&1 && die "tag $tag already exists"
+  if git rev-parse "$tag" >/dev/null 2>&1; then
+    die "tag $tag already exists"
+  fi
 }
 
 ensure_release_branch_absent() {
   local branch="$1"
-  git show-ref --verify --quiet "refs/heads/$branch" && die "local branch $branch already exists"
-  git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 &&
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    die "local branch $branch already exists"
+  fi
+  if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
     die "remote branch $branch already exists"
+  fi
 }
 
 run_quality_gate() {
