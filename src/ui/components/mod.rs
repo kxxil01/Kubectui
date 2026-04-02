@@ -49,7 +49,7 @@ use ratatui::{
 use crate::{
     app::{AppView, NavGroup},
     state::ConnectionHealth,
-    ui::theme::Theme,
+    ui::{render_cache::mark_area_skipped, theme::Theme},
 };
 
 const MAX_SIDEBAR_CACHE_ENTRIES: usize = 512;
@@ -66,9 +66,8 @@ struct HeaderCacheKey {
 type HeaderCacheValue = Arc<Line<'static>>;
 static HEADER_LINE_CACHE: LazyLock<Mutex<Option<(HeaderCacheKey, HeaderCacheValue)>>> =
     LazyLock::new(|| Mutex::new(None));
-
 thread_local! {
-    static HEADER_RENDERED: RefCell<Option<(Rect, HeaderCacheKey, usize)>> =
+    static HEADER_RENDERED: RefCell<Option<(HeaderRenderKey, usize)>> =
         const { RefCell::new(None) };
 }
 
@@ -82,9 +81,8 @@ struct StatusBarCacheKey {
 type StatusBarCacheValue = Arc<Line<'static>>;
 static STATUS_BAR_LINE_CACHE: LazyLock<Mutex<Option<(StatusBarCacheKey, StatusBarCacheValue)>>> =
     LazyLock::new(|| Mutex::new(None));
-
 thread_local! {
-    static STATUS_RENDERED: RefCell<Option<(Rect, StatusBarCacheKey, usize)>> =
+    static STATUS_RENDERED: RefCell<Option<(StatusRenderKey, usize)>> =
         const { RefCell::new(None) };
 }
 
@@ -100,17 +98,27 @@ struct SidebarCacheKey {
 }
 
 type SidebarCacheValue = Arc<Vec<Line<'static>>>;
+thread_local! {
+    static SIDEBAR_RENDERED: RefCell<Option<(SidebarRenderKey, usize)>> =
+        const { RefCell::new(None) };
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct SidebarSkipKey {
+struct HeaderRenderKey {
     area: Rect,
-    theme_index: u8,
-    icon_mode: u8,
-    active: AppView,
-    sidebar_cursor: usize,
-    collapsed_mask: u16,
-    sidebar_active: bool,
-    counts_hash: u64,
+    content: HeaderCacheKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StatusRenderKey {
+    area: Rect,
+    content: StatusBarCacheKey,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SidebarRenderKey {
+    area: Rect,
+    content: SidebarCacheKey,
 }
 
 pub struct SidebarRenderData<'a> {
@@ -165,11 +173,6 @@ impl SidebarLineCache {
 
 static SIDEBAR_LINE_CACHE: LazyLock<Mutex<SidebarLineCache>> =
     LazyLock::new(|| Mutex::new(SidebarLineCache::default()));
-
-thread_local! {
-    static SIDEBAR_RENDERED: RefCell<Option<(SidebarSkipKey, usize)>> =
-        const { RefCell::new(None) };
-}
 
 /// Global theme singleton — reads from the active theme setting.
 pub fn default_theme() -> Theme {
@@ -406,23 +409,32 @@ pub fn render_header(
     let theme_index = crate::ui::theme::active_theme_index();
     let icon_mode = crate::icons::active_icon_mode() as u8;
     let frame_count = frame.count();
+    let render_key = HeaderRenderKey {
+        area,
+        content: HeaderCacheKey {
+            theme_index,
+            icon_mode,
+            title: title.to_string(),
+            cluster_meta: cluster_meta.to_string(),
+            health,
+        },
+    };
 
-    let skip = HEADER_RENDERED.with(|cell| {
-        let mut cache = cell.borrow_mut();
-        if let Some((cached_area, ref cached_key, ref mut prev_frame)) = *cache
-            && cached_area == area
-            && cached_key.theme_index == theme_index
-            && cached_key.icon_mode == icon_mode
-            && cached_key.title == title
-            && cached_key.cluster_meta == cluster_meta
-            && cached_key.health == health
-            && frame_count == *prev_frame + 1
-        {
-            *prev_frame = frame_count;
-            return true;
-        }
-        false
-    });
+    let skip = {
+        let buffer = frame.buffer_mut();
+        HEADER_RENDERED.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            if let Some((cached_key, prev_frame)) = cache.as_mut()
+                && *cached_key == render_key
+                && frame_count == *prev_frame + 1
+            {
+                mark_area_skipped(buffer, area);
+                *prev_frame = frame_count;
+                return true;
+            }
+            false
+        })
+    };
     if skip {
         return;
     }
@@ -444,17 +456,7 @@ pub fn render_header(
     );
 
     HEADER_RENDERED.with(|cell| {
-        *cell.borrow_mut() = Some((
-            area,
-            HeaderCacheKey {
-                theme_index,
-                icon_mode,
-                title: title.to_string(),
-                cluster_meta: cluster_meta.to_string(),
-                health,
-            },
-            frame_count,
-        ));
+        *cell.borrow_mut() = Some((render_key, frame_count));
     });
 }
 
@@ -505,32 +507,36 @@ pub fn render_sidebar(
     use ratatui::layout::Margin;
 
     let theme_index = crate::ui::theme::active_theme_index();
-    let icon_mode = crate::icons::active_icon_mode() as u8;
     let sidebar_active = data.focus == Focus::Sidebar;
     let frame_count = frame.count();
-
-    let skip_key = SidebarSkipKey {
+    let render_key = SidebarRenderKey {
         area,
-        theme_index,
-        icon_mode,
-        active,
-        sidebar_cursor,
-        collapsed_mask: collapsed_mask(data.collapsed),
-        sidebar_active,
-        counts_hash: data.counts_hash,
+        content: SidebarCacheKey {
+            theme_index,
+            icon_mode: crate::icons::active_icon_mode() as u8,
+            active,
+            sidebar_cursor,
+            collapsed_mask: collapsed_mask(data.collapsed),
+            sidebar_active,
+            counts_hash: data.counts_hash,
+        },
     };
 
-    let skip = SIDEBAR_RENDERED.with(|cell| {
-        let mut cache = cell.borrow_mut();
-        if let Some((ref cached_key, ref mut prev_frame)) = *cache
-            && *cached_key == skip_key
-            && frame_count == *prev_frame + 1
-        {
-            *prev_frame = frame_count;
-            return true;
-        }
-        false
-    });
+    let skip = {
+        let buffer = frame.buffer_mut();
+        SIDEBAR_RENDERED.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            if let Some((cached_key, prev_frame)) = cache.as_mut()
+                && *cached_key == render_key
+                && frame_count == *prev_frame + 1
+            {
+                mark_area_skipped(buffer, area);
+                *prev_frame = frame_count;
+                return true;
+            }
+            false
+        })
+    };
     if skip {
         return;
     }
@@ -565,7 +571,7 @@ pub fn render_sidebar(
     }
 
     SIDEBAR_RENDERED.with(|cell| {
-        *cell.borrow_mut() = Some((skip_key, frame_count));
+        *cell.borrow_mut() = Some((render_key, frame_count));
     });
 }
 
@@ -573,21 +579,30 @@ pub fn render_sidebar(
 pub fn render_status_bar(frame: &mut Frame, area: Rect, message: &str, is_error: bool) {
     let theme_index = crate::ui::theme::active_theme_index();
     let frame_count = frame.count();
+    let render_key = StatusRenderKey {
+        area,
+        content: StatusBarCacheKey {
+            theme_index,
+            message: message.to_string(),
+            is_error,
+        },
+    };
 
-    let skip = STATUS_RENDERED.with(|cell| {
-        let mut cache = cell.borrow_mut();
-        if let Some((cached_area, ref cached_key, ref mut prev_frame)) = *cache
-            && cached_area == area
-            && cached_key.theme_index == theme_index
-            && cached_key.message == message
-            && cached_key.is_error == is_error
-            && frame_count == *prev_frame + 1
-        {
-            *prev_frame = frame_count;
-            return true;
-        }
-        false
-    });
+    let skip = {
+        let buffer = frame.buffer_mut();
+        STATUS_RENDERED.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            if let Some((cached_key, prev_frame)) = cache.as_mut()
+                && *cached_key == render_key
+                && frame_count == *prev_frame + 1
+            {
+                mark_area_skipped(buffer, area);
+                *prev_frame = frame_count;
+                return true;
+            }
+            false
+        })
+    };
     if skip {
         return;
     }
@@ -609,15 +624,7 @@ pub fn render_status_bar(frame: &mut Frame, area: Rect, message: &str, is_error:
     frame.render_widget(widget, area);
 
     STATUS_RENDERED.with(|cell| {
-        *cell.borrow_mut() = Some((
-            area,
-            StatusBarCacheKey {
-                theme_index,
-                message: message.to_string(),
-                is_error,
-            },
-            frame_count,
-        ));
+        *cell.borrow_mut() = Some((render_key, frame_count));
     });
 }
 

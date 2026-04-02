@@ -194,6 +194,7 @@ impl ResourceRef {
                 | ResourceRef::DaemonSet(_, namespace)
                 | ResourceRef::ReplicaSet(_, namespace)
                 | ResourceRef::ReplicationController(_, namespace)
+                | ResourceRef::CronJob(_, namespace)
                 | ResourceRef::Job(_, namespace) => {
                     let mut checks = self.base_access_checks("get");
                     checks.push(ResourceAccessCheck::resource(
@@ -780,6 +781,31 @@ mod tests {
             check.resource == "pods"
                 && check.verb == "get"
                 && check.subresource.as_deref() == Some("log")
+        }));
+    }
+
+    #[test]
+    fn cronjob_logs_require_cronjob_read_pod_listing_and_log_access() {
+        let resource = ResourceRef::CronJob("nightly".to_string(), "ops".to_string());
+        let checks = resource.authorization_checks(DetailAction::Logs);
+
+        assert!(checks.iter().any(|check| {
+            check.resource == "cronjobs"
+                && check.verb == "get"
+                && check.namespace.as_deref() == Some("ops")
+                && check.name.as_deref() == Some("nightly")
+        }));
+        assert!(checks.iter().any(|check| {
+            check.resource == "pods"
+                && check.verb == "list"
+                && check.namespace.as_deref() == Some("ops")
+                && check.subresource.is_none()
+        }));
+        assert!(checks.iter().any(|check| {
+            check.resource == "pods"
+                && check.verb == "get"
+                && check.subresource.as_deref() == Some("log")
+                && check.namespace.as_deref() == Some("ops")
         }));
     }
 
