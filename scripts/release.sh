@@ -8,6 +8,7 @@ usage() {
 Usage:
   ./scripts/release.sh <version|patch|minor|major>
   ./scripts/release.sh publish
+  ./scripts/release.sh ship <version|patch|minor|major>
 
 Examples:
   ./scripts/release.sh patch
@@ -15,6 +16,7 @@ Examples:
   ./scripts/release.sh 1.2.3
   ./scripts/release.sh 2.0.0-beta.1
   ./scripts/release.sh publish
+  ./scripts/release.sh ship patch
 EOF
 }
 
@@ -89,19 +91,23 @@ run_quality_gate() {
   echo "All checks passed."
 }
 
-prepare_release() {
-  local requested="$1"
-  local current new_version tag release_branch
-
+ensure_release_tooling() {
   require_cmd cargo
   require_cmd git
   require_cmd gh
   require_cmd sed
-
   gh auth status >/dev/null 2>&1 || die "gh is not authenticated. Run 'gh auth login' first."
-  ensure_clean_worktree
-  ensure_on_main
-  ensure_main_synced
+}
+
+release_pr_body() {
+  local tag="$1"
+  local new_version="$2"
+  printf '## Why\n- prepare the version bump for %s\n- keep release preparation on the normal branch and PR path\n\n## How\n- update Cargo.toml and Cargo.lock to %s\n- run the standard quality gate before creating the release PR\n\n## Tests\n- `cargo fmt --all -- --check`\n- `cargo clippy --all-targets --all-features -- -D warnings`\n- `cargo test --all-targets --all-features`\n' "$tag" "$new_version"
+}
+
+prepare_release_metadata() {
+  local requested="$1"
+  local current new_version tag release_branch
 
   current="$(current_version)"
   new_version="$(bump_version "$current" "$requested")"
@@ -110,6 +116,44 @@ prepare_release() {
 
   ensure_tag_absent "$tag"
   ensure_release_branch_absent "$release_branch"
+
+  echo "$current" "$new_version" "$tag" "$release_branch"
+}
+
+create_release_pr() {
+  local new_version="$1"
+  local tag="$2"
+  local release_branch="$3"
+  local pr_url
+
+  sed -i.bak "s/^version = \".*\"/version = \"${new_version}\"/" "$CARGO_TOML"
+  rm -f "${CARGO_TOML}.bak"
+  cargo check --quiet
+
+  echo "Creating release branch and PR..." >&2
+  git checkout -b "$release_branch"
+  git add "$CARGO_TOML" Cargo.lock
+  git commit -m "chore: release ${tag}"
+  git push -u origin "$release_branch"
+  pr_url="$(gh pr create \
+    --base main \
+    --head "$release_branch" \
+    --title "chore: release ${tag}" \
+    --body "$(release_pr_body "$tag" "$new_version")")"
+
+  printf '%s\n' "$pr_url"
+}
+
+prepare_release() {
+  local requested="$1"
+  local current new_version tag release_branch pr_url
+
+  ensure_release_tooling
+  ensure_clean_worktree
+  ensure_on_main
+  ensure_main_synced
+
+  read -r current new_version tag release_branch < <(prepare_release_metadata "$requested")
 
   echo "Current version: $current"
   echo "New version:     $new_version"
@@ -120,23 +164,11 @@ prepare_release() {
   run_quality_gate
   echo
 
-  sed -i.bak "s/^version = \".*\"/version = \"${new_version}\"/" "$CARGO_TOML"
-  rm -f "${CARGO_TOML}.bak"
-  cargo check --quiet
-
-  echo "Creating release branch and PR..."
-  git checkout -b "$release_branch"
-  git add "$CARGO_TOML" Cargo.lock
-  git commit -m "chore: release ${tag}"
-  git push -u origin "$release_branch"
-  gh pr create \
-    --base main \
-    --head "$release_branch" \
-    --title "chore: release ${tag}" \
-    --body $'## Why\n- prepare the version bump for '"${tag}"$'\n- keep release preparation on the normal branch and PR path\n\n## How\n- update Cargo.toml and Cargo.lock to '"${new_version}"$'\n- run the standard quality gate before creating the release PR\n\n## Tests\n- `cargo fmt --all -- --check`\n- `cargo clippy --all-targets --all-features -- -D warnings`\n- `cargo test --all-targets --all-features`'
+  pr_url="$(create_release_pr "$new_version" "$tag" "$release_branch")"
 
   echo
   echo "Release PR created."
+  echo "$pr_url"
   echo "After it merges, run ./scripts/release.sh publish from clean updated main."
 }
 
@@ -159,25 +191,98 @@ publish_release() {
   echo "Published tag $tag"
 }
 
+wait_for_pr_merge() {
+  local pr_ref="$1"
+  local state=""
+
+  while true; do
+    state="$(gh pr view "$pr_ref" --json state --jq .state)"
+    case "$state" in
+      MERGED)
+        return 0
+        ;;
+      CLOSED)
+        die "release PR was closed before merge"
+        ;;
+    esac
+    sleep 5
+  done
+}
+
+ship_release() {
+  local requested="$1"
+  local current new_version tag release_branch pr_url
+
+  ensure_release_tooling
+  ensure_clean_worktree
+  ensure_on_main
+  ensure_main_synced
+
+  read -r current new_version tag release_branch < <(prepare_release_metadata "$requested")
+
+  echo "Current version: $current"
+  echo "New version:     $new_version"
+  echo "Tag:             $tag"
+  echo "Release branch:  $release_branch"
+  echo
+
+  run_quality_gate
+  echo
+
+  pr_url="$(create_release_pr "$new_version" "$tag" "$release_branch")"
+
+  echo
+  echo "Enabling merge for $pr_url ..."
+  gh pr merge "$pr_url" --squash --delete-branch --auto
+  echo "Waiting for release PR to merge..."
+  wait_for_pr_merge "$pr_url"
+
+  git checkout main
+  git pull --ff-only origin main
+  publish_release
+}
+
 main() {
   if [[ $# -eq 0 ]]; then
     usage
     exit 0
   fi
 
-  [[ $# -eq 1 ]] || {
-    usage
-    exit 1
-  }
-
-  case "$1" in
+  case "${1:-}" in
     publish)
+      [[ $# -eq 1 ]] || {
+        usage
+        exit 1
+      }
       publish_release
       ;;
+    ship)
+      [[ $# -eq 2 ]] || {
+        usage
+        exit 1
+      }
+      case "$2" in
+        patch|minor|major|[0-9]*)
+          ship_release "$2"
+          ;;
+        *)
+          usage
+          exit 1
+          ;;
+      esac
+      ;;
     patch|minor|major|[0-9]*)
+      [[ $# -eq 1 ]] || {
+        usage
+        exit 1
+      }
       prepare_release "$1"
       ;;
     -h|--help|help)
+      [[ $# -eq 1 ]] || {
+        usage
+        exit 1
+      }
       usage
       ;;
     *)

@@ -31,12 +31,13 @@ Optional follow-up checks when credentials are present:
 
 ## Release flow
 
-1. Prepare the release PR:
+1. Preferred one-shot flow:
+   - `scripts/release.sh ship patch`
+   - or `scripts/release.sh ship minor`
+   - or `scripts/release.sh ship <exact-version>`
+2. Manual split flow if needed:
    - `scripts/release.sh patch`
-   - or `scripts/release.sh minor`
-   - or `scripts/release.sh <exact-version>`
-2. Merge the generated release PR to `main`
-3. From clean updated `main`, publish the tag:
+   - merge the generated release PR to `main`
    - `scripts/release.sh publish`
 
 The publish step pushes only the tag. It does not push `main`.
