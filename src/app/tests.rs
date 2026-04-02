@@ -1105,6 +1105,42 @@ fn resource_ref_helpers_work_for_each_variant() {
     assert_eq!(cr_cluster.kind(), "ClusterWidget");
     assert_eq!(cr_cluster.name(), "global");
     assert_eq!(cr_cluster.namespace(), None);
+
+    let flux_helm_release = ResourceRef::CustomResource {
+        name: "backend".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "helm.toolkit.fluxcd.io".to_string(),
+        version: "v2".to_string(),
+        kind: "HelmRelease".to_string(),
+        plural: "helmreleases".to_string(),
+    };
+    assert_eq!(
+        flux_helm_release.primary_view(),
+        Some(AppView::FluxCDHelmReleases)
+    );
+
+    let flux_kustomization = ResourceRef::CustomResource {
+        name: "apps".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "kustomize.toolkit.fluxcd.io".to_string(),
+        version: "v1".to_string(),
+        kind: "Kustomization".to_string(),
+        plural: "kustomizations".to_string(),
+    };
+    assert_eq!(
+        flux_kustomization.primary_view(),
+        Some(AppView::FluxCDKustomizations)
+    );
+
+    let flux_helm_chart = ResourceRef::CustomResource {
+        name: "podinfo".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "source.toolkit.fluxcd.io".to_string(),
+        version: "v1".to_string(),
+        kind: "HelmChart".to_string(),
+        plural: "helmcharts".to_string(),
+    };
+    assert_eq!(flux_helm_chart.primary_view(), Some(AppView::FluxCDSources));
 }
 
 #[test]
@@ -2077,6 +2113,38 @@ fn apply_workspace_snapshot_reopens_active_group() {
 }
 
 #[test]
+fn apply_workspace_snapshot_records_recent_view_jump_in_restored_scope() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "default".into();
+    app.view = AppView::Dashboard;
+
+    let snapshot = WorkspaceSnapshot {
+        context: Some("prod".into()),
+        namespace: "payments".into(),
+        view: AppView::Pods,
+        search_query: None,
+        collapsed_groups: Vec::new(),
+        workbench_open: false,
+        workbench_height: 15,
+        workbench_maximized: false,
+        action_history_tab: false,
+    };
+
+    app.apply_workspace_snapshot(&snapshot);
+
+    let recent = app.recent_jumps().front().expect("recent jump");
+    assert_eq!(recent.target, RecentJumpTarget::View(AppView::Pods));
+    assert_eq!(
+        recent.scope,
+        ActivityScope {
+            context: Some("prod".into()),
+            namespace: "payments".into(),
+        }
+    );
+}
+
+#[test]
 fn save_and_cycle_pod_log_presets_round_trip() {
     use crate::events::input::apply_action;
     use crate::log_investigation::{LogEntry, LogQueryMode};
@@ -2238,4 +2306,195 @@ fn sidebar_icons_do_not_use_replacement_glyphs() {
     assert!(!NavGroup::Config.sidebar_text(false).contains('\u{fffd}'));
     assert!(!AppView::Endpoints.icon().contains('\u{fffd}'));
     assert!(!AppView::Endpoints.sidebar_text().contains('\u{fffd}'));
+}
+
+#[test]
+fn recent_resource_jumps_dedupe_and_move_to_front() {
+    let mut app = AppState::default();
+    let pod = ResourceRef::Pod("api-0".into(), "prod".into());
+    let deployment = ResourceRef::Deployment("api".into(), "prod".into());
+
+    app.record_recent_resource_jump(pod.clone());
+    app.record_recent_resource_jump(deployment.clone());
+    app.record_recent_resource_jump(pod.clone());
+
+    let targets: Vec<_> = app
+        .recent_jumps()
+        .iter()
+        .map(|entry| &entry.target)
+        .collect();
+    assert_eq!(
+        targets,
+        vec![
+            &RecentJumpTarget::Resource(pod),
+            &RecentJumpTarget::Resource(deployment)
+        ]
+    );
+}
+
+#[test]
+fn recent_jumps_stay_bounded() {
+    let mut app = AppState::default();
+    for idx in 0..(MAX_RECENT_JUMPS + 5) {
+        app.record_recent_view_jump(if idx % 2 == 0 {
+            AppView::Pods
+        } else {
+            AppView::Deployments
+        });
+        app.record_recent_resource_jump(ResourceRef::Pod(format!("api-{idx}"), "prod".into()));
+    }
+
+    assert!(app.recent_jumps().len() <= MAX_RECENT_JUMPS);
+    assert_eq!(
+        app.recent_jumps().front().map(|entry| &entry.target),
+        Some(&RecentJumpTarget::Resource(ResourceRef::Pod(
+            format!("api-{}", MAX_RECENT_JUMPS + 4),
+            "prod".into()
+        )))
+    );
+}
+
+#[test]
+fn navigate_to_view_records_recent_view_jump_for_current_scope() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+
+    app.navigate_to_view(AppView::Pods);
+
+    let recent = app.recent_jumps().front().expect("recent jump");
+    assert_eq!(recent.target, RecentJumpTarget::View(AppView::Pods));
+    assert_eq!(
+        recent.scope,
+        ActivityScope {
+            context: Some("prod".into()),
+            namespace: "payments".into(),
+        }
+    );
+}
+
+#[test]
+fn visible_action_history_entries_filter_to_active_scope() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+        "Pod api-0",
+        "Restart requested",
+    );
+
+    app.current_context_name = Some("staging".into());
+    app.current_namespace = "default".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("web-0".into(), "default".into())),
+        "Pod web-0",
+        "Restart requested",
+    );
+
+    let entries = app.visible_action_history_entries();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].resource_label, "Pod web-0");
+}
+
+#[test]
+fn selected_action_history_target_ignores_stale_scope_rows() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+        "Pod api-0",
+        "Restart requested",
+    );
+
+    app.current_context_name = Some("staging".into());
+    app.current_namespace = "default".into();
+    app.open_action_history_tab(true);
+
+    assert!(app.selected_action_history_target().is_none());
+}
+
+#[test]
+fn visible_action_history_entries_hide_completed_rows_from_old_scope() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+    let entry_id = app.record_action_pending(
+        ActionKind::Delete,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+        "Pod api-0",
+        "Delete requested",
+    );
+    app.complete_action_history(
+        entry_id,
+        ActionStatus::Succeeded,
+        "Deleted Pod api-0",
+        false,
+    );
+
+    app.current_context_name = Some("staging".into());
+    app.current_namespace = "default".into();
+
+    assert!(app.visible_action_history_entries().is_empty());
+}
+
+#[test]
+fn action_history_selection_clamps_when_scope_changes() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+        "Pod api-0",
+        "Restart requested",
+    );
+
+    app.current_context_name = Some("staging".into());
+    app.current_namespace = "default".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("web-0".into(), "default".into())),
+        "Pod web-0",
+        "Restart requested",
+    );
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("web-1".into(), "default".into())),
+        "Pod web-1",
+        "Restart requested",
+    );
+    app.open_action_history_tab(true);
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::ActionHistory(history_tab) = &mut tab.state
+    {
+        history_tab.selected = 1;
+    }
+
+    app.current_context_name = Some("prod".into());
+    app.set_namespace("payments".into());
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("action history tab should stay open");
+    };
+    let WorkbenchTabState::ActionHistory(history_tab) = &tab.state else {
+        panic!("active tab should be action history");
+    };
+    assert_eq!(history_tab.selected, 0);
+    assert_eq!(
+        app.selected_action_history_target()
+            .map(|target| target.resource.clone()),
+        Some(ResourceRef::Pod("api-0".into(), "payments".into()))
+    );
 }

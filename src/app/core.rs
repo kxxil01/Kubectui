@@ -30,6 +30,7 @@ impl Default for AppState {
             pod_sort: None,
             tunnel_registry: crate::state::port_forward::TunnelRegistry::new(),
             action_history: ActionHistoryState::default(),
+            recent_jumps: Default::default(),
             preferences: None,
             cluster_preferences: None,
             current_context_name: None,
@@ -44,6 +45,13 @@ impl Default for AppState {
 }
 
 impl AppState {
+    pub fn activity_scope(&self) -> ActivityScope {
+        ActivityScope {
+            context: self.current_context_name.clone(),
+            namespace: self.current_namespace.clone(),
+        }
+    }
+
     pub fn view(&self) -> AppView {
         self.view
     }
@@ -85,6 +93,59 @@ impl AppState {
         &self.action_history
     }
 
+    pub fn visible_action_history_entries(
+        &self,
+    ) -> Vec<&crate::action_history::ActionHistoryEntry> {
+        let current_scope = self.activity_scope();
+        self.action_history
+            .entries()
+            .iter()
+            .filter(|entry| entry.scope == current_scope)
+            .collect()
+    }
+
+    pub fn sync_action_history_selection(&mut self) {
+        let current_scope = self.activity_scope();
+        let total = self
+            .action_history
+            .entries()
+            .iter()
+            .filter(|entry| entry.scope == current_scope)
+            .count();
+        for tab in &mut self.workbench.tabs {
+            if let WorkbenchTabState::ActionHistory(history_tab) = &mut tab.state {
+                history_tab.selected = history_tab.selected.min(total.saturating_sub(1));
+            }
+        }
+    }
+
+    pub fn recent_jumps(&self) -> &std::collections::VecDeque<RecentJumpEntry> {
+        &self.recent_jumps
+    }
+
+    pub fn record_recent_view_jump(&mut self, view: AppView) {
+        self.push_recent_jump(RecentJumpEntry {
+            scope: self.activity_scope(),
+            target: RecentJumpTarget::View(view),
+        });
+    }
+
+    pub fn record_recent_resource_jump(&mut self, resource: ResourceRef) {
+        self.push_recent_jump(RecentJumpEntry {
+            scope: self.activity_scope(),
+            target: RecentJumpTarget::Resource(resource),
+        });
+    }
+
+    fn push_recent_jump(&mut self, entry: RecentJumpEntry) {
+        self.recent_jumps
+            .retain(|existing| existing.scope != entry.scope || existing.target != entry.target);
+        self.recent_jumps.push_front(entry);
+        while self.recent_jumps.len() > MAX_RECENT_JUMPS {
+            self.recent_jumps.pop_back();
+        }
+    }
+
     pub fn open_action_history_tab(&mut self, focus: bool) {
         let history_key = crate::workbench::WorkbenchTabKey::ActionHistory;
         if focus {
@@ -112,13 +173,14 @@ impl AppState {
     ) -> u64 {
         self.open_action_history_tab(false);
         let affected_resource = resource.clone();
+        let scope = self.activity_scope();
         let target = resource.map(|resource| ActionHistoryTarget {
             view: origin_view,
             resource,
         });
         let id = self
             .action_history
-            .record_pending(kind, resource_label, message, target);
+            .record_pending(kind, resource_label, message, scope, target);
         self.rebuild_timeline_for(affected_resource.as_ref());
         id
     }
@@ -158,8 +220,11 @@ impl AppState {
         let WorkbenchTabState::ActionHistory(history_tab) = &tab.state else {
             return None;
         };
-        self.action_history
-            .get(history_tab.selected)
+        let entries = self.visible_action_history_entries();
+        let selected = history_tab.selected.min(entries.len().saturating_sub(1));
+        entries
+            .get(selected)
+            .copied()
             .and_then(|entry| entry.target.as_ref())
     }
 

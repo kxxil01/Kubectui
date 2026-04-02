@@ -523,17 +523,14 @@ pub fn detail_action_denied_message(
 }
 
 /// Navigates to the bookmarked resource's primary view and returns the ref.
-pub fn prepare_bookmark_target(
+pub fn prepare_resource_target(
     app: &mut AppState,
     snapshot: &ClusterSnapshot,
-) -> Result<ResourceRef, String> {
-    let resource = app
-        .selected_bookmark_resource()
-        .ok_or_else(|| "No bookmarked resource is selected.".to_string())?;
-
-    if !resource_exists(snapshot, &resource) {
+    resource: &ResourceRef,
+) -> Result<(), String> {
+    if !resource_exists(snapshot, resource) {
         return Err(format!(
-            "Bookmarked {} '{}' is no longer present in the current snapshot.",
+            "{} '{}' is no longer present in the current snapshot.",
             resource.kind(),
             resource.name()
         ));
@@ -542,21 +539,40 @@ pub fn prepare_bookmark_target(
     app.search_query.clear();
     app.is_search_mode = false;
 
-    if let Some(view) = resource.primary_view() {
-        app.view = view;
-        app.focus = kubectui::app::Focus::Content;
-        app.selected_idx = 0;
-        app.apply_sort_from_preferences(kubectui::columns::view_key(view));
-        if let Some(selected_idx) = bookmark_selected_index(
-            view,
-            snapshot,
-            &resource,
-            app.workload_sort(),
-            app.pod_sort(),
-        ) {
-            app.selected_idx = selected_idx;
-        }
+    let Some(view) = resource.primary_view() else {
+        return Err(format!(
+            "{} '{}' does not map to a navigable primary view.",
+            resource.kind(),
+            resource.name()
+        ));
+    };
+
+    app.navigate_to_view(view);
+    app.focus = kubectui::app::Focus::Content;
+    app.extension_in_instances = false;
+    if let Some(selected_idx) = bookmark_selected_index(
+        view,
+        snapshot,
+        resource,
+        app.workload_sort(),
+        app.pod_sort(),
+    ) {
+        app.selected_idx = selected_idx;
     }
+
+    Ok(())
+}
+
+/// Navigates to the bookmarked resource's primary view and returns the ref.
+pub fn prepare_bookmark_target(
+    app: &mut AppState,
+    snapshot: &ClusterSnapshot,
+) -> Result<ResourceRef, String> {
+    let resource = app
+        .selected_bookmark_resource()
+        .ok_or_else(|| "No bookmarked resource is selected.".to_string())?;
+
+    prepare_resource_target(app, snapshot, &resource).map_err(|err| format!("Bookmarked {err}"))?;
 
     Ok(resource)
 }
@@ -632,6 +648,7 @@ pub fn open_detail_for_resource(
     resource: ResourceRef,
     detail_request_seq: &mut u64,
 ) {
+    app.record_recent_resource_jump(resource.clone());
     let request_id = super::next_request_id(detail_request_seq);
     let mut state = initial_loading_state(resource.clone(), snapshot);
     state.pending_request_id = Some(request_id);

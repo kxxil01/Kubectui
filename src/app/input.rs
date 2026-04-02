@@ -24,7 +24,7 @@ impl AppState {
             return AppAction::ToggleWorkbench;
         }
 
-        let action_history_len = self.action_history.entries().len();
+        let action_history_len = self.visible_action_history_entries().len();
         let Some(tab) = self.workbench.active_tab_mut() else {
             return AppAction::None;
         };
@@ -1306,6 +1306,12 @@ impl AppState {
             return match self.command_palette.handle_key(key) {
                 CommandPaletteAction::None => AppAction::None,
                 CommandPaletteAction::Navigate(view) => AppAction::NavigateTo(view),
+                CommandPaletteAction::JumpToResource(resource) => {
+                    AppAction::JumpToResource(resource)
+                }
+                CommandPaletteAction::ActivateWorkbenchTab(key) => {
+                    AppAction::ActivateWorkbenchTab(key)
+                }
                 CommandPaletteAction::Execute(action, resource) => {
                     AppAction::PaletteAction { action, resource }
                 }

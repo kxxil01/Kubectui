@@ -14,6 +14,7 @@ pub mod detail_sections;
 pub mod events;
 pub mod export;
 pub mod extensions;
+pub mod global_search;
 pub mod governance;
 pub mod icons;
 pub mod k8s;
