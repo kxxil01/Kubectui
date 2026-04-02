@@ -128,6 +128,7 @@ pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
         DetailAction::ViewDecodedSecret => AppAction::OpenDecodedSecret,
         DetailAction::ToggleBookmark => AppAction::ToggleBookmark,
         DetailAction::ViewEvents => AppAction::OpenResourceEvents,
+        DetailAction::ViewAccessReview => AppAction::OpenAccessReview,
         DetailAction::Logs => AppAction::LogsViewerOpen,
         DetailAction::Exec => AppAction::OpenExec,
         DetailAction::DebugContainer => AppAction::DebugContainerDialogOpen,

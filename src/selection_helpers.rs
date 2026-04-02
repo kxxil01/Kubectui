@@ -4,6 +4,7 @@ use kubectui::{
     app::{AppState, AppView, DetailViewState, ResourceRef},
     authorization::DetailActionAuthorization,
     bookmarks::{bookmark_selected_index, resource_exists, selected_bookmark_resource},
+    cronjob::{cronjob_history_entries, preferred_history_index},
     detail_sections::metadata_for_resource,
     k8s::client::K8sClient,
     policy::{DetailAction, ResourceActionContext},
@@ -420,6 +421,24 @@ pub fn selected_resource_context(
     snapshot: &ClusterSnapshot,
 ) -> Option<ResourceActionContext> {
     let resource = selected_resource(app, snapshot)?;
+    let (effective_logs_resource, cronjob_history_logs_available) = match &resource {
+        ResourceRef::CronJob(name, ns) => snapshot
+            .cronjobs
+            .iter()
+            .find(|cronjob| &cronjob.name == name && &cronjob.namespace == ns)
+            .map(|cronjob| {
+                let history = cronjob_history_entries(cronjob, &snapshot.jobs, &snapshot.pods);
+                let selected = history.get(preferred_history_index(&history)).cloned();
+                (
+                    selected.as_ref().map(|entry| {
+                        ResourceRef::Job(entry.job_name.clone(), entry.namespace.clone())
+                    }),
+                    selected.is_some_and(|entry| entry.has_log_target()),
+                )
+            })
+            .unwrap_or((None, false)),
+        _ => (None, false),
+    };
     let node_unschedulable = match &resource {
         ResourceRef::Node(name) => snapshot
             .nodes
@@ -440,7 +459,9 @@ pub fn selected_resource_context(
         resource,
         node_unschedulable,
         cronjob_suspended,
-        cronjob_history_logs_available: false,
+        cronjob_history_logs_available,
+        effective_logs_resource,
+        effective_logs_authorization: None,
         action_authorizations: Default::default(),
     })
 }

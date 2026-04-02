@@ -12,12 +12,13 @@ use ratatui::{
 use crate::{
     action_history::{ActionHistoryEntry, ActionStatus},
     app::{AppState, Focus},
+    authorization::{ActionAccessReview, DetailActionAuthorization, ResourceAccessCheck},
     log_investigation::{LogQueryMode, LogSeverity, highlight_ranges},
     resource_diff::{ResourceDiffBaselineKind, ResourceDiffLineKind},
     secret::DecodedSecretValue,
     state::ClusterSnapshot,
     time::format_local,
-    ui::components::default_theme,
+    ui::{components::default_theme, theme::Theme},
     workbench::{RunbookStepState, WorkbenchTab, WorkbenchTabState},
 };
 
@@ -148,6 +149,7 @@ pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, cluster: 
 
     match &active_tab.state {
         WorkbenchTabState::ActionHistory(tab) => render_action_history_tab(frame, inner, app, tab),
+        WorkbenchTabState::AccessReview(tab) => render_access_review_tab(frame, inner, tab),
         WorkbenchTabState::ResourceYaml(tab) => {
             render_yaml_tab(frame, inner, tab.scroll, active_tab)
         }
@@ -187,7 +189,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             Line::from(""),
             Line::from("  Open a resource tab with:"),
             Line::from(
-                "  [y] YAML  [D] Drift  [O] Rollout  [t] Traffic  [o] Decoded  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward",
+                "  [y] YAML  [D] Drift  [O] Rollout  [A] Access  [t] Traffic  [o] Decoded  [v] Timeline  [l] Logs  [x] Exec  [f] Port-Forward",
             ),
             Line::from(""),
             Line::from("  [H] opens action history."),
@@ -238,6 +240,121 @@ fn render_action_history_tab(
 
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
     render_scrollbar(frame, area, entries.len(), window.start);
+}
+
+fn render_access_review_tab(
+    frame: &mut Frame,
+    area: Rect,
+    tab: &crate::workbench::AccessReviewTabState,
+) {
+    let theme = default_theme();
+    let lines = access_review_lines(tab, &theme);
+    let total_lines = lines.len();
+    let window = scroll_window(total_lines, tab.scroll, area.height.max(1) as usize);
+    let visible = lines
+        .into_iter()
+        .skip(window.start)
+        .take(window.end.saturating_sub(window.start))
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(visible).wrap(Wrap { trim: false }), area);
+    render_scrollbar(frame, area, total_lines, window.start);
+}
+
+fn access_review_lines(
+    tab: &crate::workbench::AccessReviewTabState,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::with_capacity(tab.line_count());
+    let context = tab.context_name.as_deref().unwrap_or("unknown");
+    lines.push(Line::from(vec![
+        Span::styled(" Resource: ", theme.section_title_style()),
+        Span::raw(tab.resource.summary_label()),
+    ]));
+    lines.push(Line::from(vec![
+        Span::styled(" Context: ", theme.section_title_style()),
+        Span::raw(context.to_string()),
+        Span::raw("  "),
+        Span::styled("Namespace Scope: ", theme.section_title_style()),
+        Span::raw(tab.namespace_scope.clone()),
+    ]));
+    lines.push(Line::from(vec![Span::styled(
+        " Required Kubernetes API checks for each supported detail action",
+        theme.muted_style(),
+    )]));
+    lines.push(Line::from(""));
+
+    for entry in &tab.entries {
+        lines.push(render_access_review_header_line(entry, theme));
+        if entry.checks.is_empty() {
+            lines.push(Line::from(vec![Span::styled(
+                "   No RBAC check required for this action.",
+                theme.muted_style(),
+            )]));
+        } else {
+            for check in &entry.checks {
+                lines.push(render_access_review_check_line(check, theme));
+            }
+        }
+        lines.push(Line::from(""));
+    }
+
+    lines
+}
+
+fn render_access_review_header_line(entry: &ActionAccessReview, theme: &Theme) -> Line<'static> {
+    let (status_label, status_style) = match entry.authorization {
+        Some(DetailActionAuthorization::Allowed) => ("allowed", Style::default().fg(theme.success)),
+        Some(DetailActionAuthorization::Denied) => ("denied", Style::default().fg(theme.error)),
+        Some(DetailActionAuthorization::Unknown) => ("unknown", theme.badge_warning_style()),
+        None => ("not gated", theme.muted_style()),
+    };
+    let mut spans = vec![
+        Span::styled(
+            format!(" {} ", entry.action.key_hint()),
+            theme.section_title_style(),
+        ),
+        Span::raw(entry.action.label().to_string()),
+        Span::raw("  "),
+        Span::styled(format!("[{status_label}]"), status_style),
+    ];
+    if entry.strict {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled("(strict)", theme.muted_style()));
+    }
+    Line::from(spans)
+}
+
+fn render_access_review_check_line(check: &ResourceAccessCheck, theme: &Theme) -> Line<'static> {
+    let mut target = match &check.group {
+        Some(group) => format!("{group}/{}", check.resource),
+        None => check.resource.clone(),
+    };
+    if let Some(subresource) = &check.subresource {
+        target.push('/');
+        target.push_str(subresource);
+    }
+
+    let mut details = Vec::new();
+    if let Some(namespace) = &check.namespace {
+        details.push(format!("namespace={namespace}"));
+    }
+    if let Some(name) = &check.name {
+        details.push(format!("name={name}"));
+    }
+
+    let suffix = if details.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", details.join(", "))
+    };
+
+    Line::from(vec![
+        Span::styled("   - ", theme.muted_style()),
+        Span::styled(check.verb.clone(), theme.section_title_style()),
+        Span::raw(" "),
+        Span::raw(target),
+        Span::styled(suffix, theme.muted_style()),
+    ])
 }
 
 fn render_network_policy_tab(

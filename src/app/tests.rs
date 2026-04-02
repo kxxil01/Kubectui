@@ -1404,6 +1404,29 @@ fn uppercase_c_opens_connectivity_for_pod_detail() {
 }
 
 #[test]
+fn uppercase_a_opens_access_review_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
+    assert_eq!(action, AppAction::OpenAccessReview);
+}
+
+#[test]
+fn uppercase_a_opens_access_review_from_content_focus() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
+    assert_eq!(action, AppAction::OpenAccessReview);
+}
+
+#[test]
 fn t_key_opens_traffic_debug_for_service_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
