@@ -1354,6 +1354,8 @@ mod tests {
             node_unschedulable,
             cronjob_suspended: None,
             cronjob_history_logs_available: false,
+            effective_logs_resource: None,
+            effective_logs_authorization: None,
             action_authorizations: Default::default(),
         }
     }

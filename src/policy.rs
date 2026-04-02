@@ -4,8 +4,8 @@ use crate::k8s::flux::flux_reconcile_support;
 use crate::{
     app::{AppView, DetailViewState, ResourceRef, WorkloadSortColumn},
     authorization::{
-        ActionAccessReview, ActionAuthorizationMap, detail_action_requires_authorization,
-        detail_action_requires_strict_authorization,
+        ActionAccessReview, ActionAuthorizationMap, DetailActionAuthorization,
+        detail_action_requires_authorization, detail_action_requires_strict_authorization,
     },
 };
 
@@ -79,6 +79,8 @@ pub struct ResourceActionContext {
     pub node_unschedulable: Option<bool>,
     pub cronjob_suspended: Option<bool>,
     pub cronjob_history_logs_available: bool,
+    pub effective_logs_resource: Option<ResourceRef>,
+    pub effective_logs_authorization: Option<DetailActionAuthorization>,
     pub action_authorizations: ActionAuthorizationMap,
 }
 
@@ -573,20 +575,6 @@ fn supports_action_borrowed(
     true
 }
 
-fn supports_action_without_authorization_borrowed(
-    resource: &ResourceRef,
-    node_unschedulable: Option<bool>,
-    cronjob_suspended: Option<bool>,
-    cronjob_history_logs_available: bool,
-    action: DetailAction,
-) -> bool {
-    if matches!(action, DetailAction::Logs) && matches!(resource, ResourceRef::CronJob(_, _)) {
-        return cronjob_history_logs_available;
-    }
-
-    resource.supports_detail_action(action, node_unschedulable, cronjob_suspended)
-}
-
 impl ResourceActionContext {
     pub fn supports_action(&self, action: DetailAction) -> bool {
         supports_action_borrowed(
@@ -603,33 +591,62 @@ impl ResourceActionContext {
         DetailAction::ORDER
             .into_iter()
             .filter(|action| *action != DetailAction::ViewAccessReview)
-            .filter(|action| {
-                supports_action_without_authorization_borrowed(
-                    &self.resource,
-                    self.node_unschedulable,
-                    self.cronjob_suspended,
-                    self.cronjob_history_logs_available,
-                    *action,
-                )
-            })
-            .map(|action| ActionAccessReview {
-                action,
-                authorization: detail_action_requires_authorization(action).then(|| {
-                    self.action_authorizations
-                        .get(&action)
-                        .copied()
-                        .unwrap_or(crate::authorization::DetailActionAuthorization::Unknown)
-                }),
-                strict: detail_action_requires_strict_authorization(action),
-                checks: self.resource.authorization_checks(action),
-            })
+            .filter_map(|action| self.access_review_entry(action))
             .collect()
+    }
+
+    fn access_review_entry(&self, action: DetailAction) -> Option<ActionAccessReview> {
+        let uses_effective_logs_target = matches!(action, DetailAction::Logs)
+            && matches!(self.resource, ResourceRef::CronJob(_, _));
+        let review_resource = if uses_effective_logs_target {
+            self.effective_logs_resource.as_ref()?
+        } else {
+            &self.resource
+        };
+
+        let supported = if uses_effective_logs_target {
+            true
+        } else {
+            review_resource.supports_detail_action(
+                action,
+                self.node_unschedulable,
+                self.cronjob_suspended,
+            )
+        };
+        if !supported {
+            return None;
+        }
+
+        let authorization = if uses_effective_logs_target {
+            self.effective_logs_authorization
+        } else if detail_action_requires_authorization(action) {
+            Some(
+                self.action_authorizations
+                    .get(&action)
+                    .copied()
+                    .unwrap_or(DetailActionAuthorization::Unknown),
+            )
+        } else {
+            None
+        };
+
+        Some(ActionAccessReview {
+            action,
+            authorization,
+            strict: detail_action_requires_strict_authorization(action),
+            checks: review_resource.authorization_checks(action),
+        })
     }
 }
 
 impl DetailViewState {
     pub fn resource_action_context(&self) -> Option<ResourceActionContext> {
         self.resource.clone().map(|resource| ResourceActionContext {
+            effective_logs_resource: self.selected_detail_resource(),
+            effective_logs_authorization: self
+                .selected_cronjob_history()
+                .and_then(|entry| entry.logs_authorized)
+                .map(|allowed| DetailActionAuthorization::from_allowed(Some(allowed))),
             resource,
             node_unschedulable: self.metadata.node_unschedulable,
             cronjob_suspended: self.metadata.cronjob_suspended,
@@ -1325,6 +1342,8 @@ mod tests {
             node_unschedulable: None,
             cronjob_suspended: None,
             cronjob_history_logs_available: false,
+            effective_logs_resource: None,
+            effective_logs_authorization: None,
             action_authorizations: auths,
         };
 
@@ -1353,6 +1372,28 @@ mod tests {
                 .iter()
                 .any(|entry| entry.action == DetailAction::ViewAccessReview)
         );
+    }
+
+    #[test]
+    fn access_review_uses_effective_job_target_for_cronjob_logs() {
+        let job = ResourceRef::Job("nightly-001".to_string(), "ops".to_string());
+        let ctx = ResourceActionContext {
+            resource: ResourceRef::CronJob("nightly".to_string(), "ops".to_string()),
+            node_unschedulable: None,
+            cronjob_suspended: None,
+            cronjob_history_logs_available: false,
+            effective_logs_resource: Some(job.clone()),
+            effective_logs_authorization: Some(DetailActionAuthorization::Denied),
+            action_authorizations: ActionAuthorizationMap::new(),
+        };
+
+        let logs = ctx
+            .access_review_entries()
+            .into_iter()
+            .find(|entry| entry.action == DetailAction::Logs)
+            .expect("cronjob logs review entry");
+        assert_eq!(logs.authorization, Some(DetailActionAuthorization::Denied));
+        assert_eq!(logs.checks, job.authorization_checks(DetailAction::Logs));
     }
 
     #[test]

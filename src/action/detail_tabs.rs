@@ -290,6 +290,11 @@ pub async fn handle_open_access_review(
         resource_ctx.action_authorizations = client
             .fetch_detail_action_authorizations(&resource_ctx.resource)
             .await;
+        if let Some(log_resource) = resource_ctx.effective_logs_resource.as_ref() {
+            resource_ctx.effective_logs_authorization = client
+                .is_detail_action_authorized(log_resource, DetailAction::Logs)
+                .await;
+        }
         resource_ctx
     } else {
         app.set_error("No resource selected for access review.".to_string());
