@@ -1653,7 +1653,7 @@ dependencies = [
 
 [[package]]
 name = "kubectui"
-version = "1.0.21"
+version = "1.0.23"
 dependencies = [
  "anyhow",
  "async-trait",
