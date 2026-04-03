@@ -785,7 +785,7 @@ mod tests {
     }
 
     #[test]
-    fn rollout_inspection_requires_authorization_but_is_not_strict() {
+    fn rollout_inspection_requires_authorization_and_is_strict() {
         assert!(detail_action_requires_authorization(
             DetailAction::ViewRollout
         ));
