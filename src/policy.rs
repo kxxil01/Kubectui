@@ -103,6 +103,7 @@ impl DetailAction {
         DetailAction::Logs,
         DetailAction::Exec,
         DetailAction::DebugContainer,
+        DetailAction::NodeDebugShell,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -1596,6 +1597,13 @@ mod tests {
                 .iter()
                 .any(|entry| entry.action == DetailAction::NodeDebugShell)
         );
+    }
+
+    #[test]
+    fn all_actions_keep_node_debug_for_authorization_fetch() {
+        assert!(DetailAction::ALL.contains(&DetailAction::NodeDebugShell));
+        assert!(!DetailAction::ORDER.contains(&DetailAction::NodeDebugShell));
+        assert!(!DetailAction::ACCESS_REVIEW_ORDER.contains(&DetailAction::NodeDebugShell));
     }
 
     #[test]
