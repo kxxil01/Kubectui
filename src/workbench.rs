@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 use crate::{
     action_history::ActionHistoryState,
     app::{LogsViewerState, ResourceRef},
-    authorization::ActionAccessReview,
+    authorization::{ActionAccessReview, DetailActionAuthorization, ResourceAccessCheck},
     icons::tab_icon,
     k8s::{
         client::EventInfo,
@@ -18,6 +18,7 @@ use crate::{
     },
     network_policy_analysis::NetworkPolicyAnalysis,
     network_policy_connectivity::ConnectivityAnalysis,
+    rbac_subjects::{SubjectAccessReview, SubjectBindingResolution},
     resource_diff::{
         ResourceDiffBaselineKind, ResourceDiffLine, ResourceDiffResult, YamlDocumentDiffResult,
     },
@@ -304,13 +305,33 @@ impl ActionHistoryTabState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccessReviewFocus {
+    Summary,
+    SubjectInput,
+}
+
 #[derive(Debug, Clone)]
 pub struct AccessReviewTabState {
     pub resource: ResourceRef,
     pub context_name: Option<String>,
     pub namespace_scope: String,
     pub entries: Vec<ActionAccessReview>,
+    pub subject_review: Option<SubjectAccessReview>,
+    pub attempted_review: Option<AttemptedActionReview>,
+    pub focus: AccessReviewFocus,
+    pub subject_input: InputFieldWidget,
+    pub subject_input_error: Option<String>,
     pub scroll: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AttemptedActionReview {
+    pub action: crate::policy::DetailAction,
+    pub authorization: Option<DetailActionAuthorization>,
+    pub strict: bool,
+    pub checks: Vec<ResourceAccessCheck>,
+    pub note: Option<String>,
 }
 
 impl AccessReviewTabState {
@@ -319,24 +340,135 @@ impl AccessReviewTabState {
         context_name: Option<String>,
         namespace_scope: String,
         entries: Vec<ActionAccessReview>,
+        subject_review: Option<SubjectAccessReview>,
+        attempted_review: Option<AttemptedActionReview>,
     ) -> Self {
-        Self {
+        let subject_input_value = subject_review
+            .as_ref()
+            .map(|review| review.subject.spec())
+            .unwrap_or_default();
+        let mut tab = Self {
             resource,
             context_name,
             namespace_scope,
             entries,
+            subject_review,
+            attempted_review,
+            focus: AccessReviewFocus::Summary,
+            subject_input: InputFieldWidget::with_value(&subject_input_value, 128),
+            subject_input_error: None,
             scroll: 0,
+        };
+        if tab.attempted_review.is_some() {
+            tab.scroll = 3;
         }
+        tab
     }
 
     pub fn line_count(&self) -> usize {
         let header_lines = 4usize;
+        let attempted_lines = self
+            .attempted_review
+            .as_ref()
+            .map_or(0, Self::attempted_review_line_count);
+        let subject_input_lines = self.subject_input_line_count();
+        let subject_lines = self
+            .subject_review
+            .as_ref()
+            .map_or(0, Self::subject_review_line_count);
         let entry_lines = self
             .entries
             .iter()
-            .map(|entry| 2 + entry.checks.len().max(1))
+            .map(Self::entry_line_count)
             .sum::<usize>();
-        header_lines + entry_lines
+        header_lines + attempted_lines + subject_input_lines + subject_lines + entry_lines
+    }
+
+    #[cfg(test)]
+    fn action_line_offset(&self, action: crate::policy::DetailAction) -> Option<usize> {
+        let mut offset = 4usize;
+        if let Some(review) = &self.attempted_review {
+            offset += Self::attempted_review_line_count(review);
+        }
+        offset += self.subject_input_line_count();
+        if let Some(review) = &self.subject_review {
+            offset += Self::subject_review_line_count(review);
+        }
+        for entry in &self.entries {
+            if entry.action == action {
+                return Some(offset.saturating_sub(1));
+            }
+            offset += Self::entry_line_count(entry);
+        }
+        None
+    }
+
+    pub fn subject_review_offset(&self) -> usize {
+        let mut offset = 4usize;
+        if let Some(review) = &self.attempted_review {
+            offset += Self::attempted_review_line_count(review);
+        }
+        offset + self.subject_input_line_count()
+    }
+
+    pub fn subject_input_offset(&self) -> usize {
+        let mut offset = 4usize;
+        if let Some(review) = &self.attempted_review {
+            offset += Self::attempted_review_line_count(review);
+        }
+        offset
+    }
+
+    fn attempted_review_line_count(review: &AttemptedActionReview) -> usize {
+        let grouped_scope_headers =
+            usize::from(review.checks.iter().any(|check| check.namespace.is_some()))
+                + usize::from(review.checks.iter().any(|check| check.namespace.is_none()));
+        3 + usize::from(review.note.is_some())
+            + if review.checks.is_empty() {
+                1
+            } else {
+                1 + review.checks.len() + grouped_scope_headers
+            }
+    }
+
+    fn subject_input_line_count(&self) -> usize {
+        3usize + usize::from(self.subject_input_error.is_some())
+    }
+
+    fn subject_review_line_count(review: &SubjectAccessReview) -> usize {
+        3 + review
+            .bindings
+            .iter()
+            .map(Self::subject_binding_line_count)
+            .sum::<usize>()
+    }
+
+    fn subject_binding_line_count(binding: &SubjectBindingResolution) -> usize {
+        3 + binding.role.rules.len().max(1)
+    }
+
+    fn entry_line_count(entry: &ActionAccessReview) -> usize {
+        let grouped_scope_headers =
+            usize::from(entry.checks.iter().any(|check| check.namespace.is_some()))
+                + usize::from(entry.checks.iter().any(|check| check.namespace.is_none()));
+
+        2 + if entry.checks.is_empty() {
+            1
+        } else {
+            entry.checks.len() + grouped_scope_headers
+        }
+    }
+
+    pub fn start_subject_input(&mut self) {
+        self.focus = AccessReviewFocus::SubjectInput;
+        self.subject_input.focused = true;
+        self.subject_input.cursor_end();
+        self.scroll = self.subject_input_offset();
+    }
+
+    pub fn stop_subject_input(&mut self) {
+        self.focus = AccessReviewFocus::Summary;
+        self.subject_input.focused = false;
     }
 }
 
@@ -2438,6 +2570,108 @@ mod tests {
         tab.apply_error("boom".to_string());
         assert_eq!(tab.scroll, 0);
         assert_eq!(tab.rendered_line_count(), 4);
+    }
+
+    #[test]
+    fn access_review_line_count_and_offsets_include_scope_headers() {
+        let tab = AccessReviewTabState::new(
+            ResourceRef::ServiceAccount("api".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            vec![
+                ActionAccessReview {
+                    action: crate::policy::DetailAction::ViewYaml,
+                    authorization: Some(crate::authorization::DetailActionAuthorization::Allowed),
+                    strict: false,
+                    checks: vec![],
+                },
+                ActionAccessReview {
+                    action: crate::policy::DetailAction::Delete,
+                    authorization: Some(crate::authorization::DetailActionAuthorization::Denied),
+                    strict: true,
+                    checks: vec![
+                        crate::authorization::ResourceAccessCheck::resource(
+                            "get",
+                            None,
+                            "namespaces",
+                            None,
+                            Some("payments"),
+                        ),
+                        crate::authorization::ResourceAccessCheck::resource(
+                            "delete",
+                            None,
+                            "pods",
+                            Some("payments"),
+                            Some("api-0"),
+                        ),
+                    ],
+                },
+            ],
+            Some(crate::rbac_subjects::SubjectAccessReview {
+                subject: crate::rbac_subjects::AccessReviewSubject::ServiceAccount {
+                    name: "api".into(),
+                    namespace: "payments".into(),
+                },
+                bindings: vec![
+                    crate::rbac_subjects::SubjectBindingResolution {
+                        binding: ResourceRef::RoleBinding(
+                            "payments-view".into(),
+                            "payments".into(),
+                        ),
+                        role: crate::rbac_subjects::SubjectRoleResolution {
+                            resource: Some(ResourceRef::Role(
+                                "payments-reader".into(),
+                                "payments".into(),
+                            )),
+                            kind: "Role".into(),
+                            name: "payments-reader".into(),
+                            namespace: Some("payments".into()),
+                            rules: vec![crate::k8s::dtos::RbacRule {
+                                verbs: vec!["get".into()],
+                                resources: vec!["pods".into()],
+                                ..crate::k8s::dtos::RbacRule::default()
+                            }],
+                            missing: false,
+                        },
+                    },
+                    crate::rbac_subjects::SubjectBindingResolution {
+                        binding: ResourceRef::ClusterRoleBinding("api-admin".into()),
+                        role: crate::rbac_subjects::SubjectRoleResolution {
+                            resource: Some(ResourceRef::ClusterRole("ops-admin".into())),
+                            kind: "ClusterRole".into(),
+                            name: "ops-admin".into(),
+                            namespace: None,
+                            rules: vec![crate::k8s::dtos::RbacRule {
+                                verbs: vec!["*".into()],
+                                resources: vec!["*".into()],
+                                ..crate::k8s::dtos::RbacRule::default()
+                            }],
+                            missing: false,
+                        },
+                    },
+                ],
+            }),
+            Some(AttemptedActionReview {
+                action: crate::policy::DetailAction::Delete,
+                authorization: Some(crate::authorization::DetailActionAuthorization::Denied),
+                strict: true,
+                checks: vec![crate::authorization::ResourceAccessCheck::resource(
+                    "delete",
+                    Some("apps"),
+                    "deployments",
+                    Some("payments"),
+                    Some("api"),
+                )],
+                note: None,
+            }),
+        );
+
+        assert_eq!(tab.line_count(), 33);
+        assert_eq!(
+            tab.action_line_offset(crate::policy::DetailAction::Delete),
+            Some(26)
+        );
+        assert_eq!(tab.scroll, 3);
     }
 
     #[test]

@@ -416,11 +416,10 @@ pub fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<R
 }
 
 /// Returns the resource context (with node/cronjob metadata) for the selection.
-pub fn selected_resource_context(
-    app: &AppState,
+pub fn resource_action_context(
     snapshot: &ClusterSnapshot,
-) -> Option<ResourceActionContext> {
-    let resource = selected_resource(app, snapshot)?;
+    resource: ResourceRef,
+) -> ResourceActionContext {
     let (effective_logs_resource, cronjob_history_logs_available) = match &resource {
         ResourceRef::CronJob(name, ns) => snapshot
             .cronjobs
@@ -455,7 +454,7 @@ pub fn selected_resource_context(
             .map(|cronjob| cronjob.suspend),
         _ => None,
     };
-    Some(ResourceActionContext {
+    ResourceActionContext {
         resource,
         node_unschedulable,
         cronjob_suspended,
@@ -463,7 +462,15 @@ pub fn selected_resource_context(
         effective_logs_resource,
         effective_logs_authorization: None,
         action_authorizations: Default::default(),
-    })
+    }
+}
+
+pub fn selected_resource_context(
+    app: &AppState,
+    snapshot: &ClusterSnapshot,
+) -> Option<ResourceActionContext> {
+    let resource = selected_resource(app, snapshot)?;
+    Some(resource_action_context(snapshot, resource))
 }
 
 /// Looks up cached RBAC authorization for a detail action on the given resource.
@@ -500,19 +507,6 @@ pub async fn detail_action_authorization(
     };
 
     resolve_detail_action_authorization(cached, live)
-}
-
-/// Returns a human-readable blocking message when an action should not proceed.
-pub async fn detail_action_block_message(
-    app: &AppState,
-    client: &K8sClient,
-    resource: &ResourceRef,
-    action: DetailAction,
-) -> Option<String> {
-    let status = detail_action_authorization(app, client, resource, action)
-        .await
-        .unwrap_or(DetailActionAuthorization::Unknown);
-    (!status.permits(action)).then(|| detail_action_denied_message(action, resource, status))
 }
 
 /// Builds a human-readable denial message for the given action and resource.

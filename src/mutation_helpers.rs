@@ -137,7 +137,12 @@ pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
         DetailAction::Probes => AppAction::ProbePanelOpen,
         DetailAction::Scale => AppAction::ScaleDialogOpen,
         DetailAction::Restart => AppAction::RolloutRestart,
+        DetailAction::PauseRollout | DetailAction::ResumeRollout => {
+            AppAction::ToggleRolloutPauseResume
+        }
+        DetailAction::RollbackRollout => AppAction::ConfirmRolloutUndo,
         DetailAction::FluxReconcile => AppAction::FluxReconcile,
+        DetailAction::RollbackHelm => AppAction::ConfirmHelmRollback,
         DetailAction::EditYaml => AppAction::EditYaml,
         DetailAction::Delete => AppAction::DeleteResource,
         DetailAction::Trigger => AppAction::TriggerCronJob,

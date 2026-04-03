@@ -3570,15 +3570,16 @@ pub(crate) async fn run_app_inner(
                                 continue;
                             }
                         };
-                    if let Some(message) = detail_action_block_message(
-                        &app,
+                    if action::detail_tabs::redirect_blocked_detail_action_to_access_review(
+                        &mut app,
                         &client,
+                        Some(&cached_snapshot),
                         &reconcile_resource,
                         DetailAction::FluxReconcile,
                     )
                     .await
+                    .is_some()
                     {
-                        app.set_error(message);
                         continue;
                     }
 
@@ -4597,6 +4598,14 @@ pub(crate) async fn run_app_inner(
                         continue;
                     }
                 }
+                AppAction::ApplyAccessReviewSubject => {
+                    if action::detail_tabs::handle_apply_access_review_subject(
+                        &mut app,
+                        &cached_snapshot,
+                    ) {
+                        continue;
+                    }
+                }
                 AppAction::LogsViewerOpen => {
                     let resource = app
                         .detail_view
@@ -4612,11 +4621,16 @@ pub(crate) async fn run_app_inner(
                         app.set_error("No resource selected for logs.".to_string());
                         continue;
                     };
-                    if let Some(message) =
-                        detail_action_block_message(&app, &client, &resource, DetailAction::Logs)
-                            .await
+                    if action::detail_tabs::redirect_blocked_detail_action_to_access_review(
+                        &mut app,
+                        &client,
+                        Some(&cached_snapshot),
+                        &resource,
+                        DetailAction::Logs,
+                    )
+                    .await
+                    .is_some()
                     {
-                        app.set_error(message);
                         continue;
                     }
                     let Some((pod_name, pod_ns, pod_resource)) = (match &resource {
@@ -4727,11 +4741,16 @@ pub(crate) async fn run_app_inner(
                         continue;
                     };
                     let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
-                    if let Some(message) =
-                        detail_action_block_message(&app, &client, &resource, DetailAction::Exec)
-                            .await
+                    if action::detail_tabs::redirect_blocked_detail_action_to_access_review(
+                        &mut app,
+                        &client,
+                        Some(&cached_snapshot),
+                        &resource,
+                        DetailAction::Exec,
+                    )
+                    .await
+                    .is_some()
                     {
-                        app.set_error(message);
                         continue;
                     }
 
@@ -4775,6 +4794,7 @@ pub(crate) async fn run_app_inner(
                     if action::debug::handle_debug_container_dialog_open(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &debug_dialog_bootstrap_tx,
                         &mut debug_dialog_request_seq,
                     )
@@ -4787,6 +4807,7 @@ pub(crate) async fn run_app_inner(
                     if action::debug::handle_debug_container_dialog_submit(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &debug_launch_tx,
                         &mut next_exec_session_id,
                         refresh_state.context_generation,
@@ -5210,15 +5231,16 @@ pub(crate) async fn run_app_inner(
                     let Some(resource) = resource else {
                         continue;
                     };
-                    if let Some(message) = detail_action_block_message(
-                        &app,
+                    if action::detail_tabs::redirect_blocked_detail_action_to_access_review(
+                        &mut app,
                         &client,
+                        Some(&cached_snapshot),
                         &resource,
                         DetailAction::PortForward,
                     )
                     .await
+                    .is_some()
                     {
-                        app.set_error(message);
                         continue;
                     }
                     app.detail_view = None;
@@ -5239,6 +5261,7 @@ pub(crate) async fn run_app_inner(
                     if action::scale::handle_scale_dialog_submit(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &scale_tx,
                         refresh_state.context_generation,
                         &mut status_message_clear_at,
@@ -5252,6 +5275,7 @@ pub(crate) async fn run_app_inner(
                     if action::rollout::handle_rollout_restart(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &rollout_tx,
                         refresh_state.context_generation,
                         &mut status_message_clear_at,
@@ -5265,6 +5289,7 @@ pub(crate) async fn run_app_inner(
                     if action::delete::handle_delete_resource(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &delete_tx,
                         &mut delete_request_seq,
                         &mut delete_in_flight_id,
@@ -5280,6 +5305,7 @@ pub(crate) async fn run_app_inner(
                     if action::delete::handle_force_delete_resource(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &delete_tx,
                         &mut delete_request_seq,
                         &mut delete_in_flight_id,
@@ -5295,6 +5321,7 @@ pub(crate) async fn run_app_inner(
                     if action::cronjob::handle_trigger_cronjob(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &trigger_cronjob_tx,
                         refresh_state.context_generation,
                         &mut status_message_clear_at,
@@ -5311,6 +5338,7 @@ pub(crate) async fn run_app_inner(
                     if action::cronjob::handle_set_cronjob_suspend(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &cronjob_suspend_tx,
                         refresh_state.context_generation,
                         &mut status_message_clear_at,
@@ -5338,6 +5366,7 @@ pub(crate) async fn run_app_inner(
                     if action::node_ops::handle_cordon_node(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &node_ops_tx,
                         &mut node_op_in_flight,
                         refresh_state.context_generation,
@@ -5353,6 +5382,7 @@ pub(crate) async fn run_app_inner(
                     if action::node_ops::handle_uncordon_node(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &node_ops_tx,
                         &mut node_op_in_flight,
                         refresh_state.context_generation,
@@ -5369,6 +5399,7 @@ pub(crate) async fn run_app_inner(
                     if action::node_ops::handle_drain_node(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &node_ops_tx,
                         &mut node_op_in_flight,
                         refresh_state.context_generation,
@@ -5386,10 +5417,14 @@ pub(crate) async fn run_app_inner(
                 AppAction::ExecuteHelmRollback => {
                     if action::helm::handle_execute_helm_rollback(
                         &mut app,
+                        &client,
+                        &cached_snapshot,
                         &helm_rollback_tx,
                         refresh_state.context_generation,
                         &mut status_message_clear_at,
-                    ) {
+                    )
+                    .await
+                    {
                         continue;
                     }
                 }
@@ -5397,6 +5432,7 @@ pub(crate) async fn run_app_inner(
                     if action::rollout::handle_toggle_rollout_pause_resume(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &rollout_tx,
                         refresh_state.context_generation,
                         &mut status_message_clear_at,
@@ -5410,6 +5446,7 @@ pub(crate) async fn run_app_inner(
                     if action::rollout::handle_execute_rollout_undo(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &rollout_tx,
                         refresh_state.context_generation,
                         &mut status_message_clear_at,
@@ -5456,15 +5493,16 @@ pub(crate) async fn run_app_inner(
                     });
 
                     if let Some((resource, kind, name, namespace, yaml_content)) = edit_info {
-                        if let Some(message) = detail_action_block_message(
-                            &app,
+                        if action::detail_tabs::redirect_blocked_detail_action_to_access_review(
+                            &mut app,
                             &client,
+                            Some(&cached_snapshot),
                             &resource,
                             DetailAction::EditYaml,
                         )
                         .await
+                        .is_some()
                         {
-                            app.set_error(message);
                             continue;
                         }
                         match edit_yaml_in_external_editor(
@@ -5715,15 +5753,16 @@ pub(crate) async fn run_app_inner(
                         resource_label.clone(),
                         format!("Applying decoded Secret changes to {resource_label}..."),
                     );
-                    if let Some(message) = detail_action_block_message(
-                        &app,
-                        &client,
-                        &resource,
-                        DetailAction::EditYaml,
-                    )
-                    .await
+                    if let Some(message) =
+                        action::detail_tabs::redirect_blocked_detail_action_to_access_review(
+                            &mut app,
+                            &client,
+                            Some(&cached_snapshot),
+                            &resource,
+                            DetailAction::EditYaml,
+                        )
+                        .await
                     {
-                        app.set_error(message.clone());
                         app.complete_action_history(
                             action_history_id,
                             ActionStatus::Failed,
@@ -5888,15 +5927,16 @@ pub(crate) async fn run_app_inner(
                         let tx = probe_tx.clone();
                         let k = client.get_client();
                         let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
-                        if let Some(message) = detail_action_block_message(
-                            &app,
+                        if action::detail_tabs::redirect_blocked_detail_action_to_access_review(
+                            &mut app,
                             &client,
+                            Some(&cached_snapshot),
                             &resource,
                             DetailAction::Probes,
                         )
                         .await
+                        .is_some()
                         {
-                            app.set_error(message);
                             continue;
                         }
                         tokio::spawn(async move {

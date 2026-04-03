@@ -30,6 +30,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
         | AppAction::RunbookToggleStepDone
         | AppAction::RunbookToggleStepSkipped => true,
         AppAction::OpenAccessReview
+        | AppAction::ApplyAccessReviewSubject
         | AppAction::OpenNetworkPolicyView
         | AppAction::OpenNetworkConnectivity
         | AppAction::OpenTrafficDebug => true,

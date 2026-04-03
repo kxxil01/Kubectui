@@ -25,6 +25,7 @@ pub mod network_policy_semantics;
 pub mod policy;
 pub mod preferences;
 pub mod projects;
+pub mod rbac_subjects;
 pub mod resource_diff;
 pub mod resource_templates;
 pub mod runbooks;

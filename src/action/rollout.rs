@@ -10,10 +10,11 @@ use kubectui::{
 };
 
 use crate::{
+    action::detail_tabs::redirect_blocked_detail_action_to_access_review,
     async_types::{RolloutInspectionAsyncResult, RolloutMutationAsyncResult, RolloutMutationKind},
     mutation_helpers::set_transient_status,
     next_request_id,
-    selection_helpers::{detail_action_block_message, selected_resource},
+    selection_helpers::selected_resource,
 };
 
 pub fn spawn_rollout_inspection_fetch(
@@ -67,10 +68,16 @@ pub async fn handle_open_rollout(
         );
         return true;
     }
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::ViewRollout).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewRollout,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
     let request_id = next_request_id(request_seq);
@@ -104,6 +111,7 @@ pub fn refresh_rollout_tab(
 pub async fn handle_rollout_restart(
     app: &mut AppState,
     client: &kubectui::k8s::client::K8sClient,
+    snapshot: &kubectui::state::ClusterSnapshot,
     tx: &tokio::sync::mpsc::Sender<RolloutMutationAsyncResult>,
     context_generation: u64,
     status_message_clear_at: &mut Option<Instant>,
@@ -113,10 +121,16 @@ pub async fn handle_rollout_restart(
         app.set_error("Restart is unavailable for the selected resource.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::Restart).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::Restart,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
     let (kind, name, namespace) = workload_identity(&resource);
@@ -162,6 +176,7 @@ pub async fn handle_rollout_restart(
 pub async fn handle_toggle_rollout_pause_resume(
     app: &mut AppState,
     client: &kubectui::k8s::client::K8sClient,
+    snapshot: &kubectui::state::ClusterSnapshot,
     tx: &tokio::sync::mpsc::Sender<RolloutMutationAsyncResult>,
     context_generation: u64,
     status_message_clear_at: &mut Option<Instant>,
@@ -177,14 +192,24 @@ pub async fn handle_toggle_rollout_pause_resume(
         app.set_error("Pause/resume is only available from a Deployment rollout tab.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::Restart).await
+    let next_paused = !paused;
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        if next_paused {
+            DetailAction::PauseRollout
+        } else {
+            DetailAction::ResumeRollout
+        },
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
     let (_, name, namespace) = workload_identity(&resource);
-    let next_paused = !paused;
     let action_kind = if next_paused {
         ActionKind::Pause
     } else {
@@ -259,6 +284,7 @@ pub fn handle_confirm_rollout_undo(app: &mut AppState) -> bool {
 pub async fn handle_execute_rollout_undo(
     app: &mut AppState,
     client: &kubectui::k8s::client::K8sClient,
+    snapshot: &kubectui::state::ClusterSnapshot,
     tx: &tokio::sync::mpsc::Sender<RolloutMutationAsyncResult>,
     context_generation: u64,
     status_message_clear_at: &mut Option<Instant>,
@@ -278,10 +304,17 @@ pub async fn handle_execute_rollout_undo(
         };
         (rollout_tab.resource.clone(), target_revision)
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::Restart).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::RollbackRollout,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
+        clear_rollout_undo_confirm(app, &resource);
         return true;
     }
     if let Some(tab) = rollout_tab_mut(app, &resource) {
@@ -322,6 +355,12 @@ pub async fn handle_execute_rollout_undo(
             .await;
     });
     false
+}
+
+fn clear_rollout_undo_confirm(app: &mut AppState, resource: &ResourceRef) {
+    if let Some(tab) = rollout_tab_mut(app, resource) {
+        tab.cancel_undo_confirm();
+    }
 }
 
 fn rollout_target_resource(app: &AppState) -> Option<ResourceRef> {
@@ -366,5 +405,29 @@ fn workload_identity(resource: &ResourceRef) -> (&'static str, String, String) {
         }
         ResourceRef::DaemonSet(name, namespace) => ("daemonset", name.clone(), namespace.clone()),
         _ => unreachable!("validated rollout resource"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_rollout_undo_confirm_cancels_pending_confirmation() {
+        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        let mut app = AppState::default();
+        let mut tab = kubectui::workbench::RolloutTabState::new(resource.clone());
+        tab.begin_undo_confirm(4);
+        app.workbench.open_tab(WorkbenchTabState::Rollout(tab));
+
+        clear_rollout_undo_confirm(&mut app, &resource);
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing rollout tab");
+        };
+        let WorkbenchTabState::Rollout(tab) = &tab.state else {
+            panic!("expected rollout tab");
+        };
+        assert!(tab.confirm_undo_revision.is_none());
     }
 }

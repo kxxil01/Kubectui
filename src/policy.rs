@@ -58,7 +58,11 @@ pub enum DetailAction {
     Probes,
     Scale,
     Restart,
+    PauseRollout,
+    ResumeRollout,
+    RollbackRollout,
     FluxReconcile,
+    RollbackHelm,
     EditYaml,
     Delete,
     Trigger,
@@ -85,7 +89,43 @@ pub struct ResourceActionContext {
 }
 
 impl DetailAction {
-    pub const ORDER: [DetailAction; 29] = [
+    pub const ALL: &[DetailAction] = &[
+        DetailAction::ViewYaml,
+        DetailAction::ViewConfigDrift,
+        DetailAction::ViewRollout,
+        DetailAction::ViewHelmHistory,
+        DetailAction::ViewDecodedSecret,
+        DetailAction::ToggleBookmark,
+        DetailAction::ViewEvents,
+        DetailAction::ViewAccessReview,
+        DetailAction::Logs,
+        DetailAction::Exec,
+        DetailAction::DebugContainer,
+        DetailAction::NodeDebugShell,
+        DetailAction::PortForward,
+        DetailAction::Probes,
+        DetailAction::Scale,
+        DetailAction::Restart,
+        DetailAction::PauseRollout,
+        DetailAction::ResumeRollout,
+        DetailAction::RollbackRollout,
+        DetailAction::FluxReconcile,
+        DetailAction::RollbackHelm,
+        DetailAction::EditYaml,
+        DetailAction::Delete,
+        DetailAction::Trigger,
+        DetailAction::SuspendCronJob,
+        DetailAction::ResumeCronJob,
+        DetailAction::ViewNetworkPolicies,
+        DetailAction::CheckNetworkConnectivity,
+        DetailAction::ViewTrafficDebug,
+        DetailAction::ViewRelationships,
+        DetailAction::Cordon,
+        DetailAction::Uncordon,
+        DetailAction::Drain,
+    ];
+
+    pub const ORDER: &[DetailAction] = &[
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
         DetailAction::ViewRollout,
@@ -117,35 +157,77 @@ impl DetailAction {
         DetailAction::Drain,
     ];
 
-    pub const fn key_hint(self) -> &'static str {
+    pub const ACCESS_REVIEW_ORDER: &[DetailAction] = &[
+        DetailAction::ViewYaml,
+        DetailAction::ViewConfigDrift,
+        DetailAction::ViewRollout,
+        DetailAction::ViewHelmHistory,
+        DetailAction::ViewDecodedSecret,
+        DetailAction::ToggleBookmark,
+        DetailAction::ViewEvents,
+        DetailAction::Logs,
+        DetailAction::Exec,
+        DetailAction::DebugContainer,
+        DetailAction::NodeDebugShell,
+        DetailAction::PortForward,
+        DetailAction::Probes,
+        DetailAction::Scale,
+        DetailAction::Restart,
+        DetailAction::FluxReconcile,
+        DetailAction::EditYaml,
+        DetailAction::Delete,
+        DetailAction::Trigger,
+        DetailAction::SuspendCronJob,
+        DetailAction::ResumeCronJob,
+        DetailAction::ViewNetworkPolicies,
+        DetailAction::CheckNetworkConnectivity,
+        DetailAction::ViewTrafficDebug,
+        DetailAction::ViewRelationships,
+        DetailAction::Cordon,
+        DetailAction::Uncordon,
+        DetailAction::Drain,
+    ];
+
+    pub const fn shortcut_hint(self) -> Option<&'static str> {
         match self {
-            DetailAction::ViewYaml => "[y]",
-            DetailAction::ViewConfigDrift => "[D]",
-            DetailAction::ViewRollout => "[O]",
-            DetailAction::ViewHelmHistory => "[h]",
-            DetailAction::ViewDecodedSecret => "[o]",
-            DetailAction::ToggleBookmark => "[B]",
-            DetailAction::ViewEvents => "[v]",
-            DetailAction::ViewAccessReview => "[A]",
-            DetailAction::Logs => "[l]",
-            DetailAction::Exec => "[x]",
-            DetailAction::DebugContainer => "[g]",
-            DetailAction::NodeDebugShell => "[g]",
-            DetailAction::PortForward => "[f]",
-            DetailAction::Probes => "[p]",
-            DetailAction::Scale => "[s]",
-            DetailAction::Restart | DetailAction::FluxReconcile => "[R]",
-            DetailAction::EditYaml => "[e]",
-            DetailAction::Delete => "[d]",
-            DetailAction::Trigger => "[T]",
-            DetailAction::SuspendCronJob | DetailAction::ResumeCronJob => "[S]",
-            DetailAction::ViewNetworkPolicies => "[N]",
-            DetailAction::CheckNetworkConnectivity => "[C]",
-            DetailAction::ViewTrafficDebug => "[t]",
-            DetailAction::ViewRelationships => "[w]",
-            DetailAction::Cordon => "[c]",
-            DetailAction::Uncordon => "[u]",
-            DetailAction::Drain => "[D]",
+            DetailAction::ViewYaml => Some("[y]"),
+            DetailAction::ViewConfigDrift => Some("[D]"),
+            DetailAction::ViewRollout => Some("[O]"),
+            DetailAction::ViewHelmHistory => Some("[h]"),
+            DetailAction::ViewDecodedSecret => Some("[o]"),
+            DetailAction::ToggleBookmark => Some("[B]"),
+            DetailAction::ViewEvents => Some("[v]"),
+            DetailAction::ViewAccessReview => Some("[A]"),
+            DetailAction::Logs => Some("[l]"),
+            DetailAction::Exec => Some("[x]"),
+            DetailAction::DebugContainer => Some("[g]"),
+            DetailAction::NodeDebugShell => Some("[g]"),
+            DetailAction::PortForward => Some("[f]"),
+            DetailAction::Probes => Some("[p]"),
+            DetailAction::Scale => Some("[s]"),
+            DetailAction::Restart | DetailAction::FluxReconcile => Some("[R]"),
+            DetailAction::PauseRollout
+            | DetailAction::ResumeRollout
+            | DetailAction::RollbackRollout
+            | DetailAction::RollbackHelm => None,
+            DetailAction::EditYaml => Some("[e]"),
+            DetailAction::Delete => Some("[d]"),
+            DetailAction::Trigger => Some("[T]"),
+            DetailAction::SuspendCronJob | DetailAction::ResumeCronJob => Some("[S]"),
+            DetailAction::ViewNetworkPolicies => Some("[N]"),
+            DetailAction::CheckNetworkConnectivity => Some("[C]"),
+            DetailAction::ViewTrafficDebug => Some("[t]"),
+            DetailAction::ViewRelationships => Some("[w]"),
+            DetailAction::Cordon => Some("[c]"),
+            DetailAction::Uncordon => Some("[u]"),
+            DetailAction::Drain => Some("[D]"),
+        }
+    }
+
+    pub const fn key_hint(self) -> &'static str {
+        match self.shortcut_hint() {
+            Some(shortcut) => shortcut,
+            None => "[·]",
         }
     }
 
@@ -167,7 +249,11 @@ impl DetailAction {
             DetailAction::Probes => "Probes",
             DetailAction::Scale => "Scale",
             DetailAction::Restart => "Restart",
+            DetailAction::PauseRollout => "Pause Rollout",
+            DetailAction::ResumeRollout => "Resume Rollout",
+            DetailAction::RollbackRollout => "Rollback Rollout",
             DetailAction::FluxReconcile => "Reconcile",
+            DetailAction::RollbackHelm => "Helm Rollback",
             DetailAction::EditYaml => "Edit",
             DetailAction::Delete => "Delete",
             DetailAction::Trigger => "Trigger",
@@ -496,7 +582,17 @@ impl ResourceRef {
                     | ResourceRef::StatefulSet(_, _)
                     | ResourceRef::DaemonSet(_, _)
             ),
+            DetailAction::PauseRollout | DetailAction::ResumeRollout => {
+                matches!(self, ResourceRef::Deployment(_, _))
+            }
+            DetailAction::RollbackRollout => matches!(
+                self,
+                ResourceRef::Deployment(_, _)
+                    | ResourceRef::StatefulSet(_, _)
+                    | ResourceRef::DaemonSet(_, _)
+            ),
             DetailAction::FluxReconcile => self.supports_flux_reconcile(),
+            DetailAction::RollbackHelm => matches!(self, ResourceRef::HelmRelease(_, _)),
             DetailAction::EditYaml | DetailAction::Delete => {
                 !matches!(self, ResourceRef::HelmRelease(_, _))
             }
@@ -588,14 +684,35 @@ impl ResourceActionContext {
     }
 
     pub fn access_review_entries(&self) -> Vec<ActionAccessReview> {
-        DetailAction::ORDER
-            .into_iter()
-            .filter(|action| *action != DetailAction::ViewAccessReview)
-            .filter_map(|action| self.access_review_entry(action))
+        DetailAction::ACCESS_REVIEW_ORDER
+            .iter()
+            .copied()
+            .filter_map(|action| self.access_review_for_action(action))
             .collect()
     }
 
-    fn access_review_entry(&self, action: DetailAction) -> Option<ActionAccessReview> {
+    pub fn authorization_for_action(
+        &self,
+        action: DetailAction,
+    ) -> Option<DetailActionAuthorization> {
+        let uses_effective_logs_target = matches!(action, DetailAction::Logs)
+            && matches!(self.resource, ResourceRef::CronJob(_, _));
+
+        if uses_effective_logs_target {
+            self.effective_logs_authorization
+        } else if detail_action_requires_authorization(action) {
+            Some(
+                self.action_authorizations
+                    .get(&action)
+                    .copied()
+                    .unwrap_or(DetailActionAuthorization::Unknown),
+            )
+        } else {
+            None
+        }
+    }
+
+    pub fn access_review_for_action(&self, action: DetailAction) -> Option<ActionAccessReview> {
         let uses_effective_logs_target = matches!(action, DetailAction::Logs)
             && matches!(self.resource, ResourceRef::CronJob(_, _));
         let review_resource = if uses_effective_logs_target {
@@ -617,18 +734,7 @@ impl ResourceActionContext {
             return None;
         }
 
-        let authorization = if uses_effective_logs_target {
-            self.effective_logs_authorization
-        } else if detail_action_requires_authorization(action) {
-            Some(
-                self.action_authorizations
-                    .get(&action)
-                    .copied()
-                    .unwrap_or(DetailActionAuthorization::Unknown),
-            )
-        } else {
-            None
-        };
+        let authorization = self.authorization_for_action(action);
 
         Some(ActionAccessReview {
             action,
@@ -688,7 +794,11 @@ impl DetailViewState {
                 | DetailAction::Probes
                 | DetailAction::Scale
                 | DetailAction::Restart
+                | DetailAction::PauseRollout
+                | DetailAction::ResumeRollout
+                | DetailAction::RollbackRollout
                 | DetailAction::FluxReconcile
+                | DetailAction::RollbackHelm
                 | DetailAction::EditYaml
                 | DetailAction::Delete
                 | DetailAction::Trigger
@@ -732,7 +842,8 @@ impl DetailViewState {
 
     pub fn footer_actions(&self) -> Vec<DetailAction> {
         DetailAction::ORDER
-            .into_iter()
+            .iter()
+            .copied()
             .filter(|action| self.supports_action(*action))
             .collect()
     }
@@ -794,7 +905,25 @@ mod tests {
         assert!(detail.supports_action(DetailAction::EditYaml));
         assert!(detail.supports_action(DetailAction::Delete));
         assert!(detail.supports_action(DetailAction::Logs));
+        assert!(detail.supports_action(DetailAction::PauseRollout));
+        assert!(detail.supports_action(DetailAction::ResumeRollout));
+        assert!(detail.supports_action(DetailAction::RollbackRollout));
         assert!(!detail.supports_action(DetailAction::FluxReconcile));
+        assert!(
+            !detail
+                .footer_actions()
+                .contains(&DetailAction::PauseRollout)
+        );
+        assert!(
+            !detail
+                .footer_actions()
+                .contains(&DetailAction::ResumeRollout)
+        );
+        assert!(
+            !detail
+                .footer_actions()
+                .contains(&DetailAction::RollbackRollout)
+        );
     }
 
     #[test]
@@ -900,6 +1029,7 @@ mod tests {
         let helm = ResourceRef::HelmRelease("release".to_string(), "default".to_string());
 
         assert!(helm.supports_detail_action(DetailAction::ViewHelmHistory, None, None));
+        assert!(helm.supports_detail_action(DetailAction::RollbackHelm, None, None));
         assert!(!helm.supports_detail_action(DetailAction::EditYaml, None, None));
         assert!(!helm.supports_detail_action(DetailAction::Delete, None, None));
     }
@@ -1394,6 +1524,56 @@ mod tests {
             .expect("cronjob logs review entry");
         assert_eq!(logs.authorization, Some(DetailActionAuthorization::Denied));
         assert_eq!(logs.checks, job.authorization_checks(DetailAction::Logs));
+    }
+
+    #[test]
+    fn access_review_omits_stateful_rollout_mutations_from_generic_entries() {
+        let resource = ResourceRef::Deployment("api".to_string(), "ns".to_string());
+        let ctx = ResourceActionContext {
+            resource,
+            node_unschedulable: None,
+            cronjob_suspended: None,
+            cronjob_history_logs_available: false,
+            effective_logs_resource: None,
+            effective_logs_authorization: None,
+            action_authorizations: ActionAuthorizationMap::new(),
+        };
+
+        let entries = ctx.access_review_entries();
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.action == DetailAction::PauseRollout)
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.action == DetailAction::ResumeRollout)
+        );
+        assert!(
+            !entries
+                .iter()
+                .any(|entry| entry.action == DetailAction::RollbackRollout)
+        );
+    }
+
+    #[test]
+    fn access_review_omits_helm_rollback_without_revision_context() {
+        let ctx = ResourceActionContext {
+            resource: ResourceRef::HelmRelease("web".to_string(), "default".to_string()),
+            node_unschedulable: None,
+            cronjob_suspended: None,
+            cronjob_history_logs_available: false,
+            effective_logs_resource: None,
+            effective_logs_authorization: None,
+            action_authorizations: ActionAuthorizationMap::new(),
+        };
+
+        assert!(
+            !ctx.access_review_entries()
+                .iter()
+                .any(|entry| entry.action == DetailAction::RollbackHelm)
+        );
     }
 
     #[test]
