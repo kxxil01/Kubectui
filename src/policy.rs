@@ -46,6 +46,7 @@ pub enum DetailAction {
     ViewConfigDrift,
     ViewRollout,
     ViewHelmHistory,
+    ViewHelmValuesDiff,
     ViewDecodedSecret,
     ToggleBookmark,
     ViewEvents,
@@ -94,6 +95,7 @@ impl DetailAction {
         DetailAction::ViewConfigDrift,
         DetailAction::ViewRollout,
         DetailAction::ViewHelmHistory,
+        DetailAction::ViewHelmValuesDiff,
         DetailAction::ViewDecodedSecret,
         DetailAction::ToggleBookmark,
         DetailAction::ViewEvents,
@@ -191,6 +193,7 @@ impl DetailAction {
             DetailAction::ViewConfigDrift => Some("[D]"),
             DetailAction::ViewRollout => Some("[O]"),
             DetailAction::ViewHelmHistory => Some("[h]"),
+            DetailAction::ViewHelmValuesDiff => None,
             DetailAction::ViewDecodedSecret => Some("[o]"),
             DetailAction::ToggleBookmark => Some("[B]"),
             DetailAction::ViewEvents => Some("[v]"),
@@ -234,6 +237,7 @@ impl DetailAction {
             DetailAction::ViewConfigDrift => "Drift",
             DetailAction::ViewRollout => "Rollout",
             DetailAction::ViewHelmHistory => "Helm",
+            DetailAction::ViewHelmValuesDiff => "Helm Values Diff",
             DetailAction::ViewDecodedSecret => "Decoded",
             DetailAction::ToggleBookmark => "Bookmark",
             DetailAction::ViewEvents => "Events",
@@ -547,6 +551,7 @@ impl ResourceRef {
                     | ResourceRef::DaemonSet(_, _)
             ),
             DetailAction::ViewHelmHistory => matches!(self, ResourceRef::HelmRelease(_, _)),
+            DetailAction::ViewHelmValuesDiff => matches!(self, ResourceRef::HelmRelease(_, _)),
             DetailAction::ViewEvents => self.supports_events_tab(),
             DetailAction::ViewAccessReview => true,
             DetailAction::ViewDecodedSecret => matches!(self, ResourceRef::Secret(_, _)),
@@ -780,6 +785,7 @@ impl DetailViewState {
             DetailAction::ViewYaml
                 | DetailAction::ViewDecodedSecret
                 | DetailAction::ViewHelmHistory
+                | DetailAction::ViewHelmValuesDiff
                 | DetailAction::ToggleBookmark
                 | DetailAction::ViewEvents
                 | DetailAction::ViewAccessReview

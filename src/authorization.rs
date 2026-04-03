@@ -160,6 +160,7 @@ pub const fn detail_action_requires_authorization(action: DetailAction) -> bool 
             | DetailAction::ViewConfigDrift
             | DetailAction::ViewRollout
             | DetailAction::ViewHelmHistory
+            | DetailAction::ViewHelmValuesDiff
             | DetailAction::ViewDecodedSecret
             | DetailAction::ViewEvents
             | DetailAction::Logs
@@ -192,6 +193,7 @@ pub const fn detail_action_requires_strict_authorization(action: DetailAction) -
         DetailAction::ViewDecodedSecret
             | DetailAction::ViewRollout
             | DetailAction::ViewHelmHistory
+            | DetailAction::ViewHelmValuesDiff
             | DetailAction::Exec
             | DetailAction::DebugContainer
             | DetailAction::NodeDebugShell
@@ -226,7 +228,7 @@ impl ResourceRef {
             DetailAction::ViewAccessReview => Vec::new(),
             DetailAction::ViewRollout => rollout_inspection_access_checks(self),
             DetailAction::ViewTrafficDebug | DetailAction::NodeDebugShell => Vec::new(),
-            DetailAction::ViewHelmHistory => match self {
+            DetailAction::ViewHelmHistory | DetailAction::ViewHelmValuesDiff => match self {
                 ResourceRef::HelmRelease(_, namespace) => {
                     helm_release_read_access_checks(namespace)
                 }
@@ -825,12 +827,29 @@ mod tests {
     }
 
     #[test]
+    fn helm_release_values_diff_checks_match_release_read_access() {
+        let helm = ResourceRef::HelmRelease("release".into(), "default".into());
+        let checks = helm.authorization_checks(DetailAction::ViewHelmValuesDiff);
+        assert_eq!(checks, helm_release_read_access_checks("default"));
+    }
+
+    #[test]
     fn helm_release_history_requires_authorization() {
         assert!(detail_action_requires_authorization(
             DetailAction::ViewHelmHistory
         ));
         assert!(detail_action_requires_strict_authorization(
             DetailAction::ViewHelmHistory
+        ));
+    }
+
+    #[test]
+    fn helm_values_diff_requires_authorization_and_is_strict() {
+        assert!(detail_action_requires_authorization(
+            DetailAction::ViewHelmValuesDiff
+        ));
+        assert!(detail_action_requires_strict_authorization(
+            DetailAction::ViewHelmValuesDiff
         ));
     }
 

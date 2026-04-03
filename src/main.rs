@@ -4506,9 +4506,13 @@ pub(crate) async fn run_app_inner(
                 AppAction::OpenHelmValuesDiff => {
                     if action::helm::handle_open_helm_values_diff(
                         &mut app,
+                        &client,
+                        &cached_snapshot,
                         &helm_values_diff_tx,
                         &mut helm_values_diff_request_seq,
-                    ) {
+                    )
+                    .await
+                    {
                         continue;
                     }
                 }
