@@ -49,6 +49,13 @@ pub struct ResourceAccessCheck {
     pub name: Option<String>,
 }
 
+pub fn helm_release_storage_access_checks(namespace: &str) -> Vec<ResourceAccessCheck> {
+    vec![
+        ResourceAccessCheck::resource("list", None, "secrets", Some(namespace), None),
+        ResourceAccessCheck::resource("create", None, "secrets", Some(namespace), None),
+    ]
+}
+
 impl ResourceAccessCheck {
     pub fn resource(
         verb: &str,
@@ -306,16 +313,7 @@ impl ResourceRef {
                 ResourceRef::CustomResource { .. } => self.base_access_checks("patch"),
                 _ => Vec::new(),
             },
-            // Helm rollback is CLI-driven and the exact release-defined writes vary by chart.
-            // The stable, resource-scoped checks we can preflight canonically are Helm's
-            // release-storage secret reads plus the new revision secret creation.
-            DetailAction::RollbackHelm => match self {
-                ResourceRef::HelmRelease(_, namespace) => vec![
-                    ResourceAccessCheck::resource("list", None, "secrets", Some(namespace), None),
-                    ResourceAccessCheck::resource("create", None, "secrets", Some(namespace), None),
-                ],
-                _ => Vec::new(),
-            },
+            DetailAction::RollbackHelm => Vec::new(),
             DetailAction::EditYaml => {
                 let mut checks = self.authorization_checks(DetailAction::ViewYaml);
                 checks.extend(self.base_access_checks("patch"));
@@ -698,9 +696,8 @@ mod tests {
     }
 
     #[test]
-    fn helm_release_rollback_checks_release_secret_storage_access() {
-        let helm = ResourceRef::HelmRelease("release".into(), "default".into());
-        let checks = helm.authorization_checks(DetailAction::RollbackHelm);
+    fn helm_release_storage_checks_cover_secret_history_access() {
+        let checks = helm_release_storage_access_checks("default");
         assert_eq!(checks.len(), 2);
         assert!(checks.iter().any(|c| {
             c.verb == "list" && c.resource == "secrets" && c.namespace.as_deref() == Some("default")

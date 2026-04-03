@@ -5,13 +5,16 @@ use std::time::Instant;
 use kubectui::{
     action_history::ActionKind,
     app::{AppState, ResourceRef},
+    authorization::DetailActionAuthorization,
     k8s::helm,
     policy::DetailAction,
     workbench::{WorkbenchTabKey, WorkbenchTabState},
 };
 
 use crate::{
-    action::detail_tabs::redirect_blocked_detail_action_to_access_review,
+    action::detail_tabs::{
+        build_helm_rollback_attempted_review, redirect_blocked_detail_action_to_access_review,
+    },
     async_types::{HelmHistoryAsyncResult, HelmRollbackAsyncResult, HelmValuesDiffAsyncResult},
     mutation_helpers::set_transient_status,
     next_request_id,
@@ -208,7 +211,7 @@ pub async fn handle_execute_helm_rollback(
     status_message_clear_at: &mut Option<Instant>,
 ) -> bool {
     let kube_context = app.current_context_name.clone();
-    let (name, namespace, target_revision, resource) = {
+    let (name, namespace, current_revision, target_revision, resource) = {
         let Some(tab) = app.workbench.active_tab_mut() else {
             app.set_error("No active workbench tab for Helm rollback.".to_string());
             return true;
@@ -221,28 +224,57 @@ pub async fn handle_execute_helm_rollback(
             app.set_error("No Helm rollback target revision is selected.".to_string());
             return true;
         };
+        let Some(current_revision) = history_tab.current_revision else {
+            app.set_error("Current Helm revision is unavailable for rollback review.".to_string());
+            return true;
+        };
         let Some(ResourceRef::HelmRelease(name, namespace)) = Some(history_tab.resource.clone())
         else {
             app.set_error("Helm rollback target is no longer valid.".to_string());
             return true;
         };
-        history_tab.begin_rollback();
         let resource = ResourceRef::HelmRelease(name.clone(), namespace.clone());
-        (name, namespace, target_revision, resource)
+        (name, namespace, current_revision, target_revision, resource)
     };
-    if redirect_blocked_detail_action_to_access_review(
-        app,
+    let attempted_review = match build_helm_rollback_attempted_review(
         client,
-        Some(snapshot),
-        &resource,
-        DetailAction::RollbackHelm,
+        &name,
+        &namespace,
+        current_revision,
+        target_revision,
     )
     .await
-    .is_some()
     {
+        Ok(review) => review,
+        Err(err) => {
+            app.set_error(err);
+            return true;
+        }
+    };
+    if !attempted_review
+        .authorization
+        .unwrap_or(DetailActionAuthorization::Unknown)
+        .permits(DetailAction::RollbackHelm)
+    {
+        match crate::action::detail_tabs::open_access_review_for_resource_with_attempted_review(
+            app,
+            client,
+            Some(snapshot),
+            resource,
+            attempted_review,
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(err) => app.set_error(err),
+        }
         return true;
     }
-
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+    {
+        history_tab.begin_rollback();
+    };
     let resource_label = format!("Helm release '{name}' in namespace '{namespace}'");
     let origin_view = app.view();
     let action_history_id = app.record_action_pending(

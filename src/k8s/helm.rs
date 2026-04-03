@@ -109,6 +109,21 @@ pub async fn fetch_release_values_diff(
     .map_err(|err| anyhow!("Helm values diff task failed: {err}"))?
 }
 
+pub async fn fetch_release_manifest(
+    release_name: &str,
+    namespace: &str,
+    kube_context: Option<String>,
+    revision: i32,
+) -> Result<String> {
+    let release_name = release_name.to_string();
+    let namespace = namespace.to_string();
+    tokio::task::spawn_blocking(move || {
+        fetch_release_manifest_blocking(&release_name, &namespace, kube_context, revision)
+    })
+    .await
+    .map_err(|err| anyhow!("Helm manifest task failed: {err}"))?
+}
+
 pub async fn rollback_release(
     release_name: &str,
     namespace: &str,
@@ -254,6 +269,24 @@ fn fetch_release_values_blocking(
         revision.to_string(),
         "--output".to_string(),
         "yaml".to_string(),
+    ]);
+    run_helm_command(&args)
+}
+
+fn fetch_release_manifest_blocking(
+    release_name: &str,
+    namespace: &str,
+    kube_context: Option<String>,
+    revision: i32,
+) -> Result<String> {
+    helm_cli_info().map_err(anyhow::Error::msg)?;
+    let mut args = base_command_args(kube_context.as_deref(), namespace);
+    args.extend([
+        "get".to_string(),
+        "manifest".to_string(),
+        release_name.to_string(),
+        "--revision".to_string(),
+        revision.to_string(),
     ]);
     run_helm_command(&args)
 }

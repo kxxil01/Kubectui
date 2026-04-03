@@ -8,7 +8,7 @@ use kube::{
 };
 use serde::Deserialize;
 use serde_json::json;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::k8s::flux::{
     FluxReconcileSupport, RECONCILE_REQUEST_ANNOTATION, flux_reconcile_support,
@@ -17,6 +17,28 @@ use crate::time::format_rfc3339;
 
 /// Maximum rendered YAML length in bytes (10 KiB).
 pub const MAX_YAML_BYTES: usize = 10 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct ManifestMeta {
+    name: String,
+    namespace: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ManifestHeader {
+    #[serde(rename = "apiVersion")]
+    api_version: String,
+    kind: String,
+    metadata: ManifestMeta,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ManifestAccessTarget {
+    group: Option<String>,
+    resource: String,
+    namespace: Option<String>,
+    name: String,
+}
 
 /// Fetches an arbitrary Kubernetes resource and serializes it to YAML.
 ///
@@ -127,20 +149,6 @@ pub async fn apply_resource_yaml(
 /// `kind`, and `metadata.name`. Namespaced resources must also define
 /// `metadata.namespace`.
 pub async fn apply_yaml_documents(client: &Client, yaml_str: &str) -> Result<usize> {
-    #[derive(Debug, Deserialize)]
-    struct ManifestMeta {
-        name: String,
-        namespace: Option<String>,
-    }
-
-    #[derive(Debug, Deserialize)]
-    struct ManifestHeader {
-        #[serde(rename = "apiVersion")]
-        api_version: String,
-        kind: String,
-        metadata: ManifestMeta,
-    }
-
     let mut applied = 0usize;
     let mut discovered_resources: HashMap<(String, String), (ApiResource, bool)> = HashMap::new();
     for document in serde_yaml::Deserializer::from_str(yaml_str) {
@@ -184,6 +192,144 @@ pub async fn apply_yaml_documents(client: &Client, yaml_str: &str) -> Result<usi
         return Err(anyhow!("no manifest documents were found"));
     }
     Ok(applied)
+}
+
+pub async fn manifest_access_checks_for_transition(
+    client: &Client,
+    current_manifest: &str,
+    target_manifest: &str,
+    default_namespace: Option<&str>,
+) -> Result<Vec<crate::authorization::ResourceAccessCheck>> {
+    let current_headers = parse_manifest_headers(current_manifest)?;
+    let target_headers = parse_manifest_headers(target_manifest)?;
+    let mut discovered_resources: HashMap<(String, String), (ApiResource, bool)> = HashMap::new();
+    for header in current_headers.iter().chain(target_headers.iter()) {
+        let cache_key = (header.api_version.clone(), header.kind.clone());
+        if discovered_resources.contains_key(&cache_key) {
+            continue;
+        }
+        let resolved = resolve_manifest_api_resource(
+            client,
+            &header.api_version,
+            &header.kind,
+            &mut discovered_resources,
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "unsupported manifest apiVersion '{}' kind '{}'",
+                header.api_version, header.kind
+            )
+        })?;
+        discovered_resources.insert(cache_key, resolved);
+    }
+    let current_targets =
+        collect_manifest_access_targets(current_headers, default_namespace, &discovered_resources)?;
+    let target_targets =
+        collect_manifest_access_targets(target_headers, default_namespace, &discovered_resources)?;
+
+    Ok(transition_checks_from_targets(
+        &current_targets,
+        &target_targets,
+    ))
+}
+
+fn parse_manifest_headers(yaml_str: &str) -> Result<Vec<ManifestHeader>> {
+    let mut headers = Vec::new();
+    for document in serde_yaml::Deserializer::from_str(yaml_str) {
+        let value = serde_yaml::Value::deserialize(document).context("invalid YAML document")?;
+        if value.is_null() {
+            continue;
+        }
+        headers.push(serde_yaml::from_value(value).context("manifest is missing required fields")?);
+    }
+    Ok(headers)
+}
+
+fn collect_manifest_access_targets(
+    headers: Vec<ManifestHeader>,
+    default_namespace: Option<&str>,
+    discovered_resources: &HashMap<(String, String), (ApiResource, bool)>,
+) -> Result<BTreeSet<ManifestAccessTarget>> {
+    let mut targets = BTreeSet::new();
+    for header in headers {
+        let (api_resource, namespaced) = discovered_resources
+            .get(&(header.api_version.clone(), header.kind.clone()))
+            .cloned()
+            .ok_or_else(|| {
+                anyhow!(
+                    "unsupported manifest apiVersion '{}' kind '{}'",
+                    header.api_version,
+                    header.kind
+                )
+            })
+            .with_context(|| {
+                format!(
+                    "unsupported manifest apiVersion '{}' kind '{}'",
+                    header.api_version, header.kind
+                )
+            })?;
+        let namespace = if namespaced {
+            Some(
+                header
+                    .metadata
+                    .namespace
+                    .or_else(|| default_namespace.map(str::to_string))
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "manifest {} '{}' requires a namespace",
+                            header.kind,
+                            header.metadata.name
+                        )
+                    })?,
+            )
+        } else {
+            None
+        };
+        targets.insert(ManifestAccessTarget {
+            group: (!api_resource.group.is_empty()).then(|| api_resource.group.clone()),
+            resource: api_resource.plural.clone(),
+            namespace,
+            name: header.metadata.name,
+        });
+    }
+    Ok(targets)
+}
+
+fn transition_checks_from_targets(
+    current_targets: &BTreeSet<ManifestAccessTarget>,
+    target_targets: &BTreeSet<ManifestAccessTarget>,
+) -> Vec<crate::authorization::ResourceAccessCheck> {
+    use crate::authorization::ResourceAccessCheck;
+
+    let mut checks = Vec::new();
+
+    for target in target_targets {
+        let verb = if current_targets.contains(target) {
+            "patch"
+        } else {
+            "create"
+        };
+        checks.push(ResourceAccessCheck::resource(
+            verb,
+            target.group.as_deref(),
+            &target.resource,
+            target.namespace.as_deref(),
+            Some(&target.name),
+        ));
+    }
+
+    for target in current_targets.difference(target_targets) {
+        checks.push(ResourceAccessCheck::resource(
+            "delete",
+            target.group.as_deref(),
+            &target.resource,
+            target.namespace.as_deref(),
+            Some(&target.name),
+        ));
+    }
+
+    checks
 }
 
 async fn resolve_manifest_api_resource(
@@ -768,6 +914,8 @@ pub async fn request_flux_reconcile(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use kube::core::Status;
 
     use super::*;
@@ -860,5 +1008,75 @@ mod tests {
             err.to_string()
                 .contains("unsupported manifest kind fallback")
         );
+    }
+
+    #[test]
+    fn manifest_transition_derives_create_patch_and_delete_checks() {
+        let current = r#"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: payments
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: stale
+  namespace: payments
+"#;
+        let target = r#"
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: payments
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: payments
+"#;
+        let current_headers = parse_manifest_headers(current).expect("current headers");
+        let target_headers = parse_manifest_headers(target).expect("target headers");
+        let mut discovered_resources = HashMap::new();
+        for header in current_headers.iter().chain(target_headers.iter()) {
+            discovered_resources.insert(
+                (header.api_version.clone(), header.kind.clone()),
+                api_resource_for_manifest(&header.api_version, &header.kind)
+                    .expect("resolved manifest resource"),
+            );
+        }
+        let current_targets = collect_manifest_access_targets(
+            current_headers,
+            Some("payments"),
+            &discovered_resources,
+        )
+        .expect("current targets");
+        let target_targets = collect_manifest_access_targets(
+            target_headers,
+            Some("payments"),
+            &discovered_resources,
+        )
+        .expect("target targets");
+
+        let checks = transition_checks_from_targets(&current_targets, &target_targets);
+
+        assert!(checks.iter().any(|check| {
+            check.verb == "patch"
+                && check.resource == "deployments"
+                && check.name.as_deref() == Some("api")
+        }));
+        assert!(checks.iter().any(|check| {
+            check.verb == "create"
+                && check.resource == "services"
+                && check.name.as_deref() == Some("api")
+        }));
+        assert!(checks.iter().any(|check| {
+            check.verb == "delete"
+                && check.resource == "configmaps"
+                && check.name.as_deref() == Some("stale")
+        }));
     }
 }

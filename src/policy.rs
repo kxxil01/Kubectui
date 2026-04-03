@@ -161,11 +161,7 @@ impl DetailAction {
         DetailAction::ViewYaml,
         DetailAction::ViewConfigDrift,
         DetailAction::ViewRollout,
-        DetailAction::PauseRollout,
-        DetailAction::ResumeRollout,
-        DetailAction::RollbackRollout,
         DetailAction::ViewHelmHistory,
-        DetailAction::RollbackHelm,
         DetailAction::ViewDecodedSecret,
         DetailAction::ToggleBookmark,
         DetailAction::ViewEvents,
@@ -691,7 +687,7 @@ impl ResourceActionContext {
         DetailAction::ACCESS_REVIEW_ORDER
             .iter()
             .copied()
-            .filter_map(|action| self.access_review_entry(action))
+            .filter_map(|action| self.access_review_for_action(action))
             .collect()
     }
 
@@ -716,7 +712,7 @@ impl ResourceActionContext {
         }
     }
 
-    fn access_review_entry(&self, action: DetailAction) -> Option<ActionAccessReview> {
+    pub fn access_review_for_action(&self, action: DetailAction) -> Option<ActionAccessReview> {
         let uses_effective_logs_target = matches!(action, DetailAction::Logs)
             && matches!(self.resource, ResourceRef::CronJob(_, _));
         let review_resource = if uses_effective_logs_target {
@@ -1531,7 +1527,7 @@ mod tests {
     }
 
     #[test]
-    fn access_review_includes_rollout_specific_mutations_without_exposing_footer_shortcuts() {
+    fn access_review_omits_stateful_rollout_mutations_from_generic_entries() {
         let resource = ResourceRef::Deployment("api".to_string(), "ns".to_string());
         let ctx = ResourceActionContext {
             resource,
@@ -1545,24 +1541,24 @@ mod tests {
 
         let entries = ctx.access_review_entries();
         assert!(
-            entries
+            !entries
                 .iter()
                 .any(|entry| entry.action == DetailAction::PauseRollout)
         );
         assert!(
-            entries
+            !entries
                 .iter()
                 .any(|entry| entry.action == DetailAction::ResumeRollout)
         );
         assert!(
-            entries
+            !entries
                 .iter()
                 .any(|entry| entry.action == DetailAction::RollbackRollout)
         );
     }
 
     #[test]
-    fn access_review_includes_helm_rollback_entry() {
+    fn access_review_omits_helm_rollback_without_revision_context() {
         let ctx = ResourceActionContext {
             resource: ResourceRef::HelmRelease("web".to_string(), "default".to_string()),
             node_unschedulable: None,
@@ -1573,12 +1569,11 @@ mod tests {
             action_authorizations: ActionAuthorizationMap::new(),
         };
 
-        let entries = ctx.access_review_entries();
-        let rollback = entries
-            .iter()
-            .find(|entry| entry.action == DetailAction::RollbackHelm)
-            .expect("helm rollback review entry");
-        assert!(rollback.strict);
+        assert!(
+            !ctx.access_review_entries()
+                .iter()
+                .any(|entry| entry.action == DetailAction::RollbackHelm)
+        );
     }
 
     #[test]

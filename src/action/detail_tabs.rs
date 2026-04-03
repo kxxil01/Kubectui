@@ -2,7 +2,9 @@
 
 use kubectui::{
     app::{AppState, AppView, ResourceRef},
-    authorization::DetailActionAuthorization,
+    authorization::{
+        ActionAccessReview, DetailActionAuthorization, detail_action_requires_strict_authorization,
+    },
     bookmarks::BookmarkToggleResult,
     k8s::client::K8sClient,
     network_policy_analysis, network_policy_connectivity,
@@ -11,7 +13,9 @@ use kubectui::{
     secret::decode_secret_yaml,
     state::ClusterSnapshot,
     traffic_debug,
-    workbench::{ConnectivityTargetOption, WorkbenchTabKey, WorkbenchTabState},
+    workbench::{
+        AttemptedActionReview, ConnectivityTargetOption, WorkbenchTabKey, WorkbenchTabState,
+    },
 };
 
 use crate::async_types::{DetailAsyncResult, RelationsAsyncResult, ResourceDiffAsyncResult};
@@ -372,11 +376,68 @@ pub async fn open_access_review_for_resource(
     let entries = resource_ctx.access_review_entries();
     let subject_review = AccessReviewSubject::from_resource(&resource)
         .and_then(|subject| snapshot.map(|loaded| resolve_subject_access_review(loaded, subject)));
-    let attempted_review =
-        attempted_action.map(|action| kubectui::workbench::AttemptedActionReview {
-            action,
-            authorization: resource_ctx.authorization_for_action(action),
-        });
+    let attempted_review = attempted_action
+        .map(|action| attempted_review_from_resource_context(&resource_ctx, action));
+    open_access_review_tab_with_state(app, resource, entries, subject_review, attempted_review);
+    Ok(())
+}
+
+pub async fn open_access_review_for_resource_with_attempted_review(
+    app: &mut AppState,
+    client: &K8sClient,
+    snapshot: Option<&ClusterSnapshot>,
+    resource: ResourceRef,
+    attempted_review: AttemptedActionReview,
+) -> Result<(), String> {
+    let resource_ctx = resolve_access_review_context(app, client, snapshot, &resource).await?;
+    let entries = resource_ctx.access_review_entries();
+    let subject_review = AccessReviewSubject::from_resource(&resource)
+        .and_then(|subject| snapshot.map(|loaded| resolve_subject_access_review(loaded, subject)));
+    open_access_review_tab_with_state(
+        app,
+        resource,
+        entries,
+        subject_review,
+        Some(attempted_review),
+    );
+    Ok(())
+}
+
+pub async fn build_helm_rollback_attempted_review(
+    client: &K8sClient,
+    release_name: &str,
+    namespace: &str,
+    current_revision: i32,
+    target_revision: i32,
+) -> Result<AttemptedActionReview, String> {
+    let checks = client
+        .helm_rollback_access_checks(release_name, namespace, current_revision, target_revision)
+        .await
+        .map_err(|err| {
+            format!(
+                "Failed to derive Helm rollback access review for revision {current_revision} -> {target_revision}: {err:#}"
+            )
+        })?;
+    let authorization =
+        DetailActionAuthorization::from_allowed(client.evaluate_access_checks(&checks).await);
+    Ok(AttemptedActionReview {
+        action: DetailAction::RollbackHelm,
+        authorization: Some(authorization),
+        strict: detail_action_requires_strict_authorization(DetailAction::RollbackHelm),
+        checks,
+        note: Some(format!(
+            "Derived from the Helm manifest transition {current_revision} -> {target_revision}, plus release history secret access."
+        )),
+    })
+}
+
+fn open_access_review_tab_with_state(
+    app: &mut AppState,
+    resource: ResourceRef,
+    entries: Vec<ActionAccessReview>,
+    subject_review: Option<kubectui::rbac_subjects::SubjectAccessReview>,
+    attempted_review: Option<AttemptedActionReview>,
+) {
     app.detail_view = None;
     app.open_access_review_tab(
         resource,
@@ -386,7 +447,27 @@ pub async fn open_access_review_for_resource(
         subject_review,
         attempted_review,
     );
-    Ok(())
+}
+
+fn attempted_review_from_resource_context(
+    resource_ctx: &ResourceActionContext,
+    action: DetailAction,
+) -> AttemptedActionReview {
+    let entry = resource_ctx
+        .access_review_for_action(action)
+        .unwrap_or_else(|| ActionAccessReview {
+            action,
+            authorization: resource_ctx.authorization_for_action(action),
+            strict: detail_action_requires_strict_authorization(action),
+            checks: Vec::new(),
+        });
+    AttemptedActionReview {
+        action: entry.action,
+        authorization: entry.authorization,
+        strict: entry.strict,
+        checks: entry.checks,
+        note: None,
+    }
 }
 
 pub async fn redirect_blocked_detail_action_to_access_review(

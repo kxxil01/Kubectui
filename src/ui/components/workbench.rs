@@ -284,16 +284,37 @@ fn access_review_lines(
     )]));
     lines.push(Line::from(""));
 
-    if let Some(attempted_review) = tab.attempted_review {
+    if let Some(attempted_review) = tab.attempted_review.as_ref() {
         lines.push(render_attempted_action_line(
             attempted_review.action,
             attempted_review.authorization,
             theme,
         ));
         lines.push(Line::from(vec![Span::styled(
-            " This action was blocked. Review the required checks below before retrying.",
+            " This action was blocked. Review the attempted-action checks first, then the broader supported action matrix below.",
             theme.muted_style(),
         )]));
+        if let Some(note) = &attempted_review.note {
+            lines.push(Line::from(vec![Span::styled(
+                format!(" {note}"),
+                theme.muted_style(),
+            )]));
+        }
+        lines.push(render_access_review_scope_line(
+            "Attempted action checks",
+            theme,
+        ));
+        if attempted_review.checks.is_empty() {
+            lines.push(Line::from(vec![Span::styled(
+                "   No RBAC check required for this action.",
+                theme.muted_style(),
+            )]));
+        } else {
+            lines.extend(render_grouped_access_review_check_lines(
+                &attempted_review.checks,
+                theme,
+            ));
+        }
         lines.push(Line::from(""));
     }
 
@@ -311,35 +332,10 @@ fn access_review_lines(
                 theme.muted_style(),
             )]));
         } else {
-            let mut namespace_checks = Vec::new();
-            let mut cluster_checks = Vec::new();
-            for check in &entry.checks {
-                if check.namespace.is_some() {
-                    namespace_checks.push(check);
-                } else {
-                    cluster_checks.push(check);
-                }
-            }
-
-            if !namespace_checks.is_empty() {
-                lines.push(render_access_review_scope_line(
-                    "Namespace-scoped checks",
-                    theme,
-                ));
-                for check in namespace_checks {
-                    lines.push(render_access_review_check_line(check, theme));
-                }
-            }
-
-            if !cluster_checks.is_empty() {
-                lines.push(render_access_review_scope_line(
-                    "Cluster-scoped checks",
-                    theme,
-                ));
-                for check in cluster_checks {
-                    lines.push(render_access_review_check_line(check, theme));
-                }
-            }
+            lines.extend(render_grouped_access_review_check_lines(
+                &entry.checks,
+                theme,
+            ));
         }
         lines.push(Line::from(""));
     }
@@ -503,6 +499,44 @@ fn render_access_review_scope_line(label: &str, theme: &Theme) -> Line<'static> 
         format!("   {label}"),
         theme.muted_style(),
     )])
+}
+
+fn render_grouped_access_review_check_lines(
+    checks: &[ResourceAccessCheck],
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    let mut namespace_checks = Vec::new();
+    let mut cluster_checks = Vec::new();
+    for check in checks {
+        if check.namespace.is_some() {
+            namespace_checks.push(check);
+        } else {
+            cluster_checks.push(check);
+        }
+    }
+
+    if !namespace_checks.is_empty() {
+        lines.push(render_access_review_scope_line(
+            "Namespace-scoped checks",
+            theme,
+        ));
+        for check in namespace_checks {
+            lines.push(render_access_review_check_line(check, theme));
+        }
+    }
+
+    if !cluster_checks.is_empty() {
+        lines.push(render_access_review_scope_line(
+            "Cluster-scoped checks",
+            theme,
+        ));
+        for check in cluster_checks {
+            lines.push(render_access_review_check_line(check, theme));
+        }
+    }
+
+    lines
 }
 
 fn render_subject_binding_line(binding: &SubjectBindingResolution, theme: &Theme) -> Line<'static> {
@@ -3256,6 +3290,15 @@ mod tests {
             Some(AttemptedActionReview {
                 action: DetailAction::Delete,
                 authorization: Some(DetailActionAuthorization::Denied),
+                strict: true,
+                checks: vec![ResourceAccessCheck::resource(
+                    "delete",
+                    Some("apps"),
+                    "deployments",
+                    Some("payments"),
+                    Some("api"),
+                )],
+                note: None,
             }),
         );
 
@@ -3439,6 +3482,15 @@ mod tests {
             Some(AttemptedActionReview {
                 action: DetailAction::Delete,
                 authorization: Some(DetailActionAuthorization::Denied),
+                strict: true,
+                checks: vec![ResourceAccessCheck::resource(
+                    "delete",
+                    Some("apps"),
+                    "deployments",
+                    Some("payments"),
+                    Some("api"),
+                )],
+                note: None,
             }),
         );
 

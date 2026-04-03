@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, HashSet};
 use crate::{
     action_history::ActionHistoryState,
     app::{LogsViewerState, ResourceRef},
-    authorization::ActionAccessReview,
+    authorization::{ActionAccessReview, DetailActionAuthorization, ResourceAccessCheck},
     icons::tab_icon,
     k8s::{
         client::EventInfo,
@@ -325,10 +325,13 @@ pub struct AccessReviewTabState {
     pub scroll: usize,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttemptedActionReview {
     pub action: crate::policy::DetailAction,
-    pub authorization: Option<crate::authorization::DetailActionAuthorization>,
+    pub authorization: Option<DetailActionAuthorization>,
+    pub strict: bool,
+    pub checks: Vec<ResourceAccessCheck>,
+    pub note: Option<String>,
 }
 
 impl AccessReviewTabState {
@@ -356,7 +359,7 @@ impl AccessReviewTabState {
             subject_input_error: None,
             scroll: 0,
         };
-        if let Some(action) = tab.attempted_review.map(|review| review.action)
+        if let Some(action) = tab.attempted_review.as_ref().map(|review| review.action)
             && let Some(offset) = tab.action_line_offset(action)
         {
             tab.scroll = offset;
@@ -366,7 +369,10 @@ impl AccessReviewTabState {
 
     pub fn line_count(&self) -> usize {
         let header_lines = 4usize;
-        let attempted_lines = usize::from(self.attempted_review.is_some()) * 3;
+        let attempted_lines = self
+            .attempted_review
+            .as_ref()
+            .map_or(0, Self::attempted_review_line_count);
         let subject_input_lines = self.subject_input_line_count();
         let subject_lines = self
             .subject_review
@@ -382,8 +388,8 @@ impl AccessReviewTabState {
 
     fn action_line_offset(&self, action: crate::policy::DetailAction) -> Option<usize> {
         let mut offset = 4usize;
-        if self.attempted_review.is_some() {
-            offset += 3;
+        if let Some(review) = &self.attempted_review {
+            offset += Self::attempted_review_line_count(review);
         }
         offset += self.subject_input_line_count();
         if let Some(review) = &self.subject_review {
@@ -400,18 +406,30 @@ impl AccessReviewTabState {
 
     pub fn subject_review_offset(&self) -> usize {
         let mut offset = 4usize;
-        if self.attempted_review.is_some() {
-            offset += 3;
+        if let Some(review) = &self.attempted_review {
+            offset += Self::attempted_review_line_count(review);
         }
         offset + self.subject_input_line_count()
     }
 
     pub fn subject_input_offset(&self) -> usize {
         let mut offset = 4usize;
-        if self.attempted_review.is_some() {
-            offset += 3;
+        if let Some(review) = &self.attempted_review {
+            offset += Self::attempted_review_line_count(review);
         }
         offset
+    }
+
+    fn attempted_review_line_count(review: &AttemptedActionReview) -> usize {
+        let grouped_scope_headers =
+            usize::from(review.checks.iter().any(|check| check.namespace.is_some()))
+                + usize::from(review.checks.iter().any(|check| check.namespace.is_none()));
+        3 + usize::from(review.note.is_some())
+            + if review.checks.is_empty() {
+                1
+            } else {
+                1 + review.checks.len() + grouped_scope_headers
+            }
     }
 
     fn subject_input_line_count(&self) -> usize {
@@ -2636,15 +2654,24 @@ mod tests {
             Some(AttemptedActionReview {
                 action: crate::policy::DetailAction::Delete,
                 authorization: Some(crate::authorization::DetailActionAuthorization::Denied),
+                strict: true,
+                checks: vec![crate::authorization::ResourceAccessCheck::resource(
+                    "delete",
+                    Some("apps"),
+                    "deployments",
+                    Some("payments"),
+                    Some("api"),
+                )],
+                note: None,
             }),
         );
 
-        assert_eq!(tab.line_count(), 30);
+        assert_eq!(tab.line_count(), 33);
         assert_eq!(
             tab.action_line_offset(crate::policy::DetailAction::Delete),
-            Some(23)
+            Some(26)
         );
-        assert_eq!(tab.scroll, 23);
+        assert_eq!(tab.scroll, 26);
     }
 
     #[test]
