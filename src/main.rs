@@ -4827,6 +4827,7 @@ pub(crate) async fn run_app_inner(
                     if action::node_debug::handle_node_debug_dialog_submit(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &node_debug_launch_tx,
                         &mut next_exec_session_id,
                         refresh_state.context_generation,

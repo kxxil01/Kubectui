@@ -49,11 +49,63 @@ pub struct ResourceAccessCheck {
     pub name: Option<String>,
 }
 
+pub fn helm_release_read_access_checks(namespace: &str) -> Vec<ResourceAccessCheck> {
+    vec![ResourceAccessCheck::resource(
+        "list",
+        None,
+        "secrets",
+        Some(namespace),
+        None,
+    )]
+}
+
 pub fn helm_release_storage_access_checks(namespace: &str) -> Vec<ResourceAccessCheck> {
+    let mut checks = helm_release_read_access_checks(namespace);
+    checks.push(ResourceAccessCheck::resource(
+        "create",
+        None,
+        "secrets",
+        Some(namespace),
+        None,
+    ));
+    checks
+}
+
+pub fn node_debug_shell_access_checks(namespace: &str) -> Vec<ResourceAccessCheck> {
     vec![
-        ResourceAccessCheck::resource("list", None, "secrets", Some(namespace), None),
-        ResourceAccessCheck::resource("create", None, "secrets", Some(namespace), None),
+        ResourceAccessCheck::resource("create", None, "pods", Some(namespace), None),
+        ResourceAccessCheck::resource("get", None, "pods", Some(namespace), None),
+        ResourceAccessCheck::resource("delete", None, "pods", Some(namespace), None),
+        ResourceAccessCheck::subresource("create", None, "pods", "exec", Some(namespace), None),
     ]
+}
+
+pub fn rollout_inspection_access_checks(resource: &ResourceRef) -> Vec<ResourceAccessCheck> {
+    match resource {
+        ResourceRef::Deployment(_, namespace) => {
+            let mut checks = resource.base_access_checks("get");
+            checks.push(ResourceAccessCheck::resource(
+                "list",
+                Some("apps"),
+                "replicasets",
+                Some(namespace),
+                None,
+            ));
+            checks
+        }
+        ResourceRef::StatefulSet(_, namespace) | ResourceRef::DaemonSet(_, namespace) => {
+            let mut checks = resource.base_access_checks("get");
+            checks.push(ResourceAccessCheck::resource(
+                "list",
+                Some("apps"),
+                "controllerrevisions",
+                Some(namespace),
+                None,
+            ));
+            checks
+        }
+        _ => Vec::new(),
+    }
 }
 
 impl ResourceAccessCheck {
@@ -106,11 +158,14 @@ pub const fn detail_action_requires_authorization(action: DetailAction) -> bool 
         action,
         DetailAction::ViewYaml
             | DetailAction::ViewConfigDrift
+            | DetailAction::ViewRollout
+            | DetailAction::ViewHelmHistory
             | DetailAction::ViewDecodedSecret
             | DetailAction::ViewEvents
             | DetailAction::Logs
             | DetailAction::Exec
             | DetailAction::DebugContainer
+            | DetailAction::NodeDebugShell
             | DetailAction::PortForward
             | DetailAction::Probes
             | DetailAction::Scale
@@ -137,6 +192,7 @@ pub const fn detail_action_requires_strict_authorization(action: DetailAction) -
         DetailAction::ViewDecodedSecret
             | DetailAction::Exec
             | DetailAction::DebugContainer
+            | DetailAction::NodeDebugShell
             | DetailAction::PortForward
             | DetailAction::Scale
             | DetailAction::Restart
@@ -160,20 +216,20 @@ impl ResourceRef {
     pub fn authorization_checks(&self, action: DetailAction) -> Vec<ResourceAccessCheck> {
         match action {
             DetailAction::ViewYaml | DetailAction::ViewConfigDrift => match self {
-                ResourceRef::HelmRelease(_, namespace) => vec![ResourceAccessCheck::resource(
-                    "list",
-                    None,
-                    "secrets",
-                    Some(namespace),
-                    None,
-                )],
+                ResourceRef::HelmRelease(_, namespace) => {
+                    helm_release_read_access_checks(namespace)
+                }
                 _ => self.base_access_checks("get"),
             },
             DetailAction::ViewAccessReview => Vec::new(),
-            DetailAction::ViewRollout
-            | DetailAction::ViewHelmHistory
-            | DetailAction::ViewTrafficDebug
-            | DetailAction::NodeDebugShell => Vec::new(),
+            DetailAction::ViewRollout => rollout_inspection_access_checks(self),
+            DetailAction::ViewTrafficDebug | DetailAction::NodeDebugShell => Vec::new(),
+            DetailAction::ViewHelmHistory => match self {
+                ResourceRef::HelmRelease(_, namespace) => {
+                    helm_release_read_access_checks(namespace)
+                }
+                _ => Vec::new(),
+            },
             DetailAction::ViewDecodedSecret => self.base_access_checks("get"),
             DetailAction::ViewEvents => {
                 if !self.supports_events_tab() {
@@ -608,6 +664,8 @@ mod tests {
         let soft_actions = [
             DetailAction::ViewYaml,
             DetailAction::ViewConfigDrift,
+            DetailAction::ViewRollout,
+            DetailAction::ViewHelmHistory,
             DetailAction::ViewEvents,
             DetailAction::Logs,
             DetailAction::Probes,
@@ -681,6 +739,58 @@ mod tests {
     }
 
     #[test]
+    fn deployment_rollout_inspection_requires_get_deployment_and_list_replicasets() {
+        let deploy = ResourceRef::Deployment("api".into(), "default".into());
+        let checks = deploy.authorization_checks(DetailAction::ViewRollout);
+        assert_eq!(checks.len(), 2);
+        assert!(checks.iter().any(|c| {
+            c.verb == "get"
+                && c.group.as_deref() == Some("apps")
+                && c.resource == "deployments"
+                && c.namespace.as_deref() == Some("default")
+                && c.name.as_deref() == Some("api")
+        }));
+        assert!(checks.iter().any(|c| {
+            c.verb == "list"
+                && c.group.as_deref() == Some("apps")
+                && c.resource == "replicasets"
+                && c.namespace.as_deref() == Some("default")
+                && c.name.is_none()
+        }));
+    }
+
+    #[test]
+    fn statefulset_rollout_inspection_requires_get_and_list_controller_revisions() {
+        let statefulset = ResourceRef::StatefulSet("db".into(), "default".into());
+        let checks = statefulset.authorization_checks(DetailAction::ViewRollout);
+        assert_eq!(checks.len(), 2);
+        assert!(checks.iter().any(|c| {
+            c.verb == "get"
+                && c.group.as_deref() == Some("apps")
+                && c.resource == "statefulsets"
+                && c.namespace.as_deref() == Some("default")
+                && c.name.as_deref() == Some("db")
+        }));
+        assert!(checks.iter().any(|c| {
+            c.verb == "list"
+                && c.group.as_deref() == Some("apps")
+                && c.resource == "controllerrevisions"
+                && c.namespace.as_deref() == Some("default")
+                && c.name.is_none()
+        }));
+    }
+
+    #[test]
+    fn rollout_inspection_requires_authorization_but_is_not_strict() {
+        assert!(detail_action_requires_authorization(
+            DetailAction::ViewRollout
+        ));
+        assert!(!detail_action_requires_strict_authorization(
+            DetailAction::ViewRollout
+        ));
+    }
+
+    #[test]
     fn helm_release_base_access_returns_none_so_delete_has_no_checks() {
         let helm = ResourceRef::HelmRelease("release".into(), "default".into());
         assert!(helm.authorization_checks(DetailAction::Delete).is_empty());
@@ -696,6 +806,32 @@ mod tests {
     }
 
     #[test]
+    fn helm_release_view_history_checks_match_release_read_access() {
+        let helm = ResourceRef::HelmRelease("release".into(), "default".into());
+        let checks = helm.authorization_checks(DetailAction::ViewHelmHistory);
+        assert_eq!(checks, helm_release_read_access_checks("default"));
+    }
+
+    #[test]
+    fn helm_release_history_requires_authorization() {
+        assert!(detail_action_requires_authorization(
+            DetailAction::ViewHelmHistory
+        ));
+        assert!(!detail_action_requires_strict_authorization(
+            DetailAction::ViewHelmHistory
+        ));
+    }
+
+    #[test]
+    fn helm_release_read_checks_cover_secret_listing() {
+        let checks = helm_release_read_access_checks("default");
+        assert_eq!(checks.len(), 1);
+        assert!(checks.iter().any(|c| {
+            c.verb == "list" && c.resource == "secrets" && c.namespace.as_deref() == Some("default")
+        }));
+    }
+
+    #[test]
     fn helm_release_storage_checks_cover_secret_history_access() {
         let checks = helm_release_storage_access_checks("default");
         assert_eq!(checks.len(), 2);
@@ -706,6 +842,27 @@ mod tests {
             c.verb == "create"
                 && c.resource == "secrets"
                 && c.namespace.as_deref() == Some("default")
+        }));
+    }
+
+    #[test]
+    fn node_debug_shell_checks_cover_namespace_scoped_pod_lifecycle_and_exec() {
+        let checks = node_debug_shell_access_checks("ops");
+        assert_eq!(checks.len(), 4);
+        assert!(checks.iter().any(|c| {
+            c.verb == "create" && c.resource == "pods" && c.namespace.as_deref() == Some("ops")
+        }));
+        assert!(checks.iter().any(|c| {
+            c.verb == "get" && c.resource == "pods" && c.namespace.as_deref() == Some("ops")
+        }));
+        assert!(checks.iter().any(|c| {
+            c.verb == "delete" && c.resource == "pods" && c.namespace.as_deref() == Some("ops")
+        }));
+        assert!(checks.iter().any(|c| {
+            c.verb == "create"
+                && c.resource == "pods"
+                && c.subresource.as_deref() == Some("exec")
+                && c.namespace.as_deref() == Some("ops")
         }));
     }
 

@@ -101,7 +101,6 @@ impl DetailAction {
         DetailAction::Logs,
         DetailAction::Exec,
         DetailAction::DebugContainer,
-        DetailAction::NodeDebugShell,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -137,7 +136,6 @@ impl DetailAction {
         DetailAction::Logs,
         DetailAction::Exec,
         DetailAction::DebugContainer,
-        DetailAction::NodeDebugShell,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -168,7 +166,6 @@ impl DetailAction {
         DetailAction::Logs,
         DetailAction::Exec,
         DetailAction::DebugContainer,
-        DetailAction::NodeDebugShell,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -1573,6 +1570,25 @@ mod tests {
             !ctx.access_review_entries()
                 .iter()
                 .any(|entry| entry.action == DetailAction::RollbackHelm)
+        );
+    }
+
+    #[test]
+    fn access_review_omits_node_debug_without_namespace_context() {
+        let ctx = ResourceActionContext {
+            resource: ResourceRef::Node("node-0".to_string()),
+            node_unschedulable: None,
+            cronjob_suspended: None,
+            cronjob_history_logs_available: false,
+            effective_logs_resource: None,
+            effective_logs_authorization: None,
+            action_authorizations: ActionAuthorizationMap::new(),
+        };
+
+        assert!(
+            !ctx.access_review_entries()
+                .iter()
+                .any(|entry| entry.action == DetailAction::NodeDebugShell)
         );
     }
 
