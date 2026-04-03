@@ -190,6 +190,8 @@ pub const fn detail_action_requires_strict_authorization(action: DetailAction) -
     matches!(
         action,
         DetailAction::ViewDecodedSecret
+            | DetailAction::ViewRollout
+            | DetailAction::ViewHelmHistory
             | DetailAction::Exec
             | DetailAction::DebugContainer
             | DetailAction::NodeDebugShell
@@ -631,6 +633,8 @@ mod tests {
     fn unknown_blocks_all_strict_actions() {
         let strict_actions = [
             DetailAction::ViewDecodedSecret,
+            DetailAction::ViewRollout,
+            DetailAction::ViewHelmHistory,
             DetailAction::Exec,
             DetailAction::DebugContainer,
             DetailAction::PortForward,
@@ -664,8 +668,6 @@ mod tests {
         let soft_actions = [
             DetailAction::ViewYaml,
             DetailAction::ViewConfigDrift,
-            DetailAction::ViewRollout,
-            DetailAction::ViewHelmHistory,
             DetailAction::ViewEvents,
             DetailAction::Logs,
             DetailAction::Probes,
@@ -785,8 +787,18 @@ mod tests {
         assert!(detail_action_requires_authorization(
             DetailAction::ViewRollout
         ));
-        assert!(!detail_action_requires_strict_authorization(
+        assert!(detail_action_requires_strict_authorization(
             DetailAction::ViewRollout
+        ));
+    }
+
+    #[test]
+    fn helm_history_requires_authorization_and_is_strict() {
+        assert!(detail_action_requires_authorization(
+            DetailAction::ViewHelmHistory
+        ));
+        assert!(detail_action_requires_strict_authorization(
+            DetailAction::ViewHelmHistory
         ));
     }
 
@@ -817,7 +829,7 @@ mod tests {
         assert!(detail_action_requires_authorization(
             DetailAction::ViewHelmHistory
         ));
-        assert!(!detail_action_requires_strict_authorization(
+        assert!(detail_action_requires_strict_authorization(
             DetailAction::ViewHelmHistory
         ));
     }
