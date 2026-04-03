@@ -4506,9 +4506,13 @@ pub(crate) async fn run_app_inner(
                 AppAction::OpenHelmValuesDiff => {
                     if action::helm::handle_open_helm_values_diff(
                         &mut app,
+                        &client,
+                        &cached_snapshot,
                         &helm_values_diff_tx,
                         &mut helm_values_diff_request_seq,
-                    ) {
+                    )
+                    .await
+                    {
                         continue;
                     }
                 }
@@ -4827,6 +4831,7 @@ pub(crate) async fn run_app_inner(
                     if action::node_debug::handle_node_debug_dialog_submit(
                         &mut app,
                         &client,
+                        &cached_snapshot,
                         &node_debug_launch_tx,
                         &mut next_exec_session_id,
                         refresh_state.context_generation,

@@ -3,15 +3,17 @@
 use kubectui::{
     action_history::ActionKind,
     app::{AppState, ResourceRef},
-    authorization::ResourceAccessCheck,
+    authorization::{DetailActionAuthorization, node_debug_shell_access_checks},
     k8s::{
         client::K8sClient,
         node_debug::{NodeDebugLaunchResult, NodeDebugProfile},
     },
     policy::DetailAction,
     ui::components::NodeDebugDialogState,
+    workbench::AttemptedActionReview,
 };
 
+use crate::action::detail_tabs::open_access_review_for_resource_with_attempted_review;
 use crate::async_types::NodeDebugLaunchAsyncResult;
 
 pub fn handle_node_debug_dialog_open(app: &mut AppState) -> bool {
@@ -42,6 +44,7 @@ pub fn handle_node_debug_dialog_open(app: &mut AppState) -> bool {
 pub async fn handle_node_debug_dialog_submit(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &kubectui::state::ClusterSnapshot,
     launch_tx: &tokio::sync::mpsc::Sender<NodeDebugLaunchAsyncResult>,
     next_exec_session_id: &mut u64,
     context_generation: u64,
@@ -85,22 +88,26 @@ pub async fn handle_node_debug_dialog_submit(
         }
     };
 
-    match client
-        .evaluate_access_checks(&node_debug_access_checks(
-            &request.namespace,
-            request.profile,
-        ))
-        .await
-    {
-        Some(true) => {}
-        Some(false) => {
-            dialog.error_message = Some(detail_action_denied_message(&request.namespace));
+    let attempted_review =
+        build_node_debug_attempted_review(client, &request.namespace, request.profile).await;
+    match attempted_review.authorization {
+        Some(DetailActionAuthorization::Allowed) => {}
+        Some(DetailActionAuthorization::Denied) | Some(DetailActionAuthorization::Unknown) => {
+            match open_access_review_for_resource_with_attempted_review(
+                app,
+                client,
+                Some(snapshot),
+                resource.clone(),
+                attempted_review,
+            )
+            .await
+            {
+                Ok(()) => {}
+                Err(err) => app.set_error(err),
+            }
             return true;
         }
-        None => {
-            dialog.error_message = Some(detail_action_unknown_message(&request.namespace));
-            return true;
-        }
+        None => unreachable!("node debug attempted review always includes authorization"),
     }
 
     let session_id = *next_exec_session_id;
@@ -141,30 +148,27 @@ pub async fn handle_node_debug_dialog_submit(
     false
 }
 
-fn node_debug_access_checks(
+async fn build_node_debug_attempted_review(
+    client: &K8sClient,
     namespace: &str,
-    _profile: NodeDebugProfile,
-) -> Vec<ResourceAccessCheck> {
-    vec![
-        ResourceAccessCheck::resource("create", None, "pods", Some(namespace), None),
-        ResourceAccessCheck::resource("get", None, "pods", Some(namespace), None),
-        ResourceAccessCheck::resource("delete", None, "pods", Some(namespace), None),
-        ResourceAccessCheck::subresource("create", None, "pods", "exec", Some(namespace), None),
-    ]
-}
-
-fn detail_action_denied_message(namespace: &str) -> String {
-    format!(
-        "Node debug shell requires Pod create/get/delete and pods/exec access in namespace '{}'.",
-        namespace
-    )
-}
-
-fn detail_action_unknown_message(namespace: &str) -> String {
-    format!(
-        "Unable to verify Pod create/get/delete and pods/exec access for namespace '{}'. Node debug shell is blocked until RBAC can be confirmed.",
-        namespace
-    )
+    profile: NodeDebugProfile,
+) -> AttemptedActionReview {
+    let checks = node_debug_shell_access_checks(namespace);
+    let authorization =
+        DetailActionAuthorization::from_allowed(client.evaluate_access_checks(&checks).await);
+    AttemptedActionReview {
+        action: DetailAction::NodeDebugShell,
+        authorization: Some(authorization),
+        strict: kubectui::authorization::detail_action_requires_strict_authorization(
+            DetailAction::NodeDebugShell,
+        ),
+        checks,
+        note: Some(format!(
+            "{} profile requires creating a temporary debug Pod in namespace '{}' and opening pods/exec.",
+            profile.label(),
+            namespace
+        )),
+    }
 }
 
 pub fn node_debug_shell_banner(result: &NodeDebugLaunchResult) -> Vec<String> {
@@ -193,6 +197,7 @@ pub fn node_debug_shell_banner(result: &NodeDebugLaunchResult) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use kubectui::authorization::ResourceAccessCheck;
 
     #[test]
     fn banner_mentions_host_mount_and_profile() {
@@ -206,5 +211,19 @@ mod tests {
         });
         assert!(lines.iter().any(|line| line.contains("/host")));
         assert!(lines.iter().any(|line| line.contains("General profile")));
+    }
+
+    #[test]
+    fn node_debug_attempted_review_uses_canonical_checks() {
+        let checks = node_debug_shell_access_checks("ops");
+        assert_eq!(
+            checks,
+            vec![
+                ResourceAccessCheck::resource("create", None, "pods", Some("ops"), None),
+                ResourceAccessCheck::resource("get", None, "pods", Some("ops"), None),
+                ResourceAccessCheck::resource("delete", None, "pods", Some("ops"), None),
+                ResourceAccessCheck::subresource("create", None, "pods", "exec", Some("ops"), None),
+            ]
+        );
     }
 }
