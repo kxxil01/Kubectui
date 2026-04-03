@@ -125,6 +125,7 @@ pub fn map_palette_detail_action(action: DetailAction) -> AppAction {
         DetailAction::ViewConfigDrift => AppAction::OpenResourceDiff,
         DetailAction::ViewRollout => AppAction::OpenRollout,
         DetailAction::ViewHelmHistory => AppAction::OpenHelmHistory,
+        DetailAction::ViewHelmValuesDiff => AppAction::OpenHelmValuesDiff,
         DetailAction::ViewDecodedSecret => AppAction::OpenDecodedSecret,
         DetailAction::ToggleBookmark => AppAction::ToggleBookmark,
         DetailAction::ViewEvents => AppAction::OpenResourceEvents,

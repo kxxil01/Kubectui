@@ -146,17 +146,19 @@ pub fn refresh_helm_history_tab(
     );
 }
 
-pub fn handle_open_helm_values_diff(
+pub async fn handle_open_helm_values_diff(
     app: &mut AppState,
+    client: &kubectui::k8s::client::K8sClient,
+    snapshot: &kubectui::state::ClusterSnapshot,
     diff_tx: &tokio::sync::mpsc::Sender<HelmValuesDiffAsyncResult>,
     request_seq: &mut u64,
 ) -> bool {
     let kube_context = app.current_context_name.clone();
-    let Some(tab) = app.workbench.active_tab_mut() else {
+    let Some(tab) = app.workbench.active_tab() else {
         app.set_error("No active workbench tab for Helm values diff.".to_string());
         return true;
     };
-    let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state else {
+    let WorkbenchTabState::HelmHistory(history_tab) = &tab.state else {
         app.set_error("Helm values diff is only available from the Helm history tab.".to_string());
         return true;
     };
@@ -170,9 +172,29 @@ pub fn handle_open_helm_values_diff(
         );
         return true;
     };
+    let resource = history_tab.resource.clone();
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewHelmValuesDiff,
+    )
+    .await
+    .is_some()
+    {
+        return true;
+    }
 
     let request_id = next_request_id(request_seq);
-    let resource = history_tab.resource.clone();
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        app.set_error("No active workbench tab for Helm values diff.".to_string());
+        return true;
+    };
+    let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state else {
+        app.set_error("Helm values diff is only available from the Helm history tab.".to_string());
+        return true;
+    };
     history_tab.begin_diff(current_revision, target_revision, request_id);
     spawn_helm_values_diff_fetch(
         diff_tx,

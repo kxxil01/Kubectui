@@ -46,6 +46,7 @@ pub enum DetailAction {
     ViewConfigDrift,
     ViewRollout,
     ViewHelmHistory,
+    ViewHelmValuesDiff,
     ViewDecodedSecret,
     ToggleBookmark,
     ViewEvents,
@@ -94,6 +95,7 @@ impl DetailAction {
         DetailAction::ViewConfigDrift,
         DetailAction::ViewRollout,
         DetailAction::ViewHelmHistory,
+        DetailAction::ViewHelmValuesDiff,
         DetailAction::ViewDecodedSecret,
         DetailAction::ToggleBookmark,
         DetailAction::ViewEvents,
@@ -137,7 +139,6 @@ impl DetailAction {
         DetailAction::Logs,
         DetailAction::Exec,
         DetailAction::DebugContainer,
-        DetailAction::NodeDebugShell,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -168,7 +169,6 @@ impl DetailAction {
         DetailAction::Logs,
         DetailAction::Exec,
         DetailAction::DebugContainer,
-        DetailAction::NodeDebugShell,
         DetailAction::PortForward,
         DetailAction::Probes,
         DetailAction::Scale,
@@ -194,6 +194,7 @@ impl DetailAction {
             DetailAction::ViewConfigDrift => Some("[D]"),
             DetailAction::ViewRollout => Some("[O]"),
             DetailAction::ViewHelmHistory => Some("[h]"),
+            DetailAction::ViewHelmValuesDiff => None,
             DetailAction::ViewDecodedSecret => Some("[o]"),
             DetailAction::ToggleBookmark => Some("[B]"),
             DetailAction::ViewEvents => Some("[v]"),
@@ -237,6 +238,7 @@ impl DetailAction {
             DetailAction::ViewConfigDrift => "Drift",
             DetailAction::ViewRollout => "Rollout",
             DetailAction::ViewHelmHistory => "Helm",
+            DetailAction::ViewHelmValuesDiff => "Helm Values Diff",
             DetailAction::ViewDecodedSecret => "Decoded",
             DetailAction::ToggleBookmark => "Bookmark",
             DetailAction::ViewEvents => "Events",
@@ -550,6 +552,7 @@ impl ResourceRef {
                     | ResourceRef::DaemonSet(_, _)
             ),
             DetailAction::ViewHelmHistory => matches!(self, ResourceRef::HelmRelease(_, _)),
+            DetailAction::ViewHelmValuesDiff => matches!(self, ResourceRef::HelmRelease(_, _)),
             DetailAction::ViewEvents => self.supports_events_tab(),
             DetailAction::ViewAccessReview => true,
             DetailAction::ViewDecodedSecret => matches!(self, ResourceRef::Secret(_, _)),
@@ -783,6 +786,7 @@ impl DetailViewState {
             DetailAction::ViewYaml
                 | DetailAction::ViewDecodedSecret
                 | DetailAction::ViewHelmHistory
+                | DetailAction::ViewHelmValuesDiff
                 | DetailAction::ToggleBookmark
                 | DetailAction::ViewEvents
                 | DetailAction::ViewAccessReview
@@ -1574,6 +1578,32 @@ mod tests {
                 .iter()
                 .any(|entry| entry.action == DetailAction::RollbackHelm)
         );
+    }
+
+    #[test]
+    fn access_review_omits_node_debug_without_namespace_context() {
+        let ctx = ResourceActionContext {
+            resource: ResourceRef::Node("node-0".to_string()),
+            node_unschedulable: None,
+            cronjob_suspended: None,
+            cronjob_history_logs_available: false,
+            effective_logs_resource: None,
+            effective_logs_authorization: None,
+            action_authorizations: ActionAuthorizationMap::new(),
+        };
+
+        assert!(
+            !ctx.access_review_entries()
+                .iter()
+                .any(|entry| entry.action == DetailAction::NodeDebugShell)
+        );
+    }
+
+    #[test]
+    fn all_actions_keep_node_debug_for_authorization_fetch() {
+        assert!(DetailAction::ALL.contains(&DetailAction::NodeDebugShell));
+        assert!(!DetailAction::ORDER.contains(&DetailAction::NodeDebugShell));
+        assert!(!DetailAction::ACCESS_REVIEW_ORDER.contains(&DetailAction::NodeDebugShell));
     }
 
     #[test]
