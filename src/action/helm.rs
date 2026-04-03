@@ -256,6 +256,7 @@ pub async fn handle_execute_helm_rollback(
         .unwrap_or(DetailActionAuthorization::Unknown)
         .permits(DetailAction::RollbackHelm)
     {
+        clear_helm_rollback_confirm(app);
         match crate::action::detail_tabs::open_access_review_for_resource_with_attempted_review(
             app,
             client,
@@ -305,4 +306,40 @@ pub async fn handle_execute_helm_rollback(
             .await;
     });
     false
+}
+
+fn clear_helm_rollback_confirm(app: &mut AppState) {
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        return;
+    };
+    let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state else {
+        return;
+    };
+    history_tab.cancel_rollback_confirm();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_helm_rollback_confirm_cancels_pending_confirmation() {
+        let mut app = AppState::default();
+        let mut tab = kubectui::workbench::HelmHistoryTabState::new(ResourceRef::HelmRelease(
+            "web".into(),
+            "default".into(),
+        ));
+        tab.begin_rollback_confirm(3);
+        app.workbench.open_tab(WorkbenchTabState::HelmHistory(tab));
+
+        clear_helm_rollback_confirm(&mut app);
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing helm history tab");
+        };
+        let WorkbenchTabState::HelmHistory(tab) = &tab.state else {
+            panic!("expected helm history tab");
+        };
+        assert!(tab.confirm_rollback_revision.is_none());
+    }
 }

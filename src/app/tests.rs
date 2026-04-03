@@ -1454,6 +1454,35 @@ fn access_review_s_key_focuses_subject_input() {
 }
 
 #[test]
+fn access_review_s_key_scrolls_subject_input_into_view() {
+    use crate::workbench::{AccessReviewFocus, AccessReviewTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab = AccessReviewTabState::new(
+        ResourceRef::Pod("pod-0".to_string(), "ns".to_string()),
+        Some("prod".to_string()),
+        "ns".to_string(),
+        Vec::new(),
+        None,
+        None,
+    );
+    tab.scroll = 99;
+    app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing access review tab");
+    };
+    let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+        panic!("expected access review tab");
+    };
+    assert_eq!(tab.focus, AccessReviewFocus::SubjectInput);
+    assert_eq!(tab.scroll, tab.subject_input_offset());
+}
+
+#[test]
 fn access_review_enter_submits_subject_input() {
     use crate::workbench::{AccessReviewFocus, AccessReviewTabState, WorkbenchTabState};
 

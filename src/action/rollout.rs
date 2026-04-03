@@ -314,6 +314,7 @@ pub async fn handle_execute_rollout_undo(
     .await
     .is_some()
     {
+        clear_rollout_undo_confirm(app, &resource);
         return true;
     }
     if let Some(tab) = rollout_tab_mut(app, &resource) {
@@ -354,6 +355,12 @@ pub async fn handle_execute_rollout_undo(
             .await;
     });
     false
+}
+
+fn clear_rollout_undo_confirm(app: &mut AppState, resource: &ResourceRef) {
+    if let Some(tab) = rollout_tab_mut(app, resource) {
+        tab.cancel_undo_confirm();
+    }
 }
 
 fn rollout_target_resource(app: &AppState) -> Option<ResourceRef> {
@@ -398,5 +405,29 @@ fn workload_identity(resource: &ResourceRef) -> (&'static str, String, String) {
         }
         ResourceRef::DaemonSet(name, namespace) => ("daemonset", name.clone(), namespace.clone()),
         _ => unreachable!("validated rollout resource"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_rollout_undo_confirm_cancels_pending_confirmation() {
+        let resource = ResourceRef::Deployment("api".into(), "default".into());
+        let mut app = AppState::default();
+        let mut tab = kubectui::workbench::RolloutTabState::new(resource.clone());
+        tab.begin_undo_confirm(4);
+        app.workbench.open_tab(WorkbenchTabState::Rollout(tab));
+
+        clear_rollout_undo_confirm(&mut app, &resource);
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing rollout tab");
+        };
+        let WorkbenchTabState::Rollout(tab) = &tab.state else {
+            panic!("expected rollout tab");
+        };
+        assert!(tab.confirm_undo_revision.is_none());
     }
 }

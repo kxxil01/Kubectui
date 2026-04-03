@@ -359,10 +359,8 @@ impl AccessReviewTabState {
             subject_input_error: None,
             scroll: 0,
         };
-        if let Some(action) = tab.attempted_review.as_ref().map(|review| review.action)
-            && let Some(offset) = tab.action_line_offset(action)
-        {
-            tab.scroll = offset;
+        if tab.attempted_review.is_some() {
+            tab.scroll = 3;
         }
         tab
     }
@@ -386,6 +384,7 @@ impl AccessReviewTabState {
         header_lines + attempted_lines + subject_input_lines + subject_lines + entry_lines
     }
 
+    #[cfg(test)]
     fn action_line_offset(&self, action: crate::policy::DetailAction) -> Option<usize> {
         let mut offset = 4usize;
         if let Some(review) = &self.attempted_review {
@@ -464,6 +463,7 @@ impl AccessReviewTabState {
         self.focus = AccessReviewFocus::SubjectInput;
         self.subject_input.focused = true;
         self.subject_input.cursor_end();
+        self.scroll = self.subject_input_offset();
     }
 
     pub fn stop_subject_input(&mut self) {
@@ -2671,7 +2671,7 @@ mod tests {
             tab.action_line_offset(crate::policy::DetailAction::Delete),
             Some(26)
         );
-        assert_eq!(tab.scroll, 26);
+        assert_eq!(tab.scroll, 3);
     }
 
     #[test]

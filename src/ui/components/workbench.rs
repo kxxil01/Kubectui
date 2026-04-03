@@ -3310,7 +3310,7 @@ mod tests {
 
         assert!(rendered.contains("Attempted Action: Delete"));
         assert!(rendered.contains("[denied]"));
-        assert!(tab.scroll > 0);
+        assert_eq!(tab.scroll, 3);
     }
 
     #[test]
