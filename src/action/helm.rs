@@ -11,10 +11,11 @@ use kubectui::{
 };
 
 use crate::{
+    action::detail_tabs::redirect_blocked_detail_action_to_access_review,
     async_types::{HelmHistoryAsyncResult, HelmRollbackAsyncResult, HelmValuesDiffAsyncResult},
     mutation_helpers::set_transient_status,
     next_request_id,
-    selection_helpers::{detail_action_block_message, selected_resource},
+    selection_helpers::selected_resource,
 };
 
 pub fn spawn_helm_history_fetch(
@@ -95,10 +96,16 @@ pub async fn handle_open_helm_history(
         app.set_error("Helm history is only available for Helm release resources.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::ViewHelmHistory).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewHelmHistory,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
 
@@ -192,8 +199,10 @@ pub fn handle_confirm_helm_rollback(app: &mut AppState) -> bool {
     false
 }
 
-pub fn handle_execute_helm_rollback(
+pub async fn handle_execute_helm_rollback(
     app: &mut AppState,
+    client: &kubectui::k8s::client::K8sClient,
+    snapshot: &kubectui::state::ClusterSnapshot,
     rollback_tx: &tokio::sync::mpsc::Sender<HelmRollbackAsyncResult>,
     context_generation: u64,
     status_message_clear_at: &mut Option<Instant>,
@@ -221,6 +230,18 @@ pub fn handle_execute_helm_rollback(
         let resource = ResourceRef::HelmRelease(name.clone(), namespace.clone());
         (name, namespace, target_revision, resource)
     };
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::RollbackHelm,
+    )
+    .await
+    .is_some()
+    {
+        return true;
+    }
 
     let resource_label = format!("Helm release '{name}' in namespace '{namespace}'");
     let origin_view = app.view();

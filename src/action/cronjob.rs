@@ -7,11 +7,12 @@ use kubectui::{
     app::{AppState, ResourceRef},
     k8s::client::K8sClient,
     policy::DetailAction,
+    state::ClusterSnapshot,
 };
 
+use crate::action::detail_tabs::redirect_blocked_detail_action_to_access_review;
 use crate::async_types::{SetCronJobSuspendAsyncResult, TriggerCronJobAsyncResult};
 use crate::mutation_helpers::begin_detail_mutation;
-use crate::selection_helpers::detail_action_block_message;
 
 /// Handles triggering a CronJob to create a new Job.
 ///
@@ -19,6 +20,7 @@ use crate::selection_helpers::detail_action_block_message;
 pub async fn handle_trigger_cronjob(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     trigger_cronjob_tx: &tokio::sync::mpsc::Sender<TriggerCronJobAsyncResult>,
     context_generation: u64,
     status_message_clear_at: &mut Option<Instant>,
@@ -32,10 +34,16 @@ pub async fn handle_trigger_cronjob(
     });
     if let Some((name, namespace)) = cronjob_info {
         let resource = ResourceRef::CronJob(name.clone(), namespace.clone());
-        if let Some(message) =
-            detail_action_block_message(app, client, &resource, DetailAction::Trigger).await
+        if redirect_blocked_detail_action_to_access_review(
+            app,
+            client,
+            Some(snapshot),
+            &resource,
+            DetailAction::Trigger,
+        )
+        .await
+        .is_some()
         {
-            app.set_error(message);
             return true;
         }
         let resource_label = format!("CronJob '{name}'");
@@ -89,6 +97,7 @@ pub fn handle_confirm_cronjob_suspend(app: &mut AppState, suspend: bool) {
 pub async fn handle_set_cronjob_suspend(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     cronjob_suspend_tx: &tokio::sync::mpsc::Sender<SetCronJobSuspendAsyncResult>,
     context_generation: u64,
     status_message_clear_at: &mut Option<Instant>,
@@ -108,10 +117,16 @@ pub async fn handle_set_cronjob_suspend(
         } else {
             DetailAction::ResumeCronJob
         };
-        if let Some(message) =
-            detail_action_block_message(app, client, &resource, detail_action).await
+        if redirect_blocked_detail_action_to_access_review(
+            app,
+            client,
+            Some(snapshot),
+            &resource,
+            detail_action,
+        )
+        .await
+        .is_some()
         {
-            app.set_error(message);
             return true;
         }
         if let Some(detail) = &mut app.detail_view {

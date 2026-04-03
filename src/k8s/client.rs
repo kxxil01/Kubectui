@@ -950,7 +950,7 @@ impl K8sClient {
     ) -> ActionAuthorizationMap {
         let mut authorizations = ActionAuthorizationMap::new();
 
-        for action in DetailAction::ORDER {
+        for &action in DetailAction::ALL {
             if !detail_action_requires_authorization(action) {
                 continue;
             }

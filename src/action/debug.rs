@@ -5,15 +5,17 @@ use kubectui::{
     app::{AppState, ResourceRef},
     k8s::{client::K8sClient, exec::fetch_pod_containers},
     policy::DetailAction,
+    state::ClusterSnapshot,
     ui::components::DebugContainerDialogState,
 };
 
+use crate::action::detail_tabs::redirect_blocked_detail_action_to_access_review;
 use crate::async_types::{DebugContainerDialogBootstrapResult, DebugContainerLaunchAsyncResult};
-use crate::selection_helpers::detail_action_block_message;
 
 pub async fn handle_debug_container_dialog_open(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     bootstrap_tx: &tokio::sync::mpsc::Sender<DebugContainerDialogBootstrapResult>,
     request_seq: &mut u64,
 ) -> bool {
@@ -29,10 +31,16 @@ pub async fn handle_debug_container_dialog_open(
         app.set_error("Debug containers are only available for Pod resources.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::DebugContainer).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::DebugContainer,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
 
@@ -64,6 +72,7 @@ pub async fn handle_debug_container_dialog_open(
 pub async fn handle_debug_container_dialog_submit(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     launch_tx: &tokio::sync::mpsc::Sender<DebugContainerLaunchAsyncResult>,
     next_exec_session_id: &mut u64,
     context_generation: u64,
@@ -88,10 +97,16 @@ pub async fn handle_debug_container_dialog_submit(
         app.set_error("Debug container launch is unavailable for the selected Pod.".to_string());
         return true;
     }
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::DebugContainer).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::DebugContainer,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
 

@@ -2,10 +2,12 @@
 
 use kubectui::{
     app::{AppState, AppView, ResourceRef},
+    authorization::DetailActionAuthorization,
     bookmarks::BookmarkToggleResult,
     k8s::client::K8sClient,
     network_policy_analysis, network_policy_connectivity,
-    policy::DetailAction,
+    policy::{DetailAction, ResourceActionContext},
+    rbac_subjects::{AccessReviewSubject, resolve_subject_access_review},
     secret::decode_secret_yaml,
     state::ClusterSnapshot,
     traffic_debug,
@@ -15,7 +17,8 @@ use kubectui::{
 use crate::async_types::{DetailAsyncResult, RelationsAsyncResult, ResourceDiffAsyncResult};
 use crate::next_request_id;
 use crate::selection_helpers::{
-    detail_action_block_message, selected_resource, selected_resource_context,
+    detail_action_authorization, detail_action_denied_message, resource_action_context,
+    selected_resource,
 };
 
 /// Spawns an async detail-view fetch for a resource.
@@ -85,10 +88,16 @@ pub async fn handle_open_resource_yaml(
         app.set_error("No resource selected for YAML inspection.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::ViewYaml).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewYaml,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
     let cached_yaml = app
@@ -133,10 +142,16 @@ pub async fn handle_open_resource_diff(
         app.set_error("No resource selected for configuration drift inspection.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::ViewConfigDrift).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewConfigDrift,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
 
@@ -171,10 +186,16 @@ pub async fn handle_open_decoded_secret(
         app.set_error("Decoded Secret view is only available for Secret resources.".to_string());
         return true;
     }
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::ViewDecodedSecret).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewDecodedSecret,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
     let cached_yaml = app
@@ -245,10 +266,16 @@ pub async fn handle_open_resource_events(
         app.set_error("No resource selected for event inspection.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::ViewEvents).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewEvents,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
     let cached_events = app
@@ -280,37 +307,151 @@ pub async fn handle_open_access_review(
     client: &K8sClient,
     snapshot: &ClusterSnapshot,
 ) -> bool {
-    let resource_ctx = if let Some(resource_ctx) = app
+    let resource = app
         .detail_view
         .as_ref()
-        .and_then(|detail| detail.resource_action_context())
-    {
-        resource_ctx
-    } else if let Some(mut resource_ctx) = selected_resource_context(app, snapshot) {
-        resource_ctx.action_authorizations = client
-            .fetch_detail_action_authorizations(&resource_ctx.resource)
-            .await;
-        if let Some(log_resource) = resource_ctx.effective_logs_resource.as_ref() {
-            resource_ctx.effective_logs_authorization = client
-                .is_detail_action_authorized(log_resource, DetailAction::Logs)
-                .await;
-        }
-        resource_ctx
-    } else {
+        .and_then(|detail| detail.resource.clone())
+        .or_else(|| selected_resource(app, snapshot));
+    let Some(resource) = resource else {
         app.set_error("No resource selected for access review.".to_string());
         return true;
     };
 
-    let resource = resource_ctx.resource.clone();
+    match open_access_review_for_resource(app, client, Some(snapshot), resource, None).await {
+        Ok(()) => false,
+        Err(err) => {
+            app.set_error(err);
+            true
+        }
+    }
+}
+
+async fn resolve_access_review_context(
+    app: &AppState,
+    client: &K8sClient,
+    snapshot: Option<&ClusterSnapshot>,
+    resource: &ResourceRef,
+) -> Result<ResourceActionContext, String> {
+    if let Some(resource_ctx) = app
+        .detail_view
+        .as_ref()
+        .and_then(|detail| detail.resource_action_context())
+        .filter(|resource_ctx| &resource_ctx.resource == resource)
+    {
+        return Ok(resource_ctx);
+    }
+
+    let Some(snapshot) = snapshot else {
+        return Err(format!(
+            "Access review for {} '{}' requires snapshot context.",
+            resource.kind(),
+            resource.name()
+        ));
+    };
+
+    let mut resource_ctx = resource_action_context(snapshot, resource.clone());
+    resource_ctx.action_authorizations = client
+        .fetch_detail_action_authorizations(&resource_ctx.resource)
+        .await;
+    if let Some(log_resource) = resource_ctx.effective_logs_resource.as_ref() {
+        resource_ctx.effective_logs_authorization = client
+            .is_detail_action_authorized(log_resource, DetailAction::Logs)
+            .await;
+    }
+    Ok(resource_ctx)
+}
+
+pub async fn open_access_review_for_resource(
+    app: &mut AppState,
+    client: &K8sClient,
+    snapshot: Option<&ClusterSnapshot>,
+    resource: ResourceRef,
+    attempted_action: Option<DetailAction>,
+) -> Result<(), String> {
+    let resource_ctx = resolve_access_review_context(app, client, snapshot, &resource).await?;
     let entries = resource_ctx.access_review_entries();
+    let subject_review = AccessReviewSubject::from_resource(&resource)
+        .and_then(|subject| snapshot.map(|loaded| resolve_subject_access_review(loaded, subject)));
+    let attempted_review =
+        attempted_action.map(|action| kubectui::workbench::AttemptedActionReview {
+            action,
+            authorization: resource_ctx.authorization_for_action(action),
+        });
     app.detail_view = None;
     app.open_access_review_tab(
         resource,
         app.current_context_name.clone(),
         app.current_namespace.clone(),
         entries,
+        subject_review,
+        attempted_review,
     );
-    false
+    Ok(())
+}
+
+pub async fn redirect_blocked_detail_action_to_access_review(
+    app: &mut AppState,
+    client: &K8sClient,
+    snapshot: Option<&ClusterSnapshot>,
+    resource: &ResourceRef,
+    action: DetailAction,
+) -> Option<String> {
+    let status = detail_action_authorization(app, client, resource, action)
+        .await
+        .unwrap_or(DetailActionAuthorization::Unknown);
+    if status.permits(action) {
+        return None;
+    }
+
+    let denial_message = detail_action_denied_message(action, resource, status);
+    match open_access_review_for_resource(app, client, snapshot, resource.clone(), Some(action))
+        .await
+    {
+        Ok(()) => Some(denial_message),
+        Err(_) => {
+            app.set_error(denial_message.clone());
+            Some(denial_message)
+        }
+    }
+}
+
+pub fn handle_apply_access_review_subject(app: &mut AppState, snapshot: &ClusterSnapshot) -> bool {
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        return true;
+    };
+    let WorkbenchTabState::AccessReview(access_tab) = &mut tab.state else {
+        return true;
+    };
+
+    let input = access_tab.subject_input.value.trim();
+    if input.is_empty() {
+        access_tab.subject_review = None;
+        access_tab.subject_input_error = None;
+        access_tab.subject_input.error = false;
+        access_tab.scroll = access_tab.subject_input_offset();
+        access_tab.stop_subject_input();
+        return true;
+    }
+
+    match AccessReviewSubject::parse(input) {
+        Ok(subject) => {
+            access_tab.subject_input.value = subject.spec();
+            access_tab.subject_input.cursor_end();
+            access_tab.subject_input_error = None;
+            access_tab.subject_input.error = false;
+            access_tab.subject_review = Some(resolve_subject_access_review(snapshot, subject));
+            access_tab.scroll = access_tab.subject_review_offset().saturating_sub(1);
+            access_tab.stop_subject_input();
+            true
+        }
+        Err(err) => {
+            access_tab.subject_review = None;
+            access_tab.subject_input_error = Some(err);
+            access_tab.subject_input.error = true;
+            access_tab.scroll = access_tab.subject_input_offset();
+            true
+        }
+    }
 }
 
 /// Handles `AppAction::OpenRelationships`.
@@ -378,10 +519,16 @@ pub async fn handle_open_network_policies(
         app.set_error("No resource selected for network policy inspection.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::ViewNetworkPolicies).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewNetworkPolicies,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
 
@@ -440,15 +587,16 @@ pub async fn handle_open_network_connectivity(
         app.set_error("Connectivity inspection is only available for Pod resources.".to_string());
         return true;
     }
-    if let Some(message) = detail_action_block_message(
+    if redirect_blocked_detail_action_to_access_review(
         app,
         client,
+        Some(snapshot),
         &resource,
         DetailAction::CheckNetworkConnectivity,
     )
     .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
 
@@ -487,10 +635,16 @@ pub async fn handle_open_traffic_debug(
         app.set_error("No resource selected for traffic debugging.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::ViewTrafficDebug).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewTrafficDebug,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
 
@@ -551,4 +705,175 @@ pub fn handle_toggle_bookmark(app: &mut AppState, snapshot: &ClusterSnapshot) ->
         Err(err) => app.set_error(err),
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handle_apply_access_review_subject;
+    use kubectui::{
+        app::{AppState, ResourceRef},
+        k8s::dtos::{ClusterRoleBindingInfo, RoleBindingSubject},
+        rbac_subjects::{AccessReviewSubject, resolve_subject_access_review},
+        state::ClusterSnapshot,
+        workbench::{AccessReviewTabState, WorkbenchTabState},
+    };
+
+    #[test]
+    fn apply_access_review_subject_updates_subject_review() {
+        let mut app = AppState::default();
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.cluster_role_bindings.push(ClusterRoleBindingInfo {
+            name: "alice-admin".into(),
+            role_ref_kind: "ClusterRole".into(),
+            role_ref_name: "admin".into(),
+            subjects: vec![RoleBindingSubject {
+                kind: "User".into(),
+                name: "alice@example.com".into(),
+                namespace: None,
+                api_group: Some("rbac.authorization.k8s.io".into()),
+            }],
+            ..ClusterRoleBindingInfo::default()
+        });
+
+        let mut tab = AccessReviewTabState::new(
+            ResourceRef::Pod("api-0".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            Vec::new(),
+            None,
+            None,
+        );
+        tab.start_subject_input();
+        tab.subject_input.value = "User/alice@example.com".into();
+        app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+        assert!(handle_apply_access_review_subject(&mut app, &snapshot));
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing access review tab");
+        };
+        let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+            panic!("expected access review tab");
+        };
+        let review = tab
+            .subject_review
+            .as_ref()
+            .expect("expected subject review");
+        assert_eq!(review.subject.spec(), "User/alice@example.com");
+        assert_eq!(review.bindings.len(), 1);
+        assert_eq!(tab.scroll, tab.subject_review_offset().saturating_sub(1));
+        assert!(tab.subject_input_error.is_none());
+    }
+
+    #[test]
+    fn apply_access_review_subject_clears_error_before_scrolling_to_review() {
+        let mut app = AppState::default();
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.cluster_role_bindings.push(ClusterRoleBindingInfo {
+            name: "alice-admin".into(),
+            role_ref_kind: "ClusterRole".into(),
+            role_ref_name: "admin".into(),
+            subjects: vec![RoleBindingSubject {
+                kind: "User".into(),
+                name: "alice@example.com".into(),
+                namespace: None,
+                api_group: Some("rbac.authorization.k8s.io".into()),
+            }],
+            ..ClusterRoleBindingInfo::default()
+        });
+
+        let mut tab = AccessReviewTabState::new(
+            ResourceRef::Pod("api-0".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            Vec::new(),
+            None,
+            None,
+        );
+        tab.start_subject_input();
+        tab.subject_input.value = "User/alice@example.com".into();
+        tab.subject_input_error = Some("bad subject".into());
+        tab.subject_input.error = true;
+        app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+        assert!(handle_apply_access_review_subject(&mut app, &snapshot));
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing access review tab");
+        };
+        let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+            panic!("expected access review tab");
+        };
+        assert!(tab.subject_input_error.is_none());
+        assert_eq!(tab.scroll, tab.subject_review_offset().saturating_sub(1));
+    }
+
+    #[test]
+    fn apply_access_review_subject_with_empty_input_clears_review_and_resets_scroll() {
+        let mut app = AppState::default();
+        let snapshot = ClusterSnapshot::default();
+        let mut tab = AccessReviewTabState::new(
+            ResourceRef::Pod("api-0".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            Vec::new(),
+            Some(resolve_subject_access_review(
+                &snapshot,
+                AccessReviewSubject::User {
+                    name: "alice@example.com".into(),
+                },
+            )),
+            None,
+        );
+        tab.scroll = 99;
+        tab.start_subject_input();
+        tab.subject_input.clear();
+        app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+        assert!(handle_apply_access_review_subject(&mut app, &snapshot));
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing access review tab");
+        };
+        let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+            panic!("expected access review tab");
+        };
+        assert!(tab.subject_review.is_none());
+        assert!(tab.subject_input_error.is_none());
+        assert_eq!(tab.scroll, tab.subject_input_offset());
+    }
+
+    #[test]
+    fn apply_access_review_subject_reports_invalid_input_and_clears_stale_review() {
+        let mut app = AppState::default();
+        let snapshot = ClusterSnapshot::default();
+        let mut tab = AccessReviewTabState::new(
+            ResourceRef::Pod("api-0".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            Vec::new(),
+            Some(resolve_subject_access_review(
+                &snapshot,
+                AccessReviewSubject::User {
+                    name: "alice@example.com".into(),
+                },
+            )),
+            None,
+        );
+        tab.start_subject_input();
+        tab.subject_input.value = "Robot/api".into();
+        app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+        assert!(handle_apply_access_review_subject(&mut app, &snapshot));
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing access review tab");
+        };
+        let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+            panic!("expected access review tab");
+        };
+        assert!(tab.subject_review.is_none());
+        assert!(tab.subject_input_error.is_some());
+        assert_eq!(tab.scroll, tab.subject_input_offset());
+    }
 }

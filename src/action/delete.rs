@@ -7,11 +7,12 @@ use kubectui::{
     app::{AppState, AppView, ResourceRef},
     k8s::client::K8sClient,
     policy::DetailAction,
+    state::ClusterSnapshot,
 };
 
+use crate::action::detail_tabs::redirect_blocked_detail_action_to_access_review;
 use crate::async_types::DeleteAsyncResult;
 use crate::mutation_helpers::begin_detail_mutation;
-use crate::selection_helpers::detail_action_block_message;
 
 /// Spawns an async task to delete a Kubernetes resource.
 #[allow(clippy::too_many_arguments)]
@@ -87,9 +88,11 @@ fn spawn_delete_task(
 /// Handles graceful resource deletion.
 ///
 /// Returns `true` if the caller should skip the rest of the action dispatch.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_delete_resource(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     delete_tx: &tokio::sync::mpsc::Sender<DeleteAsyncResult>,
     delete_request_seq: &mut u64,
     delete_in_flight_id: &mut Option<u64>,
@@ -109,10 +112,16 @@ pub async fn handle_delete_resource(
     }
     let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
     if let Some(resource) = delete_resource {
-        if let Some(message) =
-            detail_action_block_message(app, client, &resource, DetailAction::Delete).await
+        if redirect_blocked_detail_action_to_access_review(
+            app,
+            client,
+            Some(snapshot),
+            &resource,
+            DetailAction::Delete,
+        )
+        .await
+        .is_some()
         {
-            app.set_error(message);
             return true;
         }
         if delete_in_flight_id.is_some() {
@@ -158,9 +167,11 @@ pub async fn handle_delete_resource(
 /// Handles force resource deletion.
 ///
 /// Returns `true` if the caller should skip the rest of the action dispatch.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_force_delete_resource(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     delete_tx: &tokio::sync::mpsc::Sender<DeleteAsyncResult>,
     delete_request_seq: &mut u64,
     delete_in_flight_id: &mut Option<u64>,
@@ -180,10 +191,16 @@ pub async fn handle_force_delete_resource(
     }
     let delete_resource = app.detail_view.as_ref().and_then(|d| d.resource.clone());
     if let Some(resource) = delete_resource {
-        if let Some(message) =
-            detail_action_block_message(app, client, &resource, DetailAction::Delete).await
+        if redirect_blocked_detail_action_to_access_review(
+            app,
+            client,
+            Some(snapshot),
+            &resource,
+            DetailAction::Delete,
+        )
+        .await
+        .is_some()
         {
-            app.set_error(message);
             return true;
         }
         if delete_in_flight_id.is_some() {

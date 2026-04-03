@@ -9,18 +9,26 @@ use super::{
 use crate::{
     policy::{DetailAction, ViewAction},
     ui::components::{CommandPaletteAction, ContextPickerAction, NamespacePickerAction},
-    workbench::{ConnectivityTabFocus, WorkbenchTabState},
+    workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
 
 impl AppState {
     fn handle_workbench_key_event(&mut self, key: KeyEvent) -> AppAction {
         use crate::ui::components::port_forward_dialog::PortForwardAction;
 
+        let access_review_input_active = self.workbench.active_tab().is_some_and(|tab| {
+            matches!(
+                &tab.state,
+                WorkbenchTabState::AccessReview(tab)
+                    if matches!(tab.focus, AccessReviewFocus::SubjectInput)
+            )
+        });
+
         // Common workbench keys (apply to all tab types)
-        if key.code == KeyCode::Char('z') {
+        if !access_review_input_active && key.code == KeyCode::Char('z') {
             return AppAction::WorkbenchToggleMaximize;
         }
-        if key.code == KeyCode::Char('b') {
+        if !access_review_input_active && key.code == KeyCode::Char('b') {
             return AppAction::ToggleWorkbench;
         }
 
@@ -65,33 +73,82 @@ impl AppState {
             },
             WorkbenchTabState::AccessReview(tab) => {
                 let max_scroll = tab.line_count().saturating_sub(1);
-                match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
-                        AppAction::None
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        tab.scroll = tab.scroll.saturating_sub(1);
-                        AppAction::None
-                    }
-                    KeyCode::Char('g') => {
-                        tab.scroll = 0;
-                        AppAction::None
-                    }
-                    KeyCode::Char('G') => {
-                        tab.scroll = max_scroll;
-                        AppAction::None
-                    }
-                    KeyCode::PageDown => {
-                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
-                        AppAction::None
-                    }
-                    KeyCode::PageUp => {
-                        tab.scroll = tab.scroll.saturating_sub(10);
-                        AppAction::None
-                    }
-                    _ => AppAction::None,
+                match tab.focus {
+                    AccessReviewFocus::Summary => match key.code {
+                        KeyCode::Esc => AppAction::EscapePressed,
+                        KeyCode::Tab | KeyCode::Char('s') | KeyCode::Char('/') => {
+                            tab.start_subject_input();
+                            AppAction::None
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
+                            AppAction::None
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            tab.scroll = tab.scroll.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Char('g') => {
+                            tab.scroll = 0;
+                            AppAction::None
+                        }
+                        KeyCode::Char('G') => {
+                            tab.scroll = max_scroll;
+                            AppAction::None
+                        }
+                        KeyCode::PageDown => {
+                            tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
+                            AppAction::None
+                        }
+                        KeyCode::PageUp => {
+                            tab.scroll = tab.scroll.saturating_sub(10);
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    },
+                    AccessReviewFocus::SubjectInput => match key.code {
+                        KeyCode::Esc => {
+                            tab.stop_subject_input();
+                            AppAction::None
+                        }
+                        KeyCode::Tab | KeyCode::BackTab => {
+                            tab.stop_subject_input();
+                            AppAction::None
+                        }
+                        KeyCode::Backspace | KeyCode::Delete => {
+                            tab.subject_input.delete_char();
+                            tab.subject_input_error = None;
+                            AppAction::None
+                        }
+                        KeyCode::Left => {
+                            tab.subject_input.cursor_left();
+                            AppAction::None
+                        }
+                        KeyCode::Right => {
+                            tab.subject_input.cursor_right();
+                            AppAction::None
+                        }
+                        KeyCode::Home => {
+                            tab.subject_input.cursor_home();
+                            AppAction::None
+                        }
+                        KeyCode::End => {
+                            tab.subject_input.cursor_end();
+                            AppAction::None
+                        }
+                        KeyCode::Enter => AppAction::ApplyAccessReviewSubject,
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.subject_input.clear();
+                            tab.subject_input_error = None;
+                            AppAction::None
+                        }
+                        KeyCode::Char(ch) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.subject_input.add_char(ch);
+                            tab.subject_input_error = None;
+                            AppAction::None
+                        }
+                        _ => AppAction::None,
+                    },
                 }
             }
             WorkbenchTabState::ResourceYaml(tab) => {
@@ -1225,7 +1282,6 @@ impl AppState {
 
         let allow_plain_r = match &tab.state {
             WorkbenchTabState::ActionHistory(_)
-            | WorkbenchTabState::AccessReview(_)
             | WorkbenchTabState::ResourceYaml(_)
             | WorkbenchTabState::ResourceDiff(_)
             | WorkbenchTabState::Rollout(crate::workbench::RolloutTabState {
@@ -1242,6 +1298,9 @@ impl AppState {
             | WorkbenchTabState::Relations(_)
             | WorkbenchTabState::NetworkPolicy(_)
             | WorkbenchTabState::TrafficDebug(_) => true,
+            WorkbenchTabState::AccessReview(tab) => {
+                !matches!(tab.focus, AccessReviewFocus::SubjectInput)
+            }
             WorkbenchTabState::Connectivity(tab) => tab.focus != ConnectivityTabFocus::Filter,
             WorkbenchTabState::PodLogs(tab) => {
                 !tab.viewer.searching

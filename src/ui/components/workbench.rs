@@ -14,6 +14,7 @@ use crate::{
     app::{AppState, Focus},
     authorization::{ActionAccessReview, DetailActionAuthorization, ResourceAccessCheck},
     log_investigation::{LogQueryMode, LogSeverity, highlight_ranges},
+    rbac_subjects::{SubjectAccessReview, SubjectBindingResolution},
     resource_diff::{ResourceDiffBaselineKind, ResourceDiffLineKind},
     secret::DecodedSecretValue,
     state::ClusterSnapshot,
@@ -283,6 +284,25 @@ fn access_review_lines(
     )]));
     lines.push(Line::from(""));
 
+    if let Some(attempted_review) = tab.attempted_review {
+        lines.push(render_attempted_action_line(
+            attempted_review.action,
+            attempted_review.authorization,
+            theme,
+        ));
+        lines.push(Line::from(vec![Span::styled(
+            " This action was blocked. Review the required checks below before retrying.",
+            theme.muted_style(),
+        )]));
+        lines.push(Line::from(""));
+    }
+
+    lines.extend(render_access_review_subject_input_lines(tab, theme));
+
+    if let Some(subject_review) = &tab.subject_review {
+        lines.extend(render_subject_access_review_lines(subject_review, theme));
+    }
+
     for entry in &tab.entries {
         lines.push(render_access_review_header_line(entry, theme));
         if entry.checks.is_empty() {
@@ -291,8 +311,128 @@ fn access_review_lines(
                 theme.muted_style(),
             )]));
         } else {
+            let mut namespace_checks = Vec::new();
+            let mut cluster_checks = Vec::new();
             for check in &entry.checks {
-                lines.push(render_access_review_check_line(check, theme));
+                if check.namespace.is_some() {
+                    namespace_checks.push(check);
+                } else {
+                    cluster_checks.push(check);
+                }
+            }
+
+            if !namespace_checks.is_empty() {
+                lines.push(render_access_review_scope_line(
+                    "Namespace-scoped checks",
+                    theme,
+                ));
+                for check in namespace_checks {
+                    lines.push(render_access_review_check_line(check, theme));
+                }
+            }
+
+            if !cluster_checks.is_empty() {
+                lines.push(render_access_review_scope_line(
+                    "Cluster-scoped checks",
+                    theme,
+                ));
+                for check in cluster_checks {
+                    lines.push(render_access_review_check_line(check, theme));
+                }
+            }
+        }
+        lines.push(Line::from(""));
+    }
+
+    lines
+}
+
+fn render_access_review_subject_input_lines(
+    tab: &crate::workbench::AccessReviewTabState,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::with_capacity(5);
+    lines.push(Line::from(vec![
+        Span::styled(" Review Subject: ", theme.section_title_style()),
+        tab.subject_input.styled_text(matches!(
+            tab.focus,
+            crate::workbench::AccessReviewFocus::SubjectInput
+        )),
+    ]));
+    lines.push(Line::from(vec![Span::styled(
+        " Press [s] or [Tab] to edit, [Enter] to apply. Use ServiceAccount/<namespace>/<name>, User/<name>, or Group/<name>.",
+        theme.muted_style(),
+    )]));
+    if let Some(error) = &tab.subject_input_error {
+        lines.push(Line::from(vec![Span::styled(
+            format!(" {error}"),
+            Style::default().fg(theme.error),
+        )]));
+    }
+    lines.push(Line::from(""));
+    lines
+}
+
+fn render_attempted_action_line(
+    action: crate::policy::DetailAction,
+    authorization: Option<DetailActionAuthorization>,
+    theme: &Theme,
+) -> Line<'static> {
+    let (status_label, status_style) = match authorization {
+        Some(DetailActionAuthorization::Allowed) => ("allowed", Style::default().fg(theme.success)),
+        Some(DetailActionAuthorization::Denied) => ("denied", Style::default().fg(theme.error)),
+        Some(DetailActionAuthorization::Unknown) => ("unknown", theme.badge_warning_style()),
+        None => ("not gated", theme.muted_style()),
+    };
+
+    Line::from(vec![
+        Span::styled(" Attempted Action: ", theme.section_title_style()),
+        Span::raw(action.label().to_string()),
+        Span::raw("  "),
+        Span::styled(format!("[{status_label}]"), status_style),
+    ])
+}
+
+fn render_subject_access_review_lines(
+    review: &SubjectAccessReview,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![
+        Span::styled(" Subject: ", theme.section_title_style()),
+        Span::raw(review.subject.label()),
+    ]));
+    lines.push(Line::from(vec![Span::styled(
+        " Matching bindings and referenced roles in the current snapshot",
+        theme.muted_style(),
+    )]));
+    lines.push(Line::from(""));
+
+    if review.bindings.is_empty() {
+        lines.push(Line::from(vec![Span::styled(
+            "   No matching RoleBinding or ClusterRoleBinding found.",
+            theme.muted_style(),
+        )]));
+        lines.push(Line::from(""));
+        return lines;
+    }
+
+    for binding in &review.bindings {
+        lines.push(render_subject_binding_line(binding, theme));
+        lines.push(render_subject_role_line(binding, theme));
+        if binding.role.rules.is_empty() {
+            let message = if binding.role.missing {
+                format!(
+                    "   Referenced {} is missing from the current snapshot.",
+                    binding.role.kind
+                )
+            } else {
+                "   Referenced role has no rules.".to_string()
+            };
+            lines.push(Line::from(vec![Span::styled(message, theme.muted_style())]));
+        } else {
+            for rule in &binding.role.rules {
+                lines.push(render_subject_rule_line(rule, theme));
             }
         }
         lines.push(Line::from(""));
@@ -308,15 +448,16 @@ fn render_access_review_header_line(entry: &ActionAccessReview, theme: &Theme) -
         Some(DetailActionAuthorization::Unknown) => ("unknown", theme.badge_warning_style()),
         None => ("not gated", theme.muted_style()),
     };
-    let mut spans = vec![
-        Span::styled(
-            format!(" {} ", entry.action.key_hint()),
+    let mut spans = Vec::with_capacity(5);
+    if let Some(shortcut) = entry.action.shortcut_hint() {
+        spans.push(Span::styled(
+            format!(" {shortcut} "),
             theme.section_title_style(),
-        ),
-        Span::raw(entry.action.label().to_string()),
-        Span::raw("  "),
-        Span::styled(format!("[{status_label}]"), status_style),
-    ];
+        ));
+    }
+    spans.push(Span::raw(entry.action.label().to_string()));
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(format!("[{status_label}]"), status_style));
     if entry.strict {
         spans.push(Span::raw("  "));
         spans.push(Span::styled("(strict)", theme.muted_style()));
@@ -353,6 +494,96 @@ fn render_access_review_check_line(check: &ResourceAccessCheck, theme: &Theme) -
         Span::styled(check.verb.clone(), theme.section_title_style()),
         Span::raw(" "),
         Span::raw(target),
+        Span::styled(suffix, theme.muted_style()),
+    ])
+}
+
+fn render_access_review_scope_line(label: &str, theme: &Theme) -> Line<'static> {
+    Line::from(vec![Span::styled(
+        format!("   {label}"),
+        theme.muted_style(),
+    )])
+}
+
+fn render_subject_binding_line(binding: &SubjectBindingResolution, theme: &Theme) -> Line<'static> {
+    let (binding_label, binding_scope) = match &binding.binding {
+        crate::app::ResourceRef::RoleBinding(name, namespace) => {
+            (format!("RoleBinding {namespace}/{name}"), "namespace")
+        }
+        crate::app::ResourceRef::ClusterRoleBinding(name) => {
+            (format!("ClusterRoleBinding {name}"), "cluster")
+        }
+        _ => (binding.binding.summary_label(), "unknown"),
+    };
+
+    Line::from(vec![
+        Span::styled(" Binding: ", theme.section_title_style()),
+        Span::raw(binding_label),
+        Span::raw("  "),
+        Span::styled(format!("[{binding_scope}]"), theme.muted_style()),
+    ])
+}
+
+fn render_subject_role_line(binding: &SubjectBindingResolution, theme: &Theme) -> Line<'static> {
+    let role_scope = if binding.role.namespace.is_some() {
+        "namespace"
+    } else {
+        "cluster"
+    };
+    let role_label = match (&binding.role.namespace, binding.role.missing) {
+        (Some(namespace), false) => {
+            format!("{} {namespace}/{}", binding.role.kind, binding.role.name)
+        }
+        (None, false) => format!("{} {}", binding.role.kind, binding.role.name),
+        (Some(namespace), true) => {
+            format!(
+                "{} {namespace}/{} [missing]",
+                binding.role.kind, binding.role.name
+            )
+        }
+        (None, true) => format!("{} {} [missing]", binding.role.kind, binding.role.name),
+    };
+
+    Line::from(vec![
+        Span::styled("   -> ", theme.muted_style()),
+        Span::raw(role_label),
+        Span::raw("  "),
+        Span::styled(format!("[{role_scope}]"), theme.muted_style()),
+    ])
+}
+
+fn render_subject_rule_line(rule: &crate::k8s::dtos::RbacRule, theme: &Theme) -> Line<'static> {
+    let verbs = if rule.verbs.is_empty() {
+        "*".to_string()
+    } else {
+        rule.verbs.join(", ")
+    };
+    let resources = if !rule.resources.is_empty() {
+        rule.resources.join(", ")
+    } else if !rule.non_resource_urls.is_empty() {
+        rule.non_resource_urls.join(", ")
+    } else {
+        "*".to_string()
+    };
+
+    let mut suffix = Vec::new();
+    if !rule.api_groups.is_empty() {
+        suffix.push(format!("groups={}", rule.api_groups.join(", ")));
+    }
+    if !rule.resource_names.is_empty() {
+        suffix.push(format!("names={}", rule.resource_names.join(", ")));
+    }
+    let suffix = if suffix.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", suffix.join("; "))
+    };
+
+    Line::from(vec![
+        Span::styled("     - ", theme.muted_style()),
+        Span::styled(verbs, theme.section_title_style()),
+        Span::raw(" "),
+        Span::raw(resources),
         Span::styled(suffix, theme.muted_style()),
     ])
 }
@@ -2828,8 +3059,19 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize
 
 #[cfg(test)]
 mod tests {
-    use super::{VisibleWindow, centered_window, scroll_window};
-    use crate::ui::truncate_message;
+    use super::{VisibleWindow, access_review_lines, centered_window, scroll_window};
+    use crate::{
+        app::ResourceRef,
+        authorization::{ActionAccessReview, DetailActionAuthorization, ResourceAccessCheck},
+        k8s::dtos::RbacRule,
+        policy::DetailAction,
+        rbac_subjects::{
+            AccessReviewSubject, SubjectAccessReview, SubjectBindingResolution,
+            SubjectRoleResolution,
+        },
+        ui::{components::default_theme, truncate_message},
+        workbench::{AccessReviewTabState, AttemptedActionReview},
+    };
 
     #[test]
     fn short_message_unchanged() {
@@ -2935,6 +3177,274 @@ mod tests {
                 ],
             }),
             Some(" Correlated request spans 4+ pods: api-0, api-1, worker-0, +more".to_string())
+        );
+    }
+
+    #[test]
+    fn access_review_lines_include_subject_reverse_lookup_section() {
+        let tab = AccessReviewTabState::new(
+            ResourceRef::ServiceAccount("api".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            Vec::new(),
+            Some(SubjectAccessReview {
+                subject: AccessReviewSubject::ServiceAccount {
+                    name: "api".into(),
+                    namespace: "payments".into(),
+                },
+                bindings: vec![SubjectBindingResolution {
+                    binding: ResourceRef::RoleBinding("payments-view".into(), "payments".into()),
+                    role: SubjectRoleResolution {
+                        resource: Some(ResourceRef::Role(
+                            "payments-reader".into(),
+                            "payments".into(),
+                        )),
+                        kind: "Role".into(),
+                        name: "payments-reader".into(),
+                        namespace: Some("payments".into()),
+                        rules: vec![RbacRule {
+                            verbs: vec!["get".into(), "list".into()],
+                            resources: vec!["pods".into()],
+                            ..RbacRule::default()
+                        }],
+                        missing: false,
+                    },
+                }],
+            }),
+            None,
+        );
+
+        let rendered = access_review_lines(&tab, &default_theme())
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Subject: ServiceAccount payments/api"));
+        assert!(rendered.contains("RoleBinding payments/payments-view"));
+        assert!(rendered.contains("Role payments/payments-reader"));
+        assert!(rendered.contains("get, list pods"));
+    }
+
+    #[test]
+    fn access_review_attempted_action_summary_is_rendered_and_scrolled_into_view() {
+        let tab = AccessReviewTabState::new(
+            ResourceRef::Deployment("api".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            vec![
+                ActionAccessReview {
+                    action: DetailAction::ViewYaml,
+                    authorization: Some(DetailActionAuthorization::Allowed),
+                    strict: false,
+                    checks: vec![],
+                },
+                ActionAccessReview {
+                    action: DetailAction::Delete,
+                    authorization: Some(DetailActionAuthorization::Denied),
+                    strict: true,
+                    checks: vec![ResourceAccessCheck::resource(
+                        "delete",
+                        None,
+                        "deployments",
+                        Some("payments"),
+                        Some("api"),
+                    )],
+                },
+            ],
+            None,
+            Some(AttemptedActionReview {
+                action: DetailAction::Delete,
+                authorization: Some(DetailActionAuthorization::Denied),
+            }),
+        );
+
+        let rendered = access_review_lines(&tab, &default_theme())
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Attempted Action: Delete"));
+        assert!(rendered.contains("[denied]"));
+        assert!(tab.scroll > 0);
+    }
+
+    #[test]
+    fn access_review_lines_render_subject_input_help() {
+        let tab = AccessReviewTabState::new(
+            ResourceRef::Pod("api-0".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            Vec::new(),
+            None,
+            None,
+        );
+
+        let rendered = access_review_lines(&tab, &default_theme())
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Review Subject:"));
+        assert!(rendered.contains("ServiceAccount/<namespace>/<name>"));
+    }
+
+    #[test]
+    fn access_review_lines_group_checks_by_scope() {
+        let tab = AccessReviewTabState::new(
+            ResourceRef::Pod("api-0".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            vec![ActionAccessReview {
+                action: DetailAction::Logs,
+                authorization: Some(DetailActionAuthorization::Denied),
+                strict: false,
+                checks: vec![
+                    ResourceAccessCheck::resource(
+                        "get",
+                        None,
+                        "namespaces",
+                        None,
+                        Some("payments"),
+                    ),
+                    ResourceAccessCheck::subresource(
+                        "get",
+                        None,
+                        "pods",
+                        "log",
+                        Some("payments"),
+                        Some("api-0"),
+                    ),
+                ],
+            }],
+            None,
+            None,
+        );
+
+        let rendered = access_review_lines(&tab, &default_theme())
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("Namespace-scoped checks"));
+        assert!(rendered.contains("Cluster-scoped checks"));
+    }
+
+    #[test]
+    fn access_review_lines_label_role_scope() {
+        let tab = AccessReviewTabState::new(
+            ResourceRef::ServiceAccount("api".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            Vec::new(),
+            Some(SubjectAccessReview {
+                subject: AccessReviewSubject::ServiceAccount {
+                    name: "api".into(),
+                    namespace: "payments".into(),
+                },
+                bindings: vec![SubjectBindingResolution {
+                    binding: ResourceRef::ClusterRoleBinding("api-admin".into()),
+                    role: SubjectRoleResolution {
+                        resource: Some(ResourceRef::ClusterRole("ops-admin".into())),
+                        kind: "ClusterRole".into(),
+                        name: "ops-admin".into(),
+                        namespace: None,
+                        rules: vec![],
+                        missing: false,
+                    },
+                }],
+            }),
+            None,
+        );
+
+        let rendered = access_review_lines(&tab, &default_theme())
+            .into_iter()
+            .map(|line| line.to_string())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("ClusterRole ops-admin  [cluster]"));
+    }
+
+    #[test]
+    fn access_review_line_count_matches_rendered_lines_for_grouped_sections() {
+        let tab = AccessReviewTabState::new(
+            ResourceRef::ServiceAccount("api".into(), "payments".into()),
+            Some("prod".into()),
+            "payments".into(),
+            vec![ActionAccessReview {
+                action: DetailAction::Delete,
+                authorization: Some(DetailActionAuthorization::Denied),
+                strict: true,
+                checks: vec![
+                    ResourceAccessCheck::resource(
+                        "get",
+                        None,
+                        "namespaces",
+                        None,
+                        Some("payments"),
+                    ),
+                    ResourceAccessCheck::resource(
+                        "delete",
+                        None,
+                        "pods",
+                        Some("payments"),
+                        Some("api-0"),
+                    ),
+                ],
+            }],
+            Some(SubjectAccessReview {
+                subject: AccessReviewSubject::ServiceAccount {
+                    name: "api".into(),
+                    namespace: "payments".into(),
+                },
+                bindings: vec![
+                    SubjectBindingResolution {
+                        binding: ResourceRef::RoleBinding(
+                            "payments-view".into(),
+                            "payments".into(),
+                        ),
+                        role: SubjectRoleResolution {
+                            resource: Some(ResourceRef::Role(
+                                "payments-reader".into(),
+                                "payments".into(),
+                            )),
+                            kind: "Role".into(),
+                            name: "payments-reader".into(),
+                            namespace: Some("payments".into()),
+                            rules: vec![RbacRule {
+                                verbs: vec!["get".into()],
+                                resources: vec!["pods".into()],
+                                ..RbacRule::default()
+                            }],
+                            missing: false,
+                        },
+                    },
+                    SubjectBindingResolution {
+                        binding: ResourceRef::ClusterRoleBinding("api-admin".into()),
+                        role: SubjectRoleResolution {
+                            resource: Some(ResourceRef::ClusterRole("ops-admin".into())),
+                            kind: "ClusterRole".into(),
+                            name: "ops-admin".into(),
+                            namespace: None,
+                            rules: vec![],
+                            missing: false,
+                        },
+                    },
+                ],
+            }),
+            Some(AttemptedActionReview {
+                action: DetailAction::Delete,
+                authorization: Some(DetailActionAuthorization::Denied),
+            }),
+        );
+
+        assert_eq!(
+            tab.line_count(),
+            access_review_lines(&tab, &default_theme()).len()
         );
     }
 }
