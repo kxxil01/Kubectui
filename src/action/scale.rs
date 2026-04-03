@@ -11,9 +11,9 @@ use kubectui::{
     ui::components::scale_dialog::{ScaleDialogState, ScaleTargetKind},
 };
 
+use crate::action::detail_tabs::redirect_blocked_detail_action_to_access_review;
 use crate::async_types::ScaleAsyncResult;
 use crate::mutation_helpers::begin_detail_mutation;
-use crate::selection_helpers::detail_action_block_message;
 
 /// Opens the scale dialog, reading the current replica count from the snapshot.
 ///
@@ -74,6 +74,7 @@ pub fn handle_scale_dialog_open(app: &mut AppState, cached_snapshot: &ClusterSna
 pub async fn handle_scale_dialog_submit(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     scale_tx: &tokio::sync::mpsc::Sender<ScaleAsyncResult>,
     context_generation: u64,
     status_message_clear_at: &mut Option<Instant>,
@@ -107,10 +108,16 @@ pub async fn handle_scale_dialog_submit(
         }
     });
     if let Some((resource, name, namespace, kind_label, replicas)) = scale_info {
-        if let Some(message) =
-            detail_action_block_message(app, client, &resource, DetailAction::Scale).await
+        if redirect_blocked_detail_action_to_access_review(
+            app,
+            client,
+            Some(snapshot),
+            &resource,
+            DetailAction::Scale,
+        )
+        .await
+        .is_some()
         {
-            app.set_error(message);
             return true;
         }
         let resource_label = format!("{kind_label} '{name}' in namespace '{namespace}'");

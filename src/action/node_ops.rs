@@ -7,11 +7,12 @@ use kubectui::{
     app::{AppState, ResourceRef},
     k8s::client::K8sClient,
     policy::DetailAction,
+    state::ClusterSnapshot,
 };
 
+use crate::action::detail_tabs::redirect_blocked_detail_action_to_access_review;
 use crate::async_types::{NodeOpKind, NodeOpsAsyncResult};
 use crate::mutation_helpers::begin_detail_mutation;
-use crate::selection_helpers::detail_action_block_message;
 
 /// Handles the confirm-drain-node action (opens the confirmation dialog).
 pub fn handle_confirm_drain_node(app: &mut AppState) {
@@ -28,6 +29,7 @@ pub fn handle_confirm_drain_node(app: &mut AppState) {
 pub async fn handle_cordon_node(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     node_ops_tx: &tokio::sync::mpsc::Sender<NodeOpsAsyncResult>,
     node_op_in_flight: &mut bool,
     context_generation: u64,
@@ -42,10 +44,16 @@ pub async fn handle_cordon_node(
     });
     if let Some(name) = node_name {
         let resource = ResourceRef::Node(name.clone());
-        if let Some(message) =
-            detail_action_block_message(app, client, &resource, DetailAction::Cordon).await
+        if redirect_blocked_detail_action_to_access_review(
+            app,
+            client,
+            Some(snapshot),
+            &resource,
+            DetailAction::Cordon,
+        )
+        .await
+        .is_some()
         {
-            app.set_error(message);
             return true;
         }
         *node_op_in_flight = true;
@@ -88,6 +96,7 @@ pub async fn handle_cordon_node(
 pub async fn handle_uncordon_node(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     node_ops_tx: &tokio::sync::mpsc::Sender<NodeOpsAsyncResult>,
     node_op_in_flight: &mut bool,
     context_generation: u64,
@@ -102,10 +111,16 @@ pub async fn handle_uncordon_node(
     });
     if let Some(name) = node_name {
         let resource = ResourceRef::Node(name.clone());
-        if let Some(message) =
-            detail_action_block_message(app, client, &resource, DetailAction::Uncordon).await
+        if redirect_blocked_detail_action_to_access_review(
+            app,
+            client,
+            Some(snapshot),
+            &resource,
+            DetailAction::Uncordon,
+        )
+        .await
+        .is_some()
         {
-            app.set_error(message);
             return true;
         }
         *node_op_in_flight = true;
@@ -145,9 +160,11 @@ pub async fn handle_uncordon_node(
 /// Handles draining a node (optionally forced).
 ///
 /// Returns `true` if the caller should skip the rest of the action dispatch.
+#[allow(clippy::too_many_arguments)]
 pub async fn handle_drain_node(
     app: &mut AppState,
     client: &K8sClient,
+    snapshot: &ClusterSnapshot,
     node_ops_tx: &tokio::sync::mpsc::Sender<NodeOpsAsyncResult>,
     node_op_in_flight: &mut bool,
     context_generation: u64,
@@ -167,10 +184,16 @@ pub async fn handle_drain_node(
     });
     if let Some(name) = node_name {
         let resource = ResourceRef::Node(name.clone());
-        if let Some(message) =
-            detail_action_block_message(app, client, &resource, DetailAction::Drain).await
+        if redirect_blocked_detail_action_to_access_review(
+            app,
+            client,
+            Some(snapshot),
+            &resource,
+            DetailAction::Drain,
+        )
+        .await
+        .is_some()
         {
-            app.set_error(message);
             return true;
         }
         *node_op_in_flight = true;

@@ -5,16 +5,20 @@ use std::time::Instant;
 use kubectui::{
     action_history::ActionKind,
     app::{AppState, ResourceRef},
+    authorization::DetailActionAuthorization,
     k8s::helm,
     policy::DetailAction,
     workbench::{WorkbenchTabKey, WorkbenchTabState},
 };
 
 use crate::{
+    action::detail_tabs::{
+        build_helm_rollback_attempted_review, redirect_blocked_detail_action_to_access_review,
+    },
     async_types::{HelmHistoryAsyncResult, HelmRollbackAsyncResult, HelmValuesDiffAsyncResult},
     mutation_helpers::set_transient_status,
     next_request_id,
-    selection_helpers::{detail_action_block_message, selected_resource},
+    selection_helpers::selected_resource,
 };
 
 pub fn spawn_helm_history_fetch(
@@ -95,10 +99,16 @@ pub async fn handle_open_helm_history(
         app.set_error("Helm history is only available for Helm release resources.".to_string());
         return true;
     };
-    if let Some(message) =
-        detail_action_block_message(app, client, &resource, DetailAction::ViewHelmHistory).await
+    if redirect_blocked_detail_action_to_access_review(
+        app,
+        client,
+        Some(snapshot),
+        &resource,
+        DetailAction::ViewHelmHistory,
+    )
+    .await
+    .is_some()
     {
-        app.set_error(message);
         return true;
     }
 
@@ -192,14 +202,16 @@ pub fn handle_confirm_helm_rollback(app: &mut AppState) -> bool {
     false
 }
 
-pub fn handle_execute_helm_rollback(
+pub async fn handle_execute_helm_rollback(
     app: &mut AppState,
+    client: &kubectui::k8s::client::K8sClient,
+    snapshot: &kubectui::state::ClusterSnapshot,
     rollback_tx: &tokio::sync::mpsc::Sender<HelmRollbackAsyncResult>,
     context_generation: u64,
     status_message_clear_at: &mut Option<Instant>,
 ) -> bool {
     let kube_context = app.current_context_name.clone();
-    let (name, namespace, target_revision, resource) = {
+    let (name, namespace, current_revision, target_revision, resource) = {
         let Some(tab) = app.workbench.active_tab_mut() else {
             app.set_error("No active workbench tab for Helm rollback.".to_string());
             return true;
@@ -212,16 +224,58 @@ pub fn handle_execute_helm_rollback(
             app.set_error("No Helm rollback target revision is selected.".to_string());
             return true;
         };
+        let Some(current_revision) = history_tab.current_revision else {
+            app.set_error("Current Helm revision is unavailable for rollback review.".to_string());
+            return true;
+        };
         let Some(ResourceRef::HelmRelease(name, namespace)) = Some(history_tab.resource.clone())
         else {
             app.set_error("Helm rollback target is no longer valid.".to_string());
             return true;
         };
-        history_tab.begin_rollback();
         let resource = ResourceRef::HelmRelease(name.clone(), namespace.clone());
-        (name, namespace, target_revision, resource)
+        (name, namespace, current_revision, target_revision, resource)
     };
-
+    let attempted_review = match build_helm_rollback_attempted_review(
+        client,
+        &name,
+        &namespace,
+        current_revision,
+        target_revision,
+    )
+    .await
+    {
+        Ok(review) => review,
+        Err(err) => {
+            app.set_error(err);
+            return true;
+        }
+    };
+    if !attempted_review
+        .authorization
+        .unwrap_or(DetailActionAuthorization::Unknown)
+        .permits(DetailAction::RollbackHelm)
+    {
+        clear_helm_rollback_confirm(app);
+        match crate::action::detail_tabs::open_access_review_for_resource_with_attempted_review(
+            app,
+            client,
+            Some(snapshot),
+            resource,
+            attempted_review,
+        )
+        .await
+        {
+            Ok(()) => {}
+            Err(err) => app.set_error(err),
+        }
+        return true;
+    }
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+    {
+        history_tab.begin_rollback();
+    };
     let resource_label = format!("Helm release '{name}' in namespace '{namespace}'");
     let origin_view = app.view();
     let action_history_id = app.record_action_pending(
@@ -252,4 +306,40 @@ pub fn handle_execute_helm_rollback(
             .await;
     });
     false
+}
+
+fn clear_helm_rollback_confirm(app: &mut AppState) {
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        return;
+    };
+    let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state else {
+        return;
+    };
+    history_tab.cancel_rollback_confirm();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clear_helm_rollback_confirm_cancels_pending_confirmation() {
+        let mut app = AppState::default();
+        let mut tab = kubectui::workbench::HelmHistoryTabState::new(ResourceRef::HelmRelease(
+            "web".into(),
+            "default".into(),
+        ));
+        tab.begin_rollback_confirm(3);
+        app.workbench.open_tab(WorkbenchTabState::HelmHistory(tab));
+
+        clear_helm_rollback_confirm(&mut app);
+
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing helm history tab");
+        };
+        let WorkbenchTabState::HelmHistory(tab) = &tab.state else {
+            panic!("expected helm history tab");
+        };
+        assert!(tab.confirm_rollback_revision.is_none());
+    }
 }

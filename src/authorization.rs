@@ -49,6 +49,13 @@ pub struct ResourceAccessCheck {
     pub name: Option<String>,
 }
 
+pub fn helm_release_storage_access_checks(namespace: &str) -> Vec<ResourceAccessCheck> {
+    vec![
+        ResourceAccessCheck::resource("list", None, "secrets", Some(namespace), None),
+        ResourceAccessCheck::resource("create", None, "secrets", Some(namespace), None),
+    ]
+}
+
 impl ResourceAccessCheck {
     pub fn resource(
         verb: &str,
@@ -108,7 +115,11 @@ pub const fn detail_action_requires_authorization(action: DetailAction) -> bool 
             | DetailAction::Probes
             | DetailAction::Scale
             | DetailAction::Restart
+            | DetailAction::PauseRollout
+            | DetailAction::ResumeRollout
+            | DetailAction::RollbackRollout
             | DetailAction::FluxReconcile
+            | DetailAction::RollbackHelm
             | DetailAction::EditYaml
             | DetailAction::Delete
             | DetailAction::Trigger
@@ -129,7 +140,11 @@ pub const fn detail_action_requires_strict_authorization(action: DetailAction) -
             | DetailAction::PortForward
             | DetailAction::Scale
             | DetailAction::Restart
+            | DetailAction::PauseRollout
+            | DetailAction::ResumeRollout
+            | DetailAction::RollbackRollout
             | DetailAction::FluxReconcile
+            | DetailAction::RollbackHelm
             | DetailAction::EditYaml
             | DetailAction::Delete
             | DetailAction::Trigger
@@ -284,10 +299,21 @@ impl ResourceRef {
                 | ResourceRef::DaemonSet(_, _) => self.base_access_checks("patch"),
                 _ => Vec::new(),
             },
+            DetailAction::PauseRollout | DetailAction::ResumeRollout => match self {
+                ResourceRef::Deployment(_, _) => self.base_access_checks("patch"),
+                _ => Vec::new(),
+            },
+            DetailAction::RollbackRollout => match self {
+                ResourceRef::Deployment(_, _)
+                | ResourceRef::StatefulSet(_, _)
+                | ResourceRef::DaemonSet(_, _) => self.base_access_checks("patch"),
+                _ => Vec::new(),
+            },
             DetailAction::FluxReconcile => match self {
                 ResourceRef::CustomResource { .. } => self.base_access_checks("patch"),
                 _ => Vec::new(),
             },
+            DetailAction::RollbackHelm => Vec::new(),
             DetailAction::EditYaml => {
                 let mut checks = self.authorization_checks(DetailAction::ViewYaml);
                 checks.extend(self.base_access_checks("patch"));
@@ -525,7 +551,7 @@ mod tests {
 
     #[test]
     fn allowed_permits_every_action() {
-        for action in DetailAction::ORDER {
+        for &action in DetailAction::ALL {
             assert!(
                 DetailActionAuthorization::Allowed.permits(action),
                 "Allowed should permit {:?}",
@@ -536,7 +562,7 @@ mod tests {
 
     #[test]
     fn denied_blocks_every_action() {
-        for action in DetailAction::ORDER {
+        for &action in DetailAction::ALL {
             assert!(
                 !DetailActionAuthorization::Denied.permits(action),
                 "Denied should block {:?}",
@@ -554,7 +580,11 @@ mod tests {
             DetailAction::PortForward,
             DetailAction::Scale,
             DetailAction::Restart,
+            DetailAction::PauseRollout,
+            DetailAction::ResumeRollout,
+            DetailAction::RollbackRollout,
             DetailAction::FluxReconcile,
+            DetailAction::RollbackHelm,
             DetailAction::EditYaml,
             DetailAction::Delete,
             DetailAction::Trigger,
@@ -601,7 +631,7 @@ mod tests {
 
     #[test]
     fn strict_is_subset_of_requires_authorization() {
-        for action in DetailAction::ORDER {
+        for &action in DetailAction::ALL {
             if detail_action_requires_strict_authorization(action) {
                 assert!(
                     detail_action_requires_authorization(action),
@@ -636,6 +666,21 @@ mod tests {
     }
 
     #[test]
+    fn rollout_pause_resume_and_undo_require_patch_access() {
+        let deploy = ResourceRef::Deployment("api".into(), "default".into());
+        for action in [
+            DetailAction::PauseRollout,
+            DetailAction::ResumeRollout,
+            DetailAction::RollbackRollout,
+        ] {
+            let checks = deploy.authorization_checks(action);
+            assert_eq!(checks.len(), 1);
+            assert_eq!(checks[0].verb, "patch");
+            assert_eq!(checks[0].resource, "deployments");
+        }
+    }
+
+    #[test]
     fn helm_release_base_access_returns_none_so_delete_has_no_checks() {
         let helm = ResourceRef::HelmRelease("release".into(), "default".into());
         assert!(helm.authorization_checks(DetailAction::Delete).is_empty());
@@ -648,6 +693,20 @@ mod tests {
         assert_eq!(checks.len(), 1);
         assert_eq!(checks[0].resource, "secrets");
         assert_eq!(checks[0].verb, "list");
+    }
+
+    #[test]
+    fn helm_release_storage_checks_cover_secret_history_access() {
+        let checks = helm_release_storage_access_checks("default");
+        assert_eq!(checks.len(), 2);
+        assert!(checks.iter().any(|c| {
+            c.verb == "list" && c.resource == "secrets" && c.namespace.as_deref() == Some("default")
+        }));
+        assert!(checks.iter().any(|c| {
+            c.verb == "create"
+                && c.resource == "secrets"
+                && c.namespace.as_deref() == Some("default")
+        }));
     }
 
     #[test]

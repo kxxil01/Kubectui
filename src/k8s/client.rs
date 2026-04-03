@@ -40,7 +40,7 @@ use crate::{
     app::ResourceRef,
     authorization::{
         ActionAuthorizationMap, DetailActionAuthorization, ResourceAccessCheck,
-        detail_action_requires_authorization,
+        detail_action_requires_authorization, helm_release_storage_access_checks,
     },
     k8s::{
         conversions::{
@@ -950,7 +950,7 @@ impl K8sClient {
     ) -> ActionAuthorizationMap {
         let mut authorizations = ActionAuthorizationMap::new();
 
-        for action in DetailAction::ORDER {
+        for &action in DetailAction::ALL {
             if !detail_action_requires_authorization(action) {
                 continue;
             }
@@ -990,6 +990,41 @@ impl K8sClient {
 
     pub async fn evaluate_access_checks(&self, checks: &[ResourceAccessCheck]) -> Option<bool> {
         self.evaluate_access_checks_cached(checks).await
+    }
+
+    pub async fn helm_rollback_access_checks(
+        &self,
+        release_name: &str,
+        namespace: &str,
+        current_revision: i32,
+        target_revision: i32,
+    ) -> Result<Vec<ResourceAccessCheck>> {
+        let current_manifest = crate::k8s::helm::fetch_release_manifest(
+            release_name,
+            namespace,
+            self.cluster_context.clone(),
+            current_revision,
+        )
+        .await?;
+        let target_manifest = crate::k8s::helm::fetch_release_manifest(
+            release_name,
+            namespace,
+            self.cluster_context.clone(),
+            target_revision,
+        )
+        .await?;
+
+        let mut checks = helm_release_storage_access_checks(namespace);
+        checks.extend(
+            crate::k8s::yaml::manifest_access_checks_for_transition(
+                &self.client,
+                &current_manifest,
+                &target_manifest,
+                Some(namespace),
+            )
+            .await?,
+        );
+        Ok(checks)
     }
 
     /// Fetches a concrete resource and renders it as YAML.

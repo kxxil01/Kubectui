@@ -5,14 +5,16 @@ use crate::{
     k8s::rollout::RolloutInspection,
     network_policy_analysis::NetworkPolicyAnalysis,
     policy::DetailAction,
+    rbac_subjects::SubjectAccessReview,
     resource_diff::ResourceDiffResult,
     runbooks::LoadedRunbook,
     traffic_debug::TrafficDebugAnalysis,
     ui::components::scale_dialog::ScaleTargetKind,
     workbench::{
-        AccessReviewTabState, AiAnalysisTabState, ConnectivityTabState, ConnectivityTargetOption,
-        ExtensionOutputTabState, HelmHistoryTabState, NetworkPolicyTabState, ResourceDiffTabState,
-        RolloutTabState, RunbookTabState, TrafficDebugTabState,
+        AccessReviewTabState, AiAnalysisTabState, AttemptedActionReview, ConnectivityTabState,
+        ConnectivityTargetOption, ExtensionOutputTabState, HelmHistoryTabState,
+        NetworkPolicyTabState, ResourceDiffTabState, RolloutTabState, RunbookTabState,
+        TrafficDebugTabState,
     },
 };
 
@@ -124,6 +126,8 @@ impl AppState {
         context_name: Option<String>,
         namespace_scope: String,
         entries: Vec<ActionAccessReview>,
+        subject_review: Option<SubjectAccessReview>,
+        attempted_review: Option<AttemptedActionReview>,
     ) {
         self.workbench
             .open_tab(WorkbenchTabState::AccessReview(AccessReviewTabState::new(
@@ -131,6 +135,8 @@ impl AppState {
                 context_name,
                 namespace_scope,
                 entries,
+                subject_review,
+                attempted_review,
             )));
         self.focus = Focus::Workbench;
     }

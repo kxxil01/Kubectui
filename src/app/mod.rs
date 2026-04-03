@@ -99,6 +99,7 @@ pub enum AppAction {
     OpenDecodedSecret,
     OpenResourceEvents,
     OpenAccessReview,
+    ApplyAccessReviewSubject,
     OpenActionHistory,
     OpenExec,
     DebugContainerDialogOpen,
