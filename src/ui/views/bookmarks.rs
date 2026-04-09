@@ -20,6 +20,30 @@ use crate::{
     },
 };
 
+const NARROW_BOOKMARK_WIDTH: u16 = 104;
+
+fn bookmark_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_BOOKMARK_WIDTH {
+        [
+            Constraint::Length(5),
+            Constraint::Length(14),
+            Constraint::Min(18),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Length(5),
+            Constraint::Length(20),
+            Constraint::Min(24),
+            Constraint::Length(18),
+            Constraint::Length(18),
+            Constraint::Length(10),
+        ]
+    }
+}
+
 pub fn render_bookmarks(
     frame: &mut Frame,
     area: Rect,
@@ -125,14 +149,7 @@ pub fn render_bookmarks(
             bookmarks.len()
         )
     };
-    let widths = [
-        Constraint::Length(5),
-        Constraint::Length(20),
-        Constraint::Min(24),
-        Constraint::Length(18),
-        Constraint::Length(18),
-        Constraint::Length(10),
-    ];
+    let widths = bookmark_widths(area);
 
     render_table_frame(
         frame,
@@ -194,5 +211,23 @@ mod tests {
                 render_bookmarks(frame, frame.area(), &snapshot, &bookmarks, 0, "", true);
             })
             .expect("draw bookmarks");
+    }
+
+    #[test]
+    fn bookmark_widths_switch_to_compact_profile() {
+        let widths = bookmark_widths(Rect::new(0, 0, 92, 20));
+        assert_eq!(widths[0], Constraint::Length(5));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Min(18));
+        assert_eq!(widths[5], Constraint::Length(8));
+    }
+
+    #[test]
+    fn bookmark_widths_keep_wide_profile() {
+        let widths = bookmark_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[1], Constraint::Length(20));
+        assert_eq!(widths[2], Constraint::Min(24));
+        assert_eq!(widths[4], Constraint::Length(18));
+        assert_eq!(widths[5], Constraint::Length(10));
     }
 }
