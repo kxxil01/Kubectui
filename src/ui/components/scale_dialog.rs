@@ -3,7 +3,7 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
-    widgets::{Block, Borders, Clear, Paragraph},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 /// Field focus for keyboard navigation.
@@ -210,6 +210,10 @@ impl ScaleDialogState {
 pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogState) {
     let popup = centered_rect(65, 45, area);
     frame.render_widget(Clear, popup);
+    if use_compact_scale_dialog(popup) {
+        render_compact_scale_dialog(frame, popup, state);
+        return;
+    }
 
     // Layout: Title | Metadata | Input | Validation | Buttons | Footer
     let chunks = Layout::default()
@@ -344,6 +348,52 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center);
     frame.render_widget(footer_widget, chunks[5]);
+}
+
+fn use_compact_scale_dialog(popup: Rect) -> bool {
+    popup.width < 44 || popup.height < 18
+}
+
+fn render_compact_scale_dialog(frame: &mut Frame, popup: Rect, state: &ScaleDialogState) {
+    let block = Block::default()
+        .title(format!(
+            " Scale {} {} ",
+            state.target_kind.label(),
+            state.workload_name
+        ))
+        .borders(Borders::ALL);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let desired = if state.input_buffer.is_empty() {
+        state.current_replicas.to_string()
+    } else {
+        state.input_buffer.clone()
+    };
+    let focus = match state.focus_field {
+        ScaleField::InputField => "input",
+        ScaleField::ApplyBtn => "apply",
+        ScaleField::CancelBtn => "cancel",
+    };
+    let status = if let Some(err) = &state.error_message {
+        format!("err: {err}")
+    } else if let Some(warn) = &state.warning_message {
+        format!("warn: {warn}")
+    } else if state.pending {
+        "scaling...".to_string()
+    } else {
+        "enter apply  esc cancel".to_string()
+    };
+    let lines = vec![
+        Line::from(format!(
+            "ns {} current {}",
+            state.namespace, state.current_replicas
+        )),
+        Line::from(format!("desired {} focus {}", desired, focus)),
+        Line::from(status),
+        Line::from("[+/-] adjust  [Tab] move"),
+    ];
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 use crate::ui::centered_rect;
@@ -513,5 +563,15 @@ mod tests {
         state.set_pending(true);
         state.focus_field = ScaleField::CancelBtn;
         draw(&state);
+    }
+
+    #[test]
+    fn render_scale_dialog_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
+        terminal
+            .draw(|frame| render_scale_dialog(frame, frame.area(), &state))
+            .expect("compact scale dialog should render");
     }
 }

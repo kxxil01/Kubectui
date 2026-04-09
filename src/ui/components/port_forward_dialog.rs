@@ -10,6 +10,7 @@ use ratatui::{
 use crate::k8s::portforward::{PortForwardConfig, PortForwardTarget, TunnelState};
 use crate::state::port_forward::TunnelRegistry;
 use crate::ui::components::input_field::InputFieldWidget;
+use crate::ui::{centered_rect, table_window};
 
 /// Port forward dialog modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -321,6 +322,10 @@ impl PortForwardDialog {
         if clear {
             frame.render_widget(Clear, popup);
         }
+        if use_compact_port_forward_create_dialog(popup) {
+            self.render_compact_create_mode(frame, popup);
+            return;
+        }
 
         let block = Block::default()
             .title(" Port Forward: Create ")
@@ -399,6 +404,37 @@ impl PortForwardDialog {
         frame.render_widget(footer, chunks[3]);
     }
 
+    fn render_compact_create_mode(&self, frame: &mut Frame, popup: Rect) {
+        let block = Block::default()
+            .title(" Port Forward: Create ")
+            .borders(Borders::ALL);
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+
+        let focus = match self.focus {
+            FormField::Namespace => "namespace",
+            FormField::PodName => "pod",
+            FormField::RemotePort => "remote",
+            FormField::LocalPort => "local",
+        };
+        let status = if let Some(error) = &self.error {
+            format!("err: {error}")
+        } else {
+            format!("active tunnels: {}", self.registry.active_count())
+        };
+        let lines = vec![
+            Line::from(format!("ns {}", self.namespace_field.value)),
+            Line::from(format!("pod {}", self.pod_name_field.value)),
+            Line::from(format!(
+                "remote {}  local {}",
+                self.remote_port_field.value, self.local_port_field.value
+            )),
+            Line::from(format!("focus {focus}  {status}")),
+            Line::from("[Enter] create  [F2] list  [Esc] close"),
+        ];
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
+
     fn render_form_field(
         &self,
         frame: &mut Frame,
@@ -447,7 +483,15 @@ impl PortForwardDialog {
             frame.render_widget(message, chunks[0]);
         } else {
             let mut lines = vec![];
-            for (idx, tunnel) in self.registry.tunnels().values().enumerate() {
+            let tunnels = self.registry.tunnels().values().collect::<Vec<_>>();
+            let selected = self.selected_tunnel.min(tunnels.len().saturating_sub(1));
+            let window = table_window(
+                tunnels.len(),
+                selected,
+                tunnel_list_viewport_rows(chunks[0]),
+            );
+            for (offset, tunnel) in tunnels[window.start..window.end].iter().enumerate() {
+                let idx = window.start + offset;
                 let is_selected = idx == self.selected_tunnel;
 
                 let state_color = match tunnel.state {
@@ -511,7 +555,13 @@ impl Default for PortForwardDialog {
     }
 }
 
-use crate::ui::centered_rect;
+fn tunnel_list_viewport_rows(area: Rect) -> usize {
+    usize::from(area.height.saturating_div(2)).max(1)
+}
+
+fn use_compact_port_forward_create_dialog(popup: Rect) -> bool {
+    popup.width < 50 || popup.height < 18
+}
 
 #[cfg(test)]
 mod tests {
@@ -692,5 +742,30 @@ mod tests {
         dialog.update_registry(registry);
 
         draw_dialog(&dialog);
+    }
+
+    #[test]
+    fn render_create_mode_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let dialog = PortForwardDialog::new();
+        terminal
+            .draw(|frame| dialog.render(frame, frame.area()))
+            .expect("compact create dialog should render");
+    }
+
+    #[test]
+    fn tunnel_list_viewport_rows_counts_two_lines_per_tunnel() {
+        let area = Rect::new(0, 0, 60, 9);
+        assert_eq!(tunnel_list_viewport_rows(area), 4);
+    }
+
+    #[test]
+    fn tunnel_list_window_keeps_selected_tunnel_visible() {
+        let area = Rect::new(0, 0, 60, 6);
+        let window = table_window(10, 8, tunnel_list_viewport_rows(area));
+        assert_eq!(window.start, 7);
+        assert_eq!(window.end, 10);
+        assert_eq!(window.selected, 1);
     }
 }

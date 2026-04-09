@@ -580,9 +580,30 @@ fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &De
         })
         .collect::<Vec<_>>();
 
+    let widths = cronjob_history_widths(rows[1]);
     let mut table_state = TableState::default().with_selected(Some(window.selected));
-    let table = Table::new(
-        table_rows,
+    let table = Table::new(table_rows, widths)
+        .header(header)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
+
+    frame.render_stateful_widget(table, rows[1], &mut table_state);
+}
+
+const NARROW_CRONJOB_HISTORY_WIDTH: u16 = 88;
+
+fn cronjob_history_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_CRONJOB_HISTORY_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(10),
+            Constraint::Length(8),
+            Constraint::Length(5),
+            Constraint::Length(6),
+            Constraint::Length(7),
+        ]
+    } else {
         [
             Constraint::Percentage(35),
             Constraint::Length(12),
@@ -590,14 +611,8 @@ fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &De
             Constraint::Length(6),
             Constraint::Length(8),
             Constraint::Length(8),
-        ],
-    )
-    .header(header)
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
-
-    frame.render_stateful_widget(table, rows[1], &mut table_state);
+        ]
+    }
 }
 
 fn render_compact_detail(frame: &mut Frame, inner: Rect, detail_state: &DetailViewState) {
@@ -1085,3 +1100,24 @@ fn render_cronjob_suspend_confirm(frame: &mut Frame, parent: Rect, detail_state:
 }
 
 use crate::ui::centered_rect;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cronjob_history_widths_switch_to_compact_profile() {
+        let widths = cronjob_history_widths(Rect::new(0, 0, 80, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(10));
+        assert_eq!(widths[5], Constraint::Length(7));
+    }
+
+    #[test]
+    fn cronjob_history_widths_keep_wide_profile() {
+        let widths = cronjob_history_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(35));
+        assert_eq!(widths[1], Constraint::Length(12));
+        assert_eq!(widths[5], Constraint::Length(8));
+    }
+}

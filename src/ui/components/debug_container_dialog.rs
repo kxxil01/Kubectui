@@ -304,6 +304,10 @@ pub fn render_debug_container_dialog(
 ) {
     let popup = centered_rect(72, 60, area);
     frame.render_widget(Clear, popup);
+    if use_compact_debug_container_dialog(popup) {
+        render_compact_debug_container_dialog(frame, popup, state);
+        return;
+    }
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -486,6 +490,59 @@ pub fn render_debug_container_dialog(
     );
 }
 
+fn use_compact_debug_container_dialog(popup: Rect) -> bool {
+    popup.width < 54 || popup.height < 22
+}
+
+fn render_compact_debug_container_dialog(
+    frame: &mut Frame,
+    popup: Rect,
+    state: &DebugContainerDialogState,
+) {
+    let block = Block::default()
+        .title(" Debug Container ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .style(Style::default().bg(Color::Black));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let status = if state.pending_launch {
+        "launching"
+    } else if state.loading_targets {
+        "loading"
+    } else {
+        "ready"
+    };
+    let image = state
+        .selected_image()
+        .unwrap_or_else(|| "<missing image>".to_string());
+    let target = if state.use_target_container {
+        state
+            .selected_target_container()
+            .cloned()
+            .unwrap_or_else(|| "no target".to_string())
+    } else {
+        "off".to_string()
+    };
+    let note = if let Some(error) = &state.error_message {
+        format!("err: {error}")
+    } else {
+        "enter launch  esc cancel".to_string()
+    };
+    let lines = vec![
+        Line::from(format!(
+            "pod {}/{}  {}",
+            state.namespace, state.pod_name, status
+        )),
+        Line::from(format!("image {}", image)),
+        Line::from(format!("target {}", target)),
+        Line::from(note),
+        Line::from("[Tab] move  [h/l] change  [Space] toggle"),
+    ];
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+}
+
 fn focused_style(focused: bool) -> Style {
     if focused {
         Style::default().fg(Color::Cyan)
@@ -584,5 +641,15 @@ mod tests {
 
         assert_eq!(state.custom_image, "ghjkl");
         assert_eq!(state.focus_field, DebugContainerField::CustomImage);
+    }
+
+    #[test]
+    fn render_debug_container_dialog_small_terminal_smoke() {
+        let backend = ratatui::backend::TestBackend::new(40, 10);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal should initialize");
+        let state = DebugContainerDialogState::new("api-0", "default");
+        terminal
+            .draw(|frame| render_debug_container_dialog(frame, frame.area(), &state))
+            .expect("compact debug container dialog should render");
     }
 }
