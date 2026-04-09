@@ -22,6 +22,37 @@ use crate::{
 };
 
 const GOVERNANCE_COMPACT_HEIGHT: u16 = 24;
+const GOVERNANCE_NARROW_WIDTH: u16 = 104;
+
+fn governance_widths(area: Rect) -> [Constraint; 10] {
+    if area.width < GOVERNANCE_NARROW_WIDTH {
+        [
+            Constraint::Length(3),
+            Constraint::Min(14),
+            Constraint::Length(5),
+            Constraint::Length(5),
+            Constraint::Length(5),
+            Constraint::Length(5),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Min(10),
+        ]
+    } else {
+        [
+            Constraint::Length(3),
+            Constraint::Length(18),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Min(14),
+        ]
+    }
+}
 
 pub fn render_governance(
     frame: &mut Frame,
@@ -141,18 +172,7 @@ fn render_governance_table(
             summaries.len()
         )
     };
-    let widths = [
-        Constraint::Length(3),
-        Constraint::Length(18),
-        Constraint::Length(6),
-        Constraint::Length(6),
-        Constraint::Length(6),
-        Constraint::Length(6),
-        Constraint::Length(7),
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Min(14),
-    ];
+    let widths = governance_widths(area);
 
     render_table_frame(
         frame,
@@ -387,5 +407,21 @@ mod tests {
 
         let rendered = render_summary_to_string(&summary);
         assert!(!rendered.contains("Enter opens:"));
+    }
+
+    #[test]
+    fn governance_widths_switch_to_compact_profile() {
+        let widths = governance_widths(Rect::new(0, 0, 96, 20));
+        assert_eq!(widths[0], Constraint::Length(3));
+        assert_eq!(widths[1], Constraint::Min(14));
+        assert_eq!(widths[9], Constraint::Min(10));
+    }
+
+    #[test]
+    fn governance_widths_keep_wide_profile() {
+        let widths = governance_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[1], Constraint::Length(18));
+        assert_eq!(widths[7], Constraint::Length(8));
+        assert_eq!(widths[9], Constraint::Min(14));
     }
 }

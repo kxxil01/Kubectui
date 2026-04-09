@@ -7,6 +7,24 @@ use ratatui::{
 
 use super::{join_or_all, split_primary_detail};
 
+const CLUSTER_ROLE_NARROW_WIDTH: u16 = 80;
+
+fn cluster_role_widths(area: Rect) -> [Constraint; 3] {
+    if area.width < CLUSTER_ROLE_NARROW_WIDTH {
+        [
+            Constraint::Min(20),
+            Constraint::Length(7),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Min(36),
+            Constraint::Length(8),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
@@ -210,11 +228,7 @@ pub fn render_cluster_roles(
         query,
         &sort_suffix,
     );
-    let widths = [
-        Constraint::Min(36),
-        Constraint::Length(8),
-        Constraint::Length(9),
-    ];
+    let widths = cluster_role_widths(table_area);
     render_table_frame(
         frame,
         table_area,
@@ -308,4 +322,25 @@ fn render_rule_tree(rules: &[RbacRule], theme: &crate::ui::theme::Theme) -> Vec<
         ]));
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cluster_role_widths_switch_to_compact_profile() {
+        let widths = cluster_role_widths(Rect::new(0, 0, 72, 20));
+        assert_eq!(widths[0], Constraint::Min(20));
+        assert_eq!(widths[1], Constraint::Length(7));
+        assert_eq!(widths[2], Constraint::Length(8));
+    }
+
+    #[test]
+    fn cluster_role_widths_keep_wide_profile() {
+        let widths = cluster_role_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(36));
+        assert_eq!(widths[1], Constraint::Length(8));
+        assert_eq!(widths[2], Constraint::Length(9));
+    }
 }

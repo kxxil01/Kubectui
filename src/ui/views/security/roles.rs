@@ -7,6 +7,26 @@ use ratatui::{
 
 use super::{join_or_all, split_primary_detail};
 
+const ROLE_NARROW_WIDTH: u16 = 88;
+
+fn role_widths(area: Rect) -> [Constraint; 4] {
+    if area.width < ROLE_NARROW_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(7),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Min(28),
+            Constraint::Length(18),
+            Constraint::Length(8),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
     bookmarks::BookmarkEntry,
@@ -195,12 +215,7 @@ pub fn render_roles(
         query,
         &sort_suffix,
     );
-    let widths = [
-        Constraint::Min(28),
-        Constraint::Length(18),
-        Constraint::Length(8),
-        Constraint::Length(9),
-    ];
+    let widths = role_widths(table_area);
     render_table_frame(
         frame,
         table_area,
@@ -344,5 +359,21 @@ mod tests {
         assert!(content.contains("Rule 1"));
         assert!(content.contains("get"));
         assert!(content.contains("deployments"));
+    }
+
+    #[test]
+    fn role_widths_switch_to_compact_profile() {
+        let widths = role_widths(Rect::new(0, 0, 80, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[3], Constraint::Length(8));
+    }
+
+    #[test]
+    fn role_widths_keep_wide_profile() {
+        let widths = role_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(28));
+        assert_eq!(widths[1], Constraint::Length(18));
+        assert_eq!(widths[3], Constraint::Length(9));
     }
 }
