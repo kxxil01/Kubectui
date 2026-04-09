@@ -26,6 +26,16 @@ pub struct NamespacePicker {
     is_open: bool,
 }
 
+fn namespace_picker_popup(area: Rect) -> Rect {
+    let preferred_width = (area.width * 2 / 5).clamp(40, 60);
+    let preferred_height = (area.height * 2 / 3).clamp(12, 30);
+    crate::ui::bounded_popup_rect(area, preferred_width, preferred_height, 1, 1)
+}
+
+fn use_compact_namespace_picker_layout(popup: Rect) -> bool {
+    popup.width < 44 || popup.height < 12
+}
+
 impl NamespacePicker {
     pub fn new(namespaces: Vec<String>) -> Self {
         Self {
@@ -133,15 +143,8 @@ impl NamespacePicker {
         use ratatui::widgets::BorderType;
 
         let theme = default_theme();
-
-        let popup_width = (area.width * 2 / 5).clamp(40, 60);
-        let popup_height = (area.height * 2 / 3).clamp(12, 30);
-        let popup = Rect {
-            x: (area.width.saturating_sub(popup_width)) / 2,
-            y: (area.height.saturating_sub(popup_height)) / 2,
-            width: popup_width,
-            height: popup_height,
-        };
+        let popup = namespace_picker_popup(area);
+        let compact = use_compact_namespace_picker_layout(popup);
 
         frame.render_widget(Clear, popup);
 
@@ -161,12 +164,21 @@ impl NamespacePicker {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Length(3),
-                Constraint::Min(3),
-                Constraint::Length(2),
-            ])
+            .constraints(if compact {
+                [
+                    Constraint::Length(1),
+                    Constraint::Length(3),
+                    Constraint::Min(1),
+                    Constraint::Length(1),
+                ]
+            } else {
+                [
+                    Constraint::Length(2),
+                    Constraint::Length(3),
+                    Constraint::Min(3),
+                    Constraint::Length(2),
+                ]
+            })
             .split(inner);
 
         let title_line = Line::from(vec![
@@ -254,12 +266,36 @@ impl NamespacePicker {
         frame.render_widget(List::new(items).block(list_block), chunks[2]);
 
         let footer_line = Line::from(vec![
-            Span::styled(" [↑↓/jk] ", theme.keybind_key_style()),
-            Span::styled("navigate  ", theme.keybind_desc_style()),
-            Span::styled("[Enter] ", theme.keybind_key_style()),
-            Span::styled("select  ", theme.keybind_desc_style()),
-            Span::styled("[Esc] ", theme.keybind_key_style()),
-            Span::styled("close", theme.keybind_desc_style()),
+            if compact {
+                Span::styled(" [Enter] ", theme.keybind_key_style())
+            } else {
+                Span::styled(" [↑↓/jk] ", theme.keybind_key_style())
+            },
+            if compact {
+                Span::styled("select  ", theme.keybind_desc_style())
+            } else {
+                Span::styled("navigate  ", theme.keybind_desc_style())
+            },
+            if compact {
+                Span::styled("[Esc] ", theme.keybind_key_style())
+            } else {
+                Span::styled("[Enter] ", theme.keybind_key_style())
+            },
+            if compact {
+                Span::styled("close", theme.keybind_desc_style())
+            } else {
+                Span::styled("select  ", theme.keybind_desc_style())
+            },
+            if compact {
+                Span::raw("")
+            } else {
+                Span::styled("[Esc] ", theme.keybind_key_style())
+            },
+            if compact {
+                Span::raw("")
+            } else {
+                Span::styled("close", theme.keybind_desc_style())
+            },
         ]);
         let footer_block = Block::default()
             .borders(Borders::TOP)
@@ -331,5 +367,22 @@ mod tests {
 
         picker.close();
         assert!(!picker.is_open());
+    }
+
+    #[test]
+    fn namespace_picker_popup_stays_within_small_terminal() {
+        let popup = namespace_picker_popup(Rect::new(0, 0, 40, 10));
+        assert!(popup.width <= 40);
+        assert!(popup.height <= 10);
+    }
+
+    #[test]
+    fn compact_namespace_picker_layout_activates_on_small_terminal() {
+        assert!(use_compact_namespace_picker_layout(namespace_picker_popup(
+            Rect::new(0, 0, 40, 10),
+        )));
+        assert!(!use_compact_namespace_picker_layout(
+            namespace_picker_popup(Rect::new(0, 0, 120, 40),)
+        ));
     }
 }

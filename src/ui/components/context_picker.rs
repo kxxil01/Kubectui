@@ -28,6 +28,16 @@ pub struct ContextPicker {
     is_open: bool,
 }
 
+fn context_picker_popup(area: Rect) -> Rect {
+    let preferred_width = (area.width * 3 / 5).clamp(50, 80);
+    let preferred_height = (area.height * 2 / 3).clamp(14, 32);
+    crate::ui::bounded_popup_rect(area, preferred_width, preferred_height, 1, 1)
+}
+
+fn use_compact_context_picker_layout(popup: Rect) -> bool {
+    popup.width < 50 || popup.height < 12
+}
+
 impl ContextPicker {
     pub fn new(contexts: Vec<String>, current_context: Option<String>) -> Self {
         Self {
@@ -123,15 +133,8 @@ impl ContextPicker {
         use crate::ui::components::default_theme;
 
         let theme = default_theme();
-
-        let popup_width = (area.width * 3 / 5).clamp(50, 80);
-        let popup_height = (area.height * 2 / 3).clamp(14, 32);
-        let popup = Rect {
-            x: (area.width.saturating_sub(popup_width)) / 2,
-            y: (area.height.saturating_sub(popup_height)) / 2,
-            width: popup_width,
-            height: popup_height,
-        };
+        let popup = context_picker_popup(area);
+        let compact = use_compact_context_picker_layout(popup);
 
         frame.render_widget(Clear, popup);
 
@@ -151,12 +154,21 @@ impl ContextPicker {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Length(3),
-                Constraint::Min(3),
-                Constraint::Length(2),
-            ])
+            .constraints(if compact {
+                [
+                    Constraint::Length(1),
+                    Constraint::Length(3),
+                    Constraint::Min(1),
+                    Constraint::Length(1),
+                ]
+            } else {
+                [
+                    Constraint::Length(2),
+                    Constraint::Length(3),
+                    Constraint::Min(3),
+                    Constraint::Length(2),
+                ]
+            })
             .split(inner);
 
         let title_line = Line::from(vec![
@@ -165,8 +177,11 @@ impl ContextPicker {
                 theme.title_style(),
             ),
             Span::styled("Switch Cluster Context", theme.title_style()),
-            if let Some(ref cur) = self.current_context {
-                Span::styled(format!("  ·  current: {cur}"), theme.inactive_style())
+            if !compact {
+                self.current_context
+                    .as_ref()
+                    .map(|cur| Span::styled(format!("  ·  current: {cur}"), theme.inactive_style()))
+                    .unwrap_or_else(|| Span::raw(""))
             } else {
                 Span::raw("")
             },
@@ -260,12 +275,36 @@ impl ContextPicker {
         frame.render_widget(List::new(items).block(list_block), chunks[2]);
 
         let footer_line = Line::from(vec![
-            Span::styled(" [↑↓/jk] ", theme.keybind_key_style()),
-            Span::styled("navigate  ", theme.keybind_desc_style()),
-            Span::styled("[Enter] ", theme.keybind_key_style()),
-            Span::styled("connect  ", theme.keybind_desc_style()),
-            Span::styled("[Esc] ", theme.keybind_key_style()),
-            Span::styled("skip", theme.keybind_desc_style()),
+            if compact {
+                Span::styled(" [Enter] ", theme.keybind_key_style())
+            } else {
+                Span::styled(" [↑↓/jk] ", theme.keybind_key_style())
+            },
+            if compact {
+                Span::styled("connect  ", theme.keybind_desc_style())
+            } else {
+                Span::styled("navigate  ", theme.keybind_desc_style())
+            },
+            if compact {
+                Span::styled("[Esc] ", theme.keybind_key_style())
+            } else {
+                Span::styled("[Enter] ", theme.keybind_key_style())
+            },
+            if compact {
+                Span::styled("close", theme.keybind_desc_style())
+            } else {
+                Span::styled("connect  ", theme.keybind_desc_style())
+            },
+            if compact {
+                Span::raw("")
+            } else {
+                Span::styled("[Esc] ", theme.keybind_key_style())
+            },
+            if compact {
+                Span::raw("")
+            } else {
+                Span::styled("skip", theme.keybind_desc_style())
+            },
         ]);
         let footer_block = Block::default()
             .borders(Borders::TOP)
@@ -373,5 +412,22 @@ mod tests {
             picker.handle_key(KeyEvent::from(KeyCode::Esc)),
             ContextPickerAction::Close
         );
+    }
+
+    #[test]
+    fn context_picker_popup_stays_within_small_terminal() {
+        let popup = context_picker_popup(Rect::new(0, 0, 40, 10));
+        assert!(popup.width <= 40);
+        assert!(popup.height <= 10);
+    }
+
+    #[test]
+    fn compact_context_picker_layout_activates_on_small_terminal() {
+        assert!(use_compact_context_picker_layout(context_picker_popup(
+            Rect::new(0, 0, 40, 10,)
+        )));
+        assert!(!use_compact_context_picker_layout(context_picker_popup(
+            Rect::new(0, 0, 120, 40,)
+        )));
     }
 }

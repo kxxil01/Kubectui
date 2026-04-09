@@ -37,6 +37,9 @@ struct LogHighlightOptions<'a> {
     compiled: Option<&'a regex::Regex>,
 }
 
+const STACKED_CONNECTIVITY_WIDTH: u16 = 96;
+const STACKED_RUNBOOK_WIDTH: u16 = 96;
+
 #[inline]
 fn scroll_window(total: usize, scroll: usize, viewport_rows: usize) -> VisibleWindow {
     if total == 0 {
@@ -66,6 +69,14 @@ fn centered_window(total: usize, selected: usize, viewport_rows: usize) -> Visib
         start,
         end: start + visible,
     }
+}
+
+fn use_stacked_connectivity_layout(area: Rect) -> bool {
+    area.width < STACKED_CONNECTIVITY_WIDTH
+}
+
+fn use_stacked_runbook_layout(area: Rect) -> bool {
+    area.width < STACKED_RUNBOOK_WIDTH
 }
 
 pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, cluster: &ClusterSnapshot) {
@@ -675,9 +686,18 @@ fn render_connectivity_tab(
     use crate::workbench::ConnectivityTabFocus;
 
     let theme = default_theme();
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
+    let stacked = use_stacked_connectivity_layout(area);
+    let panes = Layout::default()
+        .direction(if stacked {
+            Direction::Vertical
+        } else {
+            Direction::Horizontal
+        })
+        .constraints(if stacked {
+            [Constraint::Percentage(42), Constraint::Percentage(58)]
+        } else {
+            [Constraint::Percentage(34), Constraint::Percentage(66)]
+        })
         .split(area);
 
     let left_rows = Layout::default()
@@ -688,7 +708,7 @@ fn render_connectivity_tab(
             Constraint::Min(6),
             Constraint::Length(2),
         ])
-        .split(columns[0]);
+        .split(panes[0]);
 
     let source_line = Paragraph::new(vec![
         Line::from(Span::styled("Source", theme.section_title_style())),
@@ -802,7 +822,7 @@ fn render_connectivity_tab(
             Constraint::Length(tab.summary_lines.len().min(4) as u16),
             Constraint::Min(0),
         ])
-        .split(columns[1]);
+        .split(panes[1]);
 
     if !tab.summary_lines.is_empty() {
         let lines = tab
@@ -2845,9 +2865,18 @@ fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::Run
         rows[0],
     );
 
+    let stacked = use_stacked_runbook_layout(rows[1]);
     let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .direction(if stacked {
+            Direction::Vertical
+        } else {
+            Direction::Horizontal
+        })
+        .constraints(if stacked {
+            [Constraint::Percentage(40), Constraint::Percentage(60)]
+        } else {
+            [Constraint::Percentage(42), Constraint::Percentage(58)]
+        })
         .split(rows[1]);
 
     let left_block = Block::default()
@@ -3106,6 +3135,7 @@ mod tests {
         ui::{components::default_theme, truncate_message},
         workbench::{AccessReviewTabState, AttemptedActionReview},
     };
+    use ratatui::layout::Rect;
 
     #[test]
     fn short_message_unchanged() {
@@ -3169,6 +3199,22 @@ mod tests {
         let result = truncate_message("hello world", 4);
         assert_eq!(result.as_ref(), "h...");
         assert_eq!(result.chars().count(), 4);
+    }
+
+    #[test]
+    fn stacked_connectivity_layout_activates_on_narrow_width() {
+        assert!(super::use_stacked_connectivity_layout(Rect::new(
+            0, 0, 80, 20
+        )));
+        assert!(!super::use_stacked_connectivity_layout(Rect::new(
+            0, 0, 120, 20,
+        )));
+    }
+
+    #[test]
+    fn stacked_runbook_layout_activates_on_narrow_width() {
+        assert!(super::use_stacked_runbook_layout(Rect::new(0, 0, 80, 20)));
+        assert!(!super::use_stacked_runbook_layout(Rect::new(0, 0, 120, 20)));
     }
 
     #[test]

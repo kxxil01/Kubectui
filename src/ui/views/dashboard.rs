@@ -48,6 +48,9 @@ struct DashboardCache {
 static DASHBOARD_CACHE: LazyLock<Mutex<Option<DashboardCache>>> =
     LazyLock::new(|| Mutex::new(None));
 
+const NARROW_DASHBOARD_WIDTH: u16 = 84;
+const COMPACT_GAUGE_WIDTH: u16 = 72;
+
 fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
     let mut guard = DASHBOARD_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref c) = *guard
@@ -119,12 +122,30 @@ fn truncate_label(s: &str, max_chars: usize) -> Cow<'_, str> {
     }
 }
 
+fn use_narrow_dashboard_layout(area: Rect) -> bool {
+    area.width < NARROW_DASHBOARD_WIDTH
+}
+
+fn compact_gauge_line<'a>(label: &'a str, pct: u64, theme: &Theme) -> Line<'a> {
+    let mut spans = vec![Span::styled(
+        format!("  {label:<14} "),
+        theme.inactive_style(),
+    )];
+    spans.extend(mini_bar(pct, theme));
+    Line::from(spans)
+}
+
 // ── top-level render ──────────────────────────────────────────────────────────
 
 /// Renders the dashboard view.
 pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, _focused: bool) {
     let theme = default_theme();
     let d = cached_dashboard(snapshot);
+
+    if use_narrow_dashboard_layout(area) {
+        render_narrow_dashboard(frame, area, snapshot, &d, &theme);
+        return;
+    }
 
     // On small terminals (<40 rows) show a compact 4-row layout; otherwise full 7 rows.
     let compact = area.height < 40;
@@ -202,6 +223,43 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
         render_top_pod_consumers(frame, rows[5], &d.top_cpu_pods, &d.top_mem_pods, &theme);
         render_alerts(frame, rows[6], &d.alerts, &theme);
     }
+}
+
+fn render_narrow_dashboard(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &ClusterSnapshot,
+    d: &DashboardData,
+    theme: &Theme,
+) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Min(6),
+        ])
+        .split(area);
+
+    render_cluster_info(frame, rows[0], snapshot, theme);
+    render_cluster_health_summary(
+        frame,
+        rows[1],
+        &d.stats,
+        &d.insights,
+        snapshot.issue_count,
+        theme,
+    );
+    render_health_gauges(
+        frame,
+        rows[2],
+        &d.stats,
+        d.workload_pct,
+        &d.cluster_resources,
+        theme,
+    );
+    render_alerts(frame, rows[3], &d.alerts, theme);
 }
 
 // ── cluster info ──────────────────────────────────────────────────────────────
@@ -445,6 +503,11 @@ fn render_health_gauges(
     cluster_res: &ClusterResourceSummary,
     theme: &Theme,
 ) {
+    if area.width < COMPACT_GAUGE_WIDTH {
+        render_compact_health_gauges(frame, area, stats, workload_pct, cluster_res, theme);
+        return;
+    }
+
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -485,6 +548,34 @@ fn render_health_gauges(
         cluster_res.cluster_mem_pct,
         theme,
     );
+}
+
+fn render_compact_health_gauges(
+    frame: &mut Frame,
+    area: Rect,
+    stats: &DashboardStats,
+    workload_pct: u8,
+    cluster_res: &ClusterResourceSummary,
+    theme: &Theme,
+) {
+    let block = Block::default()
+        .title(Span::styled(" 󰄬 Health Gauges ", theme.title_style()))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.bg));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines = vec![
+        compact_gauge_line("Nodes Ready", u64::from(stats.ready_nodes_percent), theme),
+        compact_gauge_line("Pods Running", u64::from(stats.running_pods_percent), theme),
+        compact_gauge_line("Workload", u64::from(workload_pct), theme),
+        compact_gauge_line("Cluster CPU", u64::from(cluster_res.cluster_cpu_pct), theme),
+        compact_gauge_line("Cluster Mem", u64::from(cluster_res.cluster_mem_pct), theme),
+    ];
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn render_percent_gauge(frame: &mut Frame, area: Rect, title: &str, percent: u8, theme: &Theme) {

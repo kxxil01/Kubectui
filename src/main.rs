@@ -66,7 +66,7 @@ use kubectui::{
     runbooks::{LoadedRunbookStepKind, RunbookRegistry, load_runbook_registry},
     secret::{decode_secret_yaml, encode_secret_yaml},
     state::{
-        DataPhase, GlobalState, RefreshScope,
+        ClusterSnapshot, DataPhase, GlobalState, RefreshScope,
         watch::{WatchUpdate, WatchedResource},
     },
     ui,
@@ -138,6 +138,45 @@ fn fail_context_switch(
     *snapshot_dirty = true;
     *needs_redraw = true;
     app.set_error(message);
+}
+
+fn ui_staleness_visible(
+    app: &kubectui::app::AppState,
+    snapshot: &ClusterSnapshot,
+    now_unix: i64,
+) -> bool {
+    app.toasts.last().is_none()
+        && app.error_message().is_none()
+        && app.status_message().is_none()
+        && snapshot
+            .last_updated
+            .is_some_and(|ts| kubectui::time::age_seconds_since(ts, now_unix) > 45)
+}
+
+fn should_request_periodic_redraw(
+    app: &kubectui::app::AppState,
+    snapshot: &ClusterSnapshot,
+    now_unix: i64,
+    last_age_bucket: &mut i64,
+    last_staleness_second: &mut i64,
+) -> bool {
+    let mut needs_redraw = false;
+    let age_bucket = now_unix / 60;
+    if age_bucket != *last_age_bucket {
+        *last_age_bucket = age_bucket;
+        needs_redraw = true;
+    }
+
+    if ui_staleness_visible(app, snapshot, now_unix) {
+        if now_unix != *last_staleness_second {
+            *last_staleness_second = now_unix;
+            needs_redraw = true;
+        }
+    } else {
+        *last_staleness_second = now_unix;
+    }
+
+    needs_redraw
 }
 
 fn reopen_pending_runbook(
@@ -1275,6 +1314,9 @@ pub(crate) async fn run_app_inner(
         Vec::new();
     let mut pending_context_switch: Option<(String, tokio::task::JoinHandle<Result<K8sClient>>)> =
         None;
+    let startup_now_unix = kubectui::time::now_unix_seconds();
+    let mut last_age_bucket = startup_now_unix / 60;
+    let mut last_staleness_second = startup_now_unix;
 
     let mut event_stream = EventStream::new();
 
@@ -3399,6 +3441,7 @@ pub(crate) async fn run_app_inner(
 
             // Periodic tick — heartbeat for follow-mode log scrolling
             _ = tick.tick() => {
+                let now_unix = kubectui::time::now_unix_seconds();
                 if status_message_clear_at.is_some_and(|deadline| Instant::now() >= deadline) {
                     app.clear_status();
                     status_message_clear_at = None;
@@ -3414,6 +3457,15 @@ pub(crate) async fn run_app_inner(
                 }
                 // Expire old toasts
                 if app.expire_toasts() {
+                    needs_redraw = true;
+                }
+                if should_request_periodic_redraw(
+                    &app,
+                    &cached_snapshot,
+                    now_unix,
+                    &mut last_age_bucket,
+                    &mut last_staleness_second,
+                ) {
                     needs_redraw = true;
                 }
             }

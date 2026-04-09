@@ -600,6 +600,145 @@ fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &De
     frame.render_stateful_widget(table, rows[1], &mut table_state);
 }
 
+fn render_compact_detail(frame: &mut Frame, inner: Rect, detail_state: &DetailViewState) {
+    let theme = default_theme();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let (kind_label, name_label) = if let Some(resource) = &detail_state.resource {
+        (
+            resource.kind().to_ascii_uppercase(),
+            resource.name().to_string(),
+        )
+    } else {
+        ("RESOURCE".to_string(), "unknown".to_string())
+    };
+    let header = Line::from(vec![
+        Span::styled(kind_label, theme.title_style()),
+        Span::styled(" / ", theme.muted_style()),
+        Span::styled(
+            name_label,
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ),
+        if detail_state.loading {
+            Span::styled("  loading", theme.badge_warning_style())
+        } else {
+            Span::raw("")
+        },
+    ]);
+    frame.render_widget(
+        Paragraph::new(header).block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(theme.border_style()),
+        ),
+        rows[0],
+    );
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("ns ", theme.inactive_style()),
+            Span::styled(
+                detail_state
+                    .metadata
+                    .namespace
+                    .as_deref()
+                    .unwrap_or("cluster-scope"),
+                Style::default().fg(theme.accent2),
+            ),
+            Span::styled("  status ", theme.inactive_style()),
+            Span::styled(
+                detail_state.metadata.status.as_deref().unwrap_or("Unknown"),
+                theme
+                    .get_status_style(detail_state.metadata.status.as_deref().unwrap_or("Unknown")),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("labels ", theme.inactive_style()),
+            Span::styled(
+                detail_state.metadata.labels.len().to_string(),
+                Style::default().fg(theme.fg),
+            ),
+            Span::styled("  events ", theme.inactive_style()),
+            Span::styled(
+                detail_state.events.len().to_string(),
+                Style::default().fg(theme.fg),
+            ),
+        ]),
+    ];
+
+    if detail_state.loading {
+        lines.push(Line::from(Span::styled(
+            "Loading resource details...",
+            theme.badge_warning_style(),
+        )));
+    } else if let Some(err) = &detail_state.error {
+        lines.push(Line::from(Span::styled(
+            format!("Error: {err}"),
+            theme.badge_error_style(),
+        )));
+    } else if let Some(msg) = &detail_state.metrics_unavailable_message {
+        lines.push(Line::from(Span::styled(
+            format!("Metrics: {msg}"),
+            theme.inactive_style(),
+        )));
+    } else if let Some(metrics) = &detail_state.node_metrics {
+        lines.push(Line::from(format!(
+            "Metrics: cpu {}  mem {}",
+            metrics.cpu, metrics.memory
+        )));
+    } else if let Some(metrics) = &detail_state.pod_metrics {
+        lines.push(Line::from(format!(
+            "Metrics: {} container(s)",
+            metrics.containers.len()
+        )));
+    }
+
+    if let Some(section) = detail_state
+        .sections
+        .iter()
+        .find(|line| !line.trim().is_empty())
+    {
+        lines.push(Line::from(vec![
+            Span::styled("detail ", theme.inactive_style()),
+            Span::styled(section.as_str(), Style::default().fg(theme.fg_dim)),
+        ]));
+    }
+
+    lines.push(Line::from(Span::styled(
+        "Expand terminal for full metadata, metrics, and inspection panels.",
+        theme.inactive_style(),
+    )));
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[1]);
+
+    let action_keys = detail_state
+        .footer_actions()
+        .iter()
+        .map(|action| action.key_hint())
+        .collect::<Vec<_>>()
+        .join("/");
+    let footer = if action_keys.is_empty() {
+        " Esc close ".to_string()
+    } else {
+        format!(" {action_keys} actions  Esc close ")
+    };
+    frame.render_widget(
+        Paragraph::new(footer).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(theme.border_style()),
+        ),
+        rows[2],
+    );
+}
+
 /// Renders resource detail as a centered modal overlay.
 pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
     if let Some(scale) = &detail_state.scale_dialog {
@@ -632,80 +771,84 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         height: popup.height.saturating_sub(2),
     };
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),
-            Constraint::Min(9),
-            Constraint::Min(6),
-            Constraint::Length(2),
-        ])
-        .split(inner);
-
-    let (kind_label, name_label) = if let Some(resource) = &detail_state.resource {
-        (
-            resource.kind().to_ascii_uppercase(),
-            resource.name().to_string(),
-        )
+    if inner.width < 70 || inner.height < 19 {
+        render_compact_detail(frame, inner, detail_state);
     } else {
-        ("RESOURCE".to_string(), "unknown".to_string())
-    };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(9),
+                Constraint::Min(6),
+                Constraint::Length(2),
+            ])
+            .split(inner);
 
-    let header_line = Line::from(vec![
-        Span::styled(" ◆ ", theme.title_style()),
-        Span::styled(kind_label, theme.title_style()),
-        Span::styled("  /  ", theme.muted_style()),
-        Span::styled(
-            name_label,
-            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
-        ),
-        if detail_state.loading {
-            Span::styled("  ⟳ Loading…", theme.badge_warning_style())
+        let (kind_label, name_label) = if let Some(resource) = &detail_state.resource {
+            (
+                resource.kind().to_ascii_uppercase(),
+                resource.name().to_string(),
+            )
         } else {
-            Span::raw("")
-        },
-    ]);
-    let header_block = Block::default()
-        .borders(Borders::BOTTOM)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.header_bg));
-    frame.render_widget(Paragraph::new(header_line).block(header_block), chunks[0]);
+            ("RESOURCE".to_string(), "unknown".to_string())
+        };
 
-    let info_cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(35),
-            Constraint::Percentage(40),
-            Constraint::Percentage(25),
-        ])
-        .split(chunks[1]);
+        let header_line = Line::from(vec![
+            Span::styled(" ◆ ", theme.title_style()),
+            Span::styled(kind_label, theme.title_style()),
+            Span::styled("  /  ", theme.muted_style()),
+            Span::styled(
+                name_label,
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+            ),
+            if detail_state.loading {
+                Span::styled("  ⟳ Loading…", theme.badge_warning_style())
+            } else {
+                Span::raw("")
+            },
+        ]);
+        let header_block = Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(theme.border_style())
+            .style(Style::default().bg(theme.header_bg));
+        frame.render_widget(Paragraph::new(header_line).block(header_block), chunks[0]);
 
-    render_metadata_panel(frame, info_cols[0], detail_state);
-    render_details_panel(frame, info_cols[1], detail_state);
-    render_metrics_panel(frame, info_cols[2], detail_state);
-    render_inspection_panel(frame, chunks[2], detail_state);
+        let info_cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(35),
+                Constraint::Percentage(40),
+                Constraint::Percentage(25),
+            ])
+            .split(chunks[1]);
 
-    let mut footer_spans = Vec::new();
-    for action in detail_state.footer_actions() {
-        footer_spans.push(Span::styled(
-            format!("{} ", action.key_hint()),
-            theme.keybind_key_style(),
-        ));
-        footer_spans.push(Span::styled(
-            format!("{}  ", action.label()),
-            theme.keybind_desc_style(),
-        ));
+        render_metadata_panel(frame, info_cols[0], detail_state);
+        render_details_panel(frame, info_cols[1], detail_state);
+        render_metrics_panel(frame, info_cols[2], detail_state);
+        render_inspection_panel(frame, chunks[2], detail_state);
+
+        let mut footer_spans = Vec::new();
+        for action in detail_state.footer_actions() {
+            footer_spans.push(Span::styled(
+                format!("{} ", action.key_hint()),
+                theme.keybind_key_style(),
+            ));
+            footer_spans.push(Span::styled(
+                format!("{}  ", action.label()),
+                theme.keybind_desc_style(),
+            ));
+        }
+        footer_spans.push(Span::styled("[Esc] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Close", theme.keybind_desc_style()));
+        footer_spans.insert(0, Span::raw(" "));
+
+        let footer_line = Line::from(footer_spans);
+        let footer_block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(theme.border_style())
+            .style(Style::default().bg(theme.statusbar_bg));
+        frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
     }
-    footer_spans.push(Span::styled("[Esc] ", theme.keybind_key_style()));
-    footer_spans.push(Span::styled("Close", theme.keybind_desc_style()));
-    footer_spans.insert(0, Span::raw(" "));
-
-    let footer_line = Line::from(footer_spans);
-    let footer_block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.statusbar_bg));
-    frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
 
     if detail_state.confirm_delete {
         render_delete_confirm(frame, popup, detail_state);

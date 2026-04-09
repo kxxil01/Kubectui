@@ -549,6 +549,17 @@ fn effective_workbench_height(
     requested_height.min(max_height).max(6)
 }
 
+const MIN_TERMINAL_WIDTH: u16 = 40;
+const MIN_TERMINAL_HEIGHT: u16 = 10;
+const DEFAULT_SIDEBAR_WIDTH: u16 = 26;
+const MIN_SIDEBAR_WIDTH: u16 = 14;
+const MIN_CONTENT_WIDTH: u16 = 24;
+
+fn effective_sidebar_width(total_width: u16) -> u16 {
+    let max_sidebar = total_width.saturating_sub(MIN_CONTENT_WIDTH);
+    DEFAULT_SIDEBAR_WIDTH.min(max_sidebar.max(MIN_SIDEBAR_WIDTH))
+}
+
 fn current_view_activity(
     snapshot: &ClusterSnapshot,
     view: AppView,
@@ -669,10 +680,37 @@ fn truncate_error(msg: &str, max_len: usize) -> &str {
     &msg[..end]
 }
 
+fn active_overlay_mask(app: &AppState) -> u16 {
+    let mut mask = 0_u16;
+    if app.detail_view.is_some() {
+        mask |= 1 << 0;
+    }
+    if app.is_namespace_picker_open() {
+        mask |= 1 << 1;
+    }
+    if app.is_context_picker_open() {
+        mask |= 1 << 2;
+    }
+    if app.command_palette.is_open() {
+        mask |= 1 << 3;
+    }
+    if app.resource_template_dialog.is_some() {
+        mask |= 1 << 4;
+    }
+    if app.confirm_quit {
+        mask |= 1 << 5;
+    }
+    if app.help_overlay.is_open() {
+        mask |= 1 << 6;
+    }
+    mask
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ViewRenderKey {
     view: AppView,
     area: Rect,
+    overlay_mask: u16,
     snapshot_version: u64,
     selected_idx: usize,
     query_hash: u64,
@@ -807,10 +845,10 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     let area = frame.area();
 
     // Guard against terminals too small to render the layout
-    if area.height < 10 || area.width < 40 {
+    if area.height < MIN_TERMINAL_HEIGHT || area.width < MIN_TERMINAL_WIDTH {
         let msg = format!(
-            "Terminal too small ({}x{}). Need at least 40x10.",
-            area.width, area.height
+            "Terminal too small ({}x{}). Need at least {}x{}.",
+            area.width, area.height, MIN_TERMINAL_WIDTH, MIN_TERMINAL_HEIGHT
         );
         frame.render_widget(
             Paragraph::new(Span::styled(msg, ratatui::style::Style::default())),
@@ -831,6 +869,8 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             .split(frame.area())
     };
 
+    let overlay_mask = active_overlay_mask(app);
+
     {
         let _header_scope = profiling::span_scope("header");
         components::render_header(
@@ -839,6 +879,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             concat!("KubecTUI v", env!("CARGO_PKG_VERSION")),
             cluster.cluster_summary(),
             cluster.connection_health,
+            overlay_mask,
         );
     }
 
@@ -860,9 +901,13 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     let body = {
         let _body_layout_scope = profiling::span_scope("body_layout");
+        let sidebar_width = effective_sidebar_width(body_root[0].width);
         Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Length(26), Constraint::Min(0)])
+            .constraints([
+                Constraint::Length(sidebar_width),
+                Constraint::Min(MIN_CONTENT_WIDTH),
+            ])
             .split(body_root[0])
     };
 
@@ -882,6 +927,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             app.view(),
             app.sidebar_cursor,
             &sidebar_data,
+            overlay_mask,
         );
     }
 
@@ -941,6 +987,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     let view_cache_key = ViewRenderKey {
         view: app.view(),
         area: content,
+        overlay_mask,
         snapshot_version: cluster.snapshot_version,
         selected_idx: app.selected_idx(),
         query_hash: hash_str(app.search_query()),
@@ -1523,7 +1570,13 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     {
         let _status_scope = profiling::span_scope("status");
         let is_error = active_toast.is_some_and(|t| t.is_error) || app.error_message().is_some();
-        components::render_status_bar(frame, root[2], &status, is_error);
+        components::render_status_bar_with_overlay_mask(
+            frame,
+            root[2],
+            &status,
+            is_error,
+            overlay_mask,
+        );
     }
 
     if let Some(detail_state) = app.detail_view.as_ref() {
@@ -2021,6 +2074,39 @@ pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect 
         .split(vertical[1])[1]
 }
 
+pub(crate) fn centered_rect_by_size(width: u16, height: u16, area: Rect) -> Rect {
+    let width = width.max(1).min(area.width.max(1));
+    let height = height.max(1).min(area.height.max(1));
+    Rect {
+        x: area.x + (area.width.saturating_sub(width)) / 2,
+        y: area.y + (area.height.saturating_sub(height)) / 2,
+        width,
+        height,
+    }
+}
+
+pub(crate) fn bounded_popup_rect(
+    area: Rect,
+    preferred_width: u16,
+    preferred_height: u16,
+    horizontal_margin: u16,
+    vertical_margin: u16,
+) -> Rect {
+    let max_width = area
+        .width
+        .saturating_sub(horizontal_margin.saturating_mul(2))
+        .max(1);
+    let max_height = area
+        .height
+        .saturating_sub(vertical_margin.saturating_mul(2))
+        .max(1);
+    centered_rect_by_size(
+        preferred_width.min(max_width),
+        preferred_height.min(max_height),
+        area,
+    )
+}
+
 /// Formats a timestamp as a human-readable age relative to `now_unix`.
 #[inline]
 pub(crate) fn format_age_from_timestamp(created_at: Option<AppTimestamp>, now_unix: i64) -> String {
@@ -2141,6 +2227,18 @@ mod tests {
 
     fn render_to_string(app: &AppState, snapshot: &ClusterSnapshot) -> String {
         let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+        draw_in_terminal(&mut terminal, app, snapshot);
+        terminal_to_string(&terminal)
+    }
+
+    fn render_to_string_with_size(
+        app: &AppState,
+        snapshot: &ClusterSnapshot,
+        width: u16,
+        height: u16,
+    ) -> String {
+        let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
         draw_in_terminal(&mut terminal, app, snapshot);
         terminal_to_string(&terminal)
@@ -2366,6 +2464,28 @@ mod tests {
 
         let app = app_with_view(AppView::Dashboard);
         draw(&app, &snapshot);
+    }
+
+    #[test]
+    fn render_dashboard_narrow_width_uses_single_column_fallback() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.nodes.push(NodeInfo {
+            name: "n1".to_string(),
+            ready: true,
+            ..NodeInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        let app = app_with_view(AppView::Dashboard);
+        let rendered = render_to_string_with_size(&app, &snapshot, 64, 24);
+
+        assert!(rendered.contains("Cluster"));
+        assert!(rendered.contains("Health Gauges"));
+        assert!(rendered.contains("Alerts"));
     }
 
     #[test]
@@ -2732,6 +2852,13 @@ mod tests {
     }
 
     #[test]
+    fn effective_sidebar_width_preserves_content_budget_on_small_terminals() {
+        assert_eq!(effective_sidebar_width(40), 16);
+        assert_eq!(effective_sidebar_width(44), 20);
+        assert_eq!(effective_sidebar_width(50), 26);
+    }
+
+    #[test]
     fn render_with_open_workbench_smoke() {
         let mut app = app_with_view(AppView::Dashboard);
         app.workbench.toggle_open();
@@ -2835,6 +2962,53 @@ mod tests {
         assert!(rendered.contains("Runbook"));
         assert!(rendered.contains("Pod Failure Triage"));
         assert!(rendered.contains("Checklist"));
+    }
+
+    #[test]
+    fn render_runbook_workbench_narrow_width_smoke() {
+        let mut app = app_with_view(AppView::Pods);
+        let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+        app.open_runbook_tab(
+            crate::runbooks::LoadedRunbook {
+                id: "pod_failure".into(),
+                title: "Pod Failure Triage".into(),
+                description: Some("Deterministic pod checks.".into()),
+                aliases: vec!["incident".into()],
+                resource_kinds: vec!["Pod".into()],
+                shortcut: None,
+                steps: vec![crate::runbooks::LoadedRunbookStep {
+                    title: "Checklist".into(),
+                    description: Some("Inspect the latest signals first.".into()),
+                    kind: crate::runbooks::LoadedRunbookStepKind::Checklist {
+                        items: vec!["Check events".into(), "Check probes".into()],
+                    },
+                }],
+            },
+            Some(resource),
+        );
+
+        let rendered = render_to_string_with_size(&app, &ClusterSnapshot::default(), 72, 24);
+        assert!(rendered.contains("Pod Failure Triage"));
+        assert!(rendered.contains("Step Detail"));
+    }
+
+    #[test]
+    fn render_connectivity_workbench_narrow_width_smoke() {
+        let mut app = app_with_view(AppView::Pods);
+        let source = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+        app.open_connectivity_tab(
+            source,
+            vec![crate::workbench::ConnectivityTargetOption {
+                resource: ResourceRef::Pod("worker-0".to_string(), "default".to_string()),
+                display: "default/worker-0".to_string(),
+                status: "Running".to_string(),
+                pod_ip: Some("10.0.0.8".to_string()),
+            }],
+        );
+
+        let rendered = render_to_string_with_size(&app, &ClusterSnapshot::default(), 72, 24);
+        assert!(rendered.contains("Targets"));
+        assert!(rendered.contains("policy intent"));
     }
 
     #[test]
@@ -3321,6 +3495,34 @@ mod tests {
         draw(&app, &snapshot);
     }
 
+    #[test]
+    fn render_extensions_narrow_width_stacks_panes() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot
+            .custom_resource_definitions
+            .push(CustomResourceDefinitionInfo {
+                name: "widgets.demo.io".to_string(),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                plural: "widgets".to_string(),
+                scope: "Namespaced".to_string(),
+                instances: 1,
+            });
+
+        let mut app = app_with_view(AppView::Extensions);
+        app.extension_instances = vec![CustomResourceInfo {
+            name: "sample".to_string(),
+            namespace: Some("default".to_string()),
+            ..CustomResourceInfo::default()
+        }];
+
+        let rendered = render_to_string_with_size(&app, &snapshot, 56, 24);
+        assert!(rendered.contains("CRDs"));
+        assert!(rendered.contains("Custom Resources"));
+        assert!(rendered.contains("sample"));
+    }
+
     /// Verifies detail modal overlay renders on top of list view without panic.
     #[test]
     fn render_detail_overlay_smoke() {
@@ -3345,6 +3547,53 @@ mod tests {
         });
 
         draw(&app, &snapshot);
+    }
+
+    #[test]
+    fn closing_help_overlay_repaints_underlying_view() {
+        let snapshot = pods_snapshot_for_render_tests();
+        let mut terminal = Terminal::new(TestBackend::new(120, 40)).expect("terminal");
+        let app = app_with_view(AppView::Pods);
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+
+        let mut with_help = app.clone();
+        with_help.help_overlay.open();
+        draw_in_terminal(&mut terminal, &with_help, &snapshot);
+        let help_render = terminal_to_string(&terminal);
+        assert!(help_render.contains("Keybindings"));
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let closed_render = terminal_to_string(&terminal);
+        assert!(closed_render.contains("Pods (2)"));
+        assert!(!closed_render.contains("Keybindings"));
+    }
+
+    #[test]
+    fn render_detail_overlay_uses_compact_layout_on_small_terminal() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "p1".to_string(),
+            namespace: "default".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+
+        let mut app = app_with_view(AppView::Pods);
+        app.detail_view = Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("p1".to_string(), "default".to_string())),
+            metadata: DetailMetadata {
+                name: "p1".to_string(),
+                namespace: Some("default".to_string()),
+                status: Some("Running".to_string()),
+                ..DetailMetadata::default()
+            },
+            yaml: Some("kind: Pod\nmetadata:\n  name: p1\n".to_string()),
+            ..DetailViewState::default()
+        });
+
+        let rendered = render_to_string_with_size(&app, &snapshot, 40, 10);
+        assert!(!rendered.contains("Need at least 40x10"));
+        assert!(rendered.contains("Expand terminal for full metadata"));
     }
 
     /// Verifies Extensions view renders with instance selection cursor without panic.
@@ -3562,7 +3811,10 @@ mod tests {
     #[test]
     fn pod_derived_cache_separates_sort_variants() {
         let now = now();
-        let mut snapshot = ClusterSnapshot::default();
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 9_871,
+            ..ClusterSnapshot::default()
+        };
         snapshot.pods.push(crate::k8s::dtos::PodInfo {
             name: "a".to_string(),
             created_at: Some(now.checked_sub(5.minutes()).expect("timestamp in range")),
@@ -3575,8 +3827,8 @@ mod tests {
         });
 
         let now_unix = now_unix_seconds();
-        let first = cached_pod_derived(&snapshot, "", &[0, 1], now_unix, 0);
-        let second = cached_pod_derived(&snapshot, "", &[1, 0], now_unix, 1);
+        let first = cached_pod_derived(&snapshot, "variant-cache-test", &[0, 1], now_unix, 0);
+        let second = cached_pod_derived(&snapshot, "variant-cache-test", &[1, 0], now_unix, 1);
 
         assert_eq!(
             first[0].age,
