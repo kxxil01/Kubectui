@@ -1,7 +1,7 @@
 //! Governance & Cost Center view.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
     widgets::{Cell, Paragraph, Row, Wrap},
@@ -17,8 +17,11 @@ use crate::{
         TableFrame,
         components::{content_block, default_theme},
         render_centered_message, render_table_frame, table_viewport_rows, table_window,
+        vertical_primary_detail_chunks,
     },
 };
+
+const GOVERNANCE_COMPACT_HEIGHT: u16 = 24;
 
 pub fn render_governance(
     frame: &mut Frame,
@@ -60,20 +63,18 @@ pub fn render_governance(
 
     let selected = selected_idx.min(indices.len().saturating_sub(1));
     let selected_summary = &summaries[indices[selected]];
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-        .split(area);
+    let (table_area, summary_area) =
+        vertical_primary_detail_chunks(area, 58, 8, GOVERNANCE_COMPACT_HEIGHT);
     render_governance_table(
         frame,
-        chunks[0],
+        table_area,
         &summaries,
         &indices,
         selected,
         search.trim(),
         focused,
     );
-    render_governance_summary(frame, chunks[1], selected_summary, focused);
+    render_governance_summary(frame, summary_area, selected_summary, focused);
 }
 
 fn render_governance_table(

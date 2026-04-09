@@ -1,11 +1,11 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
     widgets::{Cell, Paragraph, Row},
 };
 
-use super::join_or_all;
+use super::{join_or_all, split_primary_detail};
 
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
@@ -143,14 +143,11 @@ pub fn render_cluster_roles(
         return;
     }
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-        .split(area);
+    let (table_area, detail_area) = split_primary_detail(area);
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(chunks[0]));
+    let window = table_window(total, selected, table_viewport_rows(table_area));
     let header = Row::new([
         sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
         Cell::from(Span::styled("Rules", theme.header_style())),
@@ -220,7 +217,7 @@ pub fn render_cluster_roles(
     ];
     render_table_frame(
         frame,
-        chunks[0],
+        table_area,
         TableFrame {
             rows,
             header,
@@ -245,7 +242,7 @@ pub fn render_cluster_roles(
     frame.render_widget(
         Paragraph::new((*detail).clone())
             .block(content_block("Selected ClusterRole Rules", focused)),
-        chunks[1],
+        detail_area,
     );
 }
 

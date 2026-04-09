@@ -2107,6 +2107,28 @@ pub(crate) fn bounded_popup_rect(
     )
 }
 
+pub(crate) fn vertical_primary_detail_chunks(
+    area: Rect,
+    full_primary_percent: u16,
+    compact_detail_height: u16,
+    min_full_height: u16,
+) -> (Rect, Rect) {
+    let compact = area.height < min_full_height;
+    let detail_height = compact_detail_height.min(area.height.saturating_sub(1).max(1));
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(if compact {
+            [Constraint::Min(1), Constraint::Length(detail_height)]
+        } else {
+            [
+                Constraint::Percentage(full_primary_percent),
+                Constraint::Percentage(100_u16.saturating_sub(full_primary_percent)),
+            ]
+        })
+        .split(area);
+    (chunks[0], chunks[1])
+}
+
 /// Formats a timestamp as a human-readable age relative to `now_unix`.
 #[inline]
 pub(crate) fn format_age_from_timestamp(created_at: Option<AppTimestamp>, now_unix: i64) -> String {
@@ -2425,6 +2447,20 @@ mod tests {
             })
             .sum();
         assert_eq!(total, 100);
+    }
+
+    #[test]
+    fn vertical_primary_detail_chunks_compact_on_short_height() {
+        let (primary, detail) = vertical_primary_detail_chunks(Rect::new(0, 0, 90, 18), 60, 8, 24);
+        assert_eq!(primary.height, 10);
+        assert_eq!(detail.height, 8);
+    }
+
+    #[test]
+    fn vertical_primary_detail_chunks_use_percentage_split_when_tall() {
+        let (primary, detail) = vertical_primary_detail_chunks(Rect::new(0, 0, 90, 30), 60, 8, 24);
+        assert_eq!(primary.height, 18);
+        assert_eq!(detail.height, 12);
     }
 
     /// Verifies dashboard renders without panic for empty snapshot.
