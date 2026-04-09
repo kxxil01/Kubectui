@@ -2,13 +2,16 @@
 
 use ratatui::{
     layout::{Constraint, Rect},
-    prelude::{Color, Frame, Style},
+    prelude::{Frame, Style},
     text::Span,
-    widgets::{Cell, Paragraph, Row, Table},
+    widgets::{Cell, Paragraph, Row},
 };
 
 use crate::k8s::dtos::CustomResourceDefinitionInfo;
-use crate::ui::{contains_ci, responsive_table_widths};
+use crate::ui::{
+    TableFrame, components::default_theme, contains_ci, render_table_frame, resource_table_title,
+    striped_row_style, table_viewport_rows, table_window,
+};
 
 pub fn filtered_crd_indices(crds: &[CustomResourceDefinitionInfo], query: &str) -> Vec<usize> {
     let query = query.trim();
@@ -45,11 +48,11 @@ pub fn render_crd_picker(
     query: &str,
     is_focused: bool,
 ) {
+    let theme = default_theme();
     let filtered = filtered_crd_indices(crds, query);
     let query_trimmed = query.trim();
 
     if filtered.is_empty() {
-        let theme = crate::ui::components::default_theme();
         let (icon, icon_color, msg) = if is_loading {
             ("⟳ ", theme.accent, "Loading CRDs...")
         } else if query_trimmed.is_empty() {
@@ -69,48 +72,62 @@ pub fn render_crd_picker(
         return;
     }
 
-    let clamped_idx = selected_idx.min(filtered.len().saturating_sub(1));
-    let rows = filtered.iter().enumerate().map(|(idx, &crd_idx)| {
-        let crd = &crds[crd_idx];
-        let style = if is_focused && idx == clamped_idx {
-            Style::default().bg(Color::DarkGray)
-        } else {
-            Style::default()
-        };
+    let total = filtered.len();
+    let selected = selected_idx.min(total.saturating_sub(1));
+    let window = table_window(total, selected, table_viewport_rows(area));
+    let rows = filtered[window.start..window.end]
+        .iter()
+        .enumerate()
+        .map(|(offset, &crd_idx)| {
+            let idx = window.start + offset;
+            let crd = &crds[crd_idx];
+            Row::new(vec![
+                Cell::from(crd.kind.clone()),
+                Cell::from(crd.group.clone()),
+                Cell::from(crd.scope.clone()),
+                Cell::from(crd.instances.to_string()),
+            ])
+            .style(striped_row_style(idx, &theme))
+        })
+        .collect();
 
-        Row::new(vec![
-            Cell::from(crd.kind.clone()),
-            Cell::from(crd.group.clone()),
-            Cell::from(crd.scope.clone()),
-            Cell::from(crd.instances.to_string()),
-        ])
-        .style(style)
-    });
+    let header = Row::new([
+        Cell::from(Span::styled("Kind", theme.header_style())),
+        Cell::from(Span::styled("Group", theme.header_style())),
+        Cell::from(Span::styled("Scope", theme.header_style())),
+        Cell::from(Span::styled("Instances", theme.header_style())),
+    ])
+    .style(theme.header_style())
+    .height(1);
 
-    let header =
-        Row::new(["Kind", "Group", "Scope", "Instances"]).style(Style::default().fg(Color::Cyan));
-
-    let table = Table::new(
-        rows,
-        responsive_table_widths(
-            area.width,
-            [
-                Constraint::Length(22),
-                Constraint::Length(24),
-                Constraint::Length(12),
-                Constraint::Length(10),
-            ],
-        ),
-    )
-    .header(header)
-    .block(crate::ui::components::default_block("CRDs"));
-
-    frame.render_widget(table, area);
+    let title = resource_table_title(" ", "CRDs", total, crds.len(), query_trimmed, "");
+    let widths = [
+        Constraint::Length(22),
+        Constraint::Length(24),
+        Constraint::Length(12),
+        Constraint::Length(10),
+    ];
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused: is_focused,
+            window,
+            total,
+            selected,
+        },
+        &theme,
+    );
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
 
     fn crd(name: &str, kind: &str, group: &str) -> CustomResourceDefinitionInfo {
         CustomResourceDefinitionInfo {
@@ -133,5 +150,38 @@ mod tests {
 
         let selected = selected_crd(&crds, "gadget", 0).expect("filtered selection");
         assert_eq!(selected.name, "gadgets.demo.io");
+    }
+
+    #[test]
+    fn render_crd_picker_windows_selected_row_into_view() {
+        let crds = (0..24)
+            .map(|idx| {
+                crd(
+                    &format!("kind-{idx}.demo.io"),
+                    &format!("Kind{idx}"),
+                    "demo.io",
+                )
+            })
+            .collect::<Vec<_>>();
+        let backend = TestBackend::new(60, 8);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_crd_picker(frame, frame.area(), &crds, false, 18, "", true);
+            })
+            .expect("render");
+
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+
+        assert!(out.contains("Kind18"));
+        assert!(!out.contains("Kind0"));
     }
 }

@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Cell, Paragraph, Row},
 };
 
 use crate::{
@@ -12,7 +12,10 @@ use crate::{
     icons::view_icon,
     k8s::portforward::TunnelState,
     state::port_forward::TunnelRegistry,
-    ui::{components::default_theme, contains_ci},
+    ui::{
+        TableFrame, components::default_theme, contains_ci, render_table_frame, striped_row_style,
+        table_viewport_rows, table_window,
+    },
 };
 
 pub fn render_port_forwarding(
@@ -24,11 +27,6 @@ pub fn render_port_forwarding(
     focused: bool,
 ) {
     let theme = default_theme();
-    let border_style = if focused {
-        theme.border_active_style()
-    } else {
-        theme.border_style()
-    };
     let tunnels = registry.ordered_tunnels();
 
     let items: Vec<_> = tunnels
@@ -74,15 +72,13 @@ pub fn render_port_forwarding(
         return;
     }
 
-    let rows: Vec<Row> = items
+    let total = items.len();
+    let window = table_window(total, clamped_selected, table_viewport_rows(area));
+    let rows: Vec<Row> = items[window.start..window.end]
         .iter()
         .enumerate()
-        .map(|(i, t)| {
-            let style = if i == clamped_selected {
-                theme.selection_style()
-            } else {
-                Style::default()
-            };
+        .map(|(offset, t)| {
+            let idx = window.start + offset;
             let state_str = match t.state {
                 TunnelState::Starting => "Starting",
                 TunnelState::Active => "Active",
@@ -97,7 +93,7 @@ pub fn render_port_forwarding(
                 Cell::from(t.target.remote_port.to_string()),
                 Cell::from(state_str),
             ])
-            .style(style)
+            .style(striped_row_style(idx, &theme))
         })
         .collect();
 
@@ -105,50 +101,94 @@ pub fn render_port_forwarding(
         .style(theme.header_style())
         .height(1);
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Percentage(30),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(15),
-            Constraint::Percentage(15),
-        ],
-    )
-    .header(header)
-    .block(
-        Block::default()
-            .title(Line::from(if search.is_empty() {
-                vec![
-                    Span::styled(
-                        format!(
-                            " {}Port Forwarding ",
-                            view_icon(AppView::PortForwarding).active()
-                        ),
-                        theme.title_style(),
-                    ),
-                    Span::styled(format!("({}) ", items.len()), theme.muted_style()),
-                ]
-            } else {
-                vec![
-                    Span::styled(
-                        format!(
-                            " {}Port Forwarding ",
-                            view_icon(AppView::PortForwarding).active()
-                        ),
-                        theme.title_style(),
-                    ),
-                    Span::styled(
-                        format!("({} of {}) ", items.len(), tunnels.len()),
-                        theme.muted_style(),
-                    ),
-                    Span::styled(format!("[/{search}]"), theme.muted_style()),
-                ]
-            }))
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_style),
+    let title = if search.is_empty() {
+        format!(
+            " {}Port Forwarding ({}) ",
+            view_icon(AppView::PortForwarding).active(),
+            items.len()
+        )
+    } else {
+        format!(
+            " {}Port Forwarding ({} of {}) [/{search}] ",
+            view_icon(AppView::PortForwarding).active(),
+            items.len(),
+            tunnels.len()
+        )
+    };
+    let widths = [
+        Constraint::Min(22),
+        Constraint::Length(16),
+        Constraint::Length(15),
+        Constraint::Length(8),
+        Constraint::Length(10),
+    ];
+    render_table_frame(
+        frame,
+        area,
+        TableFrame {
+            rows,
+            header,
+            widths: &widths,
+            title: &title,
+            focused,
+            window,
+            total,
+            selected: clamped_selected,
+        },
+        &theme,
     );
+}
 
-    frame.render_widget(table, area);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::{Terminal, backend::TestBackend};
+    use std::{net::SocketAddr, str::FromStr};
+
+    fn tunnel(
+        id: &str,
+        pod: &str,
+        namespace: &str,
+        port: u16,
+    ) -> crate::k8s::portforward::PortForwardTunnelInfo {
+        crate::k8s::portforward::PortForwardTunnelInfo {
+            id: id.to_string(),
+            target: crate::k8s::portforward::PortForwardTarget::new(namespace, pod, port),
+            local_addr: SocketAddr::from_str(&format!("127.0.0.1:{port}")).expect("socket"),
+            state: TunnelState::Active,
+        }
+    }
+
+    #[test]
+    fn render_port_forwarding_windows_selected_row_into_view() {
+        let mut registry = TunnelRegistry::new();
+        for idx in 0..24 {
+            registry.add_tunnel(tunnel(
+                &format!("tunnel-{idx}"),
+                &format!("pod-{idx}"),
+                "default",
+                3000 + idx as u16,
+            ));
+        }
+        let backend = TestBackend::new(72, 8);
+        let mut terminal = Terminal::new(backend).expect("terminal");
+
+        terminal
+            .draw(|frame| {
+                render_port_forwarding(frame, frame.area(), &registry, 18, "", true);
+            })
+            .expect("render");
+
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buffer.area.height {
+            for x in 0..buffer.area.width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+
+        assert!(out.contains("pod-18"));
+        assert!(!out.contains("pod-0"));
+    }
 }
