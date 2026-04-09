@@ -13,6 +13,24 @@ use crate::ui::{
     table_window,
 };
 
+const NARROW_CUSTOM_RESOURCE_WIDTH: u16 = 88;
+
+fn custom_resource_widths(area: Rect) -> [Constraint; 3] {
+    if area.width < NARROW_CUSTOM_RESOURCE_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Min(14),
+            Constraint::Length(7),
+        ]
+    } else {
+        [
+            Constraint::Min(22),
+            Constraint::Min(18),
+            Constraint::Length(8),
+        ]
+    }
+}
+
 pub fn render_custom_resources(
     frame: &mut Frame,
     area: Rect,
@@ -91,11 +109,7 @@ pub fn render_custom_resources(
     } else {
         format!("Custom Resources ({})", resources.len())
     };
-    let widths = [
-        Constraint::Min(22),
-        Constraint::Min(18),
-        Constraint::Length(8),
-    ];
+    let widths = custom_resource_widths(area);
     render_table_frame(
         frame,
         area,
@@ -147,5 +161,21 @@ mod tests {
 
         assert!(out.contains("resource-18"));
         assert!(!out.contains("resource-0"));
+    }
+
+    #[test]
+    fn custom_resource_widths_switch_to_compact_profile() {
+        let widths = custom_resource_widths(Rect::new(0, 0, 80, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Min(14));
+        assert_eq!(widths[2], Constraint::Length(7));
+    }
+
+    #[test]
+    fn custom_resource_widths_keep_wide_profile() {
+        let widths = custom_resource_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(22));
+        assert_eq!(widths[1], Constraint::Min(18));
+        assert_eq!(widths[2], Constraint::Length(8));
     }
 }

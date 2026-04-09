@@ -18,6 +18,28 @@ use crate::{
     },
 };
 
+const NARROW_PORT_FORWARD_WIDTH: u16 = 96;
+
+fn port_forward_widths(area: Rect) -> [Constraint; 5] {
+    if area.width < NARROW_PORT_FORWARD_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(12),
+            Constraint::Length(12),
+            Constraint::Length(7),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Min(22),
+            Constraint::Length(16),
+            Constraint::Length(15),
+            Constraint::Length(8),
+            Constraint::Length(10),
+        ]
+    }
+}
+
 pub fn render_port_forwarding(
     frame: &mut Frame,
     area: Rect,
@@ -115,13 +137,7 @@ pub fn render_port_forwarding(
             tunnels.len()
         )
     };
-    let widths = [
-        Constraint::Min(22),
-        Constraint::Length(16),
-        Constraint::Length(15),
-        Constraint::Length(8),
-        Constraint::Length(10),
-    ];
+    let widths = port_forward_widths(area);
     render_table_frame(
         frame,
         area,
@@ -190,5 +206,21 @@ mod tests {
 
         assert!(out.contains("pod-18"));
         assert!(!out.contains("pod-0"));
+    }
+
+    #[test]
+    fn port_forward_widths_switch_to_compact_profile() {
+        let widths = port_forward_widths(Rect::new(0, 0, 88, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(12));
+        assert_eq!(widths[4], Constraint::Length(8));
+    }
+
+    #[test]
+    fn port_forward_widths_keep_wide_profile() {
+        let widths = port_forward_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(22));
+        assert_eq!(widths[1], Constraint::Length(16));
+        assert_eq!(widths[4], Constraint::Length(10));
     }
 }
