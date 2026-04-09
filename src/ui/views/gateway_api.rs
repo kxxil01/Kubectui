@@ -30,6 +30,9 @@ use crate::{
 };
 
 const NARROW_GATEWAY_ROUTE_WIDTH: u16 = 96;
+const NARROW_GATEWAY_CLASS_WIDTH: u16 = 96;
+const NARROW_GATEWAY_WIDTH: u16 = 104;
+const NARROW_REFERENCE_GRANT_WIDTH: u16 = 96;
 
 fn gateway_route_widths(area: Rect) -> [Constraint; 6] {
     if area.width < NARROW_GATEWAY_ROUTE_WIDTH {
@@ -53,6 +56,66 @@ fn gateway_route_widths(area: Rect) -> [Constraint; 6] {
     }
 }
 
+fn gateway_class_widths(area: Rect) -> [Constraint; 4] {
+    if area.width < NARROW_GATEWAY_CLASS_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Min(24),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Percentage(26),
+            Constraint::Percentage(48),
+            Constraint::Percentage(12),
+            Constraint::Percentage(14),
+        ]
+    }
+}
+
+fn gateway_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_GATEWAY_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Min(14),
+            Constraint::Min(16),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Percentage(20),
+            Constraint::Percentage(16),
+            Constraint::Percentage(18),
+            Constraint::Percentage(22),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+        ]
+    }
+}
+
+fn reference_grant_widths(area: Rect) -> [Constraint; 5] {
+    if area.width < NARROW_REFERENCE_GRANT_WIDTH {
+        [
+            Constraint::Min(20),
+            Constraint::Length(14),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(7),
+        ]
+    } else {
+        [
+            Constraint::Percentage(22),
+            Constraint::Percentage(18),
+            Constraint::Percentage(18),
+            Constraint::Percentage(26),
+            Constraint::Percentage(16),
+        ]
+    }
+}
+
 pub fn render_gateway_classes(
     frame: &mut Frame,
     area: Rect,
@@ -65,12 +128,7 @@ pub fn render_gateway_classes(
     let theme = default_theme();
     let query = search.trim();
     let indices = filtered_gateway_class_indices(&snapshot.gateway_classes, query);
-    let widths = [
-        Constraint::Percentage(26),
-        Constraint::Percentage(48),
-        Constraint::Percentage(12),
-        Constraint::Percentage(14),
-    ];
+    let widths = gateway_class_widths(area);
     render_resource_table(
         frame,
         area,
@@ -147,14 +205,7 @@ pub fn render_gateways(
     let theme = default_theme();
     let query = search.trim();
     let indices = filtered_gateway_indices(&snapshot.gateways, query);
-    let widths = [
-        Constraint::Percentage(20),
-        Constraint::Percentage(16),
-        Constraint::Percentage(18),
-        Constraint::Percentage(22),
-        Constraint::Percentage(12),
-        Constraint::Percentage(12),
-    ];
+    let widths = gateway_widths(area);
     render_resource_table(
         frame,
         area,
@@ -411,13 +462,7 @@ pub fn render_reference_grants(
     let theme = default_theme();
     let query = search.trim();
     let indices = filtered_reference_grant_indices(&snapshot.reference_grants, query);
-    let widths = [
-        Constraint::Percentage(22),
-        Constraint::Percentage(18),
-        Constraint::Percentage(18),
-        Constraint::Percentage(26),
-        Constraint::Percentage(16),
-    ];
+    let widths = reference_grant_widths(area);
     render_resource_table(
         frame,
         area,
@@ -587,5 +632,29 @@ mod tests {
         let widths = gateway_route_widths(Rect::new(0, 0, 120, 20));
         assert_eq!(widths[0], Constraint::Percentage(20));
         assert_eq!(widths[2], Constraint::Percentage(28));
+    }
+
+    #[test]
+    fn gateway_class_widths_switch_to_compact_profile() {
+        let widths = gateway_class_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Min(24));
+        assert_eq!(widths[2], Constraint::Length(8));
+    }
+
+    #[test]
+    fn gateway_widths_switch_to_compact_profile() {
+        let widths = gateway_widths(Rect::new(0, 0, 92, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[3], Constraint::Min(16));
+    }
+
+    #[test]
+    fn reference_grant_widths_switch_to_compact_profile() {
+        let widths = reference_grant_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(20));
+        assert_eq!(widths[2], Constraint::Length(8));
+        assert_eq!(widths[4], Constraint::Length(7));
     }
 }

@@ -25,6 +25,26 @@ use crate::{
     },
 };
 
+const NARROW_PRIORITY_CLASS_WIDTH: u16 = 96;
+
+fn priority_class_widths(area: Rect) -> [Constraint; 4] {
+    if area.width < NARROW_PRIORITY_CLASS_WIDTH {
+        [
+            Constraint::Min(20),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Min(18),
+        ]
+    } else {
+        [
+            Constraint::Percentage(30),
+            Constraint::Percentage(10),
+            Constraint::Percentage(15),
+            Constraint::Percentage(45),
+        ]
+    }
+}
+
 // ── PriorityClass derived cell cache ────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,12 +123,7 @@ pub fn render_priority_classes(
     );
 
     let derived = cached_priority_class_derived(cluster, query, &indices);
-    let widths = [
-        Constraint::Percentage(30),
-        Constraint::Percentage(10),
-        Constraint::Percentage(15),
-        Constraint::Percentage(45),
-    ];
+    let widths = priority_class_widths(area);
     render_resource_table(
         frame,
         area,
@@ -186,4 +201,24 @@ pub fn render_priority_classes(
                 .collect()
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn priority_class_widths_switch_to_compact_profile() {
+        let widths = priority_class_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(20));
+        assert_eq!(widths[1], Constraint::Length(8));
+        assert_eq!(widths[3], Constraint::Min(18));
+    }
+
+    #[test]
+    fn priority_class_widths_keep_wide_profile() {
+        let widths = priority_class_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(30));
+        assert_eq!(widths[3], Constraint::Percentage(45));
+    }
 }
