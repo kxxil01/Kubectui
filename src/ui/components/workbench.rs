@@ -71,6 +71,15 @@ fn centered_window(total: usize, selected: usize, viewport_rows: usize) -> Visib
     }
 }
 
+#[inline]
+fn clamp_picker_cursor(total: usize, cursor: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        cursor.min(total.saturating_sub(1))
+    }
+}
+
 fn use_stacked_connectivity_layout(area: Rect) -> bool {
     area.width < STACKED_CONNECTIVITY_WIDTH
 }
@@ -2171,9 +2180,11 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
     if viewer.picking_container {
         let has_all = viewer.containers.len() > 1;
         let mut entries: Vec<Line> = Vec::new();
+        let total = viewer.containers.len() + usize::from(has_all);
+        let selected = clamp_picker_cursor(total, viewer.container_cursor);
 
         if has_all {
-            let selected = viewer.container_cursor == 0;
+            let selected = selected == 0;
             entries.push(Line::from(vec![
                 Span::raw(if selected { "> " } else { "  " }),
                 Span::styled(
@@ -2189,7 +2200,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
 
         for (idx, container) in viewer.containers.iter().enumerate() {
             let picker_idx = if has_all { idx + 1 } else { idx };
-            let selected = picker_idx == viewer.container_cursor;
+            let selected = picker_idx == selected;
             entries.push(Line::from(vec![
                 Span::raw(if selected { "> " } else { "  " }),
                 Span::styled(
@@ -2203,8 +2214,6 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
             ]));
         }
 
-        let total = entries.len();
-        let selected = viewer.container_cursor.min(total.saturating_sub(1));
         let window = centered_window(total, selected, log_area.height.max(1) as usize);
         frame.render_widget(
             Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
@@ -2678,12 +2687,14 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
     }
 
     if tab.picking_container {
+        let total = tab.containers.len();
+        let selected = clamp_picker_cursor(total, tab.container_cursor);
         let entries: Vec<Line> = tab
             .containers
             .iter()
             .enumerate()
             .map(|(idx, container)| {
-                let selected = idx == tab.container_cursor;
+                let selected = idx == selected;
                 Line::from(vec![
                     Span::raw(if selected { "> " } else { "  " }),
                     Span::styled(
@@ -2697,8 +2708,6 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
                 ])
             })
             .collect();
-        let total = entries.len();
-        let selected = tab.container_cursor.min(total.saturating_sub(1));
         let window = centered_window(total, selected, sections[1].height.max(1) as usize);
         frame.render_widget(
             Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
@@ -3268,6 +3277,13 @@ mod tests {
         let window = centered_window(9, 7, 3);
         assert!(window.start <= 7);
         assert!(window.end > 7);
+    }
+
+    #[test]
+    fn clamp_picker_cursor_clamps_stale_selection() {
+        assert_eq!(super::clamp_picker_cursor(0, 9), 0);
+        assert_eq!(super::clamp_picker_cursor(3, 9), 2);
+        assert_eq!(super::clamp_picker_cursor(3, 1), 1);
     }
 
     #[test]
