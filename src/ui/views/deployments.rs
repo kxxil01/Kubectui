@@ -68,7 +68,11 @@ pub fn render_deployments(
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
     let derived = cached_deployment_derived(snapshot, query, indices.as_ref(), cache_variant);
-    let widths = crate::columns::visible_constraints(visible_columns);
+    let widths = crate::columns::visible_constraints_for_area(
+        AppView::Deployments,
+        visible_columns,
+        area.width,
+    );
     let sort_suffix = workload_sort_suffix(sort);
 
     render_resource_table(

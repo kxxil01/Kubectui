@@ -20,6 +20,36 @@ use crate::{
     },
 };
 
+const NARROW_VULNERABILITY_WIDTH: u16 = 116;
+
+fn vulnerability_widths(area: Rect) -> [Constraint; 9] {
+    if area.width < NARROW_VULNERABILITY_WIDTH {
+        [
+            Constraint::Length(3),
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(12),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Min(18),
+        ]
+    } else {
+        [
+            Constraint::Length(3),
+            Constraint::Length(22),
+            Constraint::Length(18),
+            Constraint::Length(16),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Min(22),
+        ]
+    }
+}
+
 pub fn render_vulnerabilities(
     frame: &mut Frame,
     area: Rect,
@@ -32,17 +62,7 @@ pub fn render_vulnerabilities(
     let query = search.trim();
     let findings = compute_vulnerability_findings(cluster);
     let indices = filtered_vulnerability_indices(&findings, query);
-    let widths = [
-        Constraint::Length(3),
-        Constraint::Length(22),
-        Constraint::Length(18),
-        Constraint::Length(16),
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Min(22),
-    ];
+    let widths = vulnerability_widths(area);
 
     render_resource_table(
         frame,
@@ -147,4 +167,26 @@ pub fn render_vulnerabilities(
                 .collect()
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vulnerability_widths_switch_to_compact_profile() {
+        let widths = vulnerability_widths(Rect::new(0, 0, 104, 20));
+        assert_eq!(widths[0], Constraint::Length(3));
+        assert_eq!(widths[1], Constraint::Min(18));
+        assert_eq!(widths[7], Constraint::Length(6));
+        assert_eq!(widths[8], Constraint::Min(18));
+    }
+
+    #[test]
+    fn vulnerability_widths_keep_wide_profile() {
+        let widths = vulnerability_widths(Rect::new(0, 0, 140, 20));
+        assert_eq!(widths[1], Constraint::Length(22));
+        assert_eq!(widths[3], Constraint::Length(16));
+        assert_eq!(widths[8], Constraint::Min(22));
+    }
 }

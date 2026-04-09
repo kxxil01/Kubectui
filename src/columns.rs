@@ -398,6 +398,37 @@ pub fn visible_constraints(columns: &[ColumnDef]) -> Vec<Constraint> {
     columns.iter().map(|c| c.default_width).collect()
 }
 
+const NARROW_DEPLOYMENT_WIDTH: u16 = 104;
+
+fn compact_constraint_for_view(view: AppView, area_width: u16, id: &str) -> Option<Constraint> {
+    match view {
+        AppView::Deployments if area_width < NARROW_DEPLOYMENT_WIDTH => Some(match id {
+            "name" => Constraint::Min(18),
+            "namespace" => Constraint::Length(14),
+            "ready" => Constraint::Length(8),
+            "updated" => Constraint::Length(7),
+            "available" => Constraint::Length(8),
+            "age" => Constraint::Length(8),
+            "image" => Constraint::Min(16),
+            _ => return None,
+        }),
+        _ => None,
+    }
+}
+
+pub fn visible_constraints_for_area(
+    view: AppView,
+    columns: &[ColumnDef],
+    area_width: u16,
+) -> Vec<Constraint> {
+    columns
+        .iter()
+        .map(|column| {
+            compact_constraint_for_view(view, area_width, column.id).unwrap_or(column.default_width)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,6 +534,24 @@ mod tests {
         let visible = resolve_columns(TEST_COLS, &prefs);
         let constraints = visible_constraints(&visible);
         assert_eq!(constraints.len(), 4);
+    }
+
+    #[test]
+    fn deployment_constraints_switch_to_compact_profile() {
+        let constraints =
+            visible_constraints_for_area(AppView::Deployments, DEPLOYMENT_COLUMNS, 96);
+        assert_eq!(constraints[0], Constraint::Min(18));
+        assert_eq!(constraints[1], Constraint::Length(14));
+        assert_eq!(constraints[6], Constraint::Min(16));
+    }
+
+    #[test]
+    fn deployment_constraints_keep_wide_profile() {
+        let constraints =
+            visible_constraints_for_area(AppView::Deployments, DEPLOYMENT_COLUMNS, 132);
+        assert_eq!(constraints[0], Constraint::Length(24));
+        assert_eq!(constraints[4], Constraint::Length(11));
+        assert_eq!(constraints[6], Constraint::Min(20));
     }
 
     #[test]
