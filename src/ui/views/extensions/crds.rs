@@ -13,6 +13,26 @@ use crate::ui::{
     striped_row_style, table_viewport_rows, table_window,
 };
 
+const NARROW_CRD_WIDTH: u16 = 96;
+
+fn crd_widths(area: Rect) -> [Constraint; 4] {
+    if area.width < NARROW_CRD_WIDTH {
+        [
+            Constraint::Min(16),
+            Constraint::Min(16),
+            Constraint::Length(10),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Length(22),
+            Constraint::Length(24),
+            Constraint::Length(12),
+            Constraint::Length(10),
+        ]
+    }
+}
+
 pub fn filtered_crd_indices(crds: &[CustomResourceDefinitionInfo], query: &str) -> Vec<usize> {
     let query = query.trim();
 
@@ -101,12 +121,7 @@ pub fn render_crd_picker(
     .height(1);
 
     let title = resource_table_title(" ", "CRDs", total, crds.len(), query_trimmed, "");
-    let widths = [
-        Constraint::Length(22),
-        Constraint::Length(24),
-        Constraint::Length(12),
-        Constraint::Length(10),
-    ];
+    let widths = crd_widths(area);
     render_table_frame(
         frame,
         area,
@@ -183,5 +198,23 @@ mod tests {
 
         assert!(out.contains("Kind18"));
         assert!(!out.contains("Kind0"));
+    }
+
+    #[test]
+    fn crd_widths_switch_to_compact_profile() {
+        let widths = crd_widths(Rect::new(0, 0, 88, 20));
+        assert_eq!(widths[0], Constraint::Min(16));
+        assert_eq!(widths[1], Constraint::Min(16));
+        assert_eq!(widths[2], Constraint::Length(10));
+        assert_eq!(widths[3], Constraint::Length(8));
+    }
+
+    #[test]
+    fn crd_widths_keep_wide_profile() {
+        let widths = crd_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Length(22));
+        assert_eq!(widths[1], Constraint::Length(24));
+        assert_eq!(widths[2], Constraint::Length(12));
+        assert_eq!(widths[3], Constraint::Length(10));
     }
 }

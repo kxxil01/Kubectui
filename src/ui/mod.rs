@@ -1991,7 +1991,8 @@ fn render_pods_widget(
         )
     };
 
-    let constraints = crate::columns::visible_constraints(visible_columns);
+    let constraints =
+        crate::columns::visible_constraints_for_area(AppView::Pods, visible_columns, area.width);
     let table = Table::new(rows, responsive_table_widths_vec(area.width, &constraints))
         .header(header)
         .block(block)

@@ -50,6 +50,7 @@ static DASHBOARD_CACHE: LazyLock<Mutex<Option<DashboardCache>>> =
 
 const NARROW_DASHBOARD_WIDTH: u16 = 84;
 const COMPACT_GAUGE_WIDTH: u16 = 72;
+const NARROW_NAMESPACE_UTIL_WIDTH: u16 = 88;
 
 fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
     let mut guard = DASHBOARD_CACHE.lock().unwrap_or_else(|e| e.into_inner());
@@ -124,6 +125,32 @@ fn truncate_label(s: &str, max_chars: usize) -> Cow<'_, str> {
 
 fn use_narrow_dashboard_layout(area: Rect) -> bool {
     area.width < NARROW_DASHBOARD_WIDTH
+}
+
+fn namespace_util_widths(area: Rect) -> [Constraint; 8] {
+    if area.width < NARROW_NAMESPACE_UTIL_WIDTH {
+        [
+            Constraint::Min(14),
+            Constraint::Length(5),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Length(9),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Min(9),
+        ]
+    } else {
+        [
+            Constraint::Min(16),
+            Constraint::Length(6),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(11),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Min(11),
+        ]
+    }
 }
 
 fn compact_gauge_line<'a>(label: &'a str, pct: u64, theme: &Theme) -> Line<'a> {
@@ -1071,21 +1098,9 @@ fn render_namespace_utilization(
         })
         .collect();
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Min(16),    // Namespace
-            Constraint::Length(6),  // Pods
-            Constraint::Length(9),  // CPU Use
-            Constraint::Length(9),  // CPU Req
-            Constraint::Length(11), // %CPU/R (bar + pct)
-            Constraint::Length(9),  // Mem Use
-            Constraint::Length(9),  // Mem Req
-            Constraint::Min(11),    // %MEM/R (bar + pct, stretches)
-        ],
-    )
-    .header(header)
-    .block(block);
+    let table = Table::new(rows, namespace_util_widths(area))
+        .header(header)
+        .block(block);
 
     frame.render_widget(table, area);
 }
@@ -1154,4 +1169,27 @@ fn render_alerts(frame: &mut Frame, area: Rect, alerts: &[AlertItem], theme: &Th
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespace_util_widths_switch_to_compact_profile() {
+        let widths = namespace_util_widths(Rect::new(0, 0, 80, 20));
+        assert_eq!(widths[0], Constraint::Min(14));
+        assert_eq!(widths[1], Constraint::Length(5));
+        assert_eq!(widths[4], Constraint::Length(9));
+        assert_eq!(widths[7], Constraint::Min(9));
+    }
+
+    #[test]
+    fn namespace_util_widths_keep_wide_profile() {
+        let widths = namespace_util_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(16));
+        assert_eq!(widths[1], Constraint::Length(6));
+        assert_eq!(widths[4], Constraint::Length(11));
+        assert_eq!(widths[7], Constraint::Min(11));
+    }
 }

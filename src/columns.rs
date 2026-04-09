@@ -398,11 +398,26 @@ pub fn visible_constraints(columns: &[ColumnDef]) -> Vec<Constraint> {
     columns.iter().map(|c| c.default_width).collect()
 }
 
+const NARROW_POD_WIDTH: u16 = 112;
 const NARROW_DEPLOYMENT_WIDTH: u16 = 104;
 const NARROW_NODE_WIDTH: u16 = 104;
 
 fn compact_constraint_for_view(view: AppView, area_width: u16, id: &str) -> Option<Constraint> {
     match view {
+        AppView::Pods if area_width < NARROW_POD_WIDTH => Some(match id {
+            "name" => Constraint::Min(18),
+            "namespace" => Constraint::Length(14),
+            "ip" => Constraint::Length(12),
+            "status" => Constraint::Min(16),
+            "node" => Constraint::Length(14),
+            "restarts" => Constraint::Length(8),
+            "age" => Constraint::Length(8),
+            "cpu_usage" | "mem_usage" | "cpu_req" | "mem_req" | "cpu_lim" | "mem_lim" => {
+                Constraint::Length(8)
+            }
+            "cpu_pct_req" | "mem_pct_req" | "cpu_pct_lim" | "mem_pct_lim" => Constraint::Length(7),
+            _ => return None,
+        }),
         AppView::Deployments if area_width < NARROW_DEPLOYMENT_WIDTH => Some(match id {
             "name" => Constraint::Min(18),
             "namespace" => Constraint::Length(14),
@@ -553,6 +568,24 @@ mod tests {
         assert_eq!(constraints[0], Constraint::Min(18));
         assert_eq!(constraints[1], Constraint::Length(14));
         assert_eq!(constraints[6], Constraint::Min(16));
+    }
+
+    #[test]
+    fn pod_constraints_switch_to_compact_profile() {
+        let constraints = visible_constraints_for_area(AppView::Pods, POD_COLUMNS, 104);
+        assert_eq!(constraints[0], Constraint::Min(18));
+        assert_eq!(constraints[1], Constraint::Length(14));
+        assert_eq!(constraints[3], Constraint::Min(16));
+        assert_eq!(constraints[6], Constraint::Length(8));
+    }
+
+    #[test]
+    fn pod_constraints_keep_wide_profile() {
+        let constraints = visible_constraints_for_area(AppView::Pods, POD_COLUMNS, 140);
+        assert_eq!(constraints[0], Constraint::Min(28));
+        assert_eq!(constraints[1], Constraint::Length(18));
+        assert_eq!(constraints[4], Constraint::Length(22));
+        assert_eq!(constraints[6], Constraint::Length(9));
     }
 
     #[test]
