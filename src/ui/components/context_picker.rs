@@ -1,13 +1,13 @@
 //! Context (kubeconfig) picker modal component.
 
-use crate::ui::contains_ci;
+use crate::ui::{contains_ci, table_window};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Style},
     style::Modifier,
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph},
 };
 
 /// Actions emitted by context picker keyboard handling.
@@ -272,7 +272,15 @@ impl ContextPicker {
             .border_type(BorderType::Rounded)
             .border_style(theme.border_style())
             .style(Style::default().bg(theme.bg));
-        frame.render_widget(List::new(items).block(list_block), chunks[2]);
+        let selected =
+            (!contexts.is_empty()).then_some(self.selected_index.min(contexts.len() - 1));
+        let offset = selected
+            .map(|selected_index| context_picker_offset(contexts.len(), selected_index, chunks[2]))
+            .unwrap_or_default();
+        let mut state = ListState::default()
+            .with_selected(selected)
+            .with_offset(offset);
+        frame.render_stateful_widget(List::new(items).block(list_block), chunks[2], &mut state);
 
         let footer_line = Line::from(vec![
             if compact {
@@ -312,6 +320,15 @@ impl ContextPicker {
             .style(Style::default().bg(theme.statusbar_bg));
         frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
     }
+}
+
+fn context_picker_offset(total: usize, selected: usize, area: Rect) -> usize {
+    table_window(
+        total,
+        selected,
+        usize::from(area.height.saturating_sub(2)).max(1),
+    )
+    .start
 }
 
 #[cfg(test)]
@@ -429,5 +446,11 @@ mod tests {
         assert!(!use_compact_context_picker_layout(context_picker_popup(
             Rect::new(0, 0, 120, 40,)
         )));
+    }
+
+    #[test]
+    fn context_picker_offset_keeps_selection_visible() {
+        let area = Rect::new(0, 0, 40, 6);
+        assert_eq!(context_picker_offset(10, 8, area), 6);
     }
 }

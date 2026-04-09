@@ -2170,34 +2170,47 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
 
     if viewer.picking_container {
         let has_all = viewer.containers.len() > 1;
-        let mut lines: Vec<Line> = Vec::new();
+        let mut entries: Vec<Line> = Vec::new();
 
         if has_all {
-            let prefix = if viewer.container_cursor == 0 {
-                ">"
-            } else {
-                " "
-            };
-            lines.push(Line::from(vec![
-                Span::raw(format!("{prefix} ")),
+            let selected = viewer.container_cursor == 0;
+            entries.push(Line::from(vec![
+                Span::raw(if selected { "> " } else { "  " }),
                 Span::styled(
-                    " All Containers",
-                    Style::default().add_modifier(Modifier::BOLD),
+                    "All Containers",
+                    if selected {
+                        theme.selection_style().add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    },
                 ),
             ]));
         }
 
         for (idx, container) in viewer.containers.iter().enumerate() {
             let picker_idx = if has_all { idx + 1 } else { idx };
-            let prefix = if picker_idx == viewer.container_cursor {
-                ">"
-            } else {
-                " "
-            };
-            lines.push(Line::from(format!("{prefix} {container}")));
+            let selected = picker_idx == viewer.container_cursor;
+            entries.push(Line::from(vec![
+                Span::raw(if selected { "> " } else { "  " }),
+                Span::styled(
+                    container.clone(),
+                    if selected {
+                        theme.selection_style()
+                    } else {
+                        Style::default().fg(theme.fg)
+                    },
+                ),
+            ]));
         }
 
-        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
+        let total = entries.len();
+        let selected = viewer.container_cursor.min(total.saturating_sub(1));
+        let window = centered_window(total, selected, log_area.height.max(1) as usize);
+        frame.render_widget(
+            Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
+            log_area,
+        );
+        render_scrollbar(frame, log_area, total, window.start);
         return;
     }
 
@@ -3231,6 +3244,13 @@ mod tests {
             centered_window(10, 8, 3),
             VisibleWindow { start: 7, end: 10 }
         );
+    }
+
+    #[test]
+    fn log_container_picker_window_keeps_cursor_visible() {
+        let window = centered_window(12, 10, 4);
+        assert!(window.start <= 10);
+        assert!(window.end > 10);
     }
 
     #[test]
