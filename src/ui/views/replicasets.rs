@@ -27,6 +27,32 @@ use crate::{
     },
 };
 
+const NARROW_CONTROLLER_TABLE_WIDTH: u16 = 96;
+
+pub(crate) fn controller_workload_widths(area: Rect) -> [Constraint; 7] {
+    if area.width < NARROW_CONTROLLER_TABLE_WIDTH {
+        [
+            Constraint::Min(20),
+            Constraint::Length(14),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Length(8),
+            Constraint::Min(18),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Length(28),
+            Constraint::Length(16),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(11),
+            Constraint::Min(24),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ReplicaSetDerivedCell {
     image: String,
@@ -63,15 +89,7 @@ pub fn render_replicasets(
     let dim_style = Style::default().fg(theme.fg_dim);
     let muted_style = Style::default().fg(theme.muted);
     let derived = cached_replicaset_derived(cluster, query, indices.as_ref(), cache_variant);
-    let widths = [
-        Constraint::Length(28),
-        Constraint::Length(16),
-        Constraint::Length(9),
-        Constraint::Length(9),
-        Constraint::Length(11),
-        Constraint::Min(24),
-        Constraint::Length(9),
-    ];
+    let widths = controller_workload_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -197,5 +215,12 @@ mod tests {
         assert_eq!(readiness_style(3, 3, &theme).fg, Some(theme.success));
         assert_eq!(readiness_style(1, 3, &theme).fg, Some(theme.warning));
         assert_eq!(readiness_style(0, 3, &theme).fg, Some(theme.error));
+    }
+
+    #[test]
+    fn controller_workload_widths_switch_to_compact_profile() {
+        let widths = controller_workload_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(20));
+        assert_eq!(widths[5], Constraint::Min(18));
     }
 }

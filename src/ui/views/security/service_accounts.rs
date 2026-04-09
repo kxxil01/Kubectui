@@ -25,6 +25,30 @@ use crate::{
     },
 };
 
+const NARROW_SERVICE_ACCOUNT_WIDTH: u16 = 96;
+
+fn service_account_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_SERVICE_ACCOUNT_WIDTH {
+        [
+            Constraint::Min(20),
+            Constraint::Length(14),
+            Constraint::Length(7),
+            Constraint::Length(8),
+            Constraint::Length(9),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Length(26),
+            Constraint::Length(18),
+            Constraint::Length(9),
+            Constraint::Length(13),
+            Constraint::Length(11),
+            Constraint::Fill(1),
+        ]
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ServiceAccountDerivedCell {
     age: String,
@@ -65,14 +89,7 @@ pub fn render_service_accounts(
     let even_row_style = Style::default().bg(theme.bg);
     let odd_row_style = theme.row_alt_style();
     let age_style = theme.inactive_style();
-    let widths = [
-        Constraint::Length(26),
-        Constraint::Length(18),
-        Constraint::Length(9),
-        Constraint::Length(13),
-        Constraint::Length(11),
-        Constraint::Fill(1),
-    ];
+    let widths = service_account_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -201,5 +218,24 @@ fn automount_label(value: Option<bool>) -> &'static str {
         Some(true) => "true",
         Some(false) => "false",
         None => "—",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn service_account_widths_switch_to_compact_profile() {
+        let widths = service_account_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(20));
+        assert_eq!(widths[4], Constraint::Length(9));
+    }
+
+    #[test]
+    fn service_account_widths_keep_wide_profile_on_large_area() {
+        let widths = service_account_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Length(26));
+        assert_eq!(widths[5], Constraint::Fill(1));
     }
 }

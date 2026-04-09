@@ -3,11 +3,13 @@
 use std::{borrow::Cow, sync::LazyLock};
 
 use ratatui::{
-    layout::{Constraint, Rect},
+    layout::Rect,
     prelude::{Frame, Style},
     text::Span,
     widgets::{Cell, Row},
 };
+
+use super::replicasets::controller_workload_widths;
 
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
@@ -66,15 +68,7 @@ pub fn render_replication_controllers(
     let muted_style = Style::default().fg(theme.muted);
     let derived =
         cached_replication_controller_derived(cluster, query, indices.as_ref(), cache_variant);
-    let widths = [
-        Constraint::Length(28),
-        Constraint::Length(16),
-        Constraint::Length(9),
-        Constraint::Length(9),
-        Constraint::Length(11),
-        Constraint::Min(24),
-        Constraint::Length(9),
-    ];
+    let widths = controller_workload_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -208,5 +202,12 @@ mod tests {
         assert_eq!(readiness_style(2, 2, &theme).fg, Some(theme.success));
         assert_eq!(readiness_style(1, 2, &theme).fg, Some(theme.warning));
         assert_eq!(readiness_style(0, 2, &theme).fg, Some(theme.error));
+    }
+
+    #[test]
+    fn replication_controllers_use_shared_compact_width_profile() {
+        let widths = controller_workload_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[1], ratatui::layout::Constraint::Length(14));
+        assert_eq!(widths[6], ratatui::layout::Constraint::Length(8));
     }
 }

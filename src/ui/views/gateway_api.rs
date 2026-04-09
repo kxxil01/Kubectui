@@ -29,6 +29,30 @@ use crate::{
     },
 };
 
+const NARROW_GATEWAY_ROUTE_WIDTH: u16 = 96;
+
+fn gateway_route_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_GATEWAY_ROUTE_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Min(22),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Percentage(20),
+            Constraint::Percentage(16),
+            Constraint::Percentage(28),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+            Constraint::Percentage(12),
+        ]
+    }
+}
+
 pub fn render_gateway_classes(
     frame: &mut Frame,
     area: Rect,
@@ -300,14 +324,7 @@ fn render_route_table<T, Filter, Resource, Name, Namespace, Version, Hosts, Pare
     let theme = default_theme();
     let query = search.trim();
     let indices = filter(query);
-    let widths = [
-        Constraint::Percentage(20),
-        Constraint::Percentage(16),
-        Constraint::Percentage(28),
-        Constraint::Percentage(12),
-        Constraint::Percentage(12),
-        Constraint::Percentage(12),
-    ];
+    let widths = gateway_route_widths(area);
     render_resource_table(
         frame,
         area,
@@ -551,5 +568,24 @@ fn accepted_style(value: Option<bool>, theme: &crate::ui::theme::Theme) -> Style
         Some(true) => Style::default().fg(theme.success),
         Some(false) => Style::default().fg(theme.error),
         None => Style::default().fg(theme.warning),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gateway_route_widths_switch_to_compact_profile() {
+        let widths = gateway_route_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Min(22));
+    }
+
+    #[test]
+    fn gateway_route_widths_keep_wide_profile_on_large_area() {
+        let widths = gateway_route_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(20));
+        assert_eq!(widths[2], Constraint::Percentage(28));
     }
 }
