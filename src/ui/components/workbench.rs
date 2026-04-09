@@ -2678,23 +2678,33 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
     }
 
     if tab.picking_container {
-        let lines: Vec<Line> = tab
+        let entries: Vec<Line> = tab
             .containers
             .iter()
             .enumerate()
             .map(|(idx, container)| {
-                let prefix = if idx == tab.container_cursor {
-                    ">"
-                } else {
-                    " "
-                };
-                Line::from(format!("{prefix} {container}"))
+                let selected = idx == tab.container_cursor;
+                Line::from(vec![
+                    Span::raw(if selected { "> " } else { "  " }),
+                    Span::styled(
+                        container.clone(),
+                        if selected {
+                            theme.selection_style()
+                        } else {
+                            Style::default().fg(theme.fg)
+                        },
+                    ),
+                ])
             })
             .collect();
+        let total = entries.len();
+        let selected = tab.container_cursor.min(total.saturating_sub(1));
+        let window = centered_window(total, selected, sections[1].height.max(1) as usize);
         frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
             sections[1],
         );
+        render_scrollbar(frame, sections[1], total, window.start);
     } else {
         let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
         if total == 0 {
@@ -3251,6 +3261,13 @@ mod tests {
         let window = centered_window(12, 10, 4);
         assert!(window.start <= 10);
         assert!(window.end > 10);
+    }
+
+    #[test]
+    fn exec_container_picker_window_keeps_cursor_visible() {
+        let window = centered_window(9, 7, 3);
+        assert!(window.start <= 7);
+        assert!(window.end > 7);
     }
 
     #[test]
