@@ -880,32 +880,6 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
 
 fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
-    let popup = centered_rect(48, 24, parent);
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .title(Span::styled(
-            " Confirm Delete ",
-            theme.badge_error_style().add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_active_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(block, popup);
-
-    let inner = Rect {
-        x: popup.x + 1,
-        y: popup.y + 1,
-        width: popup.width.saturating_sub(2),
-        height: popup.height.saturating_sub(2),
-    };
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(2)])
-        .split(inner);
-
     let resource_label = detail_state
         .resource
         .as_ref()
@@ -925,13 +899,6 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
             theme.inactive_style(),
         )),
     ];
-    frame.render_widget(
-        Paragraph::new(body)
-            .wrap(Wrap { trim: false })
-            .alignment(ratatui::layout::Alignment::Center),
-        rows[0],
-    );
-
     let footer = Line::from(vec![
         Span::styled(" [D] / [y] / [Enter] ", theme.keybind_key_style()),
         Span::styled("Confirm  ", theme.keybind_desc_style()),
@@ -940,40 +907,19 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
     ]);
-    frame.render_widget(
-        Paragraph::new(footer).alignment(ratatui::layout::Alignment::Center),
-        rows[1],
+    render_detail_confirm_dialog(
+        frame,
+        parent,
+        48,
+        " Confirm Delete ",
+        theme.badge_error_style().add_modifier(Modifier::BOLD),
+        body,
+        footer,
     );
 }
 
 fn render_drain_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
-    let popup = centered_rect(52, 24, parent);
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .title(Span::styled(
-            " Confirm Drain ",
-            theme.badge_warning_style().add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_active_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(block, popup);
-
-    let inner = Rect {
-        x: popup.x + 1,
-        y: popup.y + 1,
-        width: popup.width.saturating_sub(2),
-        height: popup.height.saturating_sub(2),
-    };
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(2)])
-        .split(inner);
-
     let node_name = detail_state
         .resource
         .as_ref()
@@ -993,13 +939,6 @@ fn render_drain_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailVi
             theme.inactive_style(),
         )),
     ];
-    frame.render_widget(
-        Paragraph::new(body)
-            .wrap(Wrap { trim: false })
-            .alignment(ratatui::layout::Alignment::Center),
-        rows[0],
-    );
-
     let footer = Line::from(vec![
         Span::styled(" [D] / [y] / [Enter] ", theme.keybind_key_style()),
         Span::styled("Drain  ", theme.keybind_desc_style()),
@@ -1008,17 +947,19 @@ fn render_drain_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailVi
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
     ]);
-    frame.render_widget(
-        Paragraph::new(footer).alignment(ratatui::layout::Alignment::Center),
-        rows[1],
+    render_detail_confirm_dialog(
+        frame,
+        parent,
+        52,
+        " Confirm Drain ",
+        theme.badge_warning_style().add_modifier(Modifier::BOLD),
+        body,
+        footer,
     );
 }
 
 fn render_cronjob_suspend_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
-    let popup = centered_rect(56, 24, parent);
-    frame.render_widget(Clear, popup);
-
     let suspend = detail_state.confirm_cronjob_suspend.unwrap_or(false);
     let badge_style = if suspend {
         theme.badge_warning_style()
@@ -1030,29 +971,6 @@ fn render_cronjob_suspend_confirm(frame: &mut Frame, parent: Rect, detail_state:
     } else {
         " Confirm Resume "
     };
-
-    let block = Block::default()
-        .title(Span::styled(
-            title,
-            badge_style.add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_active_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(block, popup);
-
-    let inner = Rect {
-        x: popup.x + 1,
-        y: popup.y + 1,
-        width: popup.width.saturating_sub(2),
-        height: popup.height.saturating_sub(2),
-    };
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(2)])
-        .split(inner);
 
     let cronjob_name = detail_state
         .resource
@@ -1080,19 +998,76 @@ fn render_cronjob_suspend_confirm(frame: &mut Frame, parent: Rect, detail_state:
         Line::from(""),
         Line::from(Span::styled(detail_line, theme.inactive_style())),
     ];
-    frame.render_widget(
-        Paragraph::new(body)
-            .wrap(Wrap { trim: false })
-            .alignment(ratatui::layout::Alignment::Center),
-        rows[0],
-    );
-
     let footer = Line::from(vec![
         Span::styled(" [S] / [y] / [Enter] ", theme.keybind_key_style()),
         Span::styled(format!("{action_label}  "), theme.keybind_desc_style()),
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
     ]);
+    render_detail_confirm_dialog(
+        frame,
+        parent,
+        56,
+        title,
+        badge_style.add_modifier(Modifier::BOLD),
+        body,
+        footer,
+    );
+}
+
+fn detail_confirm_popup(parent: Rect, preferred_width: u16) -> Rect {
+    crate::ui::bounded_popup_rect(parent, preferred_width, 10, 1, 1)
+}
+
+fn use_compact_detail_confirm(popup: Rect) -> bool {
+    popup.width < 42 || popup.height < 8
+}
+
+fn render_detail_confirm_dialog(
+    frame: &mut Frame,
+    parent: Rect,
+    preferred_width: u16,
+    title: &str,
+    title_style: Style,
+    body: Vec<Line<'static>>,
+    footer: Line<'static>,
+) {
+    let theme = default_theme();
+    let popup = detail_confirm_popup(parent, preferred_width);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(Span::styled(title, title_style))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_active_style())
+        .style(Style::default().bg(theme.bg));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    if use_compact_detail_confirm(popup) {
+        let mut lines = body;
+        lines.push(Line::from(""));
+        lines.push(footer);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .alignment(ratatui::layout::Alignment::Center),
+            inner,
+        );
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(2)])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .alignment(ratatui::layout::Alignment::Center),
+        rows[0],
+    );
     frame.render_widget(
         Paragraph::new(footer).alignment(ratatui::layout::Alignment::Center),
         rows[1],
@@ -1104,6 +1079,8 @@ use crate::ui::centered_rect;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::app::ResourceRef;
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn cronjob_history_widths_switch_to_compact_profile() {
@@ -1119,5 +1096,50 @@ mod tests {
         assert_eq!(widths[0], Constraint::Percentage(35));
         assert_eq!(widths[1], Constraint::Length(12));
         assert_eq!(widths[5], Constraint::Length(8));
+    }
+
+    #[test]
+    fn render_delete_confirm_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let state = DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "default".to_string())),
+            confirm_delete: true,
+            ..DetailViewState::default()
+        };
+        terminal
+            .draw(|frame| render_detail(frame, frame.area(), &state))
+            .expect("delete confirm should render on small terminal");
+    }
+
+    #[test]
+    fn render_drain_confirm_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let state = DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        };
+        terminal
+            .draw(|frame| render_detail(frame, frame.area(), &state))
+            .expect("drain confirm should render on small terminal");
+    }
+
+    #[test]
+    fn render_cronjob_suspend_confirm_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let state = DetailViewState {
+            resource: Some(ResourceRef::CronJob(
+                "job-0".to_string(),
+                "default".to_string(),
+            )),
+            confirm_cronjob_suspend: Some(true),
+            ..DetailViewState::default()
+        };
+        terminal
+            .draw(|frame| render_detail(frame, frame.area(), &state))
+            .expect("cronjob suspend confirm should render on small terminal");
     }
 }
