@@ -488,7 +488,7 @@ impl PortForwardDialog {
         } else {
             let mut lines = vec![];
             let tunnels = self.registry.tunnels().values().collect::<Vec<_>>();
-            let selected = self.selected_tunnel.min(tunnels.len().saturating_sub(1));
+            let selected = selected_tunnel_index(tunnels.len(), self.selected_tunnel);
             let window = table_window(
                 tunnels.len(),
                 selected,
@@ -496,7 +496,7 @@ impl PortForwardDialog {
             );
             for (offset, tunnel) in tunnels[window.start..window.end].iter().enumerate() {
                 let idx = window.start + offset;
-                let is_selected = idx == self.selected_tunnel;
+                let is_selected = idx == selected;
 
                 let state_color = match tunnel.state {
                     TunnelState::Active => Color::Green,
@@ -601,6 +601,14 @@ impl Default for PortForwardDialog {
 
 fn tunnel_list_viewport_rows(area: Rect) -> usize {
     usize::from(area.height.saturating_div(2)).max(1)
+}
+
+fn selected_tunnel_index(total: usize, selected: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        selected.min(total.saturating_sub(1))
+    }
 }
 
 fn port_forward_dialog_popup(area: Rect) -> Rect {
@@ -837,5 +845,12 @@ mod tests {
         assert_eq!(window.start, 7);
         assert_eq!(window.end, 10);
         assert_eq!(window.selected, 1);
+    }
+
+    #[test]
+    fn selected_tunnel_index_clamps_stale_selection() {
+        assert_eq!(selected_tunnel_index(0, 9), 0);
+        assert_eq!(selected_tunnel_index(2, 9), 1);
+        assert_eq!(selected_tunnel_index(2, 1), 1);
     }
 }

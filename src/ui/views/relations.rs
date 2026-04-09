@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::k8s::relationships::{FlatNode, RelationKind, flatten_tree};
@@ -85,6 +85,13 @@ pub fn render_relation_tree(
         .collect::<Vec<_>>();
 
     frame.render_widget(Paragraph::new(lines), area);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(flat.len()).position(scroll_offset);
+    frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
 }
 
 fn clamp_relation_cursor(total: usize, cursor: usize) -> usize {
