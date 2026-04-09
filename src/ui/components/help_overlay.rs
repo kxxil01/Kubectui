@@ -4,7 +4,10 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
 };
 
 use crate::ui::components::default_theme;
@@ -305,9 +308,7 @@ impl HelpOverlay {
         }
 
         let visible_height = sections[0].height as usize;
-        let max_scroll = lines.len().saturating_sub(visible_height);
-        let scroll = self.scroll.min(max_scroll);
-        let end = (scroll + visible_height).min(lines.len());
+        let (scroll, end) = help_overlay_window(lines.len(), visible_height, self.scroll);
         let visible = if scroll < end {
             lines[scroll..end].to_vec()
         } else {
@@ -318,15 +319,36 @@ impl HelpOverlay {
             Paragraph::new(visible).wrap(Wrap { trim: false }),
             sections[0],
         );
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .track_symbol(Some("│"))
+            .thumb_symbol("█");
+        let mut scrollbar_state = ScrollbarState::new(lines.len()).position(scroll);
+        frame.render_stateful_widget(scrollbar, sections[0], &mut scrollbar_state);
 
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " [?/Esc] close  [j/k] scroll ",
-                Style::default().fg(theme.fg_dim),
-            ))),
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " [?/Esc] close  [j/k] scroll ",
+                    Style::default().fg(theme.fg_dim),
+                ),
+                Span::styled(
+                    format!(" [{}/{}] ", end.min(lines.len()), lines.len()),
+                    Style::default().fg(theme.accent),
+                ),
+            ])),
             sections[1],
         );
     }
+}
+
+fn help_overlay_window(total_lines: usize, visible_height: usize, scroll: usize) -> (usize, usize) {
+    let visible_height = visible_height.max(1);
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll = scroll.min(max_scroll);
+    let end = (scroll + visible_height).min(total_lines);
+    (scroll, end)
 }
 
 fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'static str)> {
@@ -400,6 +422,13 @@ mod tests {
     #[test]
     fn total_lines_is_nonzero() {
         assert!(HelpOverlay::total_lines() > 20);
+    }
+
+    #[test]
+    fn help_overlay_window_clamps_scroll_to_last_page() {
+        let (scroll, end) = help_overlay_window(100, 10, 999);
+        assert_eq!(scroll, 90);
+        assert_eq!(end, 100);
     }
 
     #[test]

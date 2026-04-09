@@ -64,11 +64,11 @@ pub fn render_relation_tree(
     }
 
     let flat = flatten_tree(view.tree, view.expanded);
+    let cursor = clamp_relation_cursor(flat.len(), view.cursor);
     let visible_height = area.height as usize;
     let scroll_offset = if flat.is_empty() {
         0
     } else {
-        let cursor = view.cursor.min(flat.len().saturating_sub(1));
         if cursor < visible_height / 2 {
             0
         } else {
@@ -81,10 +81,18 @@ pub fn render_relation_tree(
         .enumerate()
         .skip(scroll_offset)
         .take(visible_height)
-        .map(|(idx, node)| render_flat_node(node, idx == view.cursor, theme))
+        .map(|(idx, node)| render_flat_node(node, idx == cursor, theme))
         .collect::<Vec<_>>();
 
     frame.render_widget(Paragraph::new(lines), area);
+}
+
+fn clamp_relation_cursor(total: usize, cursor: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        cursor.min(total.saturating_sub(1))
+    }
 }
 
 fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'static> {
@@ -180,4 +188,16 @@ fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'st
         );
     }
     line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_relation_cursor_keeps_stale_cursor_visible() {
+        assert_eq!(clamp_relation_cursor(0, 9), 0);
+        assert_eq!(clamp_relation_cursor(3, 9), 2);
+        assert_eq!(clamp_relation_cursor(3, 1), 1);
+    }
 }
