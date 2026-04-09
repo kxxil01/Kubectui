@@ -50,6 +50,8 @@ impl ProbePanelState {
     /// Update probe data from coordinator background polling.
     pub fn update_probes(&mut self, probes: Vec<(String, ContainerProbes)>) {
         self.container_probes = probes;
+        self.selected_index =
+            clamp_probe_selection(self.container_probes.len(), self.selected_index);
     }
 
     /// Handle navigation: move to next container.
@@ -72,7 +74,8 @@ impl ProbePanelState {
 
     /// Toggle expansion for the currently selected container.
     pub fn toggle_expand(&mut self) {
-        if let Some((container_name, _)) = self.container_probes.get(self.selected_index) {
+        let selected = clamp_probe_selection(self.container_probes.len(), self.selected_index);
+        if let Some((container_name, _)) = self.container_probes.get(selected) {
             if self.expanded_containers.contains(container_name) {
                 self.expanded_containers.remove(container_name);
             } else {
@@ -139,6 +142,14 @@ fn probe_panel_viewport_rows(area: Rect) -> usize {
     usize::from(area.height.saturating_sub(2)).max(1)
 }
 
+fn clamp_probe_selection(total: usize, selected: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        selected.min(total.saturating_sub(1))
+    }
+}
+
 fn build_probe_lines(state: &ProbePanelState) -> (Vec<Line<'static>>, usize) {
     let mut lines: Vec<Line<'static>> = Vec::new();
     let mut selected_line = 0;
@@ -158,8 +169,9 @@ fn build_probe_lines(state: &ProbePanelState) -> (Vec<Line<'static>>, usize) {
         return (lines, 0);
     }
 
+    let selected_index = clamp_probe_selection(state.container_probes.len(), state.selected_index);
     for (idx, (container_name, probes)) in state.container_probes.iter().enumerate() {
-        let is_selected = idx == state.selected_index;
+        let is_selected = idx == selected_index;
         let is_expanded = state.expanded_containers.contains(container_name);
 
         let indicator = if is_expanded { "▼" } else { "▶" };
@@ -320,6 +332,20 @@ mod tests {
 
         state.toggle_expand();
         assert!(!state.expanded_containers.contains("container1"));
+    }
+
+    #[test]
+    fn test_update_probes_clamps_stale_selection() {
+        let probes = vec![
+            ("container1".to_string(), ContainerProbes::default()),
+            ("container2".to_string(), ContainerProbes::default()),
+        ];
+        let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
+        state.selected_index = 9;
+
+        state.update_probes(vec![("container1".to_string(), ContainerProbes::default())]);
+
+        assert_eq!(state.selected_index, 0);
     }
 
     #[test]

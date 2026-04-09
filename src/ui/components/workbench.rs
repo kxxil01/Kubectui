@@ -3000,16 +3000,23 @@ fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::Run
             }
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
-                "[Enter] run/toggle  [d] done  [s] skip  [j/k] select",
+                "[Enter] run/toggle  [d] done  [s] skip  [j/k] select  [Ctrl+j/k] detail  [Ctrl+d/u] page",
                 theme.keybind_desc_style(),
             )));
             lines
         },
     );
+    let detail_window = scroll_window(
+        detail_lines.len(),
+        tab.detail_scroll,
+        right_inner.height.max(1) as usize,
+    );
     frame.render_widget(
-        Paragraph::new(detail_lines).wrap(Wrap { trim: false }),
+        Paragraph::new(detail_lines[detail_window.start..detail_window.end].to_vec())
+            .wrap(Wrap { trim: false }),
         right_inner,
     );
+    render_scrollbar(frame, right_inner, detail_lines.len(), detail_window.start);
 }
 
 fn step_kind_label<'a>(

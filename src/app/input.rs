@@ -281,6 +281,26 @@ impl AppState {
             }
             WorkbenchTabState::Runbook(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('j') | KeyCode::Down
+                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    tab.scroll_detail_down(1);
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up
+                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    tab.scroll_detail_up(1);
+                    AppAction::None
+                }
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    tab.scroll_detail_down(10);
+                    AppAction::None
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    tab.scroll_detail_up(10);
+                    AppAction::None
+                }
                 KeyCode::Char('j') | KeyCode::Down => {
                     tab.select_next();
                     AppAction::None

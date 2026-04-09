@@ -66,15 +66,7 @@ pub fn render_relation_tree(
     let flat = flatten_tree(view.tree, view.expanded);
     let cursor = clamp_relation_cursor(flat.len(), view.cursor);
     let visible_height = area.height as usize;
-    let scroll_offset = if flat.is_empty() {
-        0
-    } else {
-        if cursor < visible_height / 2 {
-            0
-        } else {
-            cursor.saturating_sub(visible_height / 2)
-        }
-    };
+    let scroll_offset = relation_scroll_offset(flat.len(), visible_height, cursor);
 
     let lines = flat
         .iter()
@@ -100,6 +92,14 @@ fn clamp_relation_cursor(total: usize, cursor: usize) -> usize {
     } else {
         cursor.min(total.saturating_sub(1))
     }
+}
+
+fn relation_scroll_offset(total: usize, visible_height: usize, cursor: usize) -> usize {
+    if total == 0 || visible_height == 0 {
+        return 0;
+    }
+    let centered = cursor.saturating_sub(visible_height / 2);
+    centered.min(total.saturating_sub(visible_height))
 }
 
 fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'static> {
@@ -206,5 +206,11 @@ mod tests {
         assert_eq!(clamp_relation_cursor(0, 9), 0);
         assert_eq!(clamp_relation_cursor(3, 9), 2);
         assert_eq!(clamp_relation_cursor(3, 1), 1);
+    }
+
+    #[test]
+    fn relation_scroll_offset_clamps_to_last_full_page() {
+        assert_eq!(relation_scroll_offset(20, 6, 19), 14);
+        assert_eq!(relation_scroll_offset(20, 6, 2), 0);
     }
 }
