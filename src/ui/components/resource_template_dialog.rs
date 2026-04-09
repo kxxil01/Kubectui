@@ -152,8 +152,12 @@ pub fn render_resource_template_dialog(
     area: Rect,
     state: &ResourceTemplateDialogState,
 ) {
-    let popup = crate::ui::centered_rect(68, 62, area);
+    let popup = resource_template_popup(area);
     frame.render_widget(Clear, popup);
+    if use_compact_resource_template_dialog(popup) {
+        render_compact_resource_template_dialog(frame, popup, state);
+        return;
+    }
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -326,6 +330,83 @@ pub fn render_resource_template_dialog(
     );
 }
 
+fn resource_template_popup(area: Rect) -> Rect {
+    let preferred_width = area.width.saturating_mul(68).saturating_div(100).max(52);
+    let preferred_height = area.height.saturating_mul(62).saturating_div(100).max(12);
+    crate::ui::bounded_popup_rect(area, preferred_width, preferred_height, 1, 1)
+}
+
+fn use_compact_resource_template_dialog(popup: Rect) -> bool {
+    popup.width < 52 || popup.height < 18
+}
+
+fn render_compact_resource_template_dialog(
+    frame: &mut Frame,
+    popup: Rect,
+    state: &ResourceTemplateDialogState,
+) {
+    let block = Block::default()
+        .title(format!(" Template {} ", state.values.kind.label()))
+        .borders(Borders::ALL);
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let editable_fields = state
+        .visible_fields()
+        .into_iter()
+        .filter(|field| {
+            !matches!(
+                field,
+                ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn
+            )
+        })
+        .collect::<Vec<_>>();
+    let selected_idx = editable_fields
+        .iter()
+        .position(|field| *field == state.focus_field)
+        .unwrap_or_else(|| editable_fields.len().saturating_sub(1));
+    let window = table_window(editable_fields.len(), selected_idx, 1);
+    let focused = editable_fields
+        .get(window.start)
+        .copied()
+        .unwrap_or(ResourceTemplateField::Name);
+    let (label, value) = match focused {
+        ResourceTemplateField::Name => ("name", state.values.name.as_str()),
+        ResourceTemplateField::Namespace => ("ns", state.values.namespace.as_str()),
+        ResourceTemplateField::Image => ("image", state.values.image.as_str()),
+        ResourceTemplateField::Replicas => ("replicas", state.values.replicas.as_str()),
+        ResourceTemplateField::ContainerPort => ("ctr-port", state.values.container_port.as_str()),
+        ResourceTemplateField::ServicePort => ("svc-port", state.values.service_port.as_str()),
+        ResourceTemplateField::ConfigKey => ("cfg-key", state.values.config_key.as_str()),
+        ResourceTemplateField::ConfigValue => ("cfg-val", state.values.config_value.as_str()),
+        ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => unreachable!(),
+    };
+    let focus = match state.focus_field {
+        ResourceTemplateField::CreateBtn => "create",
+        ResourceTemplateField::CancelBtn => "cancel",
+        _ => label,
+    };
+    let status = if state.pending {
+        "opening editor...".to_string()
+    } else if let Some(error) = &state.error_message {
+        format!("err: {error}")
+    } else {
+        "enter create  esc cancel".to_string()
+    };
+    let lines = vec![
+        Line::from(format!(
+            "field {}/{} {}",
+            selected_idx + 1,
+            editable_fields.len(),
+            focus
+        )),
+        Line::from(format!("{label}: {value}")),
+        Line::from(status),
+        Line::from("tab move  type edit"),
+    ];
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
 fn template_field_viewport_rows(area: Rect) -> usize {
     usize::from(area.height.saturating_sub(2)).max(1)
 }
@@ -368,5 +449,15 @@ mod tests {
         );
         assert!(window.start <= selected);
         assert!(window.end > selected);
+    }
+
+    #[test]
+    fn render_resource_template_dialog_small_terminal_smoke() {
+        let backend = ratatui::backend::TestBackend::new(40, 10);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal should initialize");
+        let state = ResourceTemplateDialogState::new(ResourceTemplateKind::Deployment, "default");
+        terminal
+            .draw(|frame| render_resource_template_dialog(frame, frame.area(), &state))
+            .expect("compact resource template dialog should render");
     }
 }
