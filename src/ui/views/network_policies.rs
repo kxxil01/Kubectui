@@ -25,6 +25,28 @@ use crate::{
     },
 };
 
+const NARROW_NETWORK_POLICY_WIDTH: u16 = 96;
+
+fn network_policy_widths(area: Rect) -> [Constraint; 5] {
+    if area.width < NARROW_NETWORK_POLICY_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Min(20),
+            Constraint::Length(7),
+            Constraint::Length(7),
+        ]
+    } else {
+        [
+            Constraint::Percentage(26),
+            Constraint::Percentage(20),
+            Constraint::Percentage(34),
+            Constraint::Percentage(10),
+            Constraint::Percentage(10),
+        ]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NetworkPolicyDerivedCacheKey {
     query: String,
@@ -64,13 +86,7 @@ pub fn render_network_policies(
     );
 
     let derived = cached_network_policy_derived(cluster, query, indices.as_ref());
-    let widths = [
-        Constraint::Percentage(26),
-        Constraint::Percentage(20),
-        Constraint::Percentage(34),
-        Constraint::Percentage(10),
-        Constraint::Percentage(10),
-    ];
+    let widths = network_policy_widths(area);
     render_resource_table(
         frame,
         area,
@@ -189,4 +205,24 @@ fn cached_network_policy_derived(
     }
 
     built
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn network_policy_widths_switch_to_compact_profile() {
+        let widths = network_policy_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Min(20));
+    }
+
+    #[test]
+    fn network_policy_widths_keep_wide_profile() {
+        let widths = network_policy_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(26));
+        assert_eq!(widths[2], Constraint::Percentage(34));
+    }
 }

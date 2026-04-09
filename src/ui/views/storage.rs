@@ -30,6 +30,76 @@ use crate::{
     },
 };
 
+const NARROW_PVC_WIDTH: u16 = 104;
+const NARROW_PV_WIDTH: u16 = 112;
+const NARROW_STORAGE_CLASS_WIDTH: u16 = 96;
+
+fn pvc_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_PVC_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(8),
+            Constraint::Length(9),
+            Constraint::Min(14),
+            Constraint::Min(14),
+        ]
+    } else {
+        [
+            Constraint::Percentage(25),
+            Constraint::Percentage(15),
+            Constraint::Percentage(10),
+            Constraint::Percentage(12),
+            Constraint::Percentage(18),
+            Constraint::Percentage(20),
+        ]
+    }
+}
+
+fn pv_widths(area: Rect) -> [Constraint; 7] {
+    if area.width < NARROW_PV_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(9),
+            Constraint::Min(12),
+            Constraint::Length(9),
+            Constraint::Length(8),
+            Constraint::Min(16),
+            Constraint::Min(14),
+        ]
+    } else {
+        [
+            Constraint::Percentage(20),
+            Constraint::Percentage(10),
+            Constraint::Percentage(15),
+            Constraint::Percentage(10),
+            Constraint::Percentage(10),
+            Constraint::Percentage(20),
+            Constraint::Percentage(15),
+        ]
+    }
+}
+
+fn storage_class_widths(area: Rect) -> [Constraint; 5] {
+    if area.width < NARROW_STORAGE_CLASS_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Min(20),
+            Constraint::Length(10),
+            Constraint::Length(12),
+            Constraint::Length(7),
+        ]
+    } else {
+        [
+            Constraint::Percentage(25),
+            Constraint::Percentage(35),
+            Constraint::Percentage(15),
+            Constraint::Percentage(18),
+            Constraint::Percentage(7),
+        ]
+    }
+}
+
 // ── PVC derived cell cache ──────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -196,14 +266,7 @@ pub fn render_pvcs(
         query,
         &sort_suffix,
     );
-    let widths = [
-        Constraint::Percentage(25),
-        Constraint::Percentage(15),
-        Constraint::Percentage(10),
-        Constraint::Percentage(12),
-        Constraint::Percentage(18),
-        Constraint::Percentage(20),
-    ];
+    let widths = pvc_widths(area);
 
     render_table_frame(
         frame,
@@ -394,15 +457,7 @@ pub fn render_pvs(
         query,
         &sort_suffix,
     );
-    let widths = [
-        Constraint::Percentage(20),
-        Constraint::Percentage(10),
-        Constraint::Percentage(15),
-        Constraint::Percentage(10),
-        Constraint::Percentage(10),
-        Constraint::Percentage(20),
-        Constraint::Percentage(15),
-    ];
+    let widths = pv_widths(area);
 
     render_table_frame(
         frame,
@@ -604,13 +659,7 @@ pub fn render_storage_classes(
         query,
         &sort_suffix,
     );
-    let widths = [
-        Constraint::Percentage(25),
-        Constraint::Percentage(35),
-        Constraint::Percentage(15),
-        Constraint::Percentage(18),
-        Constraint::Percentage(7),
-    ];
+    let widths = storage_class_widths(area);
 
     render_table_frame(
         frame,
@@ -627,4 +676,55 @@ pub fn render_storage_classes(
         },
         &theme,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pvc_widths_switch_to_compact_profile() {
+        let widths = pvc_widths(Rect::new(0, 0, 92, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[4], Constraint::Min(14));
+    }
+
+    #[test]
+    fn pvc_widths_keep_wide_profile() {
+        let widths = pvc_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[0], Constraint::Percentage(25));
+        assert_eq!(widths[5], Constraint::Percentage(20));
+    }
+
+    #[test]
+    fn pv_widths_switch_to_compact_profile() {
+        let widths = pv_widths(Rect::new(0, 0, 96, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[2], Constraint::Min(12));
+        assert_eq!(widths[5], Constraint::Min(16));
+    }
+
+    #[test]
+    fn pv_widths_keep_wide_profile() {
+        let widths = pv_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[0], Constraint::Percentage(20));
+        assert_eq!(widths[6], Constraint::Percentage(15));
+    }
+
+    #[test]
+    fn storage_class_widths_switch_to_compact_profile() {
+        let widths = storage_class_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Min(20));
+        assert_eq!(widths[3], Constraint::Length(12));
+    }
+
+    #[test]
+    fn storage_class_widths_keep_wide_profile() {
+        let widths = storage_class_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(25));
+        assert_eq!(widths[1], Constraint::Percentage(35));
+        assert_eq!(widths[4], Constraint::Percentage(7));
+    }
 }
