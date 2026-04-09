@@ -27,6 +27,30 @@ use crate::{
     },
 };
 
+const NARROW_STATEFULSET_WIDTH: u16 = 104;
+
+fn statefulset_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_STATEFULSET_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(8),
+            Constraint::Min(16),
+            Constraint::Min(16),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Length(22),
+            Constraint::Length(16),
+            Constraint::Length(10),
+            Constraint::Length(22),
+            Constraint::Min(20),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 #[derive(Debug, Clone)]
 struct StatefulSetDerivedCell {
     ready: String,
@@ -62,14 +86,7 @@ pub fn render_statefulsets(
         |q| filtered_statefulset_indices(&cluster.statefulsets, q, sort),
     );
     let derived = cached_statefulset_derived(cluster, query, indices.as_ref(), cache_variant);
-    let widths = [
-        Constraint::Length(22),
-        Constraint::Length(16),
-        Constraint::Length(10),
-        Constraint::Length(22),
-        Constraint::Min(20),
-        Constraint::Length(9),
-    ];
+    let widths = statefulset_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -203,5 +220,21 @@ mod tests {
         assert_eq!(readiness_style(3, 3, &theme).fg, Some(theme.success));
         assert_eq!(readiness_style(1, 3, &theme).fg, Some(theme.warning));
         assert_eq!(readiness_style(0, 3, &theme).fg, Some(theme.error));
+    }
+
+    #[test]
+    fn statefulset_widths_switch_to_compact_profile() {
+        let widths = statefulset_widths(Rect::new(0, 0, 92, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[5], Constraint::Length(8));
+    }
+
+    #[test]
+    fn statefulset_widths_keep_wide_profile() {
+        let widths = statefulset_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[0], Constraint::Length(22));
+        assert_eq!(widths[3], Constraint::Length(22));
+        assert_eq!(widths[5], Constraint::Length(9));
     }
 }

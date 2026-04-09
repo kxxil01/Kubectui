@@ -32,6 +32,31 @@ use crate::{
 };
 
 const MAX_FORMATTED_CACHE_ENTRIES: usize = 96;
+const NARROW_FLUX_WIDTH: u16 = 120;
+
+fn flux_widths(area: Rect) -> [Constraint; 7] {
+    if area.width < NARROW_FLUX_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(14),
+            Constraint::Length(10),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Min(18),
+        ]
+    } else {
+        [
+            Constraint::Min(22),
+            Constraint::Length(18),
+            Constraint::Length(18),
+            Constraint::Length(13),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Min(24),
+        ]
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum FluxMode {
@@ -424,15 +449,7 @@ pub fn render_flux_resources(
             mode.title()
         )
     };
-    let widths = [
-        Constraint::Min(22),
-        Constraint::Length(18),
-        Constraint::Length(18),
-        Constraint::Length(13),
-        Constraint::Length(9),
-        Constraint::Length(9),
-        Constraint::Min(24),
-    ];
+    let widths = flux_widths(area);
 
     render_table_frame(
         frame,
@@ -519,6 +536,22 @@ mod tests {
         assert_eq!(status_style("Ready", &theme).fg, Some(theme.success));
         assert_eq!(status_style("NotReady", &theme).fg, Some(theme.error));
         assert_eq!(status_style("Suspended", &theme).fg, Some(theme.warning));
+    }
+
+    #[test]
+    fn flux_widths_switch_to_compact_profile() {
+        let widths = flux_widths(Rect::new(0, 0, 104, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[6], Constraint::Min(18));
+    }
+
+    #[test]
+    fn flux_widths_keep_wide_profile() {
+        let widths = flux_widths(Rect::new(0, 0, 140, 20));
+        assert_eq!(widths[0], Constraint::Min(22));
+        assert_eq!(widths[1], Constraint::Length(18));
+        assert_eq!(widths[6], Constraint::Min(24));
     }
 
     #[test]

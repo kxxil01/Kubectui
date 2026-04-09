@@ -27,6 +27,34 @@ use crate::{
     },
 };
 
+const NARROW_JOB_WIDTH: u16 = 112;
+
+fn job_widths(area: Rect) -> [Constraint; 8] {
+    if area.width < NARROW_JOB_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(9),
+            Constraint::Length(11),
+            Constraint::Length(9),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Length(22),
+            Constraint::Length(16),
+            Constraint::Length(11),
+            Constraint::Length(13),
+            Constraint::Length(11),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 #[derive(Debug, Clone)]
 struct JobDerivedCell {
     duration: String,
@@ -61,16 +89,7 @@ pub fn render_jobs(
     );
 
     let derived = cached_job_derived(cluster, query, indices.as_ref(), cache_variant);
-    let widths = [
-        Constraint::Length(22),
-        Constraint::Length(16),
-        Constraint::Length(11),
-        Constraint::Length(13),
-        Constraint::Length(11),
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Length(9),
-    ];
+    let widths = job_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -223,5 +242,22 @@ mod tests {
         assert_eq!(status_style("Running", &theme).fg, Some(theme.info));
         assert_eq!(status_style("Failed", &theme).fg, Some(theme.error));
         assert_eq!(status_style("Pending", &theme).fg, Some(theme.warning));
+    }
+
+    #[test]
+    fn job_widths_switch_to_compact_profile() {
+        let widths = job_widths(Rect::new(0, 0, 96, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[5], Constraint::Length(6));
+        assert_eq!(widths[7], Constraint::Length(8));
+    }
+
+    #[test]
+    fn job_widths_keep_wide_profile() {
+        let widths = job_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[0], Constraint::Length(22));
+        assert_eq!(widths[3], Constraint::Length(13));
+        assert_eq!(widths[7], Constraint::Length(9));
     }
 }
