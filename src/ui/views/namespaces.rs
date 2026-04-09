@@ -20,6 +20,16 @@ use crate::{
     },
 };
 
+const NARROW_NAMESPACE_WIDTH: u16 = 72;
+
+fn namespace_widths(area: Rect) -> [Constraint; 2] {
+    if area.width < NARROW_NAMESPACE_WIDTH {
+        [Constraint::Min(18), Constraint::Length(10)]
+    } else {
+        [Constraint::Percentage(75), Constraint::Percentage(25)]
+    }
+}
+
 pub fn render_namespaces(
     frame: &mut Frame,
     area: Rect,
@@ -38,7 +48,7 @@ pub fn render_namespaces(
         data_fingerprint(&cluster.namespace_list, cluster.snapshot_version),
         |q| filtered_namespace_indices(&cluster.namespace_list, q),
     );
-    let widths = [Constraint::Percentage(75), Constraint::Percentage(25)];
+    let widths = namespace_widths(area);
     render_resource_table(
         frame,
         area,
@@ -93,4 +103,23 @@ pub fn render_namespaces(
                 .collect()
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespace_widths_switch_to_compact_profile() {
+        let widths = namespace_widths(Rect::new(0, 0, 64, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(10));
+    }
+
+    #[test]
+    fn namespace_widths_keep_wide_profile() {
+        let widths = namespace_widths(Rect::new(0, 0, 96, 20));
+        assert_eq!(widths[0], Constraint::Percentage(75));
+        assert_eq!(widths[1], Constraint::Percentage(25));
+    }
 }
