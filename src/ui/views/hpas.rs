@@ -25,6 +25,30 @@ use crate::{
     },
 };
 
+const NARROW_HPA_WIDTH: u16 = 96;
+
+fn hpa_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_HPA_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Min(18),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(10),
+        ]
+    } else {
+        [
+            Constraint::Percentage(23),
+            Constraint::Percentage(18),
+            Constraint::Percentage(29),
+            Constraint::Percentage(8),
+            Constraint::Percentage(8),
+            Constraint::Percentage(14),
+        ]
+    }
+}
+
 // ── HPA derived cell cache ──────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -86,14 +110,7 @@ pub fn render_hpas(
     );
 
     let derived = cached_hpa_derived(cluster, query, &indices);
-    let widths = [
-        Constraint::Percentage(23),
-        Constraint::Percentage(18),
-        Constraint::Percentage(29),
-        Constraint::Percentage(8),
-        Constraint::Percentage(8),
-        Constraint::Percentage(14),
-    ];
+    let widths = hpa_widths(area);
     render_resource_table(
         frame,
         area,
@@ -174,4 +191,26 @@ pub fn render_hpas(
                 .collect()
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hpa_widths_switch_to_compact_profile() {
+        let widths = hpa_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Min(18));
+        assert_eq!(widths[5], Constraint::Length(10));
+    }
+
+    #[test]
+    fn hpa_widths_keep_wide_profile() {
+        let widths = hpa_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(23));
+        assert_eq!(widths[2], Constraint::Percentage(29));
+        assert_eq!(widths[5], Constraint::Percentage(14));
+    }
 }
