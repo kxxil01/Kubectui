@@ -27,6 +27,30 @@ use crate::{
     },
 };
 
+const NARROW_EVENT_WIDTH: u16 = 104;
+
+fn event_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_EVENT_WIDTH {
+        [
+            Constraint::Length(8),
+            Constraint::Length(14),
+            Constraint::Min(18),
+            Constraint::Length(12),
+            Constraint::Length(6),
+            Constraint::Min(16),
+        ]
+    } else {
+        [
+            Constraint::Length(10),
+            Constraint::Length(16),
+            Constraint::Length(24),
+            Constraint::Length(16),
+            Constraint::Length(8),
+            Constraint::Min(20),
+        ]
+    }
+}
+
 // ── Event derived cell cache ────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -208,17 +232,7 @@ pub fn render_events(
         let all = cluster.events.len();
         format!(" {icon}Events ({total} of {all}) [/{query}]{load_suffix}")
     };
-    let widths = responsive_table_widths(
-        area.width,
-        [
-            Constraint::Length(10),
-            Constraint::Length(16),
-            Constraint::Length(24),
-            Constraint::Length(16),
-            Constraint::Length(8),
-            Constraint::Min(20),
-        ],
-    );
+    let widths = responsive_table_widths(area.width, event_widths(area));
 
     render_table_frame(
         frame,
@@ -235,4 +249,27 @@ pub fn render_events(
         },
         &theme,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn event_widths_switch_to_compact_profile() {
+        let widths = event_widths(Rect::new(0, 0, 96, 20));
+        assert_eq!(widths[0], Constraint::Length(8));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Min(18));
+        assert_eq!(widths[5], Constraint::Min(16));
+    }
+
+    #[test]
+    fn event_widths_keep_wide_profile() {
+        let widths = event_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Length(10));
+        assert_eq!(widths[1], Constraint::Length(16));
+        assert_eq!(widths[2], Constraint::Length(24));
+        assert_eq!(widths[5], Constraint::Min(20));
+    }
 }
