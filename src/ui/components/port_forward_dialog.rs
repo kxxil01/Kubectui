@@ -9,7 +9,8 @@ use ratatui::{
 
 use crate::k8s::portforward::{PortForwardConfig, PortForwardTarget, TunnelState};
 use crate::state::port_forward::TunnelRegistry;
-use crate::ui::components::input_field::InputFieldWidget;
+use crate::ui::components::{input_field::InputFieldWidget, render_vertical_scrollbar};
+use crate::ui::{bounded_popup_rect, table_window};
 
 /// Port forward dialog modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -313,13 +314,17 @@ impl PortForwardDialog {
     }
 
     fn render_create_mode(&self, frame: &mut Frame, area: Rect) {
-        let popup = centered_rect(60, 70, area);
+        let popup = port_forward_dialog_popup(area);
         self.render_create_mode_in(frame, popup, true);
     }
 
     fn render_create_mode_in(&self, frame: &mut Frame, popup: Rect, clear: bool) {
         if clear {
             frame.render_widget(Clear, popup);
+        }
+        if use_compact_port_forward_create_dialog(popup) {
+            self.render_compact_create_mode(frame, popup);
+            return;
         }
 
         let block = Block::default()
@@ -399,6 +404,37 @@ impl PortForwardDialog {
         frame.render_widget(footer, chunks[3]);
     }
 
+    fn render_compact_create_mode(&self, frame: &mut Frame, popup: Rect) {
+        let block = Block::default()
+            .title(" Port Forward: Create ")
+            .borders(Borders::ALL);
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+
+        let focus = match self.focus {
+            FormField::Namespace => "namespace",
+            FormField::PodName => "pod",
+            FormField::RemotePort => "remote",
+            FormField::LocalPort => "local",
+        };
+        let status = if let Some(error) = &self.error {
+            format!("err: {error}")
+        } else {
+            format!("active tunnels: {}", self.registry.active_count())
+        };
+        let lines = vec![
+            Line::from(format!("ns {}", self.namespace_field.value)),
+            Line::from(format!("pod {}", self.pod_name_field.value)),
+            Line::from(format!(
+                "remote {}  local {}",
+                self.remote_port_field.value, self.local_port_field.value
+            )),
+            Line::from(format!("focus {focus}  {status}")),
+            Line::from("[Enter] create  [F2] list  [Esc] close"),
+        ];
+        frame.render_widget(Paragraph::new(lines), inner);
+    }
+
     fn render_form_field(
         &self,
         frame: &mut Frame,
@@ -418,13 +454,17 @@ impl PortForwardDialog {
     }
 
     fn render_list_mode(&self, frame: &mut Frame, area: Rect) {
-        let popup = centered_rect(60, 70, area);
+        let popup = port_forward_dialog_popup(area);
         self.render_list_mode_in(frame, popup, true);
     }
 
     fn render_list_mode_in(&self, frame: &mut Frame, popup: Rect, clear: bool) {
         if clear {
             frame.render_widget(Clear, popup);
+        }
+        if use_compact_port_forward_list_dialog(popup) {
+            self.render_compact_list_mode(frame, popup);
+            return;
         }
 
         let block = Block::default()
@@ -447,8 +487,16 @@ impl PortForwardDialog {
             frame.render_widget(message, chunks[0]);
         } else {
             let mut lines = vec![];
-            for (idx, tunnel) in self.registry.tunnels().values().enumerate() {
-                let is_selected = idx == self.selected_tunnel;
+            let tunnels = self.registry.tunnels().values().collect::<Vec<_>>();
+            let selected = selected_tunnel_index(tunnels.len(), self.selected_tunnel);
+            let window = table_window(
+                tunnels.len(),
+                selected,
+                tunnel_list_viewport_rows(chunks[0]),
+            );
+            for (offset, tunnel) in tunnels[window.start..window.end].iter().enumerate() {
+                let idx = window.start + offset;
+                let is_selected = idx == selected;
 
                 let state_color = match tunnel.state {
                     TunnelState::Active => Color::Green,
@@ -495,6 +543,7 @@ impl PortForwardDialog {
 
             let tunnels_list = Paragraph::new(lines);
             frame.render_widget(tunnels_list, chunks[0]);
+            render_vertical_scrollbar(frame, chunks[0], tunnels.len(), window.start);
         }
 
         // Footer
@@ -502,6 +551,46 @@ impl PortForwardDialog {
             Paragraph::new("[↑↓] Select │ [d] Delete │ [r] Refresh │ [F1] Create │ [Esc] Close")
                 .style(Style::default().fg(Color::Gray));
         frame.render_widget(footer, chunks[1]);
+    }
+
+    fn render_compact_list_mode(&self, frame: &mut Frame, popup: Rect) {
+        let block = Block::default()
+            .title(format!(
+                " Active Tunnels ({}) ",
+                self.registry.active_count()
+            ))
+            .borders(Borders::ALL);
+        let inner = block.inner(popup);
+        frame.render_widget(block, popup);
+
+        let lines = if self.registry.is_empty() {
+            vec![
+                Line::from("no active tunnels"),
+                Line::from("[F1] create  [Esc] close"),
+            ]
+        } else {
+            let tunnels = self.registry.tunnels().values().collect::<Vec<_>>();
+            let selected = self.selected_tunnel.min(tunnels.len().saturating_sub(1));
+            let tunnel = tunnels[selected];
+            let state = match tunnel.state {
+                TunnelState::Active => "active",
+                TunnelState::Starting => "starting",
+                TunnelState::Error => "error",
+                _ => "idle",
+            };
+            vec![
+                Line::from(format!("sel {}/{}", selected + 1, tunnels.len())),
+                Line::from(format!("pod {}", tunnel.target.pod_name)),
+                Line::from(format!("ns {}  {state}", tunnel.target.namespace)),
+                Line::from(format!(
+                    "local {} -> {}",
+                    tunnel.local_addr.port(),
+                    tunnel.target.remote_port
+                )),
+                Line::from("[↑↓] move  [d] stop  [Esc] close"),
+            ]
+        };
+        frame.render_widget(Paragraph::new(lines), inner);
     }
 }
 
@@ -511,7 +600,31 @@ impl Default for PortForwardDialog {
     }
 }
 
-use crate::ui::centered_rect;
+fn tunnel_list_viewport_rows(area: Rect) -> usize {
+    usize::from(area.height.saturating_div(2)).max(1)
+}
+
+fn selected_tunnel_index(total: usize, selected: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        selected.min(total.saturating_sub(1))
+    }
+}
+
+fn port_forward_dialog_popup(area: Rect) -> Rect {
+    let preferred_width = area.width.saturating_mul(60).saturating_div(100).max(50);
+    let preferred_height = area.height.saturating_mul(70).saturating_div(100).max(12);
+    bounded_popup_rect(area, preferred_width, preferred_height, 1, 1)
+}
+
+fn use_compact_port_forward_create_dialog(popup: Rect) -> bool {
+    popup.width < 50 || popup.height < 18
+}
+
+fn use_compact_port_forward_list_dialog(popup: Rect) -> bool {
+    popup.width < 50 || popup.height < 14
+}
 
 #[cfg(test)]
 mod tests {
@@ -692,5 +805,53 @@ mod tests {
         dialog.update_registry(registry);
 
         draw_dialog(&dialog);
+    }
+
+    #[test]
+    fn render_create_mode_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let dialog = PortForwardDialog::new();
+        terminal
+            .draw(|frame| dialog.render(frame, frame.area()))
+            .expect("compact create dialog should render");
+    }
+
+    #[test]
+    fn render_list_mode_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut dialog = PortForwardDialog::new();
+        dialog.mode = PortForwardMode::List;
+
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(make_tunnel("t-active", "pod-a", TunnelState::Active, 6001));
+        dialog.update_registry(registry);
+
+        terminal
+            .draw(|frame| dialog.render(frame, frame.area()))
+            .expect("compact list dialog should render");
+    }
+
+    #[test]
+    fn tunnel_list_viewport_rows_counts_two_lines_per_tunnel() {
+        let area = Rect::new(0, 0, 60, 9);
+        assert_eq!(tunnel_list_viewport_rows(area), 4);
+    }
+
+    #[test]
+    fn tunnel_list_window_keeps_selected_tunnel_visible() {
+        let area = Rect::new(0, 0, 60, 6);
+        let window = table_window(10, 8, tunnel_list_viewport_rows(area));
+        assert_eq!(window.start, 7);
+        assert_eq!(window.end, 10);
+        assert_eq!(window.selected, 1);
+    }
+
+    #[test]
+    fn selected_tunnel_index_clamps_stale_selection() {
+        assert_eq!(selected_tunnel_index(0, 9), 0);
+        assert_eq!(selected_tunnel_index(2, 9), 1);
+        assert_eq!(selected_tunnel_index(2, 1), 1);
     }
 }

@@ -40,6 +40,30 @@ type PdbDerivedCacheValue = DerivedRowsCacheValue<PdbDerivedCell>;
 static PDB_DERIVED_CACHE: LazyLock<DerivedRowsCache<PdbDerivedCell>> =
     LazyLock::new(Default::default);
 
+const NARROW_PDB_WIDTH: u16 = 96;
+
+fn pdb_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_PDB_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Min(12),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Min(28),
+            Constraint::Length(18),
+            Constraint::Length(12),
+            Constraint::Length(10),
+            Constraint::Length(12),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 fn cached_pdb_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
@@ -102,14 +126,7 @@ pub fn render_pdbs(
     let theme = default_theme();
 
     let derived = cached_pdb_derived(cluster, query, &indices, cache_variant);
-    let widths = [
-        Constraint::Min(28),
-        Constraint::Length(18),
-        Constraint::Length(12),
-        Constraint::Length(10),
-        Constraint::Length(12),
-        Constraint::Length(9),
-    ];
+    let widths = pdb_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -217,5 +234,23 @@ mod tests {
         let theme = Theme::dark();
         assert_eq!(disruption_style(2, &theme).fg, Some(theme.success));
         assert_eq!(disruption_style(0, &theme).fg, Some(theme.warning));
+    }
+
+    #[test]
+    fn pdb_widths_switch_to_compact_profile() {
+        let widths = pdb_widths(Rect::new(0, 0, 88, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Min(12));
+        assert_eq!(widths[5], Constraint::Length(8));
+    }
+
+    #[test]
+    fn pdb_widths_keep_wide_profile() {
+        let widths = pdb_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(28));
+        assert_eq!(widths[1], Constraint::Length(18));
+        assert_eq!(widths[4], Constraint::Length(12));
+        assert_eq!(widths[5], Constraint::Length(9));
     }
 }

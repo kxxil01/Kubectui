@@ -279,6 +279,8 @@ pub struct AppState {
     /// Zero-based index of the highlighted row in the active content list.
     /// Reset to `0` on every view change.
     pub selected_idx: usize,
+    /// Shared vertical scroll offset for lower detail panes in split content views.
+    pub content_detail_scroll: usize,
     pub search_query: String,
     pub is_search_mode: bool,
     pub should_quit: bool,

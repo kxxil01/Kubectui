@@ -43,7 +43,10 @@ use ratatui::{
     layout::{Alignment, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Tabs},
+    widgets::{
+        Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Tabs, Wrap,
+    },
 };
 
 use crate::{
@@ -106,18 +109,21 @@ thread_local! {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct HeaderRenderKey {
     area: Rect,
+    overlay_mask: u16,
     content: HeaderCacheKey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct StatusRenderKey {
     area: Rect,
+    overlay_mask: u16,
     content: StatusBarCacheKey,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SidebarRenderKey {
     area: Rect,
+    overlay_mask: u16,
     content: SidebarCacheKey,
 }
 
@@ -405,12 +411,14 @@ pub fn render_header(
     title: &str,
     cluster_meta: &str,
     health: ConnectionHealth,
+    overlay_mask: u16,
 ) {
     let theme_index = crate::ui::theme::active_theme_index();
     let icon_mode = crate::icons::active_icon_mode() as u8;
     let frame_count = frame.count();
     let render_key = HeaderRenderKey {
         area,
+        overlay_mask,
         content: HeaderCacheKey {
             theme_index,
             icon_mode,
@@ -502,6 +510,7 @@ pub fn render_sidebar(
     active: AppView,
     sidebar_cursor: usize,
     data: &SidebarRenderData<'_>,
+    overlay_mask: u16,
 ) {
     use crate::app::Focus;
     use ratatui::layout::Margin;
@@ -511,6 +520,7 @@ pub fn render_sidebar(
     let frame_count = frame.count();
     let render_key = SidebarRenderKey {
         area,
+        overlay_mask,
         content: SidebarCacheKey {
             theme_index,
             icon_mode: crate::icons::active_icon_mode() as u8,
@@ -577,10 +587,21 @@ pub fn render_sidebar(
 
 /// Renders the bottom status bar with context-aware styling.
 pub fn render_status_bar(frame: &mut Frame, area: Rect, message: &str, is_error: bool) {
+    render_status_bar_with_overlay_mask(frame, area, message, is_error, 0);
+}
+
+pub fn render_status_bar_with_overlay_mask(
+    frame: &mut Frame,
+    area: Rect,
+    message: &str,
+    is_error: bool,
+    overlay_mask: u16,
+) {
     let theme_index = crate::ui::theme::active_theme_index();
     let frame_count = frame.count();
     let render_key = StatusRenderKey {
         area,
+        overlay_mask,
         content: StatusBarCacheKey {
             theme_index,
             message: message.to_string(),
@@ -657,6 +678,40 @@ pub fn content_block(title: &str, focused: bool) -> Block<'static> {
     } else {
         default_block(title)
     }
+}
+
+pub fn render_scrollable_text_block<'a>(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    focused: bool,
+    lines: Vec<Line<'a>>,
+    scroll: usize,
+) {
+    let block = content_block(title, focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let total = crate::ui::wrapped_line_count(&lines, inner.width);
+    let position = scroll.min(total.saturating_sub(inner.height.max(1) as usize));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
+        inner,
+    );
+
+    render_vertical_scrollbar(frame, inner, total, position);
+}
+
+pub fn render_vertical_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize) {
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+    let mut state = ScrollbarState::new(total).position(position);
+    frame.render_stateful_widget(scrollbar, area, &mut state);
 }
 
 #[cfg(test)]

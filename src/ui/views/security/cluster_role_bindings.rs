@@ -1,9 +1,11 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Cell, Paragraph, Row},
+    widgets::{Cell, Row},
 };
+
+use super::split_primary_detail;
 
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
@@ -13,10 +15,11 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
-        components::{content_block, default_theme},
+        components::default_theme,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, render_centered_message, render_table_frame,
-        resource_table_title, sort_header_cell, table_viewport_rows, table_window,
+        resource_table_title, responsive_table_widths, sort_header_cell, table_viewport_rows,
+        table_window,
         views::filtering::filtered_cluster_role_binding_indices,
         workload_sort_suffix,
     },
@@ -52,6 +55,28 @@ static CLUSTER_ROLE_BINDING_DERIVED_CACHE: LazyLock<
         )>,
     >,
 > = LazyLock::new(|| Mutex::new(None));
+
+const CLUSTER_ROLE_BINDINGS_NARROW_WIDTH: u16 = 92;
+
+fn cluster_role_binding_widths(area: Rect) -> [Constraint; 4] {
+    let wide = if area.width < CLUSTER_ROLE_BINDINGS_NARROW_WIDTH {
+        [
+            Constraint::Min(22),
+            Constraint::Length(24),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Min(30),
+            Constraint::Length(38),
+            Constraint::Length(9),
+            Constraint::Length(9),
+        ]
+    };
+
+    responsive_table_widths(area.width, wide)
+}
 
 fn cached_cluster_role_binding_derived(
     snapshot: &ClusterSnapshot,
@@ -125,6 +150,7 @@ pub fn render_cluster_role_bindings(
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
+    detail_scroll: usize,
     focused: bool,
 ) {
     let query = query.trim();
@@ -156,14 +182,11 @@ pub fn render_cluster_role_bindings(
         return;
     }
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-        .split(area);
+    let (table_area, detail_area) = split_primary_detail(area);
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(chunks[0]));
+    let window = table_window(total, selected, table_viewport_rows(table_area));
     let header = Row::new([
         sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
         Cell::from(Span::styled("RoleRef", theme.header_style())),
@@ -229,16 +252,11 @@ pub fn render_cluster_role_bindings(
         query,
         &sort_suffix,
     );
-    let widths = [
-        Constraint::Min(30),
-        Constraint::Length(38),
-        Constraint::Length(9),
-        Constraint::Length(9),
-    ];
+    let widths = cluster_role_binding_widths(table_area);
 
     render_table_frame(
         frame,
-        chunks[0],
+        table_area,
         TableFrame {
             rows,
             header,
@@ -260,10 +278,13 @@ pub fn render_cluster_role_bindings(
         &sel_item.subjects,
         &theme,
     );
-    frame.render_widget(
-        Paragraph::new((*detail).clone())
-            .block(content_block("Selected Binding Subjects", focused)),
-        chunks[1],
+    super::render_scrollable_security_detail(
+        frame,
+        detail_area,
+        "Selected Binding Subjects",
+        focused,
+        (*detail).clone(),
+        detail_scroll,
     );
 }
 
@@ -322,4 +343,35 @@ fn render_subjects(
             ])
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::theme::Theme;
+
+    #[test]
+    fn subjects_render_as_human_readable_lines() {
+        let theme = Theme::dark();
+        let lines = render_subjects(
+            &[RoleBindingSubject {
+                kind: "User".to_string(),
+                name: "alice".to_string(),
+                namespace: None,
+                api_group: Some("rbac.authorization.k8s.io".to_string()),
+            }],
+            &theme,
+        );
+
+        let text = lines[0].to_string();
+        assert!(text.contains("User/alice"));
+        assert!(text.contains("apiGroup=rbac.authorization.k8s.io"));
+    }
+
+    #[test]
+    fn cluster_role_binding_widths_compact_on_narrow_area() {
+        let widths = cluster_role_binding_widths(Rect::new(0, 0, 80, 12));
+        assert_eq!(widths[1], Constraint::Length(24));
+        assert_eq!(widths[2], Constraint::Length(8));
+    }
 }

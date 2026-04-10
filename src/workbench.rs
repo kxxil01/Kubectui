@@ -1297,6 +1297,7 @@ pub struct RunbookTabState {
     pub resource: Option<ResourceRef>,
     pub selected: usize,
     pub banner: Option<String>,
+    pub detail_scroll: usize,
     pub steps: Vec<RunbookStepRuntime>,
 }
 
@@ -1316,6 +1317,7 @@ impl RunbookTabState {
             resource,
             selected: 0,
             banner: None,
+            detail_scroll: 0,
             steps,
         }
     }
@@ -1323,19 +1325,31 @@ impl RunbookTabState {
     pub fn select_next(&mut self) {
         if !self.steps.is_empty() {
             self.selected = (self.selected + 1).min(self.steps.len().saturating_sub(1));
+            self.detail_scroll = 0;
         }
     }
 
     pub fn select_previous(&mut self) {
         self.selected = self.selected.saturating_sub(1);
+        self.detail_scroll = 0;
     }
 
     pub fn select_top(&mut self) {
         self.selected = 0;
+        self.detail_scroll = 0;
     }
 
     pub fn select_bottom(&mut self) {
         self.selected = self.steps.len().saturating_sub(1);
+        self.detail_scroll = 0;
+    }
+
+    pub fn scroll_detail_down(&mut self, step: usize) {
+        self.detail_scroll = self.detail_scroll.saturating_add(step);
+    }
+
+    pub fn scroll_detail_up(&mut self, step: usize) {
+        self.detail_scroll = self.detail_scroll.saturating_sub(step);
     }
 
     pub fn selected_step(&self) -> Option<&RunbookStepRuntime> {
@@ -2348,6 +2362,39 @@ mod tests {
         tab.select_next();
         tab.toggle_skipped();
         assert_eq!(tab.progress_label(), "1/2");
+    }
+
+    #[test]
+    fn runbook_detail_scroll_resets_after_selection_change() {
+        let runbook = LoadedRunbook {
+            id: "scroll".into(),
+            title: "Scroll".into(),
+            description: None,
+            aliases: Vec::new(),
+            resource_kinds: Vec::new(),
+            shortcut: None,
+            steps: vec![
+                LoadedRunbookStep {
+                    title: "First".into(),
+                    description: None,
+                    kind: crate::runbooks::LoadedRunbookStepKind::Checklist {
+                        items: vec!["One".into()],
+                    },
+                },
+                LoadedRunbookStep {
+                    title: "Second".into(),
+                    description: None,
+                    kind: crate::runbooks::LoadedRunbookStepKind::Checklist {
+                        items: vec!["Two".into()],
+                    },
+                },
+            ],
+        };
+        let mut tab = RunbookTabState::new(runbook, Some(pod("pod-0")));
+        tab.scroll_detail_down(9);
+        assert_eq!(tab.detail_scroll, 9);
+        tab.select_next();
+        assert_eq!(tab.detail_scroll, 0);
     }
 
     #[test]

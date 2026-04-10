@@ -3,11 +3,12 @@
 use ratatui::{
     layout::Rect,
     prelude::{Color, Frame, Line, Span, Style},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
 use std::collections::HashSet;
 
 use crate::k8s::probes::{ContainerProbes, ProbeStatus};
+use crate::ui::wrapped_line_count;
 
 /// State for the probe panel widget.
 #[derive(Debug, Clone, Default)]
@@ -49,6 +50,8 @@ impl ProbePanelState {
     /// Update probe data from coordinator background polling.
     pub fn update_probes(&mut self, probes: Vec<(String, ContainerProbes)>) {
         self.container_probes = probes;
+        self.selected_index =
+            clamp_probe_selection(self.container_probes.len(), self.selected_index);
     }
 
     /// Handle navigation: move to next container.
@@ -71,7 +74,8 @@ impl ProbePanelState {
 
     /// Toggle expansion for the currently selected container.
     pub fn toggle_expand(&mut self) {
-        if let Some((container_name, _)) = self.container_probes.get(self.selected_index) {
+        let selected = clamp_probe_selection(self.container_probes.len(), self.selected_index);
+        if let Some((container_name, _)) = self.container_probes.get(selected) {
             if self.expanded_containers.contains(container_name) {
                 self.expanded_containers.remove(container_name);
             } else {
@@ -115,11 +119,51 @@ pub fn render_probe_panel(frame: &mut Frame, area: Rect, state: &ProbePanelState
         .title("Health Probes")
         .borders(Borders::ALL)
         .style(Style::default().fg(Color::White));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    // Build the content
-    let mut lines: Vec<Line> = Vec::new();
+    let (lines, selected_line) = build_probe_lines(state);
+    let (total, position) = probe_panel_scroll_metrics(&lines, inner, selected_line);
+    let widget = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((position.min(u16::MAX as usize) as u16, 0));
+    frame.render_widget(widget, inner);
 
-    // Show error banner if present
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(total).position(position);
+    frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+}
+
+fn probe_panel_scroll_metrics(
+    lines: &[Line<'_>],
+    area: Rect,
+    selected_line: usize,
+) -> (usize, usize) {
+    let total = wrapped_line_count(lines, area.width);
+    let selected_offset = wrapped_line_count(&lines[..selected_line.min(lines.len())], area.width);
+    let visible = usize::from(area.height.max(1));
+    let position = selected_offset
+        .saturating_sub(visible.saturating_sub(1) / 2)
+        .min(total.saturating_sub(visible.max(1)));
+    (total, position)
+}
+
+fn clamp_probe_selection(total: usize, selected: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        selected.min(total.saturating_sub(1))
+    }
+}
+
+fn build_probe_lines(state: &ProbePanelState) -> (Vec<Line<'static>>, usize) {
+    let mut lines: Vec<Line<'static>> = Vec::new();
+    let mut selected_line = 0;
+
     if let Some(err) = &state.error {
         lines.push(Line::from(vec![
             Span::styled(" ✗ ", Style::default().fg(Color::Red)),
@@ -132,117 +176,108 @@ pub fn render_probe_panel(frame: &mut Frame, area: Rect, state: &ProbePanelState
         lines.push(Line::from(Span::raw(
             "No probes configured for any containers.",
         )));
-    } else {
-        for (idx, (container_name, probes)) in state.container_probes.iter().enumerate() {
-            let is_selected = idx == state.selected_index;
-            let is_expanded = state.expanded_containers.contains(container_name);
-
-            // Container header line with indicator
-            let indicator = if is_expanded { "▼" } else { "▶" };
-            let selector = if is_selected { "█" } else { " " };
-
-            let probe_count =
-                if probes.liveness.is_some() as usize + probes.readiness.is_some() as usize == 0 {
-                    "no probes".to_string()
-                } else {
-                    let mut count_str = String::new();
-                    if probes.liveness.is_some() {
-                        count_str.push('L');
-                    }
-                    if probes.readiness.is_some() {
-                        count_str.push('R');
-                    }
-                    count_str
-                };
-
-            let container_line_style = if is_selected {
-                Style::default().fg(Color::Cyan).bg(Color::DarkGray)
-            } else {
-                Style::default().fg(Color::White)
-            };
-
-            let container_line = Line::from(vec![
-                Span::styled(selector, container_line_style),
-                Span::styled(indicator, container_line_style),
-                Span::styled(format!(" {} ", container_name), container_line_style),
-                Span::styled(
-                    format!("[{}]", probe_count),
-                    Style::default().fg(Color::DarkGray).italic(),
-                ),
-            ]);
-
-            lines.push(container_line);
-
-            // If expanded, show probe details
-            if is_expanded {
-                if let Some(liveness) = &probes.liveness {
-                    let liveness_line = format!(
-                        "  ✓ Liveness: {} (delay: {}s, period: {}s, timeout: {}s)",
-                        liveness.handler,
-                        liveness.initial_delay_seconds,
-                        liveness.period_seconds,
-                        liveness.timeout_seconds
-                    );
-                    lines.push(Line::from(Span::styled(
-                        liveness_line,
-                        Style::default().fg(Color::Green).italic(),
-                    )));
-                }
-
-                if let Some(readiness) = &probes.readiness {
-                    let readiness_line = format!(
-                        "  ✓ Readiness: {} (delay: {}s, period: {}s, timeout: {}s)",
-                        readiness.handler,
-                        readiness.initial_delay_seconds,
-                        readiness.period_seconds,
-                        readiness.timeout_seconds
-                    );
-                    lines.push(Line::from(Span::styled(
-                        readiness_line,
-                        Style::default().fg(Color::Green).italic(),
-                    )));
-                }
-            }
-        }
-
-        // Summary line
-        lines.push(Line::from(""));
-        let summary = format!(
-            "{}/{} containers have probes",
-            state.healthy_count(),
-            state.container_probes.len()
-        );
-        lines.push(Line::from(Span::styled(
-            summary,
-            Style::default().fg(Color::Yellow),
-        )));
-
-        // Legend
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("✓", Style::default().fg(Color::Green)),
-            Span::raw(" success  "),
-            Span::styled("✗", Style::default().fg(Color::Red)),
-            Span::raw(" failed  "),
-            Span::styled("⏳", Style::default().fg(Color::Blue)),
-            Span::raw(" pending  "),
-            Span::styled("?", Style::default().fg(Color::Yellow)),
-            Span::raw(" error"),
-        ]));
-
-        // Help text
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "↑/↓ or k/j: navigate  Enter/Space: toggle",
-            Style::default().fg(Color::DarkGray),
-        )));
+        return (lines, 0);
     }
 
-    let widget = Paragraph::new(lines)
-        .block(block)
-        .wrap(Wrap { trim: false });
+    let selected_index = clamp_probe_selection(state.container_probes.len(), state.selected_index);
+    for (idx, (container_name, probes)) in state.container_probes.iter().enumerate() {
+        let is_selected = idx == selected_index;
+        let is_expanded = state.expanded_containers.contains(container_name);
 
-    frame.render_widget(widget, area);
+        let indicator = if is_expanded { "▼" } else { "▶" };
+        let selector = if is_selected { "█" } else { " " };
+        let probe_count =
+            if probes.liveness.is_some() as usize + probes.readiness.is_some() as usize == 0 {
+                "no probes".to_string()
+            } else {
+                let mut count_str = String::new();
+                if probes.liveness.is_some() {
+                    count_str.push('L');
+                }
+                if probes.readiness.is_some() {
+                    count_str.push('R');
+                }
+                count_str
+            };
+        let container_line_style = if is_selected {
+            Style::default().fg(Color::Cyan).bg(Color::DarkGray)
+        } else {
+            Style::default().fg(Color::White)
+        };
+
+        if is_selected {
+            selected_line = lines.len();
+        }
+
+        lines.push(Line::from(vec![
+            Span::styled(selector, container_line_style),
+            Span::styled(indicator, container_line_style),
+            Span::styled(format!(" {} ", container_name), container_line_style),
+            Span::styled(
+                format!("[{}]", probe_count),
+                Style::default().fg(Color::DarkGray).italic(),
+            ),
+        ]));
+
+        if is_expanded {
+            if let Some(liveness) = &probes.liveness {
+                let liveness_line = format!(
+                    "  ✓ Liveness: {} (delay: {}s, period: {}s, timeout: {}s)",
+                    liveness.handler,
+                    liveness.initial_delay_seconds,
+                    liveness.period_seconds,
+                    liveness.timeout_seconds
+                );
+                lines.push(Line::from(Span::styled(
+                    liveness_line,
+                    Style::default().fg(Color::Green).italic(),
+                )));
+            }
+
+            if let Some(readiness) = &probes.readiness {
+                let readiness_line = format!(
+                    "  ✓ Readiness: {} (delay: {}s, period: {}s, timeout: {}s)",
+                    readiness.handler,
+                    readiness.initial_delay_seconds,
+                    readiness.period_seconds,
+                    readiness.timeout_seconds
+                );
+                lines.push(Line::from(Span::styled(
+                    readiness_line,
+                    Style::default().fg(Color::Green).italic(),
+                )));
+            }
+        }
+    }
+
+    lines.push(Line::from(""));
+    let summary = format!(
+        "{}/{} containers have probes",
+        state.healthy_count(),
+        state.container_probes.len()
+    );
+    lines.push(Line::from(Span::styled(
+        summary,
+        Style::default().fg(Color::Yellow),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("✓", Style::default().fg(Color::Green)),
+        Span::raw(" success  "),
+        Span::styled("✗", Style::default().fg(Color::Red)),
+        Span::raw(" failed  "),
+        Span::styled("⏳", Style::default().fg(Color::Blue)),
+        Span::raw(" pending  "),
+        Span::styled("?", Style::default().fg(Color::Yellow)),
+        Span::raw(" error"),
+    ]));
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "↑/↓ or k/j: navigate  Enter/Space: toggle",
+        Style::default().fg(Color::DarkGray),
+    )));
+
+    (lines, selected_line)
 }
 
 #[cfg(test)]
@@ -307,6 +342,20 @@ mod tests {
 
         state.toggle_expand();
         assert!(!state.expanded_containers.contains("container1"));
+    }
+
+    #[test]
+    fn test_update_probes_clamps_stale_selection() {
+        let probes = vec![
+            ("container1".to_string(), ContainerProbes::default()),
+            ("container2".to_string(), ContainerProbes::default()),
+        ];
+        let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
+        state.selected_index = 9;
+
+        state.update_probes(vec![("container1".to_string(), ContainerProbes::default())]);
+
+        assert_eq!(state.selected_index, 0);
     }
 
     #[test]
@@ -429,5 +478,24 @@ mod tests {
 
         assert_eq!(state.healthy_count(), 0);
         assert_eq!(state.selected_index, 0);
+    }
+
+    #[test]
+    fn probe_panel_window_keeps_selected_container_visible() {
+        let probes = vec![
+            ("container1".to_string(), ContainerProbes::default()),
+            ("container2".to_string(), ContainerProbes::default()),
+            ("container3".to_string(), ContainerProbes::default()),
+            ("container4".to_string(), ContainerProbes::default()),
+        ];
+        let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
+        state.selected_index = 3;
+
+        let (lines, selected_line) = build_probe_lines(&state);
+        let (total, position) =
+            probe_panel_scroll_metrics(&lines, Rect::new(0, 0, 80, 6), selected_line);
+
+        assert!(total >= lines.len());
+        assert!(position <= total.saturating_sub(1));
     }
 }

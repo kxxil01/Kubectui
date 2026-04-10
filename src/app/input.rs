@@ -248,39 +248,56 @@ impl AppState {
                     _ => AppAction::None,
                 }
             }
-            WorkbenchTabState::AiAnalysis(tab) => {
-                let max_scroll = tab.rendered_line_count().saturating_sub(1);
-                match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
-                        AppAction::None
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        tab.scroll = tab.scroll.saturating_sub(1);
-                        AppAction::None
-                    }
-                    KeyCode::Char('g') => {
-                        tab.scroll = 0;
-                        AppAction::None
-                    }
-                    KeyCode::Char('G') => {
-                        tab.scroll = max_scroll;
-                        AppAction::None
-                    }
-                    KeyCode::PageDown => {
-                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
-                        AppAction::None
-                    }
-                    KeyCode::PageUp => {
-                        tab.scroll = tab.scroll.saturating_sub(10);
-                        AppAction::None
-                    }
-                    _ => AppAction::None,
+            WorkbenchTabState::AiAnalysis(tab) => match key.code {
+                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    tab.scroll = tab.scroll.saturating_add(1);
+                    AppAction::None
                 }
-            }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.scroll = tab.scroll.saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.scroll = 0;
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    tab.scroll = usize::MAX;
+                    AppAction::None
+                }
+                KeyCode::PageDown => {
+                    tab.scroll = tab.scroll.saturating_add(10);
+                    AppAction::None
+                }
+                KeyCode::PageUp => {
+                    tab.scroll = tab.scroll.saturating_sub(10);
+                    AppAction::None
+                }
+                _ => AppAction::None,
+            },
             WorkbenchTabState::Runbook(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('j') | KeyCode::Down
+                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    tab.scroll_detail_down(1);
+                    AppAction::None
+                }
+                KeyCode::Char('k') | KeyCode::Up
+                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
+                    tab.scroll_detail_up(1);
+                    AppAction::None
+                }
+                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    tab.scroll_detail_down(10);
+                    AppAction::None
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    tab.scroll_detail_up(10);
+                    AppAction::None
+                }
                 KeyCode::Char('j') | KeyCode::Down => {
                     tab.select_next();
                     AppAction::None
@@ -1926,6 +1943,126 @@ impl AppState {
                     .and_then(DetailViewState::selected_detail_resource)
                     .map(AppAction::OpenDetail)
                     .unwrap_or(AppAction::None)
+            }
+            KeyCode::Char('j') | KeyCode::Down
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.scroll_top_panels_down(1);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('j') | KeyCode::Down
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        self.view,
+                        AppView::Dashboard
+                            | AppView::Projects
+                            | AppView::Governance
+                            | AppView::RoleBindings
+                            | AppView::ClusterRoleBindings
+                            | AppView::Roles
+                            | AppView::ClusterRoles
+                    ) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_add(1);
+                AppAction::None
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.scroll_top_panels_up(1);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        self.view,
+                        AppView::Dashboard
+                            | AppView::Projects
+                            | AppView::Governance
+                            | AppView::RoleBindings
+                            | AppView::ClusterRoleBindings
+                            | AppView::Roles
+                            | AppView::ClusterRoles
+                    ) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_sub(1);
+                AppAction::None
+            }
+            KeyCode::Char('d')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.scroll_top_panels_down(10);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('d')
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        self.view,
+                        AppView::Dashboard
+                            | AppView::Projects
+                            | AppView::Governance
+                            | AppView::RoleBindings
+                            | AppView::ClusterRoleBindings
+                            | AppView::Roles
+                            | AppView::ClusterRoles
+                    ) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
+                AppAction::None
+            }
+            KeyCode::Char('u')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.scroll_top_panels_up(10);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('u')
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        self.view,
+                        AppView::Dashboard
+                            | AppView::Projects
+                            | AppView::Governance
+                            | AppView::RoleBindings
+                            | AppView::ClusterRoleBindings
+                            | AppView::Roles
+                            | AppView::ClusterRoles
+                    ) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
+                AppAction::None
             }
             KeyCode::Char('j') | KeyCode::Down
                 if self

@@ -27,6 +27,45 @@ use crate::{
     },
 };
 
+const NARROW_INGRESS_CLASS_WIDTH: u16 = 96;
+const NARROW_INGRESS_WIDTH: u16 = 104;
+
+fn ingress_class_widths(area: Rect) -> [Constraint; 3] {
+    if area.width < NARROW_INGRESS_CLASS_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Min(22),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Percentage(34),
+            Constraint::Percentage(54),
+            Constraint::Percentage(12),
+        ]
+    }
+}
+
+fn ingress_widths(area: Rect) -> [Constraint; 5] {
+    if area.width < NARROW_INGRESS_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(12),
+            Constraint::Min(18),
+            Constraint::Min(14),
+        ]
+    } else {
+        [
+            Constraint::Percentage(26),
+            Constraint::Percentage(16),
+            Constraint::Percentage(16),
+            Constraint::Percentage(27),
+            Constraint::Percentage(15),
+        ]
+    }
+}
+
 // ── Ingress derived cell cache ──────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -204,13 +243,7 @@ pub fn render_ingresses(
         query,
         "",
     );
-    let widths = [
-        Constraint::Percentage(26),
-        Constraint::Percentage(16),
-        Constraint::Percentage(16),
-        Constraint::Percentage(27),
-        Constraint::Percentage(15),
-    ];
+    let widths = ingress_widths(area);
 
     render_table_frame(
         frame,
@@ -321,11 +354,7 @@ pub fn render_ingress_classes(
         query,
         "",
     );
-    let widths = [
-        Constraint::Percentage(34),
-        Constraint::Percentage(54),
-        Constraint::Percentage(12),
-    ];
+    let widths = ingress_class_widths(area);
 
     render_table_frame(
         frame,
@@ -342,4 +371,42 @@ pub fn render_ingress_classes(
         },
         &theme,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ingress_widths_switch_to_compact_profile() {
+        let widths = ingress_widths(Rect::new(0, 0, 92, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[3], Constraint::Min(18));
+        assert_eq!(widths[4], Constraint::Min(14));
+    }
+
+    #[test]
+    fn ingress_widths_keep_wide_profile() {
+        let widths = ingress_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(26));
+        assert_eq!(widths[3], Constraint::Percentage(27));
+        assert_eq!(widths[4], Constraint::Percentage(15));
+    }
+
+    #[test]
+    fn ingress_class_widths_switch_to_compact_profile() {
+        let widths = ingress_class_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Min(22));
+        assert_eq!(widths[2], Constraint::Length(8));
+    }
+
+    #[test]
+    fn ingress_class_widths_keep_wide_profile() {
+        let widths = ingress_class_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(34));
+        assert_eq!(widths[1], Constraint::Percentage(54));
+        assert_eq!(widths[2], Constraint::Percentage(12));
+    }
 }

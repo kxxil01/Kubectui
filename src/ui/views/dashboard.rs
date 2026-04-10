@@ -23,7 +23,7 @@ use crate::{
         },
     },
     time::format_local,
-    ui::{components::default_theme, theme::Theme, utilization_style},
+    ui::{components::default_theme, theme::Theme, utilization_style, wrapped_line_count},
 };
 
 // ── dashboard computation cache ──────────────────────────────────────────────
@@ -47,6 +47,10 @@ struct DashboardCache {
 
 static DASHBOARD_CACHE: LazyLock<Mutex<Option<DashboardCache>>> =
     LazyLock::new(|| Mutex::new(None));
+
+const NARROW_DASHBOARD_WIDTH: u16 = 84;
+const COMPACT_GAUGE_WIDTH: u16 = 72;
+const NARROW_NAMESPACE_UTIL_WIDTH: u16 = 88;
 
 fn cached_dashboard(snapshot: &ClusterSnapshot) -> DashboardData {
     let mut guard = DASHBOARD_CACHE.lock().unwrap_or_else(|e| e.into_inner());
@@ -119,12 +123,62 @@ fn truncate_label(s: &str, max_chars: usize) -> Cow<'_, str> {
     }
 }
 
+fn use_narrow_dashboard_layout(area: Rect) -> bool {
+    area.width < NARROW_DASHBOARD_WIDTH
+}
+
+fn namespace_util_widths(area: Rect) -> [Constraint; 8] {
+    if area.width < NARROW_NAMESPACE_UTIL_WIDTH {
+        [
+            Constraint::Min(14),
+            Constraint::Length(5),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Length(9),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Min(9),
+        ]
+    } else {
+        [
+            Constraint::Min(16),
+            Constraint::Length(6),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(11),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Min(11),
+        ]
+    }
+}
+
+fn compact_gauge_line<'a>(label: &'a str, pct: u64, theme: &Theme) -> Line<'a> {
+    let mut spans = vec![Span::styled(
+        format!("  {label:<14} "),
+        theme.inactive_style(),
+    )];
+    spans.extend(mini_bar(pct, theme));
+    Line::from(spans)
+}
+
 // ── top-level render ──────────────────────────────────────────────────────────
 
 /// Renders the dashboard view.
-pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, _focused: bool) {
+pub fn render_dashboard(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &ClusterSnapshot,
+    alert_scroll: usize,
+    _focused: bool,
+) {
     let theme = default_theme();
     let d = cached_dashboard(snapshot);
+
+    if use_narrow_dashboard_layout(area) {
+        render_narrow_dashboard(frame, area, snapshot, &d, &theme, alert_scroll);
+        return;
+    }
 
     // On small terminals (<40 rows) show a compact 4-row layout; otherwise full 7 rows.
     let compact = area.height < 40;
@@ -182,7 +236,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
             .split(rows[2]);
         render_resource_counts(frame, summary_cols[0], &d.stats, &theme);
         render_overcommit_governance(frame, summary_cols[1], &d.cluster_resources, &theme);
-        render_alerts(frame, rows[3], &d.alerts, &theme);
+        render_alerts(frame, rows[3], &d.alerts, &theme, alert_scroll);
     } else {
         // Full layout: rows[2..6]
         let node_rows = Layout::default()
@@ -200,8 +254,46 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
         render_overcommit_governance(frame, summary_cols[1], &d.cluster_resources, &theme);
         render_namespace_utilization(frame, rows[4], &d.ns_utilization, &theme);
         render_top_pod_consumers(frame, rows[5], &d.top_cpu_pods, &d.top_mem_pods, &theme);
-        render_alerts(frame, rows[6], &d.alerts, &theme);
+        render_alerts(frame, rows[6], &d.alerts, &theme, alert_scroll);
     }
+}
+
+fn render_narrow_dashboard(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &ClusterSnapshot,
+    d: &DashboardData,
+    theme: &Theme,
+    alert_scroll: usize,
+) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(8),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Min(6),
+        ])
+        .split(area);
+
+    render_cluster_info(frame, rows[0], snapshot, theme);
+    render_cluster_health_summary(
+        frame,
+        rows[1],
+        &d.stats,
+        &d.insights,
+        snapshot.issue_count,
+        theme,
+    );
+    render_health_gauges(
+        frame,
+        rows[2],
+        &d.stats,
+        d.workload_pct,
+        &d.cluster_resources,
+        theme,
+    );
+    render_alerts(frame, rows[3], &d.alerts, theme, alert_scroll);
 }
 
 // ── cluster info ──────────────────────────────────────────────────────────────
@@ -445,6 +537,11 @@ fn render_health_gauges(
     cluster_res: &ClusterResourceSummary,
     theme: &Theme,
 ) {
+    if area.width < COMPACT_GAUGE_WIDTH {
+        render_compact_health_gauges(frame, area, stats, workload_pct, cluster_res, theme);
+        return;
+    }
+
     let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -485,6 +582,34 @@ fn render_health_gauges(
         cluster_res.cluster_mem_pct,
         theme,
     );
+}
+
+fn render_compact_health_gauges(
+    frame: &mut Frame,
+    area: Rect,
+    stats: &DashboardStats,
+    workload_pct: u8,
+    cluster_res: &ClusterResourceSummary,
+    theme: &Theme,
+) {
+    let block = Block::default()
+        .title(Span::styled(" 󰄬 Health Gauges ", theme.title_style()))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.bg));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let lines = vec![
+        compact_gauge_line("Nodes Ready", u64::from(stats.ready_nodes_percent), theme),
+        compact_gauge_line("Pods Running", u64::from(stats.running_pods_percent), theme),
+        compact_gauge_line("Workload", u64::from(workload_pct), theme),
+        compact_gauge_line("Cluster CPU", u64::from(cluster_res.cluster_cpu_pct), theme),
+        compact_gauge_line("Cluster Mem", u64::from(cluster_res.cluster_mem_pct), theme),
+    ];
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 
 fn render_percent_gauge(frame: &mut Frame, area: Rect, title: &str, percent: u8, theme: &Theme) {
@@ -980,28 +1105,22 @@ fn render_namespace_utilization(
         })
         .collect();
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Min(16),    // Namespace
-            Constraint::Length(6),  // Pods
-            Constraint::Length(9),  // CPU Use
-            Constraint::Length(9),  // CPU Req
-            Constraint::Length(11), // %CPU/R (bar + pct)
-            Constraint::Length(9),  // Mem Use
-            Constraint::Length(9),  // Mem Req
-            Constraint::Min(11),    // %MEM/R (bar + pct, stretches)
-        ],
-    )
-    .header(header)
-    .block(block);
+    let table = Table::new(rows, namespace_util_widths(area))
+        .header(header)
+        .block(block);
 
     frame.render_widget(table, area);
 }
 
 // ── alerts ────────────────────────────────────────────────────────────────────
 
-fn render_alerts(frame: &mut Frame, area: Rect, alerts: &[AlertItem], theme: &Theme) {
+fn render_alerts(
+    frame: &mut Frame,
+    area: Rect,
+    alerts: &[AlertItem],
+    theme: &Theme,
+    scroll: usize,
+) {
     let alert_lines: Vec<Line> = if alerts.is_empty() {
         vec![Line::from(vec![
             Span::styled("✓ ", theme.badge_success_style()),
@@ -1057,10 +1176,50 @@ fn render_alerts(frame: &mut Frame, area: Rect, alerts: &[AlertItem], theme: &Th
         )
         .style(Style::default().bg(theme.bg));
 
+    let inner = block.inner(area);
+    let total = wrapped_line_count(&alert_lines, inner.width);
+    let position = scroll.min(total.saturating_sub(inner.height.max(1) as usize));
     frame.render_widget(
         Paragraph::new(alert_lines)
             .block(block)
-            .wrap(Wrap { trim: false }),
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
         area,
     );
+    crate::ui::components::render_vertical_scrollbar(frame, inner, total, position);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn namespace_util_widths_switch_to_compact_profile() {
+        let widths = namespace_util_widths(Rect::new(0, 0, 80, 20));
+        assert_eq!(widths[0], Constraint::Min(14));
+        assert_eq!(widths[1], Constraint::Length(5));
+        assert_eq!(widths[4], Constraint::Length(9));
+        assert_eq!(widths[7], Constraint::Min(9));
+    }
+
+    #[test]
+    fn namespace_util_widths_keep_wide_profile() {
+        let widths = namespace_util_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(16));
+        assert_eq!(widths[1], Constraint::Length(6));
+        assert_eq!(widths[4], Constraint::Length(11));
+        assert_eq!(widths[7], Constraint::Min(11));
+    }
+
+    #[test]
+    fn dashboard_alert_scroll_clamps_to_last_page() {
+        let lines = vec![
+            Line::from("alert 1"),
+            Line::from("alert 2"),
+            Line::from("alert 3"),
+        ];
+        let total = wrapped_line_count(&lines, 20);
+        let position = 999usize.min(total.saturating_sub(2));
+        assert_eq!(position, 1);
+    }
 }

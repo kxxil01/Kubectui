@@ -1,10 +1,10 @@
 //! Project/application scope view built from snapshot-cached native label inference.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Cell, Paragraph, Row, Wrap},
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -15,10 +15,14 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         TableFrame,
-        components::{content_block, default_theme},
-        render_centered_message, render_table_frame, table_viewport_rows, table_window,
+        components::{default_theme, render_scrollable_text_block},
+        render_centered_message, render_table_frame, responsive_table_widths, table_viewport_rows,
+        table_window, vertical_primary_detail_chunks,
     },
 };
+
+const PROJECTS_COMPACT_HEIGHT: u16 = 24;
+const PROJECTS_NARROW_WIDTH: u16 = 96;
 
 pub fn render_projects(
     frame: &mut Frame,
@@ -26,6 +30,7 @@ pub fn render_projects(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
+    detail_scroll: usize,
     focused: bool,
 ) {
     let projects = compute_projects(cluster);
@@ -59,20 +64,52 @@ pub fn render_projects(
 
     let selected = selected_idx.min(indices.len().saturating_sub(1));
     let selected_project = &projects[indices[selected]];
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(area);
+    let (table_area, summary_area) =
+        vertical_primary_detail_chunks(area, 60, 8, PROJECTS_COMPACT_HEIGHT);
     render_project_table(
         frame,
-        chunks[0],
+        table_area,
         &projects,
         &indices,
         selected,
         search.trim(),
         focused,
     );
-    render_project_summary(frame, chunks[1], selected_project, focused);
+    render_project_summary(
+        frame,
+        summary_area,
+        selected_project,
+        detail_scroll,
+        focused,
+    );
+}
+
+fn project_table_widths(area: Rect) -> [Constraint; 8] {
+    let wide = if area.width < PROJECTS_NARROW_WIDTH {
+        [
+            Constraint::Length(3),
+            Constraint::Min(18),
+            Constraint::Min(22),
+            Constraint::Min(16),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Length(6),
+            Constraint::Length(6),
+        ]
+    } else {
+        [
+            Constraint::Length(3),
+            Constraint::Length(22),
+            Constraint::Length(28),
+            Constraint::Length(22),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ]
+    };
+
+    responsive_table_widths(area.width, wide)
 }
 
 fn render_project_table(
@@ -136,16 +173,7 @@ fn render_project_table(
             projects.len()
         )
     };
-    let widths = [
-        Constraint::Length(3),
-        Constraint::Length(22),
-        Constraint::Length(28),
-        Constraint::Length(22),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Length(8),
-        Constraint::Length(8),
-    ];
+    let widths = project_table_widths(area);
 
     render_table_frame(
         frame,
@@ -164,7 +192,13 @@ fn render_project_table(
     );
 }
 
-fn render_project_summary(frame: &mut Frame, area: Rect, project: &ProjectSummary, focused: bool) {
+fn render_project_summary(
+    frame: &mut Frame,
+    area: Rect,
+    project: &ProjectSummary,
+    scroll: usize,
+    focused: bool,
+) {
     let theme = default_theme();
     let mut lines = Vec::new();
     lines.push(Line::from(vec![
@@ -257,12 +291,7 @@ fn render_project_summary(frame: &mut Frame, area: Rect, project: &ProjectSummar
         lines.push(Line::from(spans));
     }
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(content_block("Project Summary", focused)),
-        area,
-    );
+    render_scrollable_text_block(frame, area, "Project Summary", focused, lines, scroll);
 }
 
 fn severity_badge(severity: AlertSeverity, issue_count: usize) -> (&'static str, Style) {
@@ -309,6 +338,7 @@ mod tests {
                     &ClusterSnapshot::default(),
                     0,
                     "",
+                    0,
                     true,
                 );
             })
@@ -331,7 +361,36 @@ mod tests {
         });
         terminal
             .draw(|frame| {
-                render_projects(frame, frame.area(), &snapshot, 0, "", true);
+                render_projects(frame, frame.area(), &snapshot, 0, "", 0, true);
+            })
+            .expect("render");
+    }
+
+    #[test]
+    fn project_table_widths_compact_on_narrow_area() {
+        let widths = project_table_widths(Rect::new(0, 0, 84, 20));
+        assert!(matches!(widths[1], Constraint::Percentage(_)));
+        assert!(matches!(widths[2], Constraint::Percentage(_)));
+        assert!(matches!(widths[3], Constraint::Percentage(_)));
+    }
+
+    #[test]
+    fn render_projects_compact_height_smoke() {
+        let backend = ratatui::backend::TestBackend::new(96, 18);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 9,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.pods.push(PodInfo {
+            name: "api-123".into(),
+            namespace: "payments".into(),
+            labels: vec![("app.kubernetes.io/part-of".into(), "checkout".into())],
+            ..PodInfo::default()
+        });
+        terminal
+            .draw(|frame| {
+                render_projects(frame, frame.area(), &snapshot, 0, "", 0, true);
             })
             .expect("render");
     }

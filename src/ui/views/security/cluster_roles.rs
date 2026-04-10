@@ -1,11 +1,29 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{Cell, Paragraph, Row},
+    widgets::{Cell, Row},
 };
 
-use super::join_or_all;
+use super::{join_or_all, split_primary_detail};
+
+const CLUSTER_ROLE_NARROW_WIDTH: u16 = 80;
+
+fn cluster_role_widths(area: Rect) -> [Constraint; 3] {
+    if area.width < CLUSTER_ROLE_NARROW_WIDTH {
+        [
+            Constraint::Min(20),
+            Constraint::Length(7),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Min(36),
+            Constraint::Length(8),
+            Constraint::Length(9),
+        ]
+    }
+}
 
 use crate::{
     app::{AppView, ResourceRef, WorkloadSortColumn, WorkloadSortState},
@@ -15,7 +33,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
-        components::{content_block, default_theme},
+        components::default_theme,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, render_centered_message, render_table_frame,
         resource_table_title, sort_header_cell, table_viewport_rows, table_window,
@@ -112,6 +130,7 @@ pub fn render_cluster_roles(
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
+    detail_scroll: usize,
     focused: bool,
 ) {
     let query = query.trim();
@@ -143,14 +162,11 @@ pub fn render_cluster_roles(
         return;
     }
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-        .split(area);
+    let (table_area, detail_area) = split_primary_detail(area);
 
     let total = indices.len();
     let selected = selected_idx.min(total.saturating_sub(1));
-    let window = table_window(total, selected, table_viewport_rows(chunks[0]));
+    let window = table_window(total, selected, table_viewport_rows(table_area));
     let header = Row::new([
         sort_header_cell("Name", sort, WorkloadSortColumn::Name, &theme, true),
         Cell::from(Span::styled("Rules", theme.header_style())),
@@ -213,14 +229,10 @@ pub fn render_cluster_roles(
         query,
         &sort_suffix,
     );
-    let widths = [
-        Constraint::Min(36),
-        Constraint::Length(8),
-        Constraint::Length(9),
-    ];
+    let widths = cluster_role_widths(table_area);
     render_table_frame(
         frame,
-        chunks[0],
+        table_area,
         TableFrame {
             rows,
             header,
@@ -242,10 +254,13 @@ pub fn render_cluster_roles(
         &sel_item.rules,
         &theme,
     );
-    frame.render_widget(
-        Paragraph::new((*detail).clone())
-            .block(content_block("Selected ClusterRole Rules", focused)),
-        chunks[1],
+    super::render_scrollable_security_detail(
+        frame,
+        detail_area,
+        "Selected ClusterRole Rules",
+        focused,
+        (*detail).clone(),
+        detail_scroll,
     );
 }
 
@@ -311,4 +326,25 @@ fn render_rule_tree(rules: &[RbacRule], theme: &crate::ui::theme::Theme) -> Vec<
         ]));
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cluster_role_widths_switch_to_compact_profile() {
+        let widths = cluster_role_widths(Rect::new(0, 0, 72, 20));
+        assert_eq!(widths[0], Constraint::Min(20));
+        assert_eq!(widths[1], Constraint::Length(7));
+        assert_eq!(widths[2], Constraint::Length(8));
+    }
+
+    #[test]
+    fn cluster_role_widths_keep_wide_profile() {
+        let widths = cluster_role_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(36));
+        assert_eq!(widths[1], Constraint::Length(8));
+        assert_eq!(widths[2], Constraint::Length(9));
+    }
 }

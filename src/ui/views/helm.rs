@@ -28,6 +28,41 @@ use crate::{
     },
 };
 
+const NARROW_HELM_RELEASE_WIDTH: u16 = 112;
+const NARROW_HELM_REPO_WIDTH: u16 = 96;
+
+fn helm_release_widths(area: Rect) -> [Constraint; 7] {
+    if area.width < NARROW_HELM_RELEASE_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Min(18),
+            Constraint::Length(8),
+            Constraint::Length(10),
+            Constraint::Length(8),
+            Constraint::Length(12),
+        ]
+    } else {
+        [
+            Constraint::Percentage(18),
+            Constraint::Percentage(14),
+            Constraint::Percentage(20),
+            Constraint::Percentage(10),
+            Constraint::Percentage(14),
+            Constraint::Percentage(8),
+            Constraint::Percentage(16),
+        ]
+    }
+}
+
+fn helm_repo_widths(area: Rect) -> [Constraint; 2] {
+    if area.width < NARROW_HELM_REPO_WIDTH {
+        [Constraint::Min(18), Constraint::Min(28)]
+    } else {
+        [Constraint::Percentage(30), Constraint::Percentage(70)]
+    }
+}
+
 // ── Helm Release derived cell cache ─────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -224,15 +259,7 @@ pub fn render_helm_releases(
         query,
         "",
     );
-    let widths = [
-        Constraint::Percentage(18),
-        Constraint::Percentage(14),
-        Constraint::Percentage(20),
-        Constraint::Percentage(10),
-        Constraint::Percentage(14),
-        Constraint::Percentage(8),
-        Constraint::Percentage(16),
-    ];
+    let widths = helm_release_widths(area);
 
     render_table_frame(
         frame,
@@ -331,7 +358,7 @@ pub fn render_helm_repos(
         query,
         "",
     );
-    let widths = [Constraint::Percentage(30), Constraint::Percentage(70)];
+    let widths = helm_repo_widths(area);
 
     render_table_frame(
         frame,
@@ -348,4 +375,40 @@ pub fn render_helm_repos(
         },
         &theme,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn helm_release_widths_switch_to_compact_profile() {
+        let widths = helm_release_widths(Rect::new(0, 0, 96, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Min(18));
+        assert_eq!(widths[6], Constraint::Length(12));
+    }
+
+    #[test]
+    fn helm_release_widths_keep_wide_profile() {
+        let widths = helm_release_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[0], Constraint::Percentage(18));
+        assert_eq!(widths[2], Constraint::Percentage(20));
+        assert_eq!(widths[6], Constraint::Percentage(16));
+    }
+
+    #[test]
+    fn helm_repo_widths_switch_to_compact_profile() {
+        let widths = helm_repo_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Min(28));
+    }
+
+    #[test]
+    fn helm_repo_widths_keep_wide_profile() {
+        let widths = helm_repo_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(30));
+        assert_eq!(widths[1], Constraint::Percentage(70));
+    }
 }

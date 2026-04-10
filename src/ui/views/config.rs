@@ -27,6 +27,43 @@ use crate::{
     },
 };
 
+const NARROW_CONFIG_MAP_WIDTH: u16 = 96;
+const NARROW_SECRET_WIDTH: u16 = 96;
+
+fn config_map_widths(area: Rect) -> [Constraint; 3] {
+    if area.width < NARROW_CONFIG_MAP_WIDTH {
+        [
+            Constraint::Min(24),
+            Constraint::Length(14),
+            Constraint::Length(6),
+        ]
+    } else {
+        [
+            Constraint::Percentage(52),
+            Constraint::Percentage(33),
+            Constraint::Percentage(15),
+        ]
+    }
+}
+
+fn secret_widths(area: Rect) -> [Constraint; 4] {
+    if area.width < NARROW_SECRET_WIDTH {
+        [
+            Constraint::Min(20),
+            Constraint::Length(14),
+            Constraint::Min(16),
+            Constraint::Length(6),
+        ]
+    } else {
+        [
+            Constraint::Percentage(38),
+            Constraint::Percentage(24),
+            Constraint::Percentage(26),
+            Constraint::Percentage(12),
+        ]
+    }
+}
+
 // ── ConfigMap derived cell cache ────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,11 +211,7 @@ pub fn render_config_maps(
         query,
         "",
     );
-    let widths = [
-        Constraint::Percentage(52),
-        Constraint::Percentage(33),
-        Constraint::Percentage(15),
-    ];
+    let widths = config_map_widths(area);
 
     render_table_frame(
         frame,
@@ -349,12 +382,7 @@ pub fn render_secrets(
         query,
         "",
     );
-    let widths = [
-        Constraint::Percentage(38),
-        Constraint::Percentage(24),
-        Constraint::Percentage(26),
-        Constraint::Percentage(12),
-    ];
+    let widths = secret_widths(area);
 
     render_table_frame(
         frame,
@@ -371,4 +399,41 @@ pub fn render_secrets(
         },
         &theme,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn config_map_widths_switch_to_compact_profile() {
+        let widths = config_map_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(24));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Length(6));
+    }
+
+    #[test]
+    fn config_map_widths_keep_wide_profile() {
+        let widths = config_map_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(52));
+        assert_eq!(widths[1], Constraint::Percentage(33));
+        assert_eq!(widths[2], Constraint::Percentage(15));
+    }
+
+    #[test]
+    fn secret_widths_switch_to_compact_profile() {
+        let widths = secret_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(20));
+        assert_eq!(widths[2], Constraint::Min(16));
+        assert_eq!(widths[3], Constraint::Length(6));
+    }
+
+    #[test]
+    fn secret_widths_keep_wide_profile() {
+        let widths = secret_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(38));
+        assert_eq!(widths[2], Constraint::Percentage(26));
+        assert_eq!(widths[3], Constraint::Percentage(12));
+    }
 }

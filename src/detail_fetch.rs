@@ -70,6 +70,7 @@ pub(crate) async fn fetch_detail_view(
         probe_panel: None,
         cronjob_history,
         cronjob_history_selected,
+        top_panel_scroll: 0,
         confirm_delete: false,
         confirm_drain: false,
         confirm_cronjob_suspend: None,

@@ -5,8 +5,8 @@ use ratatui::{
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Cell, Clear, HighlightSpacing, Paragraph, Row, Table,
-        TableState, Wrap,
+        Block, BorderType, Borders, Cell, Clear, HighlightSpacing, Paragraph, Row, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
     },
 };
 
@@ -15,11 +15,50 @@ use crate::{
     ui::{
         components::{
             default_theme, probe_panel::render_probe_panel, render_debug_container_dialog,
-            render_node_debug_dialog, scale_dialog::render_scale_dialog,
+            render_node_debug_dialog, render_vertical_scrollbar, scale_dialog::render_scale_dialog,
         },
-        format_age, table_window,
+        format_age, table_window, wrapped_line_count,
     },
 };
+
+fn render_scrollable_detail_panel<'a>(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    lines: Vec<Line<'a>>,
+    scroll: usize,
+) {
+    let theme = default_theme();
+    let block = Block::default()
+        .title(Span::styled(title, theme.section_title_style()))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.bg));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let (total, position) = detail_panel_scroll_metrics(&lines, inner, scroll);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
+        inner,
+    );
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(total).position(position);
+    frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+}
+
+fn detail_panel_scroll_metrics(lines: &[Line<'_>], area: Rect, scroll: usize) -> (usize, usize) {
+    let total = wrapped_line_count(lines, area.width);
+    let position = scroll.min(total.saturating_sub(area.height.max(1) as usize));
+    (total, position)
+}
 
 fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
@@ -157,17 +196,12 @@ fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailVie
         )));
     }
 
-    let block = Block::default()
-        .title(Span::styled(" Metadata ", theme.section_title_style()))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
+    render_scrollable_detail_panel(
+        frame,
         area,
+        " Metadata ",
+        lines,
+        detail_state.top_panel_scroll,
     );
 }
 
@@ -256,17 +290,12 @@ fn render_details_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
         )));
     }
 
-    let block = Block::default()
-        .title(Span::styled(" Details ", theme.section_title_style()))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
+    render_scrollable_detail_panel(
+        frame,
         area,
+        " Details ",
+        lines,
+        detail_state.top_panel_scroll,
     );
 }
 
@@ -318,17 +347,12 @@ fn render_metrics_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
         ))]
     };
 
-    let block = Block::default()
-        .title(Span::styled(" Metrics ", theme.section_title_style()))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
+    render_scrollable_detail_panel(
+        frame,
         area,
+        " Metrics ",
+        lines,
+        detail_state.top_panel_scroll,
     );
 }
 
@@ -580,9 +604,31 @@ fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &De
         })
         .collect::<Vec<_>>();
 
+    let widths = cronjob_history_widths(rows[1]);
     let mut table_state = TableState::default().with_selected(Some(window.selected));
-    let table = Table::new(
-        table_rows,
+    let table = Table::new(table_rows, widths)
+        .header(header)
+        .row_highlight_style(theme.selection_style())
+        .highlight_symbol(theme.highlight_symbol())
+        .highlight_spacing(HighlightSpacing::Always);
+
+    frame.render_stateful_widget(table, rows[1], &mut table_state);
+    render_vertical_scrollbar(frame, rows[1], total, window.start);
+}
+
+const NARROW_CRONJOB_HISTORY_WIDTH: u16 = 88;
+
+fn cronjob_history_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_CRONJOB_HISTORY_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(10),
+            Constraint::Length(8),
+            Constraint::Length(5),
+            Constraint::Length(6),
+            Constraint::Length(7),
+        ]
+    } else {
         [
             Constraint::Percentage(35),
             Constraint::Length(12),
@@ -590,14 +636,147 @@ fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &De
             Constraint::Length(6),
             Constraint::Length(8),
             Constraint::Length(8),
-        ],
-    )
-    .header(header)
-    .row_highlight_style(theme.selection_style())
-    .highlight_symbol(theme.highlight_symbol())
-    .highlight_spacing(HighlightSpacing::Always);
+        ]
+    }
+}
 
-    frame.render_stateful_widget(table, rows[1], &mut table_state);
+fn render_compact_detail(frame: &mut Frame, inner: Rect, detail_state: &DetailViewState) {
+    let theme = default_theme();
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(0),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    let (kind_label, name_label) = if let Some(resource) = &detail_state.resource {
+        (
+            resource.kind().to_ascii_uppercase(),
+            resource.name().to_string(),
+        )
+    } else {
+        ("RESOURCE".to_string(), "unknown".to_string())
+    };
+    let header = Line::from(vec![
+        Span::styled(kind_label, theme.title_style()),
+        Span::styled(" / ", theme.muted_style()),
+        Span::styled(
+            name_label,
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ),
+        if detail_state.loading {
+            Span::styled("  loading", theme.badge_warning_style())
+        } else {
+            Span::raw("")
+        },
+    ]);
+    frame.render_widget(
+        Paragraph::new(header).block(
+            Block::default()
+                .borders(Borders::BOTTOM)
+                .border_style(theme.border_style()),
+        ),
+        rows[0],
+    );
+
+    let mut lines = vec![
+        Line::from(vec![
+            Span::styled("ns ", theme.inactive_style()),
+            Span::styled(
+                detail_state
+                    .metadata
+                    .namespace
+                    .as_deref()
+                    .unwrap_or("cluster-scope"),
+                Style::default().fg(theme.accent2),
+            ),
+            Span::styled("  status ", theme.inactive_style()),
+            Span::styled(
+                detail_state.metadata.status.as_deref().unwrap_or("Unknown"),
+                theme
+                    .get_status_style(detail_state.metadata.status.as_deref().unwrap_or("Unknown")),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("labels ", theme.inactive_style()),
+            Span::styled(
+                detail_state.metadata.labels.len().to_string(),
+                Style::default().fg(theme.fg),
+            ),
+            Span::styled("  events ", theme.inactive_style()),
+            Span::styled(
+                detail_state.events.len().to_string(),
+                Style::default().fg(theme.fg),
+            ),
+        ]),
+    ];
+
+    if detail_state.loading {
+        lines.push(Line::from(Span::styled(
+            "Loading resource details...",
+            theme.badge_warning_style(),
+        )));
+    } else if let Some(err) = &detail_state.error {
+        lines.push(Line::from(Span::styled(
+            format!("Error: {err}"),
+            theme.badge_error_style(),
+        )));
+    } else if let Some(msg) = &detail_state.metrics_unavailable_message {
+        lines.push(Line::from(Span::styled(
+            format!("Metrics: {msg}"),
+            theme.inactive_style(),
+        )));
+    } else if let Some(metrics) = &detail_state.node_metrics {
+        lines.push(Line::from(format!(
+            "Metrics: cpu {}  mem {}",
+            metrics.cpu, metrics.memory
+        )));
+    } else if let Some(metrics) = &detail_state.pod_metrics {
+        lines.push(Line::from(format!(
+            "Metrics: {} container(s)",
+            metrics.containers.len()
+        )));
+    }
+
+    if let Some(section) = detail_state
+        .sections
+        .iter()
+        .find(|line| !line.trim().is_empty())
+    {
+        lines.push(Line::from(vec![
+            Span::styled("detail ", theme.inactive_style()),
+            Span::styled(section.as_str(), Style::default().fg(theme.fg_dim)),
+        ]));
+    }
+
+    lines.push(Line::from(Span::styled(
+        "Expand terminal for full metadata, metrics, and inspection panels.",
+        theme.inactive_style(),
+    )));
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[1]);
+
+    let action_keys = detail_state
+        .footer_actions()
+        .iter()
+        .map(|action| action.key_hint())
+        .collect::<Vec<_>>()
+        .join("/");
+    let footer = if action_keys.is_empty() {
+        " Esc close ".to_string()
+    } else {
+        format!(" {action_keys} actions  Esc close ")
+    };
+    frame.render_widget(
+        Paragraph::new(footer).block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(theme.border_style()),
+        ),
+        rows[2],
+    );
 }
 
 /// Renders resource detail as a centered modal overlay.
@@ -632,80 +811,84 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         height: popup.height.saturating_sub(2),
     };
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(2),
-            Constraint::Min(9),
-            Constraint::Min(6),
-            Constraint::Length(2),
-        ])
-        .split(inner);
-
-    let (kind_label, name_label) = if let Some(resource) = &detail_state.resource {
-        (
-            resource.kind().to_ascii_uppercase(),
-            resource.name().to_string(),
-        )
+    if inner.width < 70 || inner.height < 19 {
+        render_compact_detail(frame, inner, detail_state);
     } else {
-        ("RESOURCE".to_string(), "unknown".to_string())
-    };
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(9),
+                Constraint::Min(6),
+                Constraint::Length(2),
+            ])
+            .split(inner);
 
-    let header_line = Line::from(vec![
-        Span::styled(" ◆ ", theme.title_style()),
-        Span::styled(kind_label, theme.title_style()),
-        Span::styled("  /  ", theme.muted_style()),
-        Span::styled(
-            name_label,
-            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
-        ),
-        if detail_state.loading {
-            Span::styled("  ⟳ Loading…", theme.badge_warning_style())
+        let (kind_label, name_label) = if let Some(resource) = &detail_state.resource {
+            (
+                resource.kind().to_ascii_uppercase(),
+                resource.name().to_string(),
+            )
         } else {
-            Span::raw("")
-        },
-    ]);
-    let header_block = Block::default()
-        .borders(Borders::BOTTOM)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.header_bg));
-    frame.render_widget(Paragraph::new(header_line).block(header_block), chunks[0]);
+            ("RESOURCE".to_string(), "unknown".to_string())
+        };
 
-    let info_cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(35),
-            Constraint::Percentage(40),
-            Constraint::Percentage(25),
-        ])
-        .split(chunks[1]);
+        let header_line = Line::from(vec![
+            Span::styled(" ◆ ", theme.title_style()),
+            Span::styled(kind_label, theme.title_style()),
+            Span::styled("  /  ", theme.muted_style()),
+            Span::styled(
+                name_label,
+                Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+            ),
+            if detail_state.loading {
+                Span::styled("  ⟳ Loading…", theme.badge_warning_style())
+            } else {
+                Span::raw("")
+            },
+        ]);
+        let header_block = Block::default()
+            .borders(Borders::BOTTOM)
+            .border_style(theme.border_style())
+            .style(Style::default().bg(theme.header_bg));
+        frame.render_widget(Paragraph::new(header_line).block(header_block), chunks[0]);
 
-    render_metadata_panel(frame, info_cols[0], detail_state);
-    render_details_panel(frame, info_cols[1], detail_state);
-    render_metrics_panel(frame, info_cols[2], detail_state);
-    render_inspection_panel(frame, chunks[2], detail_state);
+        let info_cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(35),
+                Constraint::Percentage(40),
+                Constraint::Percentage(25),
+            ])
+            .split(chunks[1]);
 
-    let mut footer_spans = Vec::new();
-    for action in detail_state.footer_actions() {
-        footer_spans.push(Span::styled(
-            format!("{} ", action.key_hint()),
-            theme.keybind_key_style(),
-        ));
-        footer_spans.push(Span::styled(
-            format!("{}  ", action.label()),
-            theme.keybind_desc_style(),
-        ));
+        render_metadata_panel(frame, info_cols[0], detail_state);
+        render_details_panel(frame, info_cols[1], detail_state);
+        render_metrics_panel(frame, info_cols[2], detail_state);
+        render_inspection_panel(frame, chunks[2], detail_state);
+
+        let mut footer_spans = Vec::new();
+        for action in detail_state.footer_actions() {
+            footer_spans.push(Span::styled(
+                format!("{} ", action.key_hint()),
+                theme.keybind_key_style(),
+            ));
+            footer_spans.push(Span::styled(
+                format!("{}  ", action.label()),
+                theme.keybind_desc_style(),
+            ));
+        }
+        footer_spans.push(Span::styled("[Esc] ", theme.keybind_key_style()));
+        footer_spans.push(Span::styled("Close", theme.keybind_desc_style()));
+        footer_spans.insert(0, Span::raw(" "));
+
+        let footer_line = Line::from(footer_spans);
+        let footer_block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(theme.border_style())
+            .style(Style::default().bg(theme.statusbar_bg));
+        frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
     }
-    footer_spans.push(Span::styled("[Esc] ", theme.keybind_key_style()));
-    footer_spans.push(Span::styled("Close", theme.keybind_desc_style()));
-    footer_spans.insert(0, Span::raw(" "));
-
-    let footer_line = Line::from(footer_spans);
-    let footer_block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.statusbar_bg));
-    frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
 
     if detail_state.confirm_delete {
         render_delete_confirm(frame, popup, detail_state);
@@ -722,32 +905,6 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
 
 fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
-    let popup = centered_rect(48, 24, parent);
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .title(Span::styled(
-            " Confirm Delete ",
-            theme.badge_error_style().add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_active_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(block, popup);
-
-    let inner = Rect {
-        x: popup.x + 1,
-        y: popup.y + 1,
-        width: popup.width.saturating_sub(2),
-        height: popup.height.saturating_sub(2),
-    };
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(2)])
-        .split(inner);
-
     let resource_label = detail_state
         .resource
         .as_ref()
@@ -767,13 +924,6 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
             theme.inactive_style(),
         )),
     ];
-    frame.render_widget(
-        Paragraph::new(body)
-            .wrap(Wrap { trim: false })
-            .alignment(ratatui::layout::Alignment::Center),
-        rows[0],
-    );
-
     let footer = Line::from(vec![
         Span::styled(" [D] / [y] / [Enter] ", theme.keybind_key_style()),
         Span::styled("Confirm  ", theme.keybind_desc_style()),
@@ -782,40 +932,19 @@ fn render_delete_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailV
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
     ]);
-    frame.render_widget(
-        Paragraph::new(footer).alignment(ratatui::layout::Alignment::Center),
-        rows[1],
+    render_detail_confirm_dialog(
+        frame,
+        parent,
+        48,
+        " Confirm Delete ",
+        theme.badge_error_style().add_modifier(Modifier::BOLD),
+        body,
+        footer,
     );
 }
 
 fn render_drain_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
-    let popup = centered_rect(52, 24, parent);
-    frame.render_widget(Clear, popup);
-
-    let block = Block::default()
-        .title(Span::styled(
-            " Confirm Drain ",
-            theme.badge_warning_style().add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_active_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(block, popup);
-
-    let inner = Rect {
-        x: popup.x + 1,
-        y: popup.y + 1,
-        width: popup.width.saturating_sub(2),
-        height: popup.height.saturating_sub(2),
-    };
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(2)])
-        .split(inner);
-
     let node_name = detail_state
         .resource
         .as_ref()
@@ -835,13 +964,6 @@ fn render_drain_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailVi
             theme.inactive_style(),
         )),
     ];
-    frame.render_widget(
-        Paragraph::new(body)
-            .wrap(Wrap { trim: false })
-            .alignment(ratatui::layout::Alignment::Center),
-        rows[0],
-    );
-
     let footer = Line::from(vec![
         Span::styled(" [D] / [y] / [Enter] ", theme.keybind_key_style()),
         Span::styled("Drain  ", theme.keybind_desc_style()),
@@ -850,17 +972,19 @@ fn render_drain_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailVi
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
     ]);
-    frame.render_widget(
-        Paragraph::new(footer).alignment(ratatui::layout::Alignment::Center),
-        rows[1],
+    render_detail_confirm_dialog(
+        frame,
+        parent,
+        52,
+        " Confirm Drain ",
+        theme.badge_warning_style().add_modifier(Modifier::BOLD),
+        body,
+        footer,
     );
 }
 
 fn render_cronjob_suspend_confirm(frame: &mut Frame, parent: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
-    let popup = centered_rect(56, 24, parent);
-    frame.render_widget(Clear, popup);
-
     let suspend = detail_state.confirm_cronjob_suspend.unwrap_or(false);
     let badge_style = if suspend {
         theme.badge_warning_style()
@@ -872,29 +996,6 @@ fn render_cronjob_suspend_confirm(frame: &mut Frame, parent: Rect, detail_state:
     } else {
         " Confirm Resume "
     };
-
-    let block = Block::default()
-        .title(Span::styled(
-            title,
-            badge_style.add_modifier(Modifier::BOLD),
-        ))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_active_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(block, popup);
-
-    let inner = Rect {
-        x: popup.x + 1,
-        y: popup.y + 1,
-        width: popup.width.saturating_sub(2),
-        height: popup.height.saturating_sub(2),
-    };
-
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(3), Constraint::Length(2)])
-        .split(inner);
 
     let cronjob_name = detail_state
         .resource
@@ -922,19 +1023,76 @@ fn render_cronjob_suspend_confirm(frame: &mut Frame, parent: Rect, detail_state:
         Line::from(""),
         Line::from(Span::styled(detail_line, theme.inactive_style())),
     ];
-    frame.render_widget(
-        Paragraph::new(body)
-            .wrap(Wrap { trim: false })
-            .alignment(ratatui::layout::Alignment::Center),
-        rows[0],
-    );
-
     let footer = Line::from(vec![
         Span::styled(" [S] / [y] / [Enter] ", theme.keybind_key_style()),
         Span::styled(format!("{action_label}  "), theme.keybind_desc_style()),
         Span::styled("[Esc] ", theme.keybind_key_style()),
         Span::styled("Cancel", theme.keybind_desc_style()),
     ]);
+    render_detail_confirm_dialog(
+        frame,
+        parent,
+        56,
+        title,
+        badge_style.add_modifier(Modifier::BOLD),
+        body,
+        footer,
+    );
+}
+
+fn detail_confirm_popup(parent: Rect, preferred_width: u16) -> Rect {
+    crate::ui::bounded_popup_rect(parent, preferred_width, 10, 1, 1)
+}
+
+fn use_compact_detail_confirm(popup: Rect) -> bool {
+    popup.width < 42 || popup.height < 8
+}
+
+fn render_detail_confirm_dialog(
+    frame: &mut Frame,
+    parent: Rect,
+    preferred_width: u16,
+    title: &str,
+    title_style: Style,
+    body: Vec<Line<'static>>,
+    footer: Line<'static>,
+) {
+    let theme = default_theme();
+    let popup = detail_confirm_popup(parent, preferred_width);
+    frame.render_widget(Clear, popup);
+
+    let block = Block::default()
+        .title(Span::styled(title, title_style))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_active_style())
+        .style(Style::default().bg(theme.bg));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    if use_compact_detail_confirm(popup) {
+        let mut lines = body;
+        lines.push(Line::from(""));
+        lines.push(footer);
+        frame.render_widget(
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .alignment(ratatui::layout::Alignment::Center),
+            inner,
+        );
+        return;
+    }
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(3), Constraint::Length(2)])
+        .split(inner);
+    frame.render_widget(
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .alignment(ratatui::layout::Alignment::Center),
+        rows[0],
+    );
     frame.render_widget(
         Paragraph::new(footer).alignment(ratatui::layout::Alignment::Center),
         rows[1],
@@ -942,3 +1100,85 @@ fn render_cronjob_suspend_confirm(frame: &mut Frame, parent: Rect, detail_state:
 }
 
 use crate::ui::centered_rect;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::ResourceRef;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn cronjob_history_widths_switch_to_compact_profile() {
+        let widths = cronjob_history_widths(Rect::new(0, 0, 80, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(10));
+        assert_eq!(widths[5], Constraint::Length(7));
+    }
+
+    #[test]
+    fn cronjob_history_widths_keep_wide_profile() {
+        let widths = cronjob_history_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(35));
+        assert_eq!(widths[1], Constraint::Length(12));
+        assert_eq!(widths[5], Constraint::Length(8));
+    }
+
+    #[test]
+    fn render_delete_confirm_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let state = DetailViewState {
+            resource: Some(ResourceRef::Pod("pod-0".to_string(), "default".to_string())),
+            confirm_delete: true,
+            ..DetailViewState::default()
+        };
+        terminal
+            .draw(|frame| render_detail(frame, frame.area(), &state))
+            .expect("delete confirm should render on small terminal");
+    }
+
+    #[test]
+    fn render_drain_confirm_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let state = DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        };
+        terminal
+            .draw(|frame| render_detail(frame, frame.area(), &state))
+            .expect("drain confirm should render on small terminal");
+    }
+
+    #[test]
+    fn render_cronjob_suspend_confirm_small_terminal_smoke() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let state = DetailViewState {
+            resource: Some(ResourceRef::CronJob(
+                "job-0".to_string(),
+                "default".to_string(),
+            )),
+            confirm_cronjob_suspend: Some(true),
+            ..DetailViewState::default()
+        };
+        terminal
+            .draw(|frame| render_detail(frame, frame.area(), &state))
+            .expect("cronjob suspend confirm should render on small terminal");
+    }
+
+    #[test]
+    fn detail_panel_scroll_metrics_clamp_to_last_full_page() {
+        let lines = vec![Line::from("row"); 20];
+        assert_eq!(
+            detail_panel_scroll_metrics(&lines, Rect::new(0, 0, 18, 6), 99),
+            (20, 14)
+        );
+        let short = vec![Line::from("row"); 3];
+        assert_eq!(
+            detail_panel_scroll_metrics(&short, Rect::new(0, 0, 18, 6), 99),
+            (3, 0)
+        );
+    }
+}

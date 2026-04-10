@@ -11,6 +11,7 @@ use crate::k8s::{
     exec::DebugImagePreset,
     node_debug::{NodeDebugLaunchRequest, NodeDebugProfile, default_debug_image},
 };
+use crate::ui::truncate_message;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeDebugField {
@@ -277,6 +278,10 @@ impl NodeDebugField {
 pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebugDialogState) {
     let popup = centered_rect(72, 62, area);
     frame.render_widget(Clear, popup);
+    if use_compact_node_debug_dialog(popup) {
+        render_compact_node_debug_dialog(frame, popup, state);
+        return;
+    }
 
     let block = Block::default()
         .title(" Node Debug Shell ")
@@ -446,6 +451,111 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
     );
 }
 
+fn use_compact_node_debug_dialog(popup: Rect) -> bool {
+    popup.width < 54 || popup.height < 22
+}
+
+fn render_compact_node_debug_dialog(frame: &mut Frame, popup: Rect, state: &NodeDebugDialogState) {
+    let block = Block::default()
+        .title(" Node Debug Shell ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .style(Style::default().bg(Color::Black));
+    let inner = block.inner(popup);
+    frame.render_widget(block, popup);
+
+    let status = if state.pending_launch {
+        "launching"
+    } else {
+        "ready"
+    };
+    let image = if state.selected_preset == DebugImagePreset::Custom {
+        if state.custom_image.is_empty() {
+            "<custom image>"
+        } else {
+            state.custom_image.as_str()
+        }
+    } else {
+        state.selected_preset.label()
+    };
+    let note = if let Some(error) = &state.error_message {
+        format!("err: {error}")
+    } else if state.profile.is_privileged() {
+        "sysadmin profile".to_string()
+    } else {
+        "general profile".to_string()
+    };
+    let lines = compact_node_debug_lines(state, status, image, &note, inner.width, inner.height);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn compact_node_debug_lines(
+    state: &NodeDebugDialogState,
+    status: &str,
+    image: &str,
+    note: &str,
+    width: u16,
+    height: u16,
+) -> Vec<Line<'static>> {
+    let width = usize::from(width.max(1));
+    if height <= 2 {
+        return vec![
+            compact_line(format!("node {}  {}", state.node_name, status), width),
+            compact_line(
+                format!(
+                    "ns {}  profile {}",
+                    state.selected_namespace(),
+                    state.profile.label()
+                ),
+                width,
+            ),
+        ];
+    }
+
+    if height == 3 {
+        return vec![
+            compact_line(format!("node {}  {}", state.node_name, status), width),
+            compact_line(format!("image {}", image), width),
+            compact_line(note, width),
+        ];
+    }
+
+    if height == 4 {
+        return vec![
+            compact_line(format!("node {}  {}", state.node_name, status), width),
+            compact_line(format!("image {}", image), width),
+            compact_line(
+                format!(
+                    "ns {}  profile {}",
+                    state.selected_namespace(),
+                    state.profile.label()
+                ),
+                width,
+            ),
+            compact_line(note, width),
+        ];
+    }
+
+    vec![
+        compact_line(format!("node {}  {}", state.node_name, status), width),
+        compact_line(format!("image {}", image), width),
+        compact_line(
+            format!(
+                "ns {}  profile {}",
+                state.selected_namespace(),
+                state.profile.label()
+            ),
+            width,
+        ),
+        compact_line(note, width),
+        compact_line("[Tab] move  [h/l] change  [Enter] launch", width),
+    ]
+}
+
+fn compact_line(text: impl AsRef<str>, width: usize) -> Line<'static> {
+    Line::from(truncate_message(text.as_ref(), width.max(1)).into_owned())
+}
+
 fn render_field(
     frame: &mut Frame,
     area: Rect,
@@ -581,5 +691,23 @@ mod tests {
         );
         assert_eq!(state.selected_namespace(), "kube-system");
         assert!(!state.available_namespaces.iter().any(|ns| ns == "default"));
+    }
+
+    #[test]
+    fn render_node_debug_dialog_small_terminal_smoke() {
+        let backend = ratatui::backend::TestBackend::new(40, 10);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal should initialize");
+        let state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        terminal
+            .draw(|frame| render_node_debug_dialog(frame, frame.area(), &state))
+            .expect("compact node debug dialog should render");
+    }
+
+    #[test]
+    fn compact_node_debug_lines_fit_two_line_body() {
+        let state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        let lines = compact_node_debug_lines(&state, "ready", "busybox", "general profile", 24, 2);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].to_string().contains("node node-0"));
     }
 }

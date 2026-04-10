@@ -27,6 +27,30 @@ use crate::{
     },
 };
 
+const NARROW_SERVICE_WIDTH: u16 = 104;
+
+fn service_widths(area: Rect) -> [Constraint; 6] {
+    if area.width < NARROW_SERVICE_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(10),
+            Constraint::Length(14),
+            Constraint::Min(14),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Length(24),
+            Constraint::Length(16),
+            Constraint::Length(14),
+            Constraint::Length(16),
+            Constraint::Min(18),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 #[derive(Debug, Clone)]
 struct ServiceDerivedCell {
     cluster_ip: String,
@@ -63,14 +87,7 @@ pub fn render_services(
     );
 
     let derived = cached_service_derived(snapshot, query, indices.as_ref(), cache_variant);
-    let widths = [
-        Constraint::Length(24),
-        Constraint::Length(16),
-        Constraint::Length(14),
-        Constraint::Length(16),
-        Constraint::Min(18),
-        Constraint::Length(9),
-    ];
+    let widths = service_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -270,5 +287,22 @@ mod tests {
             service_type_style("ExternalName", &theme).fg,
             Some(theme.accent2)
         );
+    }
+
+    #[test]
+    fn service_widths_switch_to_compact_profile() {
+        let widths = service_widths(Rect::new(0, 0, 92, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[4], Constraint::Min(14));
+        assert_eq!(widths[5], Constraint::Length(8));
+    }
+
+    #[test]
+    fn service_widths_keep_wide_profile() {
+        let widths = service_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[0], Constraint::Length(24));
+        assert_eq!(widths[1], Constraint::Length(16));
+        assert_eq!(widths[5], Constraint::Length(9));
     }
 }
