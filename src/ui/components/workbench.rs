@@ -19,7 +19,7 @@ use crate::{
     secret::DecodedSecretValue,
     state::ClusterSnapshot,
     time::format_local,
-    ui::{components::default_theme, theme::Theme, wrapped_line_count},
+    ui::{components::default_theme, theme::Theme, wrap_span_groups, wrapped_line_count},
     workbench::{RunbookStepState, WorkbenchTab, WorkbenchTabState},
 };
 
@@ -2031,11 +2031,6 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
     };
     let viewer = &tab_state.viewer;
 
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
-        .split(area);
-
     let status = if viewer.loading {
         "loading"
     } else if viewer.previous_logs {
@@ -2054,43 +2049,71 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
         format!("container: {}", viewer.container_name)
     };
 
-    let mut status_spans = vec![
-        Span::styled(format!(" {status} "), theme.badge_warning_style()),
-        Span::raw(" "),
-        Span::styled(container, theme.keybind_desc_style()),
+    let mut status_groups = vec![
+        vec![Span::styled(
+            format!(" {status} "),
+            theme.badge_warning_style(),
+        )],
+        vec![Span::raw(" ")],
+        vec![Span::styled(container, theme.keybind_desc_style())],
     ];
     if viewer.show_timestamps {
-        status_spans.push(Span::styled(
+        status_groups.push(vec![Span::styled(
             "  [timestamps ON]",
             theme.keybind_desc_style(),
-        ));
+        )]);
     }
     if viewer.structured_view {
-        status_spans.push(Span::styled(
+        status_groups.push(vec![Span::styled(
             "  [json summary ON]",
             theme.keybind_desc_style(),
-        ));
+        )]);
     }
     if let Some(request_id) = viewer.correlation_request_id.as_deref() {
-        status_spans.push(Span::styled(
+        status_groups.push(vec![Span::styled(
             format!("  [corr {}]", compact_request_id(request_id)),
             theme.badge_success_style(),
-        ));
+        )]);
     }
-    status_spans.push(Span::styled(
+    status_groups.push(vec![Span::styled(
         format!("  [window {}]", viewer.time_window.label()),
         theme.keybind_desc_style(),
-    ));
-    status_spans.push(Span::raw("  "));
-    let hint = if viewer.searching {
-        "[Enter] apply  [Esc] cancel  [Ctrl+U] clear"
+    )]);
+    let hint_groups = if viewer.searching {
+        vec![
+            vec![Span::styled("[Enter] apply  ", theme.keybind_desc_style())],
+            vec![Span::styled("[Esc] cancel  ", theme.keybind_desc_style())],
+            vec![Span::styled("[Ctrl+U] clear", theme.keybind_desc_style())],
+        ]
     } else if viewer.jumping_to_time {
-        "[Enter] jump  [Esc] cancel  [Ctrl+U] clear"
+        vec![
+            vec![Span::styled("[Enter] jump  ", theme.keybind_desc_style())],
+            vec![Span::styled("[Esc] cancel  ", theme.keybind_desc_style())],
+            vec![Span::styled("[Ctrl+U] clear", theme.keybind_desc_style())],
+        ]
     } else {
-        "[Esc] back  [f] follow  [P] previous  [t] timestamps  [/] search  [R] regex/text  [W] window  [T] jump-to-time  [C] correlate  [J] json  [ / ] presets  [M] save preset  [n/N] next/prev  [S] save"
+        [
+            "[Esc] back  ",
+            "[f] follow  ",
+            "[P] previous  ",
+            "[t] timestamps  ",
+            "[/] search  ",
+            "[R] regex/text  ",
+            "[W] window  ",
+            "[T] jump-to-time  ",
+            "[C] correlate  ",
+            "[J] json  ",
+            "[ / ] presets  ",
+            "[M] save preset  ",
+            "[n/N] next/prev  ",
+            "[S] save",
+        ]
+        .into_iter()
+        .map(|group| vec![Span::styled(group, theme.keybind_desc_style())])
+        .collect::<Vec<_>>()
     };
-    status_spans.push(Span::styled(hint, theme.keybind_desc_style()));
-    let mut header_lines = vec![Line::from(status_spans)];
+    let mut header_lines = wrap_span_groups(&status_groups, area.width.max(1));
+    header_lines.extend(wrap_span_groups(&hint_groups, area.width.max(1)));
     if viewer.searching {
         header_lines.push(Line::from(vec![
             Span::styled(" Search mode: ", theme.keybind_desc_style()),
@@ -2136,7 +2159,15 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
         }
         header_lines.push(Line::from(spans));
     }
-    frame.render_widget(Paragraph::new(header_lines), sections[0]);
+    let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(header_lines).wrap(Wrap { trim: false }),
+        sections[0],
+    );
 
     // If searching or jumping to time, render input bar and reduce log area
     let log_area = if viewer.searching || viewer.jumping_to_time {
@@ -2433,13 +2464,8 @@ fn render_workload_logs_tab(
     let theme = default_theme();
     let now = crate::time::now();
     let filter_summary = summarize_workload_log_filters(tab, now);
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
-        .split(area);
-
-    let mut header_spans = vec![
-        Span::styled(
+    let mut header_groups = vec![
+        vec![Span::styled(
             format!(
                 " {} ",
                 if tab.loading {
@@ -2451,9 +2477,9 @@ fn render_workload_logs_tab(
                 }
             ),
             theme.badge_warning_style(),
-        ),
-        Span::raw(" "),
-        Span::styled(
+        )],
+        vec![Span::raw(" ")],
+        vec![Span::styled(
             format!(
                 "pod:{}  container:{}  {}:{}  window:{}",
                 tab.pod_filter.as_deref().unwrap_or("all"),
@@ -2467,46 +2493,68 @@ fn render_workload_logs_tab(
                 tab.time_window.label()
             ),
             theme.keybind_desc_style(),
-        ),
+        )],
     ];
     if let Some(label) = tab.label_filter.as_deref() {
-        header_spans.push(Span::raw("  "));
-        header_spans.push(Span::styled(
+        header_groups.push(vec![Span::raw("  ")]);
+        header_groups.push(vec![Span::styled(
             format!("label:{label}"),
             theme.badge_warning_style(),
-        ));
+        )]);
     }
     if let Some(request_id) = tab.correlation_request_id.as_deref() {
-        header_spans.push(Span::raw("  "));
-        header_spans.push(Span::styled(
+        header_groups.push(vec![Span::raw("  ")]);
+        header_groups.push(vec![Span::styled(
             format!("corr {}", compact_request_id(request_id)),
             theme.badge_success_style(),
-        ));
+        )]);
     }
 
-    let hint = if tab.editing_text_filter {
-        Line::from(Span::styled(
+    let mut header_lines = wrap_span_groups(&header_groups, area.width.max(1));
+    header_lines.extend(if tab.editing_text_filter {
+        vec![Line::from(Span::styled(
             format!(
                 " Editing {} filter: {}  [Enter] apply  [Esc] cancel  [Ctrl+U] clear",
                 tab.text_filter_mode.label(),
                 tab.filter_input,
             ),
             theme.keybind_desc_style(),
-        ))
+        ))]
     } else if tab.jumping_to_time {
-        Line::from(Span::styled(
+        vec![Line::from(Span::styled(
             format!(
                 " Jump to time: {}  [Enter] jump  [Esc] cancel  [Ctrl+U] clear",
                 tab.time_jump_input,
             ),
             theme.keybind_desc_style(),
-        ))
+        ))]
     } else {
-        Line::from(Span::styled(
-            "[/] text  [R] regex/text  [W] window  [T] jump-to-time  [L] label  [C] correlate  [J] json  [p] pod  [c] container  [ / ] presets  [M] save preset  [f] follow  [S] save  [Esc] back",
-            theme.keybind_desc_style(),
-        ))
-    };
+        wrap_span_groups(
+            &[
+                vec![Span::styled("[/] text  ", theme.keybind_desc_style())],
+                vec![Span::styled("[R] regex/text  ", theme.keybind_desc_style())],
+                vec![Span::styled("[W] window  ", theme.keybind_desc_style())],
+                vec![Span::styled(
+                    "[T] jump-to-time  ",
+                    theme.keybind_desc_style(),
+                )],
+                vec![Span::styled("[L] label  ", theme.keybind_desc_style())],
+                vec![Span::styled("[C] correlate  ", theme.keybind_desc_style())],
+                vec![Span::styled("[J] json  ", theme.keybind_desc_style())],
+                vec![Span::styled("[p] pod  ", theme.keybind_desc_style())],
+                vec![Span::styled("[c] container  ", theme.keybind_desc_style())],
+                vec![Span::styled("[ / ] presets  ", theme.keybind_desc_style())],
+                vec![Span::styled(
+                    "[M] save preset  ",
+                    theme.keybind_desc_style(),
+                )],
+                vec![Span::styled("[f] follow  ", theme.keybind_desc_style())],
+                vec![Span::styled("[S] save  ", theme.keybind_desc_style())],
+                vec![Span::styled("[Esc] back", theme.keybind_desc_style())],
+            ],
+            area.width.max(1),
+        )
+    });
 
     let mut info_spans = Vec::new();
     if tab.structured_view {
@@ -2534,13 +2582,18 @@ fn render_workload_logs_tab(
         info_spans.push(Span::styled(summary, theme.keybind_desc_style()));
     }
 
-    let mut header_lines = vec![Line::from(header_spans), hint];
-    header_lines.push(if info_spans.is_empty() {
-        Line::default()
-    } else {
-        Line::from(info_spans)
-    });
-    frame.render_widget(Paragraph::new(header_lines), sections[0]);
+    if !info_spans.is_empty() {
+        header_lines.push(Line::from(info_spans));
+    }
+    let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(header_lines).wrap(Wrap { trim: false }),
+        sections[0],
+    );
 
     if let Some(error) = &tab.error {
         frame.render_widget(
@@ -3168,20 +3221,27 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize
 
 #[cfg(test)]
 mod tests {
-    use super::{VisibleWindow, access_review_lines, centered_window, scroll_window};
+    use super::{
+        VisibleWindow, access_review_lines, centered_window, render_logs_tab,
+        render_workload_logs_tab, scroll_window,
+    };
     use crate::{
         app::ResourceRef,
         authorization::{ActionAccessReview, DetailActionAuthorization, ResourceAccessCheck},
         k8s::dtos::RbacRule,
+        log_investigation::LogTimeWindow,
         policy::DetailAction,
         rbac_subjects::{
             AccessReviewSubject, SubjectAccessReview, SubjectBindingResolution,
             SubjectRoleResolution,
         },
         ui::{components::default_theme, truncate_message, wrapped_line_count},
-        workbench::{AccessReviewTabState, AttemptedActionReview},
+        workbench::{
+            AccessReviewTabState, AttemptedActionReview, PodLogsTabState, WorkbenchTab,
+            WorkbenchTabState, WorkloadLogsTabState,
+        },
     };
-    use ratatui::{layout::Rect, text::Line};
+    use ratatui::{Terminal, backend::TestBackend, layout::Rect, text::Line};
 
     #[test]
     fn short_message_unchanged() {
@@ -3642,5 +3702,37 @@ mod tests {
             tab.line_count(),
             access_review_lines(&tab, &default_theme()).len()
         );
+    }
+
+    #[test]
+    fn pod_logs_header_renders_on_narrow_width() {
+        let backend = TestBackend::new(72, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab_state =
+            PodLogsTabState::new(ResourceRef::Pod("api-0".into(), "default".into()));
+        tab_state.viewer.container_name = "init-keto-schema".into();
+        tab_state.viewer.structured_view = true;
+        tab_state.viewer.time_window = LogTimeWindow::All;
+        let tab = WorkbenchTab::new(1, WorkbenchTabState::PodLogs(tab_state));
+
+        terminal
+            .draw(|frame| render_logs_tab(frame, Rect::new(0, 0, 72, 12), &tab, 0))
+            .expect("pod logs header should wrap on narrow width");
+    }
+
+    #[test]
+    fn workload_logs_header_renders_on_narrow_width() {
+        let backend = TestBackend::new(72, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "default".into()), 1);
+        tab.loading = false;
+        tab.follow_mode = false;
+        tab.structured_view = true;
+        tab.correlation_request_id = Some("1234567890abcdef".into());
+
+        terminal
+            .draw(|frame| render_workload_logs_tab(frame, Rect::new(0, 0, 72, 12), &tab))
+            .expect("workload logs header should wrap on narrow width");
     }
 }
