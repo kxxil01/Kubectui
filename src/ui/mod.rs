@@ -1044,9 +1044,13 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     if !view_skipped {
         let _view_scope = profiling::span_scope(app.view().profiling_key());
         match app.view() {
-            AppView::Dashboard => {
-                views::dashboard::render_dashboard(frame, content, cluster, content_focused)
-            }
+            AppView::Dashboard => views::dashboard::render_dashboard(
+                frame,
+                content,
+                cluster,
+                app.content_detail_scroll,
+                content_focused,
+            ),
             AppView::Nodes => views::nodes::render_nodes(
                 frame,
                 content,

@@ -165,12 +165,18 @@ fn compact_gauge_line<'a>(label: &'a str, pct: u64, theme: &Theme) -> Line<'a> {
 // ── top-level render ──────────────────────────────────────────────────────────
 
 /// Renders the dashboard view.
-pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, _focused: bool) {
+pub fn render_dashboard(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &ClusterSnapshot,
+    alert_scroll: usize,
+    _focused: bool,
+) {
     let theme = default_theme();
     let d = cached_dashboard(snapshot);
 
     if use_narrow_dashboard_layout(area) {
-        render_narrow_dashboard(frame, area, snapshot, &d, &theme);
+        render_narrow_dashboard(frame, area, snapshot, &d, &theme, alert_scroll);
         return;
     }
 
@@ -230,7 +236,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
             .split(rows[2]);
         render_resource_counts(frame, summary_cols[0], &d.stats, &theme);
         render_overcommit_governance(frame, summary_cols[1], &d.cluster_resources, &theme);
-        render_alerts(frame, rows[3], &d.alerts, &theme);
+        render_alerts(frame, rows[3], &d.alerts, &theme, alert_scroll);
     } else {
         // Full layout: rows[2..6]
         let node_rows = Layout::default()
@@ -248,7 +254,7 @@ pub fn render_dashboard(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapsho
         render_overcommit_governance(frame, summary_cols[1], &d.cluster_resources, &theme);
         render_namespace_utilization(frame, rows[4], &d.ns_utilization, &theme);
         render_top_pod_consumers(frame, rows[5], &d.top_cpu_pods, &d.top_mem_pods, &theme);
-        render_alerts(frame, rows[6], &d.alerts, &theme);
+        render_alerts(frame, rows[6], &d.alerts, &theme, alert_scroll);
     }
 }
 
@@ -258,6 +264,7 @@ fn render_narrow_dashboard(
     snapshot: &ClusterSnapshot,
     d: &DashboardData,
     theme: &Theme,
+    alert_scroll: usize,
 ) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -286,7 +293,7 @@ fn render_narrow_dashboard(
         &d.cluster_resources,
         theme,
     );
-    render_alerts(frame, rows[3], &d.alerts, theme);
+    render_alerts(frame, rows[3], &d.alerts, theme, alert_scroll);
 }
 
 // ── cluster info ──────────────────────────────────────────────────────────────
@@ -1107,7 +1114,13 @@ fn render_namespace_utilization(
 
 // ── alerts ────────────────────────────────────────────────────────────────────
 
-fn render_alerts(frame: &mut Frame, area: Rect, alerts: &[AlertItem], theme: &Theme) {
+fn render_alerts(
+    frame: &mut Frame,
+    area: Rect,
+    alerts: &[AlertItem],
+    theme: &Theme,
+    scroll: usize,
+) {
     let alert_lines: Vec<Line> = if alerts.is_empty() {
         vec![Line::from(vec![
             Span::styled("✓ ", theme.badge_success_style()),
@@ -1164,59 +1177,16 @@ fn render_alerts(frame: &mut Frame, area: Rect, alerts: &[AlertItem], theme: &Th
         .style(Style::default().bg(theme.bg));
 
     let inner = block.inner(area);
-    let alert_lines = alert_lines_for_viewport(&alert_lines, inner, theme);
+    let total = wrapped_line_count(&alert_lines, inner.width);
+    let position = scroll.min(total.saturating_sub(inner.height.max(1) as usize));
     frame.render_widget(
         Paragraph::new(alert_lines)
             .block(block)
-            .wrap(Wrap { trim: false }),
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
         area,
     );
-}
-
-fn alert_lines_for_viewport(
-    lines: &[Line<'static>],
-    area: Rect,
-    theme: &Theme,
-) -> Vec<Line<'static>> {
-    if lines.is_empty() {
-        return Vec::new();
-    }
-
-    let visible_rows = usize::from(area.height.max(1));
-    let width = area.width.max(1);
-    let mut used = 0usize;
-    let mut visible = Vec::new();
-
-    for (idx, line) in lines.iter().enumerate() {
-        let remaining = lines.len().saturating_sub(idx + 1);
-        let reserve = usize::from(remaining > 0);
-        let line_rows = wrapped_line_count(std::slice::from_ref(line), width);
-        if used + line_rows + reserve > visible_rows {
-            if remaining > 0 && visible_rows > 0 {
-                visible.push(Line::from(vec![
-                    Span::styled("… ", Style::default().fg(theme.fg_dim)),
-                    Span::styled(
-                        format!("{remaining} more alert(s)"),
-                        Style::default()
-                            .fg(theme.fg_dim)
-                            .add_modifier(Modifier::ITALIC),
-                    ),
-                ]));
-            }
-            break;
-        }
-        used += line_rows;
-        visible.push(line.clone());
-    }
-
-    if visible.is_empty() {
-        vec![Line::from(Span::styled(
-            "… alerts truncated",
-            Style::default().fg(theme.fg_dim),
-        ))]
-    } else {
-        visible
-    }
+    crate::ui::components::render_vertical_scrollbar(frame, inner, total, position);
 }
 
 #[cfg(test)]
@@ -1242,20 +1212,14 @@ mod tests {
     }
 
     #[test]
-    fn alert_lines_for_viewport_adds_overflow_indicator() {
-        let theme = default_theme();
+    fn dashboard_alert_scroll_clamps_to_last_page() {
         let lines = vec![
             Line::from("alert 1"),
             Line::from("alert 2"),
             Line::from("alert 3"),
         ];
-        let visible = alert_lines_for_viewport(&lines, Rect::new(0, 0, 20, 2), &theme);
-        assert_eq!(visible.len(), 2);
-        let text = visible[1]
-            .spans
-            .iter()
-            .map(|span| span.content.as_ref())
-            .collect::<String>();
-        assert!(text.contains("more alert"));
+        let total = wrapped_line_count(&lines, 20);
+        let position = 999usize.min(total.saturating_sub(2));
+        assert_eq!(position, 1);
     }
 }

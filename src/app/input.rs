@@ -1962,7 +1962,8 @@ impl AppState {
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(
                         self.view,
-                        AppView::Projects
+                        AppView::Dashboard
+                            | AppView::Projects
                             | AppView::Governance
                             | AppView::RoleBindings
                             | AppView::ClusterRoleBindings
@@ -1991,7 +1992,8 @@ impl AppState {
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(
                         self.view,
-                        AppView::Projects
+                        AppView::Dashboard
+                            | AppView::Projects
                             | AppView::Governance
                             | AppView::RoleBindings
                             | AppView::ClusterRoleBindings
@@ -2020,7 +2022,8 @@ impl AppState {
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(
                         self.view,
-                        AppView::Projects
+                        AppView::Dashboard
+                            | AppView::Projects
                             | AppView::Governance
                             | AppView::RoleBindings
                             | AppView::ClusterRoleBindings
@@ -2049,7 +2052,8 @@ impl AppState {
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                     && matches!(
                         self.view,
-                        AppView::Projects
+                        AppView::Dashboard
+                            | AppView::Projects
                             | AppView::Governance
                             | AppView::RoleBindings
                             | AppView::ClusterRoleBindings
