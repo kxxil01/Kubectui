@@ -2618,10 +2618,7 @@ fn render_workload_logs_tab(
             Line::from(spans)
         })
         .collect();
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        sections[1],
-    );
+    frame.render_widget(Paragraph::new(lines), sections[1]);
     render_scrollbar(frame, sections[1], total, window.start);
 }
 
