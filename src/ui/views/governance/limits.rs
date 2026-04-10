@@ -48,6 +48,28 @@ static LIMIT_RANGE_DERIVED_CACHE: LazyLock<
     Mutex<Option<(LimitRangeDerivedCacheKey, LimitRangeDerivedCacheValue)>>,
 > = LazyLock::new(|| Mutex::new(None));
 
+const NARROW_LIMIT_RANGE_WIDTH: u16 = 92;
+
+fn limit_range_widths(area: Rect) -> [Constraint; 5] {
+    if area.width < NARROW_LIMIT_RANGE_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(6),
+            Constraint::Min(16),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Min(28),
+            Constraint::Length(18),
+            Constraint::Length(8),
+            Constraint::Min(24),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 fn cached_limit_range_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
@@ -114,13 +136,7 @@ pub fn render_limit_ranges(
     let theme = default_theme();
 
     let derived = cached_limit_range_derived(cluster, query, &indices, cache_variant);
-    let widths = [
-        Constraint::Min(28),
-        Constraint::Length(18),
-        Constraint::Length(8),
-        Constraint::Min(24),
-        Constraint::Length(9),
-    ];
+    let widths = limit_range_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -223,6 +239,24 @@ mod tests {
     use crate::k8s::dtos::{LimitRangeInfo, LimitSpec};
 
     use super::*;
+
+    #[test]
+    fn limit_range_widths_switch_to_compact_profile() {
+        let widths = limit_range_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Length(6));
+        assert_eq!(widths[4], Constraint::Length(8));
+    }
+
+    #[test]
+    fn limit_range_widths_keep_wide_profile() {
+        let widths = limit_range_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(28));
+        assert_eq!(widths[1], Constraint::Length(18));
+        assert_eq!(widths[3], Constraint::Min(24));
+        assert_eq!(widths[4], Constraint::Length(9));
+    }
 
     #[test]
     fn summary_deduplicates_types() {

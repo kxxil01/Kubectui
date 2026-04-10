@@ -5,7 +5,7 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::Paragraph,
+    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
 };
 
 use crate::k8s::relationships::{FlatNode, RelationKind, flatten_tree};
@@ -64,27 +64,42 @@ pub fn render_relation_tree(
     }
 
     let flat = flatten_tree(view.tree, view.expanded);
+    let cursor = clamp_relation_cursor(flat.len(), view.cursor);
     let visible_height = area.height as usize;
-    let scroll_offset = if flat.is_empty() {
-        0
-    } else {
-        let cursor = view.cursor.min(flat.len().saturating_sub(1));
-        if cursor < visible_height / 2 {
-            0
-        } else {
-            cursor.saturating_sub(visible_height / 2)
-        }
-    };
+    let scroll_offset = relation_scroll_offset(flat.len(), visible_height, cursor);
 
     let lines = flat
         .iter()
         .enumerate()
         .skip(scroll_offset)
         .take(visible_height)
-        .map(|(idx, node)| render_flat_node(node, idx == view.cursor, theme))
+        .map(|(idx, node)| render_flat_node(node, idx == cursor, theme))
         .collect::<Vec<_>>();
 
     frame.render_widget(Paragraph::new(lines), area);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(flat.len()).position(scroll_offset);
+    frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+}
+
+fn clamp_relation_cursor(total: usize, cursor: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        cursor.min(total.saturating_sub(1))
+    }
+}
+
+fn relation_scroll_offset(total: usize, visible_height: usize, cursor: usize) -> usize {
+    if total == 0 || visible_height == 0 {
+        return 0;
+    }
+    let centered = cursor.saturating_sub(visible_height / 2);
+    centered.min(total.saturating_sub(visible_height))
 }
 
 fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'static> {
@@ -180,4 +195,22 @@ fn render_flat_node(node: &FlatNode, is_cursor: bool, theme: &Theme) -> Line<'st
         );
     }
     line
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn clamp_relation_cursor_keeps_stale_cursor_visible() {
+        assert_eq!(clamp_relation_cursor(0, 9), 0);
+        assert_eq!(clamp_relation_cursor(3, 9), 2);
+        assert_eq!(clamp_relation_cursor(3, 1), 1);
+    }
+
+    #[test]
+    fn relation_scroll_offset_clamps_to_last_full_page() {
+        assert_eq!(relation_scroll_offset(20, 6, 19), 14);
+        assert_eq!(relation_scroll_offset(20, 6, 2), 0);
+    }
 }

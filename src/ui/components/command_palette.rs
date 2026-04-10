@@ -16,6 +16,7 @@ use crate::global_search::GlobalResourceSearchEntry;
 use crate::policy::{DetailAction, ResourceActionContext};
 use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::LoadedRunbook;
+use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::theme::Theme;
 use crate::workbench::WorkbenchTabKey;
 use crate::workspaces::display_hotkey;
@@ -24,6 +25,22 @@ const TEMPLATE_INTENT_ALIASES: &[&str] =
     &["create", "new", "template", "scaffold", "apply", "manifest"];
 const MAX_ACTIVITY_RESULTS: usize = 16;
 const MAX_RESOURCE_RESULTS: usize = 40;
+const COMPACT_PALETTE_WIDTH: u16 = 48;
+const COMPACT_PALETTE_HEIGHT: u16 = 12;
+
+fn command_palette_popup(area: Rect) -> Rect {
+    let preferred_width = (area.width * 2 / 5).clamp(44, 60);
+    let preferred_height = (area.height / 2).clamp(16, 24);
+    let popup = crate::ui::bounded_popup_rect(area, preferred_width, preferred_height, 1, 1);
+    Rect {
+        y: area.y + area.height.saturating_sub(popup.height) / 3,
+        ..popup
+    }
+}
+
+fn use_compact_command_palette_layout(popup: Rect) -> bool {
+    popup.width < COMPACT_PALETTE_WIDTH || popup.height < COMPACT_PALETTE_HEIGHT
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PaletteSection {
@@ -789,6 +806,17 @@ fn compute_palette_offset(
     offset
 }
 
+fn palette_scroll_metrics(item_heights: &[usize], offset: usize) -> (usize, usize) {
+    if item_heights.is_empty() {
+        return (1, 0);
+    }
+
+    let clamped_offset = offset.min(item_heights.len().saturating_sub(1));
+    let total = item_heights.iter().sum::<usize>().max(1);
+    let position = item_heights[..clamped_offset].iter().sum::<usize>();
+    (total, position)
+}
+
 /// Modal command palette for jumping directly to any view.
 #[derive(Debug, Clone, Default)]
 pub struct CommandPalette {
@@ -1196,15 +1224,8 @@ impl CommandPalette {
 
         use crate::ui::components::default_theme;
         let theme = default_theme();
-
-        let popup_width = (area.width * 2 / 5).clamp(44, 60);
-        let popup_height = (area.height / 2).clamp(16, 24);
-        let popup = Rect {
-            x: (area.width.saturating_sub(popup_width)) / 2,
-            y: area.height.saturating_sub(popup_height) / 3,
-            width: popup_width,
-            height: popup_height,
-        };
+        let popup = command_palette_popup(area);
+        let compact = use_compact_command_palette_layout(popup);
 
         frame.render_widget(Clear, popup);
 
@@ -1224,18 +1245,31 @@ impl CommandPalette {
 
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Length(3),
-                Constraint::Min(3),
-                Constraint::Length(2),
-            ])
+            .constraints(if compact {
+                [
+                    Constraint::Length(1),
+                    Constraint::Length(3),
+                    Constraint::Min(1),
+                    Constraint::Length(1),
+                ]
+            } else {
+                [
+                    Constraint::Length(2),
+                    Constraint::Length(3),
+                    Constraint::Min(3),
+                    Constraint::Length(2),
+                ]
+            })
             .split(inner);
 
         let title = Line::from(vec![
             Span::styled(" ⌘ ", theme.title_style()),
             Span::styled("Action Palette", theme.title_style()),
-            Span::styled("  · type to filter", theme.inactive_style()),
+            if compact {
+                Span::raw("")
+            } else {
+                Span::styled("  · type to filter", theme.inactive_style())
+            },
         ]);
         let title_block = Block::default()
             .borders(Borders::BOTTOM)
@@ -1312,18 +1346,44 @@ impl CommandPalette {
                 compute_palette_offset(&item_heights, selected_index, viewport_height)
             })
             .unwrap_or_default();
+        let (scroll_total, scroll_position) = palette_scroll_metrics(&item_heights, offset);
         let mut state = ListState::default()
             .with_selected(selected)
             .with_offset(offset);
         frame.render_stateful_widget(List::new(items).block(list_block), chunks[2], &mut state);
+        render_vertical_scrollbar(frame, chunks[2], scroll_total, scroll_position);
 
         let footer = Line::from(vec![
-            Span::styled(" [↑↓/jk] ", theme.keybind_key_style()),
-            Span::styled("navigate  ", theme.keybind_desc_style()),
-            Span::styled("[Enter] ", theme.keybind_key_style()),
-            Span::styled("select  ", theme.keybind_desc_style()),
-            Span::styled("[Esc] ", theme.keybind_key_style()),
-            Span::styled("close", theme.keybind_desc_style()),
+            if compact {
+                Span::styled(" [Enter] ", theme.keybind_key_style())
+            } else {
+                Span::styled(" [↑↓/jk] ", theme.keybind_key_style())
+            },
+            if compact {
+                Span::styled("select  ", theme.keybind_desc_style())
+            } else {
+                Span::styled("navigate  ", theme.keybind_desc_style())
+            },
+            if compact {
+                Span::styled("[Esc] ", theme.keybind_key_style())
+            } else {
+                Span::styled("[Enter] ", theme.keybind_key_style())
+            },
+            if compact {
+                Span::styled("close", theme.keybind_desc_style())
+            } else {
+                Span::styled("select  ", theme.keybind_desc_style())
+            },
+            if compact {
+                Span::raw("")
+            } else {
+                Span::styled("[Esc] ", theme.keybind_key_style())
+            },
+            if compact {
+                Span::raw("")
+            } else {
+                Span::styled("close", theme.keybind_desc_style())
+            },
         ]);
         let footer_block = Block::default()
             .borders(Borders::TOP)
@@ -1510,6 +1570,15 @@ mod tests {
         assert_eq!(compute_palette_offset(&heights, 0, 5), 0);
         assert_eq!(compute_palette_offset(&heights, 2, 5), 1);
         assert_eq!(compute_palette_offset(&heights, 3, 5), 2);
+    }
+
+    #[test]
+    fn palette_scroll_metrics_use_visual_row_offsets() {
+        let heights = vec![2, 3, 1, 4];
+
+        assert_eq!(palette_scroll_metrics(&heights, 0), (10, 0));
+        assert_eq!(palette_scroll_metrics(&heights, 2), (10, 5));
+        assert_eq!(palette_scroll_metrics(&heights, 99), (10, 6));
     }
 
     #[test]
@@ -2037,6 +2106,23 @@ mod tests {
             palette.handle_key(KeyEvent::from(KeyCode::Enter)),
             CommandPaletteAction::ActivateWorkbenchTab(key)
         );
+    }
+
+    #[test]
+    fn command_palette_popup_stays_within_small_terminal() {
+        let popup = command_palette_popup(Rect::new(0, 0, 40, 10));
+        assert!(popup.width <= 40);
+        assert!(popup.height <= 10);
+    }
+
+    #[test]
+    fn compact_command_palette_layout_activates_on_small_terminal() {
+        assert!(use_compact_command_palette_layout(command_palette_popup(
+            Rect::new(0, 0, 40, 10),
+        )));
+        assert!(!use_compact_command_palette_layout(command_palette_popup(
+            Rect::new(0, 0, 120, 40),
+        )));
     }
 
     #[test]

@@ -21,6 +21,32 @@ use crate::{
     },
 };
 
+const NARROW_ISSUE_WIDTH: u16 = 112;
+
+fn issue_widths(area: Rect) -> [Constraint; 7] {
+    if area.width < NARROW_ISSUE_WIDTH {
+        [
+            Constraint::Length(3),
+            Constraint::Length(8),
+            Constraint::Length(14),
+            Constraint::Length(12),
+            Constraint::Min(14),
+            Constraint::Length(12),
+            Constraint::Min(18),
+        ]
+    } else {
+        [
+            Constraint::Length(3),
+            Constraint::Length(10),
+            Constraint::Length(20),
+            Constraint::Length(14),
+            Constraint::Min(20),
+            Constraint::Length(16),
+            Constraint::Min(20),
+        ]
+    }
+}
+
 #[derive(Clone, Copy)]
 enum DiagnosticsMode {
     All,
@@ -189,15 +215,7 @@ fn render_diagnostics(
         };
         format!(" {icon}{label} ({total} of {all}) [/{query}]{coverage_suffix}")
     };
-    let widths = [
-        Constraint::Length(3),
-        Constraint::Length(10),
-        Constraint::Length(20),
-        Constraint::Length(14),
-        Constraint::Min(20),
-        Constraint::Length(16),
-        Constraint::Min(20),
-    ];
+    let widths = issue_widths(area);
 
     render_table_frame(
         frame,
@@ -226,4 +244,25 @@ fn issue_message_preview(message: &str) -> &str {
         end -= 1;
     }
     &message[..end]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn issue_widths_switch_to_compact_profile() {
+        let widths = issue_widths(Rect::new(0, 0, 104, 20));
+        assert_eq!(widths[0], Constraint::Length(3));
+        assert_eq!(widths[1], Constraint::Length(8));
+        assert_eq!(widths[6], Constraint::Min(18));
+    }
+
+    #[test]
+    fn issue_widths_keep_wide_profile() {
+        let widths = issue_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[1], Constraint::Length(10));
+        assert_eq!(widths[2], Constraint::Length(20));
+        assert_eq!(widths[6], Constraint::Min(20));
+    }
 }

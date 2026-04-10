@@ -4,10 +4,13 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
+    widgets::{
+        Block, BorderType, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Wrap,
+    },
 };
 
-use crate::ui::components::default_theme;
+use crate::ui::{components::default_theme, wrapped_line_count};
 use crate::{app::DetailViewState, policy::DetailAction};
 
 #[derive(Debug, Clone, Default)]
@@ -305,28 +308,51 @@ impl HelpOverlay {
         }
 
         let visible_height = sections[0].height as usize;
-        let max_scroll = lines.len().saturating_sub(visible_height);
-        let scroll = self.scroll.min(max_scroll);
-        let end = (scroll + visible_height).min(lines.len());
-        let visible = if scroll < end {
-            lines[scroll..end].to_vec()
-        } else {
-            vec![]
-        };
+        let (scroll, end, total) =
+            help_overlay_window(&lines, sections[0].width, visible_height, self.scroll);
 
         frame.render_widget(
-            Paragraph::new(visible).wrap(Wrap { trim: false }),
+            Paragraph::new(lines)
+                .wrap(Wrap { trim: false })
+                .scroll((scroll.min(u16::MAX as usize) as u16, 0)),
             sections[0],
         );
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("▲"))
+            .end_symbol(Some("▼"))
+            .track_symbol(Some("│"))
+            .thumb_symbol("█");
+        let mut scrollbar_state = ScrollbarState::new(total).position(scroll);
+        frame.render_stateful_widget(scrollbar, sections[0], &mut scrollbar_state);
 
         frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                " [?/Esc] close  [j/k] scroll ",
-                Style::default().fg(theme.fg_dim),
-            ))),
+            Paragraph::new(Line::from(vec![
+                Span::styled(
+                    " [?/Esc] close  [j/k] scroll ",
+                    Style::default().fg(theme.fg_dim),
+                ),
+                Span::styled(
+                    format!(" [{end}/{total}] "),
+                    Style::default().fg(theme.accent),
+                ),
+            ])),
             sections[1],
         );
     }
+}
+
+fn help_overlay_window(
+    lines: &[Line<'_>],
+    width: u16,
+    visible_height: usize,
+    scroll: usize,
+) -> (usize, usize, usize) {
+    let visible_height = visible_height.max(1);
+    let total_lines = wrapped_line_count(lines, width);
+    let max_scroll = total_lines.saturating_sub(visible_height);
+    let scroll = scroll.min(max_scroll);
+    let end = (scroll + visible_height).min(total_lines);
+    (scroll, end, total_lines)
 }
 
 fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'static str)> {
@@ -400,6 +426,15 @@ mod tests {
     #[test]
     fn total_lines_is_nonzero() {
         assert!(HelpOverlay::total_lines() > 20);
+    }
+
+    #[test]
+    fn help_overlay_window_clamps_scroll_to_last_page() {
+        let lines = vec![Line::from("row"); 100];
+        let (scroll, end, total) = help_overlay_window(&lines, 20, 10, 999);
+        assert_eq!(scroll, 90);
+        assert_eq!(end, 100);
+        assert_eq!(total, 100);
     }
 
     #[test]

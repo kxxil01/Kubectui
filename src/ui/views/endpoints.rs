@@ -25,6 +25,26 @@ use crate::{
     },
 };
 
+const NARROW_ENDPOINT_WIDTH: u16 = 96;
+
+fn endpoint_widths(area: Rect) -> [Constraint; 4] {
+    if area.width < NARROW_ENDPOINT_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Min(20),
+            Constraint::Min(14),
+        ]
+    } else {
+        [
+            Constraint::Percentage(28),
+            Constraint::Percentage(20),
+            Constraint::Percentage(30),
+            Constraint::Percentage(22),
+        ]
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct EndpointDerivedCacheKey {
     query: String,
@@ -63,12 +83,7 @@ pub fn render_endpoints(
     );
 
     let derived = cached_endpoint_derived(cluster, query, indices.as_ref());
-    let widths = [
-        Constraint::Percentage(28),
-        Constraint::Percentage(20),
-        Constraint::Percentage(30),
-        Constraint::Percentage(22),
-    ];
+    let widths = endpoint_widths(area);
     render_resource_table(
         frame,
         area,
@@ -195,4 +210,26 @@ fn cached_endpoint_derived(
     }
 
     built
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn endpoint_widths_switch_to_compact_profile() {
+        let widths = endpoint_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[2], Constraint::Min(20));
+        assert_eq!(widths[3], Constraint::Min(14));
+    }
+
+    #[test]
+    fn endpoint_widths_keep_wide_profile() {
+        let widths = endpoint_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Percentage(28));
+        assert_eq!(widths[2], Constraint::Percentage(30));
+        assert_eq!(widths[3], Constraint::Percentage(22));
+    }
 }

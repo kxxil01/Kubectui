@@ -49,6 +49,28 @@ static RESOURCE_QUOTA_DERIVED_CACHE: LazyLock<
     Mutex<Option<(ResourceQuotaDerivedCacheKey, ResourceQuotaDerivedCacheValue)>>,
 > = LazyLock::new(|| Mutex::new(None));
 
+const NARROW_RESOURCE_QUOTA_WIDTH: u16 = 92;
+
+fn resource_quota_widths(area: Rect) -> [Constraint; 5] {
+    if area.width < NARROW_RESOURCE_QUOTA_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(7),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Min(28),
+            Constraint::Length(18),
+            Constraint::Length(10),
+            Constraint::Length(10),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 fn cached_resource_quota_derived(
     snapshot: &ClusterSnapshot,
     query: &str,
@@ -117,13 +139,7 @@ pub fn render_resource_quotas(
     let theme = default_theme();
 
     let derived = cached_resource_quota_derived(cluster, query, &indices, cache_variant);
-    let widths = [
-        Constraint::Min(28),
-        Constraint::Length(18),
-        Constraint::Length(10),
-        Constraint::Length(10),
-        Constraint::Length(9),
-    ];
+    let widths = resource_quota_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -226,6 +242,23 @@ fn usage_style(percent: f64, theme: &crate::ui::theme::Theme) -> Style {
 mod tests {
     use super::*;
     use crate::ui::theme::Theme;
+
+    #[test]
+    fn resource_quota_widths_switch_to_compact_profile() {
+        let widths = resource_quota_widths(Rect::new(0, 0, 84, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[3], Constraint::Length(8));
+        assert_eq!(widths[4], Constraint::Length(8));
+    }
+
+    #[test]
+    fn resource_quota_widths_keep_wide_profile() {
+        let widths = resource_quota_widths(Rect::new(0, 0, 120, 20));
+        assert_eq!(widths[0], Constraint::Min(28));
+        assert_eq!(widths[1], Constraint::Length(18));
+        assert_eq!(widths[4], Constraint::Length(9));
+    }
 
     #[test]
     fn usage_style_thresholds() {

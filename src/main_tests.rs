@@ -9,7 +9,8 @@ use super::{
     mutation_refresh_options, normalize_recent_events, palette_action_requires_loaded_detail,
     parse_editor_command, prepare_bookmark_target, prepare_resource_target,
     queued_refresh_requires_two_phase, refresh_options_for_view, selected_extension_crd,
-    selected_flux_reconcile_resource, selected_resource, workbench_follow_streams_to_stop,
+    selected_flux_reconcile_resource, selected_resource, should_request_periodic_redraw,
+    ui_staleness_visible, workbench_follow_streams_to_stop,
 };
 use kubectui::{
     action_history::ActionKind,
@@ -206,6 +207,41 @@ fn selected_flux_reconcile_resource_uses_detail_resource_when_present() {
     assert_eq!(resource.kind(), "HelmRelease");
     assert_eq!(resource.name(), "backend");
     assert_eq!(resource.namespace(), Some("flux-system"));
+}
+
+#[test]
+fn periodic_redraw_triggers_on_minute_bucket_change() {
+    let app = AppState::default();
+    let snapshot = ClusterSnapshot::default();
+    let mut last_age_bucket = 10;
+    let mut last_staleness_second = 600;
+
+    assert!(should_request_periodic_redraw(
+        &app,
+        &snapshot,
+        660,
+        &mut last_age_bucket,
+        &mut last_staleness_second,
+    ));
+    assert_eq!(last_age_bucket, 11);
+}
+
+#[test]
+fn staleness_visible_only_without_other_status_surfaces() {
+    let now_unix = 1_000;
+    let stale_snapshot = ClusterSnapshot {
+        last_updated: Some(AppTimestamp::from_second(now_unix - 46).expect("valid timestamp")),
+        ..ClusterSnapshot::default()
+    };
+    let mut app = AppState::default();
+    assert!(ui_staleness_visible(&app, &stale_snapshot, now_unix));
+
+    app.set_status("working".to_string());
+    assert!(!ui_staleness_visible(&app, &stale_snapshot, now_unix));
+
+    app.clear_status();
+    app.push_toast("toast".to_string(), false);
+    assert!(!ui_staleness_visible(&app, &stale_snapshot, now_unix));
 }
 
 #[test]

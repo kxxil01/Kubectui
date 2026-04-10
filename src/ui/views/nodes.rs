@@ -234,7 +234,8 @@ pub fn render_nodes(
         query,
         &sort_suffix,
     );
-    let widths = crate::columns::visible_constraints(visible_columns);
+    let widths =
+        crate::columns::visible_constraints_for_area(AppView::Nodes, visible_columns, area.width);
 
     render_table_frame(
         frame,

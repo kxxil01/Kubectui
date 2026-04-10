@@ -398,6 +398,62 @@ pub fn visible_constraints(columns: &[ColumnDef]) -> Vec<Constraint> {
     columns.iter().map(|c| c.default_width).collect()
 }
 
+const NARROW_POD_WIDTH: u16 = 112;
+const NARROW_DEPLOYMENT_WIDTH: u16 = 104;
+const NARROW_NODE_WIDTH: u16 = 104;
+
+fn compact_constraint_for_view(view: AppView, area_width: u16, id: &str) -> Option<Constraint> {
+    match view {
+        AppView::Pods if area_width < NARROW_POD_WIDTH => Some(match id {
+            "name" => Constraint::Min(18),
+            "namespace" => Constraint::Length(14),
+            "ip" => Constraint::Length(12),
+            "status" => Constraint::Min(16),
+            "node" => Constraint::Length(14),
+            "restarts" => Constraint::Length(8),
+            "age" => Constraint::Length(8),
+            "cpu_usage" | "mem_usage" | "cpu_req" | "mem_req" | "cpu_lim" | "mem_lim" => {
+                Constraint::Length(8)
+            }
+            "cpu_pct_req" | "mem_pct_req" | "cpu_pct_lim" | "mem_pct_lim" => Constraint::Length(7),
+            _ => return None,
+        }),
+        AppView::Deployments if area_width < NARROW_DEPLOYMENT_WIDTH => Some(match id {
+            "name" => Constraint::Min(18),
+            "namespace" => Constraint::Length(14),
+            "ready" => Constraint::Length(8),
+            "updated" => Constraint::Length(7),
+            "available" => Constraint::Length(8),
+            "age" => Constraint::Length(8),
+            "image" => Constraint::Min(16),
+            _ => return None,
+        }),
+        AppView::Nodes if area_width < NARROW_NODE_WIDTH => Some(match id {
+            "name" => Constraint::Min(18),
+            "status" => Constraint::Min(18),
+            "roles" => Constraint::Length(10),
+            "cpu" => Constraint::Length(14),
+            "memory" => Constraint::Length(14),
+            "age" => Constraint::Length(8),
+            _ => return None,
+        }),
+        _ => None,
+    }
+}
+
+pub fn visible_constraints_for_area(
+    view: AppView,
+    columns: &[ColumnDef],
+    area_width: u16,
+) -> Vec<Constraint> {
+    columns
+        .iter()
+        .map(|column| {
+            compact_constraint_for_view(view, area_width, column.id).unwrap_or(column.default_width)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -503,6 +559,59 @@ mod tests {
         let visible = resolve_columns(TEST_COLS, &prefs);
         let constraints = visible_constraints(&visible);
         assert_eq!(constraints.len(), 4);
+    }
+
+    #[test]
+    fn deployment_constraints_switch_to_compact_profile() {
+        let constraints =
+            visible_constraints_for_area(AppView::Deployments, DEPLOYMENT_COLUMNS, 96);
+        assert_eq!(constraints[0], Constraint::Min(18));
+        assert_eq!(constraints[1], Constraint::Length(14));
+        assert_eq!(constraints[6], Constraint::Min(16));
+    }
+
+    #[test]
+    fn pod_constraints_switch_to_compact_profile() {
+        let constraints = visible_constraints_for_area(AppView::Pods, POD_COLUMNS, 104);
+        assert_eq!(constraints[0], Constraint::Min(18));
+        assert_eq!(constraints[1], Constraint::Length(14));
+        assert_eq!(constraints[3], Constraint::Min(16));
+        assert_eq!(constraints[6], Constraint::Length(8));
+    }
+
+    #[test]
+    fn pod_constraints_keep_wide_profile() {
+        let constraints = visible_constraints_for_area(AppView::Pods, POD_COLUMNS, 140);
+        assert_eq!(constraints[0], Constraint::Min(28));
+        assert_eq!(constraints[1], Constraint::Length(18));
+        assert_eq!(constraints[4], Constraint::Length(22));
+        assert_eq!(constraints[6], Constraint::Length(9));
+    }
+
+    #[test]
+    fn deployment_constraints_keep_wide_profile() {
+        let constraints =
+            visible_constraints_for_area(AppView::Deployments, DEPLOYMENT_COLUMNS, 132);
+        assert_eq!(constraints[0], Constraint::Length(24));
+        assert_eq!(constraints[4], Constraint::Length(11));
+        assert_eq!(constraints[6], Constraint::Min(20));
+    }
+
+    #[test]
+    fn node_constraints_switch_to_compact_profile() {
+        let constraints = visible_constraints_for_area(AppView::Nodes, NODE_COLUMNS, 96);
+        assert_eq!(constraints[0], Constraint::Min(18));
+        assert_eq!(constraints[1], Constraint::Min(18));
+        assert_eq!(constraints[2], Constraint::Length(10));
+        assert_eq!(constraints[5], Constraint::Length(8));
+    }
+
+    #[test]
+    fn node_constraints_keep_wide_profile() {
+        let constraints = visible_constraints_for_area(AppView::Nodes, NODE_COLUMNS, 132);
+        assert_eq!(constraints[0], Constraint::Percentage(22));
+        assert_eq!(constraints[1], Constraint::Percentage(22));
+        assert_eq!(constraints[5], Constraint::Percentage(10));
     }
 
     #[test]

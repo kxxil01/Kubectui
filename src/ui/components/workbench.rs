@@ -19,7 +19,7 @@ use crate::{
     secret::DecodedSecretValue,
     state::ClusterSnapshot,
     time::format_local,
-    ui::{components::default_theme, theme::Theme},
+    ui::{components::default_theme, theme::Theme, wrapped_line_count},
     workbench::{RunbookStepState, WorkbenchTab, WorkbenchTabState},
 };
 
@@ -36,6 +36,9 @@ struct LogHighlightOptions<'a> {
     mode: LogQueryMode,
     compiled: Option<&'a regex::Regex>,
 }
+
+const STACKED_CONNECTIVITY_WIDTH: u16 = 96;
+const STACKED_RUNBOOK_WIDTH: u16 = 96;
 
 #[inline]
 fn scroll_window(total: usize, scroll: usize, viewport_rows: usize) -> VisibleWindow {
@@ -66,6 +69,23 @@ fn centered_window(total: usize, selected: usize, viewport_rows: usize) -> Visib
         start,
         end: start + visible,
     }
+}
+
+#[inline]
+fn clamp_picker_cursor(total: usize, cursor: usize) -> usize {
+    if total == 0 {
+        0
+    } else {
+        cursor.min(total.saturating_sub(1))
+    }
+}
+
+fn use_stacked_connectivity_layout(area: Rect) -> bool {
+    area.width < STACKED_CONNECTIVITY_WIDTH
+}
+
+fn use_stacked_runbook_layout(area: Rect) -> bool {
+    area.width < STACKED_RUNBOOK_WIDTH
 }
 
 pub fn render_workbench(frame: &mut Frame, area: Rect, app: &AppState, cluster: &ClusterSnapshot) {
@@ -239,7 +259,7 @@ fn render_action_history_tab(
         .map(|(idx, entry)| render_action_history_line(entry, idx == selected, &theme))
         .collect();
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    frame.render_widget(Paragraph::new(lines), area);
     render_scrollbar(frame, area, entries.len(), window.start);
 }
 
@@ -257,7 +277,7 @@ fn render_access_review_tab(
         .skip(window.start)
         .take(window.end.saturating_sub(window.start))
         .collect::<Vec<_>>();
-    frame.render_widget(Paragraph::new(visible).wrap(Wrap { trim: false }), area);
+    frame.render_widget(Paragraph::new(visible), area);
     render_scrollbar(frame, area, total_lines, window.start);
 }
 
@@ -675,9 +695,18 @@ fn render_connectivity_tab(
     use crate::workbench::ConnectivityTabFocus;
 
     let theme = default_theme();
-    let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(34), Constraint::Percentage(66)])
+    let stacked = use_stacked_connectivity_layout(area);
+    let panes = Layout::default()
+        .direction(if stacked {
+            Direction::Vertical
+        } else {
+            Direction::Horizontal
+        })
+        .constraints(if stacked {
+            [Constraint::Percentage(42), Constraint::Percentage(58)]
+        } else {
+            [Constraint::Percentage(34), Constraint::Percentage(66)]
+        })
         .split(area);
 
     let left_rows = Layout::default()
@@ -688,7 +717,7 @@ fn render_connectivity_tab(
             Constraint::Min(6),
             Constraint::Length(2),
         ])
-        .split(columns[0]);
+        .split(panes[0]);
 
     let source_line = Paragraph::new(vec![
         Line::from(Span::styled("Source", theme.section_title_style())),
@@ -733,9 +762,12 @@ fn render_connectivity_tab(
             Style::default().fg(theme.fg_dim),
         ))]
     } else {
+        let selected = tab
+            .selected_target
+            .min(tab.filtered_target_indices.len().saturating_sub(1));
         let window = centered_window(
             tab.filtered_target_indices.len(),
-            tab.selected_target,
+            selected,
             left_rows[2].height.saturating_sub(2) as usize,
         );
         tab.filtered_target_indices[window.start..window.end]
@@ -744,15 +776,15 @@ fn render_connectivity_tab(
             .map(|(offset, target_idx)| {
                 let absolute = window.start + offset;
                 let target = &tab.targets[*target_idx];
-                let selected = absolute == tab.selected_target;
-                let style = if selected {
+                let is_selected = absolute == selected;
+                let style = if is_selected {
                     theme.selection_style()
                 } else {
                     Style::default().fg(theme.fg)
                 };
                 let ip = target.pod_ip.as_deref().unwrap_or("-");
                 Line::from(vec![
-                    Span::styled(if selected { "› " } else { "  " }, style),
+                    Span::styled(if is_selected { "› " } else { "  " }, style),
                     Span::styled(target.display.clone(), style),
                     Span::styled(
                         format!("  {}  {}", target.status, ip),
@@ -802,7 +834,7 @@ fn render_connectivity_tab(
             Constraint::Length(tab.summary_lines.len().min(4) as u16),
             Constraint::Min(0),
         ])
-        .split(columns[1]);
+        .split(panes[1]);
 
     if !tab.summary_lines.is_empty() {
         let lines = tab
@@ -1079,7 +1111,7 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
         vec![Line::from("")]
     };
 
-    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), area);
+    frame.render_widget(Paragraph::new(body), area);
     render_scrollbar(frame, area, total, window.start);
 }
 
@@ -1345,8 +1377,9 @@ fn render_rollout_tab(
     if tab.revisions.is_empty() {
         lines.push(Line::from("  No rollout history available."));
     } else {
+        let selected_idx = tab.selected.min(tab.revisions.len().saturating_sub(1));
         for (idx, revision) in tab.revisions.iter().enumerate() {
-            let selected = idx == tab.selected;
+            let selected = idx == selected_idx;
             let mut row_style = Style::default().fg(theme.fg);
             if selected {
                 row_style = row_style.bg(theme.selection_bg).fg(theme.selection_fg);
@@ -1377,11 +1410,12 @@ fn render_rollout_tab(
     let scroll = if tab.revisions.is_empty() {
         0
     } else {
-        (revision_start + tab.selected).saturating_sub(3)
+        let selected = tab.selected.min(tab.revisions.len().saturating_sub(1));
+        (revision_start + selected).saturating_sub(3)
     };
     let window = scroll_window(lines.len(), scroll, sections[1].height.max(1) as usize);
     frame.render_widget(
-        Paragraph::new(lines[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
+        Paragraph::new(lines[window.start..window.end].to_vec()),
         sections[1],
     );
     render_scrollbar(frame, sections[1], lines.len(), window.start);
@@ -1572,20 +1606,18 @@ fn render_helm_history_tab(
     }
 
     let total = tab.revisions.len();
-    let window = centered_window(total, tab.selected, sections[1].height.max(1) as usize);
+    let selected = tab.selected.min(total.saturating_sub(1));
+    let window = centered_window(total, selected, sections[1].height.max(1) as usize);
     let lines = tab.revisions[window.start..window.end]
         .iter()
         .enumerate()
         .map(|(offset, revision)| {
-            let selected = window.start + offset == tab.selected;
-            render_helm_revision_line(revision, selected, tab.current_revision, &theme)
+            let is_selected = window.start + offset == selected;
+            render_helm_revision_line(revision, is_selected, tab.current_revision, &theme)
         })
         .collect::<Vec<_>>();
 
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        sections[1],
-    );
+    frame.render_widget(Paragraph::new(lines), sections[1]);
     render_scrollbar(frame, sections[1], total, window.start);
 }
 
@@ -1708,7 +1740,7 @@ fn render_diff_lines(
         .map(render_diff_line)
         .collect::<Vec<_>>();
 
-    frame.render_widget(Paragraph::new(rendered).wrap(Wrap { trim: false }), area);
+    frame.render_widget(Paragraph::new(rendered), area);
     render_scrollbar(frame, area, total, window.start);
 }
 
@@ -1873,10 +1905,7 @@ fn render_decoded_secret_tab(
         })
         .collect();
 
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        content_area,
-    );
+    frame.render_widget(Paragraph::new(lines), content_area);
     render_scrollbar(frame, content_area, total, window.start);
 }
 
@@ -2150,34 +2179,47 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
 
     if viewer.picking_container {
         let has_all = viewer.containers.len() > 1;
-        let mut lines: Vec<Line> = Vec::new();
+        let mut entries: Vec<Line> = Vec::new();
+        let total = viewer.containers.len() + usize::from(has_all);
+        let selected = clamp_picker_cursor(total, viewer.container_cursor);
 
         if has_all {
-            let prefix = if viewer.container_cursor == 0 {
-                ">"
-            } else {
-                " "
-            };
-            lines.push(Line::from(vec![
-                Span::raw(format!("{prefix} ")),
+            let selected = selected == 0;
+            entries.push(Line::from(vec![
+                Span::raw(if selected { "> " } else { "  " }),
                 Span::styled(
-                    " All Containers",
-                    Style::default().add_modifier(Modifier::BOLD),
+                    "All Containers",
+                    if selected {
+                        theme.selection_style().add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().add_modifier(Modifier::BOLD)
+                    },
                 ),
             ]));
         }
 
         for (idx, container) in viewer.containers.iter().enumerate() {
             let picker_idx = if has_all { idx + 1 } else { idx };
-            let prefix = if picker_idx == viewer.container_cursor {
-                ">"
-            } else {
-                " "
-            };
-            lines.push(Line::from(format!("{prefix} {container}")));
+            let selected = picker_idx == selected;
+            entries.push(Line::from(vec![
+                Span::raw(if selected { "> " } else { "  " }),
+                Span::styled(
+                    container.clone(),
+                    if selected {
+                        theme.selection_style()
+                    } else {
+                        Style::default().fg(theme.fg)
+                    },
+                ),
+            ]));
         }
 
-        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
+        let window = centered_window(total, selected, log_area.height.max(1) as usize);
+        frame.render_widget(
+            Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
+            log_area,
+        );
+        render_scrollbar(frame, log_area, total, window.start);
         return;
     }
 
@@ -2645,23 +2687,33 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
     }
 
     if tab.picking_container {
-        let lines: Vec<Line> = tab
+        let total = tab.containers.len();
+        let selected = clamp_picker_cursor(total, tab.container_cursor);
+        let entries: Vec<Line> = tab
             .containers
             .iter()
             .enumerate()
             .map(|(idx, container)| {
-                let prefix = if idx == tab.container_cursor {
-                    ">"
-                } else {
-                    " "
-                };
-                Line::from(format!("{prefix} {container}"))
+                let selected = idx == selected;
+                Line::from(vec![
+                    Span::raw(if selected { "> " } else { "  " }),
+                    Span::styled(
+                        container.clone(),
+                        if selected {
+                            theme.selection_style()
+                        } else {
+                            Style::default().fg(theme.fg)
+                        },
+                    ),
+                ])
             })
             .collect();
+        let window = centered_window(total, selected, sections[1].height.max(1) as usize);
         frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
+            Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
             sections[1],
         );
+        render_scrollbar(frame, sections[1], total, window.start);
     } else {
         let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
         if total == 0 {
@@ -2845,9 +2897,18 @@ fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::Run
         rows[0],
     );
 
+    let stacked = use_stacked_runbook_layout(rows[1]);
     let columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
+        .direction(if stacked {
+            Direction::Vertical
+        } else {
+            Direction::Horizontal
+        })
+        .constraints(if stacked {
+            [Constraint::Percentage(40), Constraint::Percentage(60)]
+        } else {
+            [Constraint::Percentage(42), Constraint::Percentage(58)]
+        })
         .split(rows[1]);
 
     let left_block = Block::default()
@@ -2939,16 +3000,23 @@ fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::Run
             }
             lines.push(Line::default());
             lines.push(Line::from(Span::styled(
-                "[Enter] run/toggle  [d] done  [s] skip  [j/k] select",
+                "[Enter] run/toggle  [d] done  [s] skip  [j/k] select  [Ctrl+j/k] detail  [Ctrl+d/u] page",
                 theme.keybind_desc_style(),
             )));
             lines
         },
     );
+    let detail_total = wrapped_line_count(&detail_lines, right_inner.width);
+    let detail_scroll = tab
+        .detail_scroll
+        .min(detail_total.saturating_sub(right_inner.height.max(1) as usize));
     frame.render_widget(
-        Paragraph::new(detail_lines).wrap(Wrap { trim: false }),
+        Paragraph::new(detail_lines)
+            .wrap(Wrap { trim: false })
+            .scroll((detail_scroll.min(u16::MAX as usize) as u16, 0)),
         right_inner,
     );
+    render_scrollbar(frame, right_inner, detail_total, detail_scroll);
 }
 
 fn step_kind_label<'a>(
@@ -3045,12 +3113,15 @@ fn render_ai_analysis_tab(
         render_ai_section(&mut lines, "Uncertainty", &content.uncertainty, &theme);
     }
 
-    let scroll = tab.scroll.min(lines.len().saturating_sub(1));
+    let total = wrapped_line_count(&lines, area.width);
+    let scroll = tab
+        .scroll
+        .min(total.saturating_sub(area.height.max(1) as usize));
     let paragraph = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
         .scroll((scroll.min(u16::MAX as usize) as u16, 0));
     frame.render_widget(paragraph, area);
-    render_scrollbar(frame, area, tab.rendered_line_count(), scroll);
+    render_scrollbar(frame, area, total, scroll);
 }
 
 fn render_ai_section(
@@ -3103,9 +3174,10 @@ mod tests {
             AccessReviewSubject, SubjectAccessReview, SubjectBindingResolution,
             SubjectRoleResolution,
         },
-        ui::{components::default_theme, truncate_message},
+        ui::{components::default_theme, truncate_message, wrapped_line_count},
         workbench::{AccessReviewTabState, AttemptedActionReview},
     };
+    use ratatui::{layout::Rect, text::Line};
 
     #[test]
     fn short_message_unchanged() {
@@ -3172,6 +3244,22 @@ mod tests {
     }
 
     #[test]
+    fn stacked_connectivity_layout_activates_on_narrow_width() {
+        assert!(super::use_stacked_connectivity_layout(Rect::new(
+            0, 0, 80, 20
+        )));
+        assert!(!super::use_stacked_connectivity_layout(Rect::new(
+            0, 0, 120, 20,
+        )));
+    }
+
+    #[test]
+    fn stacked_runbook_layout_activates_on_narrow_width() {
+        assert!(super::use_stacked_runbook_layout(Rect::new(0, 0, 80, 20)));
+        assert!(!super::use_stacked_runbook_layout(Rect::new(0, 0, 120, 20)));
+    }
+
+    #[test]
     fn scroll_window_clamps_to_bottom() {
         assert_eq!(
             scroll_window(10, 99, 3),
@@ -3185,6 +3273,47 @@ mod tests {
             centered_window(10, 8, 3),
             VisibleWindow { start: 7, end: 10 }
         );
+    }
+
+    #[test]
+    fn wrapped_line_count_tracks_visual_rows_on_narrow_width() {
+        let total = wrapped_line_count(
+            &[
+                Line::from("header"),
+                Line::from("this line wraps across several rows"),
+            ],
+            10,
+        );
+        assert!(total > 2);
+    }
+
+    #[test]
+    fn log_container_picker_window_keeps_cursor_visible() {
+        let window = centered_window(12, 10, 4);
+        assert!(window.start <= 10);
+        assert!(window.end > 10);
+    }
+
+    #[test]
+    fn exec_container_picker_window_keeps_cursor_visible() {
+        let window = centered_window(9, 7, 3);
+        assert!(window.start <= 7);
+        assert!(window.end > 7);
+    }
+
+    #[test]
+    fn clamp_picker_cursor_clamps_stale_selection() {
+        assert_eq!(super::clamp_picker_cursor(0, 9), 0);
+        assert_eq!(super::clamp_picker_cursor(3, 9), 2);
+        assert_eq!(super::clamp_picker_cursor(3, 1), 1);
+    }
+
+    #[test]
+    fn centered_window_clamps_stale_connectivity_selection() {
+        let selected = super::clamp_picker_cursor(3, 9);
+        let window = centered_window(3, selected, 2);
+        assert!(window.start <= selected);
+        assert!(window.end > selected);
     }
 
     #[test]

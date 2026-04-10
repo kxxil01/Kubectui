@@ -500,6 +500,7 @@ pub struct DetailViewState {
     pub probe_panel: Option<ProbePanelComponentState>,
     pub cronjob_history: Vec<CronJobHistoryEntry>,
     pub cronjob_history_selected: usize,
+    pub top_panel_scroll: usize,
     /// When true, a delete confirmation prompt is shown in the detail view.
     pub confirm_delete: bool,
     /// When true, a drain confirmation prompt is shown in the detail view.
@@ -531,6 +532,14 @@ impl DetailViewState {
 
     pub fn select_prev_cronjob_history(&mut self) {
         self.cronjob_history_selected = self.cronjob_history_selected.saturating_sub(1);
+    }
+
+    pub fn scroll_top_panels_down(&mut self, step: usize) {
+        self.top_panel_scroll = self.top_panel_scroll.saturating_add(step);
+    }
+
+    pub fn scroll_top_panels_up(&mut self, step: usize) {
+        self.top_panel_scroll = self.top_panel_scroll.saturating_sub(step);
     }
 
     pub fn selected_detail_resource(&self) -> Option<ResourceRef> {

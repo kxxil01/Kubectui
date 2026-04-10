@@ -1,10 +1,10 @@
 //! Governance & Cost Center view.
 
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Cell, Paragraph, Row, Wrap},
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -15,10 +15,44 @@ use crate::{
     state::{ClusterSnapshot, RefreshScope},
     ui::{
         TableFrame,
-        components::{content_block, default_theme},
+        components::{default_theme, render_scrollable_text_block},
         render_centered_message, render_table_frame, table_viewport_rows, table_window,
+        vertical_primary_detail_chunks,
     },
 };
+
+const GOVERNANCE_COMPACT_HEIGHT: u16 = 24;
+const GOVERNANCE_NARROW_WIDTH: u16 = 104;
+
+fn governance_widths(area: Rect) -> [Constraint; 10] {
+    if area.width < GOVERNANCE_NARROW_WIDTH {
+        [
+            Constraint::Length(3),
+            Constraint::Min(14),
+            Constraint::Length(5),
+            Constraint::Length(5),
+            Constraint::Length(5),
+            Constraint::Length(5),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Min(10),
+        ]
+    } else {
+        [
+            Constraint::Length(3),
+            Constraint::Length(18),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(6),
+            Constraint::Length(7),
+            Constraint::Length(8),
+            Constraint::Length(8),
+            Constraint::Min(14),
+        ]
+    }
+}
 
 pub fn render_governance(
     frame: &mut Frame,
@@ -26,6 +60,7 @@ pub fn render_governance(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
+    detail_scroll: usize,
     focused: bool,
 ) {
     let summaries = compute_governance(cluster);
@@ -60,20 +95,24 @@ pub fn render_governance(
 
     let selected = selected_idx.min(indices.len().saturating_sub(1));
     let selected_summary = &summaries[indices[selected]];
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
-        .split(area);
+    let (table_area, summary_area) =
+        vertical_primary_detail_chunks(area, 58, 8, GOVERNANCE_COMPACT_HEIGHT);
     render_governance_table(
         frame,
-        chunks[0],
+        table_area,
         &summaries,
         &indices,
         selected,
         search.trim(),
         focused,
     );
-    render_governance_summary(frame, chunks[1], selected_summary, focused);
+    render_governance_summary(
+        frame,
+        summary_area,
+        selected_summary,
+        detail_scroll,
+        focused,
+    );
 }
 
 fn render_governance_table(
@@ -140,18 +179,7 @@ fn render_governance_table(
             summaries.len()
         )
     };
-    let widths = [
-        Constraint::Length(3),
-        Constraint::Length(18),
-        Constraint::Length(6),
-        Constraint::Length(6),
-        Constraint::Length(6),
-        Constraint::Length(6),
-        Constraint::Length(7),
-        Constraint::Length(8),
-        Constraint::Length(8),
-        Constraint::Min(14),
-    ];
+    let widths = governance_widths(area);
 
     render_table_frame(
         frame,
@@ -174,6 +202,7 @@ fn render_governance_summary(
     frame: &mut Frame,
     area: Rect,
     summary: &NamespaceGovernanceSummary,
+    scroll: usize,
     focused: bool,
 ) {
     let theme = default_theme();
@@ -240,12 +269,7 @@ fn render_governance_summary(
         lines.push(Line::from(spans));
     }
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(content_block("Governance Summary", focused)),
-        area,
-    );
+    render_scrollable_text_block(frame, area, "Governance Summary", focused, lines, scroll);
 }
 
 fn severity_badge(severity: AlertSeverity) -> (&'static str, Style) {
@@ -270,7 +294,7 @@ mod tests {
         let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
         terminal
             .draw(|frame| {
-                render_governance_summary(frame, frame.area(), summary, true);
+                render_governance_summary(frame, frame.area(), summary, 0, true);
             })
             .expect("render");
         let buffer = terminal.backend().buffer();
@@ -361,6 +385,7 @@ mod tests {
                     &ClusterSnapshot::default(),
                     0,
                     "",
+                    0,
                     true,
                 );
             })
@@ -386,5 +411,21 @@ mod tests {
 
         let rendered = render_summary_to_string(&summary);
         assert!(!rendered.contains("Enter opens:"));
+    }
+
+    #[test]
+    fn governance_widths_switch_to_compact_profile() {
+        let widths = governance_widths(Rect::new(0, 0, 96, 20));
+        assert_eq!(widths[0], Constraint::Length(3));
+        assert_eq!(widths[1], Constraint::Min(14));
+        assert_eq!(widths[9], Constraint::Min(10));
+    }
+
+    #[test]
+    fn governance_widths_keep_wide_profile() {
+        let widths = governance_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[1], Constraint::Length(18));
+        assert_eq!(widths[7], Constraint::Length(8));
+        assert_eq!(widths[9], Constraint::Min(14));
     }
 }

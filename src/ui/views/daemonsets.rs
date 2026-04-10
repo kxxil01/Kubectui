@@ -37,6 +37,32 @@ type DaemonSetDerivedCacheValue = DerivedRowsCacheValue<DaemonSetDerivedCell>;
 static DAEMONSET_DERIVED_CACHE: LazyLock<DerivedRowsCache<DaemonSetDerivedCell>> =
     LazyLock::new(Default::default);
 
+const NARROW_DAEMONSET_WIDTH: u16 = 104;
+
+fn daemonset_widths(area: Rect) -> [Constraint; 7] {
+    if area.width < NARROW_DAEMONSET_WIDTH {
+        [
+            Constraint::Min(18),
+            Constraint::Length(14),
+            Constraint::Length(7),
+            Constraint::Length(7),
+            Constraint::Length(8),
+            Constraint::Min(18),
+            Constraint::Length(8),
+        ]
+    } else {
+        [
+            Constraint::Length(20),
+            Constraint::Length(16),
+            Constraint::Length(9),
+            Constraint::Length(9),
+            Constraint::Length(13),
+            Constraint::Min(24),
+            Constraint::Length(9),
+        ]
+    }
+}
+
 /// Renders the DaemonSets table with stateful selection and scrollbar.
 #[allow(clippy::too_many_arguments)]
 pub fn render_daemonsets(
@@ -61,15 +87,7 @@ pub fn render_daemonsets(
         |q| filtered_daemonset_indices(&cluster.daemonsets, q, sort),
     );
     let derived = cached_daemonset_derived(cluster, query, indices.as_ref(), cache_variant);
-    let widths = [
-        Constraint::Length(20),
-        Constraint::Length(16),
-        Constraint::Length(9),
-        Constraint::Length(9),
-        Constraint::Length(13),
-        Constraint::Min(24),
-        Constraint::Length(9),
-    ];
+    let widths = daemonset_widths(area);
     let sort_suffix = workload_sort_suffix(sort);
     render_resource_table(
         frame,
@@ -216,5 +234,23 @@ mod tests {
         assert_eq!(readiness_style(4, 4, &theme).fg, Some(theme.success));
         assert_eq!(readiness_style(2, 4, &theme).fg, Some(theme.warning));
         assert_eq!(readiness_style(0, 4, &theme).fg, Some(theme.error));
+    }
+
+    #[test]
+    fn daemonset_widths_switch_to_compact_profile() {
+        let widths = daemonset_widths(Rect::new(0, 0, 92, 20));
+        assert_eq!(widths[0], Constraint::Min(18));
+        assert_eq!(widths[1], Constraint::Length(14));
+        assert_eq!(widths[5], Constraint::Min(18));
+        assert_eq!(widths[6], Constraint::Length(8));
+    }
+
+    #[test]
+    fn daemonset_widths_keep_wide_profile() {
+        let widths = daemonset_widths(Rect::new(0, 0, 132, 20));
+        assert_eq!(widths[0], Constraint::Length(20));
+        assert_eq!(widths[4], Constraint::Length(13));
+        assert_eq!(widths[5], Constraint::Min(24));
+        assert_eq!(widths[6], Constraint::Length(9));
     }
 }

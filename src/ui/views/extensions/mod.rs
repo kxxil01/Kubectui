@@ -10,6 +10,12 @@ use ratatui::{
 
 use crate::{app::AppState, state::ClusterSnapshot};
 
+const STACKED_EXTENSIONS_WIDTH: u16 = 72;
+
+fn use_stacked_extensions_layout(area: Rect) -> bool {
+    area.width < STACKED_EXTENSIONS_WIDTH
+}
+
 /// Renders extensions split-pane with CRDs (left) and instances (right).
 pub fn render_extensions(
     frame: &mut Frame,
@@ -18,9 +24,18 @@ pub fn render_extensions(
     app: &AppState,
     _focused: bool,
 ) {
+    let stacked = use_stacked_extensions_layout(area);
     let chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .direction(if stacked {
+            Direction::Vertical
+        } else {
+            Direction::Horizontal
+        })
+        .constraints(if stacked {
+            [Constraint::Percentage(40), Constraint::Percentage(60)]
+        } else {
+            [Constraint::Percentage(45), Constraint::Percentage(55)]
+        })
         .split(area);
 
     crds::render_crd_picker(
@@ -44,4 +59,15 @@ pub fn render_extensions(
         app.extension_instance_cursor,
         app.extension_in_instances,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn stacked_extensions_layout_activates_on_narrow_width() {
+        assert!(use_stacked_extensions_layout(Rect::new(0, 0, 60, 20)));
+        assert!(!use_stacked_extensions_layout(Rect::new(0, 0, 90, 20)));
+    }
 }
