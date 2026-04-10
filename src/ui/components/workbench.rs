@@ -215,8 +215,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             Line::from(""),
             Line::from("  [H] opens action history."),
             Line::from("  [b] closes the workbench, [Ctrl+W] closes the active tab."),
-        ])
-        .wrap(Wrap { trim: false }),
+        ]),
         area,
     );
 }
@@ -242,8 +241,7 @@ fn render_action_history_tab(
                     "  Mutating actions for the current context and namespace will appear here.",
                 ),
                 Line::from("  Use [Enter] on a jumpable row to reopen the affected resource."),
-            ])
-            .wrap(Wrap { trim: false }),
+            ]),
             area,
         );
         return;
@@ -810,9 +808,7 @@ fn render_connectivity_tab(
             theme.border_style()
         });
     frame.render_widget(
-        Paragraph::new(target_lines)
-            .block(targets_block)
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(target_lines).block(targets_block),
         left_rows[2],
     );
 
@@ -847,10 +843,7 @@ fn render_connectivity_tab(
                 ))
             })
             .collect::<Vec<_>>();
-        frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
-            right_rows[0],
-        );
+        frame.render_widget(Paragraph::new(lines), right_rows[0]);
     }
 
     crate::ui::views::relations::render_relation_tree(
@@ -892,10 +885,7 @@ fn render_traffic_debug_tab(
                 ))
             })
             .collect::<Vec<_>>();
-        frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
-            sections[0],
-        );
+        frame.render_widget(Paragraph::new(lines), sections[0]);
     }
 
     crate::ui::views::relations::render_relation_tree(
@@ -1270,8 +1260,7 @@ fn render_rollout_tab(
                 Span::styled(" Hint ", theme.inactive_style()),
                 Span::styled(hint, Style::default().fg(theme.muted)),
             ]),
-        ])
-        .wrap(Wrap { trim: false }),
+        ]),
         sections[0],
     );
 
@@ -2223,7 +2212,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
 
         let window = centered_window(total, selected, log_area.height.max(1) as usize);
         frame.render_widget(
-            Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
+            Paragraph::new(entries[window.start..window.end].to_vec()),
             log_area,
         );
         render_scrollbar(frame, log_area, total, window.start);
@@ -2963,10 +2952,7 @@ fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::Run
             })
             .collect::<Vec<_>>()
     };
-    frame.render_widget(
-        Paragraph::new(step_lines).wrap(Wrap { trim: false }),
-        left_inner,
-    );
+    frame.render_widget(Paragraph::new(step_lines), left_inner);
     render_scrollbar(frame, left_inner, tab.steps.len(), window.start);
 
     let right_block = Block::default()
