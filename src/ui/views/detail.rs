@@ -476,7 +476,15 @@ fn render_inspection_panel(frame: &mut Frame, area: Rect, detail_state: &DetailV
         ]),
     ];
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    let (total, position) =
+        detail_panel_scroll_metrics(&lines, inner, detail_state.top_panel_scroll);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
+        inner,
+    );
+    render_vertical_scrollbar(frame, inner, total, position);
 }
 
 fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
@@ -529,7 +537,12 @@ fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &De
             secondary_hint
         }),
     ];
-    frame.render_widget(Paragraph::new(hints).wrap(Wrap { trim: false }), rows[0]);
+    let hint_width = usize::from(rows[0].width.max(1));
+    let hints = hints
+        .into_iter()
+        .map(|line| truncate_line_content(&line, hint_width))
+        .collect::<Vec<_>>();
+    frame.render_widget(Paragraph::new(hints), rows[0]);
 
     if detail_state.cronjob_history.is_empty() {
         frame.render_widget(
@@ -765,7 +778,15 @@ fn render_compact_detail(frame: &mut Frame, inner: Rect, detail_state: &DetailVi
         theme.inactive_style(),
     )));
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), rows[1]);
+    let (total, position) =
+        detail_panel_scroll_metrics(&lines, rows[1], detail_state.top_panel_scroll);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
+        rows[1],
+    );
+    render_vertical_scrollbar(frame, rows[1], total, position);
 
     let action_keys = detail_state
         .footer_actions()
@@ -1210,5 +1231,39 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert!(text.chars().count() <= 16);
+    }
+
+    #[test]
+    fn compact_detail_uses_wrapped_scroll_metrics() {
+        let lines = vec![
+            Line::from("row 1"),
+            Line::from("row 2"),
+            Line::from("row 3"),
+            Line::from("row 4"),
+            Line::from("row 5"),
+        ];
+        assert_eq!(
+            detail_panel_scroll_metrics(&lines, Rect::new(0, 0, 12, 3), 99),
+            (5, 2)
+        );
+    }
+
+    #[test]
+    fn truncate_line_content_clamps_cronjob_hint_width() {
+        let line = Line::from(vec![
+            Span::raw(" [j/k] "),
+            Span::raw("Select run  "),
+            Span::raw("[Enter] "),
+            Span::raw("Open Job  "),
+            Span::raw("[l] "),
+            Span::raw("Logs for selected Job"),
+        ]);
+        let truncated = truncate_line_content(&line, 20);
+        let text = truncated
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(text.chars().count() <= 20);
     }
 }
