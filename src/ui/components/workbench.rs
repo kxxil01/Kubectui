@@ -762,9 +762,12 @@ fn render_connectivity_tab(
             Style::default().fg(theme.fg_dim),
         ))]
     } else {
+        let selected = tab
+            .selected_target
+            .min(tab.filtered_target_indices.len().saturating_sub(1));
         let window = centered_window(
             tab.filtered_target_indices.len(),
-            tab.selected_target,
+            selected,
             left_rows[2].height.saturating_sub(2) as usize,
         );
         tab.filtered_target_indices[window.start..window.end]
@@ -773,15 +776,15 @@ fn render_connectivity_tab(
             .map(|(offset, target_idx)| {
                 let absolute = window.start + offset;
                 let target = &tab.targets[*target_idx];
-                let selected = absolute == tab.selected_target;
-                let style = if selected {
+                let is_selected = absolute == selected;
+                let style = if is_selected {
                     theme.selection_style()
                 } else {
                     Style::default().fg(theme.fg)
                 };
                 let ip = target.pod_ip.as_deref().unwrap_or("-");
                 Line::from(vec![
-                    Span::styled(if selected { "› " } else { "  " }, style),
+                    Span::styled(if is_selected { "› " } else { "  " }, style),
                     Span::styled(target.display.clone(), style),
                     Span::styled(
                         format!("  {}  {}", target.status, ip),
@@ -1374,8 +1377,9 @@ fn render_rollout_tab(
     if tab.revisions.is_empty() {
         lines.push(Line::from("  No rollout history available."));
     } else {
+        let selected_idx = tab.selected.min(tab.revisions.len().saturating_sub(1));
         for (idx, revision) in tab.revisions.iter().enumerate() {
-            let selected = idx == tab.selected;
+            let selected = idx == selected_idx;
             let mut row_style = Style::default().fg(theme.fg);
             if selected {
                 row_style = row_style.bg(theme.selection_bg).fg(theme.selection_fg);
@@ -1406,7 +1410,8 @@ fn render_rollout_tab(
     let scroll = if tab.revisions.is_empty() {
         0
     } else {
-        (revision_start + tab.selected).saturating_sub(3)
+        let selected = tab.selected.min(tab.revisions.len().saturating_sub(1));
+        (revision_start + selected).saturating_sub(3)
     };
     let window = scroll_window(lines.len(), scroll, sections[1].height.max(1) as usize);
     frame.render_widget(
@@ -1601,13 +1606,14 @@ fn render_helm_history_tab(
     }
 
     let total = tab.revisions.len();
-    let window = centered_window(total, tab.selected, sections[1].height.max(1) as usize);
+    let selected = tab.selected.min(total.saturating_sub(1));
+    let window = centered_window(total, selected, sections[1].height.max(1) as usize);
     let lines = tab.revisions[window.start..window.end]
         .iter()
         .enumerate()
         .map(|(offset, revision)| {
-            let selected = window.start + offset == tab.selected;
-            render_helm_revision_line(revision, selected, tab.current_revision, &theme)
+            let is_selected = window.start + offset == selected;
+            render_helm_revision_line(revision, is_selected, tab.current_revision, &theme)
         })
         .collect::<Vec<_>>();
 
@@ -3291,6 +3297,14 @@ mod tests {
         assert_eq!(super::clamp_picker_cursor(0, 9), 0);
         assert_eq!(super::clamp_picker_cursor(3, 9), 2);
         assert_eq!(super::clamp_picker_cursor(3, 1), 1);
+    }
+
+    #[test]
+    fn centered_window_clamps_stale_connectivity_selection() {
+        let selected = super::clamp_picker_cursor(3, 9);
+        let window = centered_window(3, selected, 2);
+        assert!(window.start <= selected);
+        assert!(window.end > selected);
     }
 
     #[test]

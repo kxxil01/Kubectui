@@ -1952,6 +1952,54 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.scroll_top_panels_down(1);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.scroll_top_panels_up(1);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('d')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.scroll_top_panels_down(10);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('u')
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                if let Some(detail) = &mut self.detail_view {
+                    detail.scroll_top_panels_up(10);
+                }
+                AppAction::None
+            }
+            KeyCode::Char('j') | KeyCode::Down
+                if self
+                    .detail_view
+                    .as_ref()
+                    .is_some_and(|detail| !detail.has_confirmation_dialog())
                     && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 if let Some(detail) = &mut self.detail_view {

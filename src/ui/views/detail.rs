@@ -5,8 +5,8 @@ use ratatui::{
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, Borders, Cell, Clear, HighlightSpacing, Paragraph, Row, Table,
-        TableState, Wrap,
+        Block, BorderType, Borders, Cell, Clear, HighlightSpacing, Paragraph, Row, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Table, TableState, Wrap,
     },
 };
 
@@ -20,6 +20,48 @@ use crate::{
         format_age, table_window,
     },
 };
+
+fn detail_panel_viewport_rows(area: Rect) -> usize {
+    usize::from(area.height.saturating_sub(2)).max(1)
+}
+
+fn detail_panel_window(total: usize, area: Rect, scroll: usize) -> (usize, usize) {
+    let visible = detail_panel_viewport_rows(area);
+    let start = scroll.min(total.saturating_sub(visible));
+    let end = (start + visible).min(total);
+    (start, end)
+}
+
+fn render_scrollable_detail_panel<'a>(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    lines: Vec<Line<'a>>,
+    scroll: usize,
+) {
+    let theme = default_theme();
+    let block = Block::default()
+        .title(Span::styled(title, theme.section_title_style()))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(theme.border_style())
+        .style(Style::default().bg(theme.bg));
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let (start, end) = detail_panel_window(lines.len(), area, scroll);
+    frame.render_widget(
+        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+        inner,
+    );
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+    let mut scrollbar_state = ScrollbarState::new(lines.len()).position(start);
+    frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+}
 
 fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
@@ -157,17 +199,12 @@ fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailVie
         )));
     }
 
-    let block = Block::default()
-        .title(Span::styled(" Metadata ", theme.section_title_style()))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
+    render_scrollable_detail_panel(
+        frame,
         area,
+        " Metadata ",
+        lines,
+        detail_state.top_panel_scroll,
     );
 }
 
@@ -256,17 +293,12 @@ fn render_details_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
         )));
     }
 
-    let block = Block::default()
-        .title(Span::styled(" Details ", theme.section_title_style()))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
+    render_scrollable_detail_panel(
+        frame,
         area,
+        " Details ",
+        lines,
+        detail_state.top_panel_scroll,
     );
 }
 
@@ -318,17 +350,12 @@ fn render_metrics_panel(frame: &mut Frame, area: Rect, detail_state: &DetailView
         ))]
     };
 
-    let block = Block::default()
-        .title(Span::styled(" Metrics ", theme.section_title_style()))
-        .borders(Borders::ALL)
-        .border_type(BorderType::Rounded)
-        .border_style(theme.border_style())
-        .style(Style::default().bg(theme.bg));
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
+    render_scrollable_detail_panel(
+        frame,
         area,
+        " Metrics ",
+        lines,
+        detail_state.top_panel_scroll,
     );
 }
 
@@ -1141,5 +1168,14 @@ mod tests {
         terminal
             .draw(|frame| render_detail(frame, frame.area(), &state))
             .expect("cronjob suspend confirm should render on small terminal");
+    }
+
+    #[test]
+    fn detail_panel_window_clamps_to_last_full_page() {
+        assert_eq!(
+            detail_panel_window(20, Rect::new(0, 0, 20, 8), 99),
+            (14, 20)
+        );
+        assert_eq!(detail_panel_window(3, Rect::new(0, 0, 20, 8), 99), (0, 3));
     }
 }
