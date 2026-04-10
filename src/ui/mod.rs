@@ -249,6 +249,39 @@ pub(crate) fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
         .sum()
 }
 
+pub(crate) fn wrap_span_groups(groups: &[Vec<Span<'static>>], width: u16) -> Vec<Line<'static>> {
+    if groups.is_empty() {
+        return vec![Line::from(String::new())];
+    }
+
+    let usable_width = usize::from(width.max(1));
+    let mut lines = Vec::new();
+    let mut current = Vec::new();
+    let mut current_width = 0usize;
+
+    for group in groups {
+        let group_width = group
+            .iter()
+            .map(|span| span.content.chars().count())
+            .sum::<usize>()
+            .max(1);
+        if !current.is_empty() && current_width + group_width > usable_width {
+            lines.push(Line::from(std::mem::take(&mut current)));
+            current_width = 0;
+        }
+        current.extend(group.iter().cloned());
+        current_width += group_width;
+    }
+
+    if current.is_empty() {
+        lines.push(Line::from(String::new()));
+    } else {
+        lines.push(Line::from(current));
+    }
+
+    lines
+}
+
 /// Computes the visible window for a selected row, centered when possible.
 #[inline]
 pub(crate) fn table_window(total: usize, selected: usize, viewport_rows: usize) -> TableWindow {
@@ -3981,5 +4014,31 @@ mod tests {
             resource_table_title("󰜟 ", "Deployments", 42, 42, "", ""),
             " 󰜟 Deployments (42) "
         );
+    }
+
+    #[test]
+    fn wrap_span_groups_moves_whole_group_to_next_line() {
+        let lines = wrap_span_groups(
+            &[
+                vec![Span::raw("[y] YAML  ")],
+                vec![Span::raw("[D] Drift  ")],
+                vec![Span::raw("[B] Bookmark")],
+            ],
+            22,
+        );
+
+        assert_eq!(lines.len(), 2);
+        let first: String = lines[0]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        let second: String = lines[1]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect();
+        assert_eq!(first, "[y] YAML  [D] Drift  ");
+        assert_eq!(second, "[B] Bookmark");
     }
 }

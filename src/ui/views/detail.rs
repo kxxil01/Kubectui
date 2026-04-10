@@ -17,7 +17,7 @@ use crate::{
             default_theme, probe_panel::render_probe_panel, render_debug_container_dialog,
             render_node_debug_dialog, render_vertical_scrollbar, scale_dialog::render_scale_dialog,
         },
-        format_age, table_window, wrapped_line_count,
+        format_age, table_window, wrap_span_groups, wrapped_line_count,
     },
 };
 
@@ -67,6 +67,35 @@ fn truncate_line_content(line: &Line<'_>, width: usize) -> Line<'static> {
         .map(|span| span.content.as_ref())
         .collect::<String>();
     Line::from(crate::ui::truncate_message(&text, width.max(1)).into_owned())
+}
+
+fn detail_footer_groups(
+    detail_state: &DetailViewState,
+    theme: &crate::ui::theme::Theme,
+) -> Vec<Vec<Span<'static>>> {
+    let mut groups = detail_state
+        .footer_actions()
+        .iter()
+        .map(|action| {
+            vec![
+                Span::styled(format!("{} ", action.key_hint()), theme.keybind_key_style()),
+                Span::styled(format!("{}  ", action.label()), theme.keybind_desc_style()),
+            ]
+        })
+        .collect::<Vec<_>>();
+    groups.push(vec![
+        Span::styled("[Esc] ", theme.keybind_key_style()),
+        Span::styled("Close", theme.keybind_desc_style()),
+    ]);
+    groups
+}
+
+fn detail_footer_lines(
+    detail_state: &DetailViewState,
+    theme: &crate::ui::theme::Theme,
+    width: u16,
+) -> Vec<Line<'static>> {
+    wrap_span_groups(&detail_footer_groups(detail_state, theme), width.max(1))
 }
 
 fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
@@ -844,13 +873,15 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
     if inner.width < 70 || inner.height < 19 {
         render_compact_detail(frame, inner, detail_state);
     } else {
+        let footer_lines = detail_footer_lines(detail_state, &theme, inner.width.max(1));
+        let footer_height = footer_lines.len().max(1) as u16 + 1;
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(2),
                 Constraint::Min(9),
                 Constraint::Min(6),
-                Constraint::Length(2),
+                Constraint::Length(footer_height),
             ])
             .split(inner);
 
@@ -897,27 +928,11 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
         render_metrics_panel(frame, info_cols[2], detail_state);
         render_inspection_panel(frame, chunks[2], detail_state);
 
-        let mut footer_spans = Vec::new();
-        for action in detail_state.footer_actions() {
-            footer_spans.push(Span::styled(
-                format!("{} ", action.key_hint()),
-                theme.keybind_key_style(),
-            ));
-            footer_spans.push(Span::styled(
-                format!("{}  ", action.label()),
-                theme.keybind_desc_style(),
-            ));
-        }
-        footer_spans.push(Span::styled("[Esc] ", theme.keybind_key_style()));
-        footer_spans.push(Span::styled("Close", theme.keybind_desc_style()));
-        footer_spans.insert(0, Span::raw(" "));
-
-        let footer_line = Line::from(footer_spans);
         let footer_block = Block::default()
             .borders(Borders::TOP)
             .border_style(theme.border_style())
             .style(Style::default().bg(theme.statusbar_bg));
-        frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
+        frame.render_widget(Paragraph::new(footer_lines).block(footer_block), chunks[3]);
     }
 
     if detail_state.confirm_delete {
@@ -1268,5 +1283,15 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert!(text.chars().count() <= 20);
+    }
+
+    #[test]
+    fn detail_footer_lines_wrap_when_width_tight() {
+        let state = DetailViewState {
+            resource: Some(ResourceRef::Pod("api-0".into(), "default".into())),
+            ..DetailViewState::default()
+        };
+        let lines = detail_footer_lines(&state, &default_theme(), 32);
+        assert!(lines.len() > 1);
     }
 }
