@@ -60,6 +60,15 @@ fn detail_panel_scroll_metrics(lines: &[Line<'_>], area: Rect, scroll: usize) ->
     (total, position)
 }
 
+fn truncate_line_content(line: &Line<'_>, width: usize) -> Line<'static> {
+    let text = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    Line::from(crate::ui::truncate_message(&text, width.max(1)).into_owned())
+}
+
 fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
     let theme = default_theme();
 
@@ -1071,13 +1080,15 @@ fn render_detail_confirm_dialog(
     frame.render_widget(block, popup);
 
     if use_compact_detail_confirm(popup) {
-        let mut lines = body;
+        let width = usize::from(inner.width.max(1));
+        let mut lines = body
+            .into_iter()
+            .map(|line| truncate_line_content(&line, width))
+            .collect::<Vec<_>>();
         lines.push(Line::from(""));
-        lines.push(footer);
+        lines.push(truncate_line_content(&footer, width));
         frame.render_widget(
-            Paragraph::new(lines)
-                .wrap(Wrap { trim: false })
-                .alignment(ratatui::layout::Alignment::Center),
+            Paragraph::new(lines).alignment(ratatui::layout::Alignment::Center),
             inner,
         );
         return;
@@ -1180,5 +1191,24 @@ mod tests {
             detail_panel_scroll_metrics(&short, Rect::new(0, 0, 18, 6), 99),
             (3, 0)
         );
+    }
+
+    #[test]
+    fn truncate_line_content_keeps_compact_confirm_single_row() {
+        let line = Line::from(vec![
+            Span::raw(" [D] / [y] / [Enter] "),
+            Span::raw("Confirm  "),
+            Span::raw("[F] "),
+            Span::raw("Force  "),
+            Span::raw("[Esc] "),
+            Span::raw("Cancel"),
+        ]);
+        let truncated = truncate_line_content(&line, 16);
+        let text = truncated
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(text.chars().count() <= 16);
     }
 }
