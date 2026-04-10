@@ -11,7 +11,8 @@ use crate::k8s::{
     exec::DebugImagePreset,
     node_debug::{NodeDebugLaunchRequest, NodeDebugProfile, default_debug_image},
 };
-use crate::ui::truncate_message;
+use crate::ui::components::render_vertical_scrollbar;
+use crate::ui::{truncate_message, wrapped_line_count};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeDebugField {
@@ -41,6 +42,7 @@ pub struct NodeDebugDialogState {
     pub profile: NodeDebugProfile,
     pub pending_launch: bool,
     pub error_message: Option<String>,
+    pub notes_scroll: usize,
 }
 
 impl NodeDebugDialogState {
@@ -76,6 +78,7 @@ impl NodeDebugDialogState {
             profile: NodeDebugProfile::General,
             pending_launch: false,
             error_message: None,
+            notes_scroll: 0,
         }
     }
 
@@ -91,6 +94,7 @@ impl NodeDebugDialogState {
         if pending {
             self.error_message = None;
         }
+        self.notes_scroll = 0;
     }
 
     pub fn build_launch_request(&self) -> Result<NodeDebugLaunchRequest, String> {
@@ -107,6 +111,28 @@ impl NodeDebugDialogState {
     pub fn handle_key(&mut self, key: KeyEvent) -> NodeDebugDialogEvent {
         if self.pending_launch {
             return NodeDebugDialogEvent::None;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.notes_scroll = self.notes_scroll.saturating_add(1);
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.notes_scroll = self.notes_scroll.saturating_sub(1);
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Char('d') | KeyCode::PageDown => {
+                    self.notes_scroll = self.notes_scroll.saturating_add(10);
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Char('u') | KeyCode::PageUp => {
+                    self.notes_scroll = self.notes_scroll.saturating_sub(10);
+                    return NodeDebugDialogEvent::None;
+                }
+                _ => {}
+            }
         }
 
         if self.is_editing_custom_image() {
@@ -240,6 +266,7 @@ impl NodeDebugDialogState {
             current.checked_sub(1).unwrap_or(all.len() - 1)
         };
         self.profile = all[next];
+        self.notes_scroll = 0;
     }
 
     fn is_editing_custom_image(&self) -> bool {
@@ -426,14 +453,22 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
             Span::styled(error.clone(), Style::default().fg(Color::White)),
         ]));
     }
+    let notes_block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let notes_inner = notes_block.inner(chunks[6]);
+    frame.render_widget(notes_block, chunks[6]);
+    let notes_total = wrapped_line_count(&notes, notes_inner.width);
+    let notes_position = state
+        .notes_scroll
+        .min(notes_total.saturating_sub(notes_inner.height.max(1) as usize));
     frame.render_widget(
-        Paragraph::new(notes).wrap(Wrap { trim: true }).block(
-            Block::default()
-                .borders(Borders::TOP)
-                .border_style(Style::default().fg(Color::DarkGray)),
-        ),
-        chunks[6],
+        Paragraph::new(notes)
+            .wrap(Wrap { trim: true })
+            .scroll((notes_position.min(u16::MAX as usize) as u16, 0)),
+        notes_inner,
     );
+    render_vertical_scrollbar(frame, notes_inner, notes_total, notes_position);
 
     frame.render_widget(
         Paragraph::new(Line::from(vec![
@@ -443,6 +478,8 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
             Span::styled("change  ", Style::default().fg(Color::White)),
             Span::styled("[Enter] ", Style::default().fg(Color::Cyan)),
             Span::styled("activate  ", Style::default().fg(Color::White)),
+            Span::styled("[Ctrl+j/k] ", Style::default().fg(Color::Cyan)),
+            Span::styled("notes  ", Style::default().fg(Color::White)),
             Span::styled("[Esc] ", Style::default().fg(Color::Cyan)),
             Span::styled("cancel", Style::default().fg(Color::White)),
         ]))
@@ -709,5 +746,19 @@ mod tests {
         let lines = compact_node_debug_lines(&state, "ready", "busybox", "general profile", 24, 2);
         assert_eq!(lines.len(), 2);
         assert!(lines[0].to_string().contains("node node-0"));
+    }
+
+    #[test]
+    fn ctrl_scroll_updates_notes_scroll() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        assert_eq!(state.notes_scroll, 0);
+        state.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+        assert_eq!(state.notes_scroll, 1);
+        state.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert_eq!(state.notes_scroll, 11);
+        state.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert_eq!(state.notes_scroll, 1);
+        state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        assert_eq!(state.notes_scroll, 0);
     }
 }

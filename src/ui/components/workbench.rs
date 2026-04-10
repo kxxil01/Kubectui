@@ -215,8 +215,7 @@ fn render_empty_state(frame: &mut Frame, area: Rect) {
             Line::from(""),
             Line::from("  [H] opens action history."),
             Line::from("  [b] closes the workbench, [Ctrl+W] closes the active tab."),
-        ])
-        .wrap(Wrap { trim: false }),
+        ]),
         area,
     );
 }
@@ -242,8 +241,7 @@ fn render_action_history_tab(
                     "  Mutating actions for the current context and namespace will appear here.",
                 ),
                 Line::from("  Use [Enter] on a jumpable row to reopen the affected resource."),
-            ])
-            .wrap(Wrap { trim: false }),
+            ]),
             area,
         );
         return;
@@ -810,9 +808,7 @@ fn render_connectivity_tab(
             theme.border_style()
         });
     frame.render_widget(
-        Paragraph::new(target_lines)
-            .block(targets_block)
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(target_lines).block(targets_block),
         left_rows[2],
     );
 
@@ -847,10 +843,7 @@ fn render_connectivity_tab(
                 ))
             })
             .collect::<Vec<_>>();
-        frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
-            right_rows[0],
-        );
+        frame.render_widget(Paragraph::new(lines), right_rows[0]);
     }
 
     crate::ui::views::relations::render_relation_tree(
@@ -892,10 +885,7 @@ fn render_traffic_debug_tab(
                 ))
             })
             .collect::<Vec<_>>();
-        frame.render_widget(
-            Paragraph::new(lines).wrap(Wrap { trim: false }),
-            sections[0],
-        );
+        frame.render_widget(Paragraph::new(lines), sections[0]);
     }
 
     crate::ui::views::relations::render_relation_tree(
@@ -1225,9 +1215,9 @@ fn render_rollout_tab(
         .map(|kind| Span::styled(format!(" {} ", kind.label()), workload_badge_style))
         .unwrap_or_else(|| Span::styled(" Workload ", workload_badge_style));
     let hint = if tab.mutation_pending.is_some() {
-        "[mutation in progress]"
+        "[mutation in progress]  [j/k] scroll  [Ctrl+d/u] page"
     } else if tab.confirm_undo_revision.is_some() {
-        "[Enter/U] confirm undo  [Esc] cancel"
+        "[Enter/U] confirm undo  [Esc] cancel  [j/k] scroll  [Ctrl+d/u] page"
     } else if tab.kind == Some(crate::k8s::rollout::RolloutWorkloadKind::Deployment) {
         "[R] restart  [P] pause/resume  [U] undo selected  [j/k] move"
     } else {
@@ -1270,25 +1260,28 @@ fn render_rollout_tab(
                 Span::styled(" Hint ", theme.inactive_style()),
                 Span::styled(hint, Style::default().fg(theme.muted)),
             ]),
-        ])
-        .wrap(Wrap { trim: false }),
+        ]),
         sections[0],
     );
 
     if tab.mutation_pending.is_some() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![Line::from(Span::styled(
                 " Rollout mutation in progress...",
                 theme.inactive_style(),
-            )),
-            sections[1],
+            ))],
+            tab.detail_scroll,
         );
         return;
     }
 
     if let Some(target_revision) = tab.confirm_undo_revision {
-        frame.render_widget(
-            Paragraph::new(vec![
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![
                 Line::from(vec![Span::styled(
                     format!(" Roll back this workload to revision {target_revision}?"),
                     theme.section_title_style(),
@@ -1300,9 +1293,8 @@ fn render_rollout_tab(
                 Line::from(
                     " Kubectui will refresh rollout state and workload data after completion.",
                 ),
-            ])
-            .wrap(Wrap { trim: false }),
-            sections[1],
+            ],
+            tab.detail_scroll,
         );
         return;
     }
@@ -1319,13 +1311,14 @@ fn render_rollout_tab(
     }
 
     if let Some(error) = &tab.error {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![Line::from(Span::styled(
                 format!(" Rollout fetch failed: {error}"),
                 theme.badge_error_style(),
-            ))
-            .wrap(Wrap { trim: false }),
-            sections[1],
+            ))],
+            tab.detail_scroll,
         );
         return;
     }
@@ -1504,9 +1497,9 @@ fn render_helm_history_tab(
         "No Helm revisions available.".to_string()
     };
     let hint = if tab.rollback_pending {
-        "[rollback in progress]"
+        "[rollback in progress]  [j/k] scroll  [Ctrl+d/u] page"
     } else if tab.confirm_rollback_revision.is_some() {
-        "[Enter/y/R] confirm  [Esc] cancel"
+        "[Enter/y/R] confirm  [Esc] cancel  [j/k] scroll  [Ctrl+d/u] page"
     } else if tab.diff.is_some() {
         "[Esc] back  [R] rollback"
     } else {
@@ -1527,13 +1520,14 @@ fn render_helm_history_tab(
     );
 
     if tab.rollback_pending {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![Line::from(Span::styled(
                 " Helm rollback is running. Action history will update when the CLI call completes.",
                 theme.inactive_style(),
-            ))
-            .wrap(Wrap { trim: false }),
-            sections[1],
+            ))],
+            tab.scroll,
         );
         return;
     }
@@ -1543,8 +1537,10 @@ fn render_helm_history_tab(
             .current_revision
             .map(|revision| revision.to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        frame.render_widget(
-            Paragraph::new(vec![
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![
                 Line::from(Span::styled(
                     format!(
                         " Roll back this release from revision {current} to revision {target_revision}?"
@@ -1558,9 +1554,8 @@ fn render_helm_history_tab(
                 Line::from(
                     " Kubectui will wait for Helm and refresh the release history after completion.",
                 ),
-            ])
-            .wrap(Wrap { trim: false }),
-            sections[1],
+            ],
+            tab.scroll,
         );
         return;
     }
@@ -1674,10 +1669,11 @@ fn render_helm_values_diff(
     }
 
     if diff.lines.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(summary, theme.inactive_style()))
-                .wrap(Wrap { trim: false }),
+        render_wrapped_text_lines(
+            frame,
             sections[1],
+            vec![Line::from(Span::styled(summary, theme.inactive_style()))],
+            diff.scroll,
         );
         return;
     }
@@ -2216,7 +2212,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
 
         let window = centered_window(total, selected, log_area.height.max(1) as usize);
         frame.render_widget(
-            Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
+            Paragraph::new(entries[window.start..window.end].to_vec()),
             log_area,
         );
         render_scrollbar(frame, log_area, total, window.start);
@@ -2266,7 +2262,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
             )
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
+    frame.render_widget(Paragraph::new(lines), log_area);
     render_scrollbar(frame, log_area, total, window.start);
 }
 
@@ -2622,10 +2618,7 @@ fn render_workload_logs_tab(
             Line::from(spans)
         })
         .collect();
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        sections[1],
-    );
+    frame.render_widget(Paragraph::new(lines), sections[1]);
     render_scrollbar(frame, sections[1], total, window.start);
 }
 
@@ -2710,7 +2703,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             .collect();
         let window = centered_window(total, selected, sections[1].height.max(1) as usize);
         frame.render_widget(
-            Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
+            Paragraph::new(entries[window.start..window.end].to_vec()),
             sections[1],
         );
         render_scrollbar(frame, sections[1], total, window.start);
@@ -2745,10 +2738,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
                 }
             }
 
-            frame.render_widget(
-                Paragraph::new(lines).wrap(Wrap { trim: false }),
-                sections[1],
-            );
+            frame.render_widget(Paragraph::new(lines), sections[1]);
             render_scrollbar(frame, sections[1], total, window.start);
         }
     }
@@ -2959,10 +2949,7 @@ fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::Run
             })
             .collect::<Vec<_>>()
     };
-    frame.render_widget(
-        Paragraph::new(step_lines).wrap(Wrap { trim: false }),
-        left_inner,
-    );
+    frame.render_widget(Paragraph::new(step_lines), left_inner);
     render_scrollbar(frame, left_inner, tab.steps.len(), window.start);
 
     let right_block = Block::default()
@@ -3141,6 +3128,23 @@ fn render_ai_section(
     lines.push(Line::default());
 }
 
+fn render_wrapped_text_lines(
+    frame: &mut Frame,
+    area: Rect,
+    lines: Vec<Line<'static>>,
+    scroll: usize,
+) {
+    let total = wrapped_line_count(&lines, area.width);
+    let position = scroll.min(total.saturating_sub(area.height.max(1) as usize));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
+        area,
+    );
+    render_scrollbar(frame, area, total, position);
+}
+
 fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize) {
     if total <= area.height as usize || area.width == 0 {
         return;
@@ -3284,6 +3288,17 @@ mod tests {
             ],
             10,
         );
+        assert!(total > 2);
+    }
+
+    #[test]
+    fn wrapped_text_scroll_clamps_to_last_page() {
+        let lines = vec![Line::from(
+            "this line wraps across several rows on narrow panes",
+        )];
+        let total = wrapped_line_count(&lines, 10);
+        let position = 999usize.min(total.saturating_sub(2));
+        assert!(position <= total.saturating_sub(2));
         assert!(total > 2);
     }
 

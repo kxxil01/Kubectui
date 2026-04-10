@@ -543,7 +543,9 @@ impl PortForwardDialog {
 
             let tunnels_list = Paragraph::new(lines);
             frame.render_widget(tunnels_list, chunks[0]);
-            render_vertical_scrollbar(frame, chunks[0], tunnels.len(), window.start);
+            let (scroll_total, scroll_position) =
+                tunnel_scroll_metrics(tunnels.len(), window.start);
+            render_vertical_scrollbar(frame, chunks[0], scroll_total, scroll_position);
         }
 
         // Footer
@@ -602,6 +604,18 @@ impl Default for PortForwardDialog {
 
 fn tunnel_list_viewport_rows(area: Rect) -> usize {
     usize::from(area.height.saturating_div(2)).max(1)
+}
+
+fn tunnel_scroll_metrics(total_tunnels: usize, offset: usize) -> (usize, usize) {
+    if total_tunnels == 0 {
+        return (1, 0);
+    }
+
+    let clamped_offset = offset.min(total_tunnels.saturating_sub(1));
+    (
+        total_tunnels.saturating_mul(2),
+        clamped_offset.saturating_mul(2),
+    )
 }
 
 fn selected_tunnel_index(total: usize, selected: usize) -> usize {
@@ -853,5 +867,13 @@ mod tests {
         assert_eq!(selected_tunnel_index(0, 9), 0);
         assert_eq!(selected_tunnel_index(2, 9), 1);
         assert_eq!(selected_tunnel_index(2, 1), 1);
+    }
+
+    #[test]
+    fn tunnel_scroll_metrics_use_visual_row_offsets() {
+        assert_eq!(tunnel_scroll_metrics(0, 0), (1, 0));
+        assert_eq!(tunnel_scroll_metrics(3, 0), (6, 0));
+        assert_eq!(tunnel_scroll_metrics(3, 2), (6, 4));
+        assert_eq!(tunnel_scroll_metrics(3, 9), (6, 4));
     }
 }
