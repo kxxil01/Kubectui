@@ -271,11 +271,6 @@ impl HelpOverlay {
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
 
-        let sections = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(1)])
-            .split(inner);
-
         let mut lines: Vec<Line> = Vec::new();
         lines.push(Line::from(Span::styled(
             "  Detail View",
@@ -307,6 +302,23 @@ impl HelpOverlay {
             lines.push(Line::from(""));
         }
 
+        let footer_lines = vec![Line::from(vec![
+            Span::styled(
+                " [?/Esc] close  [j/k] scroll ",
+                Style::default().fg(theme.fg_dim),
+            ),
+            Span::styled(
+                format!(" [{}/{}] ", 0, 0),
+                Style::default().fg(theme.accent),
+            ),
+        ])];
+        let footer_height =
+            crate::ui::wrapped_line_count(&footer_lines, inner.width.max(1)).max(1) as u16;
+        let sections = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(footer_height)])
+            .split(inner);
+
         let visible_height = sections[0].height as usize;
         let (scroll, end, total) =
             help_overlay_window(&lines, sections[0].width, visible_height, self.scroll);
@@ -325,17 +337,18 @@ impl HelpOverlay {
         let mut scrollbar_state = ScrollbarState::new(total).position(scroll);
         frame.render_stateful_widget(scrollbar, sections[0], &mut scrollbar_state);
 
+        let footer_lines = vec![Line::from(vec![
+            Span::styled(
+                " [?/Esc] close  [j/k] scroll ",
+                Style::default().fg(theme.fg_dim),
+            ),
+            Span::styled(
+                format!(" [{end}/{total}] "),
+                Style::default().fg(theme.accent),
+            ),
+        ])];
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(
-                    " [?/Esc] close  [j/k] scroll ",
-                    Style::default().fg(theme.fg_dim),
-                ),
-                Span::styled(
-                    format!(" [{end}/{total}] "),
-                    Style::default().fg(theme.accent),
-                ),
-            ])),
+            Paragraph::new(footer_lines).wrap(Wrap { trim: false }),
             sections[1],
         );
     }

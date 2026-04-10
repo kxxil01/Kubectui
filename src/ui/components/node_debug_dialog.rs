@@ -12,7 +12,7 @@ use crate::k8s::{
     node_debug::{NodeDebugLaunchRequest, NodeDebugProfile, default_debug_image},
 };
 use crate::ui::components::render_vertical_scrollbar;
-use crate::ui::{truncate_message, wrapped_line_count};
+use crate::ui::{truncate_message, wrap_span_groups, wrapped_line_count};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeDebugField {
@@ -315,29 +315,15 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .style(Style::default().bg(Color::Black));
-    frame.render_widget(block, popup);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(4),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(5),
-            Constraint::Length(2),
-        ])
-        .split(popup);
-
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
+    frame.render_widget(&block, popup);
+    let inner = block.inner(popup);
+    let header_lines = wrap_span_groups(
+        &[vec![
             Span::styled(
                 if state.pending_launch {
-                    " launching "
+                    " launching ".to_string()
                 } else {
-                    " ready "
+                    " ready ".to_string()
                 },
                 Style::default().fg(Color::Black).bg(Color::Cyan),
             ),
@@ -346,8 +332,54 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
                 format!("Node {}", state.node_name),
                 Style::default().fg(Color::White),
             ),
-        ]))
-        .alignment(Alignment::Center),
+        ]],
+        inner.width.max(1),
+    );
+    let footer_lines = wrap_span_groups(
+        &[
+            vec![
+                Span::styled(
+                    "[Tab/Shift-Tab] ".to_string(),
+                    Style::default().fg(Color::Cyan),
+                ),
+                Span::styled("move".to_string(), Style::default().fg(Color::White)),
+            ],
+            vec![
+                Span::styled("[h/l] ".to_string(), Style::default().fg(Color::Cyan)),
+                Span::styled("change".to_string(), Style::default().fg(Color::White)),
+            ],
+            vec![
+                Span::styled("[Enter] ".to_string(), Style::default().fg(Color::Cyan)),
+                Span::styled("activate".to_string(), Style::default().fg(Color::White)),
+            ],
+            vec![
+                Span::styled("[Ctrl+j/k] ".to_string(), Style::default().fg(Color::Cyan)),
+                Span::styled("notes".to_string(), Style::default().fg(Color::White)),
+            ],
+            vec![
+                Span::styled("[Esc] ".to_string(), Style::default().fg(Color::Cyan)),
+                Span::styled("cancel".to_string(), Style::default().fg(Color::White)),
+            ],
+        ],
+        inner.width.max(1),
+    );
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(wrapped_line_count(&header_lines, inner.width.max(1)).max(1) as u16),
+            Constraint::Length(4),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(5),
+            Constraint::Length(wrapped_line_count(&footer_lines, inner.width.max(1)).max(1) as u16),
+        ])
+        .split(popup);
+
+    frame.render_widget(
+        Paragraph::new(header_lines).alignment(Alignment::Center),
         chunks[0],
     );
 
@@ -471,19 +503,7 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
     render_vertical_scrollbar(frame, notes_inner, notes_total, notes_position);
 
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled("[Tab/Shift-Tab] ", Style::default().fg(Color::Cyan)),
-            Span::styled("move  ", Style::default().fg(Color::White)),
-            Span::styled("[h/l] ", Style::default().fg(Color::Cyan)),
-            Span::styled("change  ", Style::default().fg(Color::White)),
-            Span::styled("[Enter] ", Style::default().fg(Color::Cyan)),
-            Span::styled("activate  ", Style::default().fg(Color::White)),
-            Span::styled("[Ctrl+j/k] ", Style::default().fg(Color::Cyan)),
-            Span::styled("notes  ", Style::default().fg(Color::White)),
-            Span::styled("[Esc] ", Style::default().fg(Color::Cyan)),
-            Span::styled("cancel", Style::default().fg(Color::White)),
-        ]))
-        .alignment(Alignment::Center),
+        Paragraph::new(footer_lines).alignment(Alignment::Center),
         chunks[7],
     );
 }
@@ -760,5 +780,19 @@ mod tests {
         assert_eq!(state.notes_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.notes_scroll, 0);
+    }
+
+    #[test]
+    fn render_node_debug_dialog_noncompact_narrow_width_smoke() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal should initialize");
+        let state = NodeDebugDialogState::new(
+            "node-with-very-long-name",
+            "default",
+            vec!["default".to_string()],
+        );
+        terminal
+            .draw(|frame| render_node_debug_dialog(frame, frame.area(), &state))
+            .expect("non-compact node debug dialog should render");
     }
 }

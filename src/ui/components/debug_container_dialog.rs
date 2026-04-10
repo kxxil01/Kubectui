@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
 use crate::ui::components::render_vertical_scrollbar;
-use crate::ui::{truncate_message, wrapped_line_count};
+use crate::ui::{truncate_message, wrap_span_groups, wrapped_line_count};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugContainerField {
@@ -338,36 +338,22 @@ pub fn render_debug_container_dialog(
         return;
     }
 
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(4),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(4),
-            Constraint::Length(2),
-        ])
-        .split(popup);
-
     let block = Block::default()
         .title(" Debug Container ")
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
         .style(Style::default().bg(Color::Black));
-    frame.render_widget(block, popup);
-
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
+    frame.render_widget(&block, popup);
+    let inner = block.inner(popup);
+    let header_lines = wrap_span_groups(
+        &[vec![
             Span::styled(
                 if state.pending_launch {
-                    " launching "
+                    " launching ".to_string()
                 } else if state.loading_targets {
-                    " loading "
+                    " loading ".to_string()
                 } else {
-                    " ready "
+                    " ready ".to_string()
                 },
                 Style::default().fg(Color::Black).bg(Color::Cyan),
             ),
@@ -376,8 +362,42 @@ pub fn render_debug_container_dialog(
                 format!("Pod {} / {}", state.namespace, state.pod_name),
                 Style::default().fg(Color::White),
             ),
-        ]))
-        .alignment(Alignment::Center),
+        ]],
+        inner.width.max(1),
+    );
+    let footer_lines = wrap_span_groups(
+        &[
+            vec![
+                Span::styled("[Enter] ".to_string(), button_style(true)),
+                Span::styled("Launch".to_string(), Style::default().fg(Color::White)),
+            ],
+            vec![
+                Span::styled("[Ctrl+j/k] ".to_string(), Style::default().fg(Color::Cyan)),
+                Span::styled("body".to_string(), Style::default().fg(Color::White)),
+            ],
+            vec![
+                Span::styled("[Esc] ".to_string(), button_style(false)),
+                Span::styled("Cancel".to_string(), Style::default().fg(Color::White)),
+            ],
+        ],
+        inner.width.max(1),
+    );
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(wrapped_line_count(&header_lines, inner.width.max(1)).max(1) as u16),
+            Constraint::Length(4),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Length(3),
+            Constraint::Min(4),
+            Constraint::Length(wrapped_line_count(&footer_lines, inner.width.max(1)).max(1) as u16),
+        ])
+        .split(popup);
+
+    frame.render_widget(
+        Paragraph::new(header_lines).alignment(Alignment::Center),
         chunks[0],
     );
 
@@ -515,18 +535,8 @@ pub fn render_debug_container_dialog(
     );
     render_vertical_scrollbar(frame, chunks[6], body_total, body_position);
 
-    let launch_style = button_style(state.focus_field == DebugContainerField::Launch);
-    let cancel_style = button_style(state.focus_field == DebugContainerField::Cancel);
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" [Enter] ", launch_style),
-            Span::styled("Launch  ", Style::default().fg(Color::White)),
-            Span::styled(" [Ctrl+j/k] ", Style::default().fg(Color::Cyan)),
-            Span::styled("body  ", Style::default().fg(Color::White)),
-            Span::styled(" [Esc] ", cancel_style),
-            Span::styled("Cancel", Style::default().fg(Color::White)),
-        ]))
-        .alignment(Alignment::Center),
+        Paragraph::new(footer_lines).alignment(Alignment::Center),
         chunks[7],
     );
 }
@@ -773,5 +783,17 @@ mod tests {
         assert_eq!(state.body_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.body_scroll, 0);
+    }
+
+    #[test]
+    fn render_debug_container_dialog_noncompact_narrow_width_smoke() {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal should initialize");
+        let mut state = DebugContainerDialogState::new("pod-with-very-long-name", "default");
+        state.loading_targets = false;
+        state.target_containers = vec!["main".to_string()];
+        terminal
+            .draw(|frame| render_debug_container_dialog(frame, frame.area(), &state))
+            .expect("non-compact debug container dialog should render");
     }
 }

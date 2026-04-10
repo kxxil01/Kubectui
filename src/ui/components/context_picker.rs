@@ -1,13 +1,16 @@
 //! Context (kubeconfig) picker modal component.
 
-use crate::ui::{components::render_vertical_scrollbar, contains_ci, table_window};
+use crate::ui::{
+    components::render_vertical_scrollbar, contains_ci, table_window, wrap_span_groups,
+    wrapped_line_count,
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Style},
     style::Modifier,
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 
 /// Actions emitted by context picker keyboard handling.
@@ -152,6 +155,26 @@ impl ContextPicker {
             height: popup.height.saturating_sub(2),
         };
 
+        let footer_groups = if compact {
+            vec![
+                vec![Span::styled(" [Enter] ", theme.keybind_key_style())],
+                vec![Span::styled("connect  ", theme.keybind_desc_style())],
+                vec![Span::styled("[Esc] ", theme.keybind_key_style())],
+                vec![Span::styled("close", theme.keybind_desc_style())],
+            ]
+        } else {
+            vec![
+                vec![Span::styled(" [↑↓/jk] ", theme.keybind_key_style())],
+                vec![Span::styled("navigate  ", theme.keybind_desc_style())],
+                vec![Span::styled("[Enter] ", theme.keybind_key_style())],
+                vec![Span::styled("connect  ", theme.keybind_desc_style())],
+                vec![Span::styled("[Esc] ", theme.keybind_key_style())],
+                vec![Span::styled("skip", theme.keybind_desc_style())],
+            ]
+        };
+        let footer_lines = wrap_span_groups(&footer_groups, inner.width.max(1));
+        let footer_height = wrapped_line_count(&footer_lines, inner.width.max(1)).max(1) as u16 + 1;
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints(if compact {
@@ -159,14 +182,14 @@ impl ContextPicker {
                     Constraint::Length(1),
                     Constraint::Length(3),
                     Constraint::Min(1),
-                    Constraint::Length(1),
+                    Constraint::Length(footer_height),
                 ]
             } else {
                 [
                     Constraint::Length(2),
                     Constraint::Length(3),
                     Constraint::Min(3),
-                    Constraint::Length(2),
+                    Constraint::Length(footer_height),
                 ]
             })
             .split(inner);
@@ -283,43 +306,16 @@ impl ContextPicker {
         frame.render_stateful_widget(List::new(items).block(list_block), chunks[2], &mut state);
         render_vertical_scrollbar(frame, chunks[2], contexts.len(), offset);
 
-        let footer_line = Line::from(vec![
-            if compact {
-                Span::styled(" [Enter] ", theme.keybind_key_style())
-            } else {
-                Span::styled(" [↑↓/jk] ", theme.keybind_key_style())
-            },
-            if compact {
-                Span::styled("connect  ", theme.keybind_desc_style())
-            } else {
-                Span::styled("navigate  ", theme.keybind_desc_style())
-            },
-            if compact {
-                Span::styled("[Esc] ", theme.keybind_key_style())
-            } else {
-                Span::styled("[Enter] ", theme.keybind_key_style())
-            },
-            if compact {
-                Span::styled("close", theme.keybind_desc_style())
-            } else {
-                Span::styled("connect  ", theme.keybind_desc_style())
-            },
-            if compact {
-                Span::raw("")
-            } else {
-                Span::styled("[Esc] ", theme.keybind_key_style())
-            },
-            if compact {
-                Span::raw("")
-            } else {
-                Span::styled("skip", theme.keybind_desc_style())
-            },
-        ]);
         let footer_block = Block::default()
             .borders(Borders::TOP)
             .border_style(theme.border_style())
             .style(Style::default().bg(theme.statusbar_bg));
-        frame.render_widget(Paragraph::new(footer_line).block(footer_block), chunks[3]);
+        frame.render_widget(
+            Paragraph::new(footer_lines)
+                .wrap(Wrap { trim: false })
+                .block(footer_block),
+            chunks[3],
+        );
     }
 }
 

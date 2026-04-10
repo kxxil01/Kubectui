@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="220" viewBox="0 0 1400 220" role="img" aria-label="Detail footer wraps keybind actions instead of cropping">
+  <rect width="1400" height="220" fill="#1f2430"/>
+  <rect x="10" y="10" width="1380" height="200" rx="8" fill="#2a3040" stroke="#7aa2f7" stroke-width="2"/>
+  <rect x="20" y="20" width="1360" height="140" rx="4" fill="#2f3546"/>
+  <text x="36" y="64" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[y]</text>
+  <text x="100" y="64" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">YAML</text>
+  <text x="190" y="64" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[D]</text>
+  <text x="254" y="64" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Diff</text>
+  <text x="334" y="64" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[B]</text>
+  <text x="398" y="64" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Bookmark</text>
+  <text x="548" y="64" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[v]</text>
+  <text x="612" y="64" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Events</text>
+  <text x="714" y="64" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[A]</text>
+  <text x="778" y="64" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Access</text>
+  <text x="36" y="108" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[l]</text>
+  <text x="100" y="108" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Logs</text>
+  <text x="180" y="108" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[x]</text>
+  <text x="244" y="108" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Exec</text>
+  <text x="320" y="108" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[g]</text>
+  <text x="384" y="108" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Debug</text>
+  <text x="474" y="108" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[f]</text>
+  <text x="538" y="108" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Port-Fwd</text>
+  <text x="674" y="108" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[p]</text>
+  <text x="738" y="108" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Probes</text>
+  <text x="842" y="108" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[e]</text>
+  <text x="906" y="108" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Edit</text>
+  <text x="980" y="108" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[d]</text>
+  <text x="1044" y="108" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Delete</text>
+  <text x="1138" y="108" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[N]</text>
+  <text x="1202" y="108" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">NetPol</text>
+  <text x="36" y="152" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[C]</text>
+  <text x="100" y="152" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Reach</text>
+  <text x="184" y="152" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[t]</text>
+  <text x="248" y="152" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Traffic</text>
+  <text x="352" y="152" fill="#8bd5ff" font-family="Menlo, Monaco, monospace" font-size="28">[w]</text>
+  <text x="416" y="152" fill="#d8dee9" font-family="Menlo, Monaco, monospace" font-size="28">Relations</text>
+  <text x="20" y="198" fill="#98c379" font-family="Menlo, Monaco, monospace" font-size="22">after: footer wraps whole action groups to next line, no right-edge crop</text>
+</svg>
