@@ -1119,10 +1119,13 @@ fn render_detail_confirm_dialog(
         .direction(Direction::Vertical)
         .constraints([Constraint::Min(3), Constraint::Length(2)])
         .split(inner);
+    let body_width = usize::from(rows[0].width.max(1));
+    let body = body
+        .into_iter()
+        .map(|line| truncate_line_content(&line, body_width))
+        .collect::<Vec<_>>();
     frame.render_widget(
-        Paragraph::new(body)
-            .wrap(Wrap { trim: false })
-            .alignment(ratatui::layout::Alignment::Center),
+        Paragraph::new(body).alignment(ratatui::layout::Alignment::Center),
         rows[0],
     );
     frame.render_widget(
