@@ -333,13 +333,56 @@ impl AppState {
             },
             WorkbenchTabState::HelmHistory(tab) => {
                 if tab.rollback_pending {
-                    return AppAction::None;
+                    return match key.code {
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            tab.scroll = tab.scroll.saturating_add(1);
+                            AppAction::None
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            tab.scroll = tab.scroll.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::PageDown | KeyCode::Char('d')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            tab.scroll = tab.scroll.saturating_add(10);
+                            AppAction::None
+                        }
+                        KeyCode::PageUp | KeyCode::Char('u')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            tab.scroll = tab.scroll.saturating_sub(10);
+                            AppAction::None
+                        }
+                        KeyCode::Esc => AppAction::None,
+                        _ => AppAction::None,
+                    };
                 }
 
                 if tab.confirm_rollback_revision.is_some() {
                     return match key.code {
                         KeyCode::Esc => {
                             tab.cancel_rollback_confirm();
+                            AppAction::None
+                        }
+                        KeyCode::Char('j') | KeyCode::Down => {
+                            tab.scroll = tab.scroll.saturating_add(1);
+                            AppAction::None
+                        }
+                        KeyCode::Char('k') | KeyCode::Up => {
+                            tab.scroll = tab.scroll.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::PageDown | KeyCode::Char('d')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            tab.scroll = tab.scroll.saturating_add(10);
+                            AppAction::None
+                        }
+                        KeyCode::PageUp | KeyCode::Char('u')
+                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
                         }
                         KeyCode::Char('R') | KeyCode::Char('y') | KeyCode::Enter => {

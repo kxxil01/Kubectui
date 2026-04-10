@@ -1504,9 +1504,9 @@ fn render_helm_history_tab(
         "No Helm revisions available.".to_string()
     };
     let hint = if tab.rollback_pending {
-        "[rollback in progress]"
+        "[rollback in progress]  [j/k] scroll  [Ctrl+d/u] page"
     } else if tab.confirm_rollback_revision.is_some() {
-        "[Enter/y/R] confirm  [Esc] cancel"
+        "[Enter/y/R] confirm  [Esc] cancel  [j/k] scroll  [Ctrl+d/u] page"
     } else if tab.diff.is_some() {
         "[Esc] back  [R] rollback"
     } else {
@@ -1527,13 +1527,14 @@ fn render_helm_history_tab(
     );
 
     if tab.rollback_pending {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![Line::from(Span::styled(
                 " Helm rollback is running. Action history will update when the CLI call completes.",
                 theme.inactive_style(),
-            ))
-            .wrap(Wrap { trim: false }),
-            sections[1],
+            ))],
+            tab.scroll,
         );
         return;
     }
@@ -1543,8 +1544,10 @@ fn render_helm_history_tab(
             .current_revision
             .map(|revision| revision.to_string())
             .unwrap_or_else(|| "unknown".to_string());
-        frame.render_widget(
-            Paragraph::new(vec![
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![
                 Line::from(Span::styled(
                     format!(
                         " Roll back this release from revision {current} to revision {target_revision}?"
@@ -1558,9 +1561,8 @@ fn render_helm_history_tab(
                 Line::from(
                     " Kubectui will wait for Helm and refresh the release history after completion.",
                 ),
-            ])
-            .wrap(Wrap { trim: false }),
-            sections[1],
+            ],
+            tab.scroll,
         );
         return;
     }
@@ -1674,10 +1676,11 @@ fn render_helm_values_diff(
     }
 
     if diff.lines.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(summary, theme.inactive_style()))
-                .wrap(Wrap { trim: false }),
+        render_wrapped_text_lines(
+            frame,
             sections[1],
+            vec![Line::from(Span::styled(summary, theme.inactive_style()))],
+            diff.scroll,
         );
         return;
     }
@@ -3141,6 +3144,23 @@ fn render_ai_section(
     lines.push(Line::default());
 }
 
+fn render_wrapped_text_lines(
+    frame: &mut Frame,
+    area: Rect,
+    lines: Vec<Line<'static>>,
+    scroll: usize,
+) {
+    let total = wrapped_line_count(&lines, area.width);
+    let position = scroll.min(total.saturating_sub(area.height.max(1) as usize));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
+        area,
+    );
+    render_scrollbar(frame, area, total, position);
+}
+
 fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize) {
     if total <= area.height as usize || area.width == 0 {
         return;
@@ -3284,6 +3304,17 @@ mod tests {
             ],
             10,
         );
+        assert!(total > 2);
+    }
+
+    #[test]
+    fn wrapped_text_scroll_clamps_to_last_page() {
+        let lines = vec![Line::from(
+            "this line wraps across several rows on narrow panes",
+        )];
+        let total = wrapped_line_count(&lines, 10);
+        let position = 999usize.min(total.saturating_sub(2));
+        assert!(position <= total.saturating_sub(2));
         assert!(total > 2);
     }
 
