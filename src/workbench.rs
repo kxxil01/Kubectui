@@ -160,6 +160,7 @@ pub struct HelmHistoryTabState {
     pub pending_history_request_id: Option<u64>,
     pub cli_version: Option<String>,
     pub revisions: Vec<HelmReleaseRevisionInfo>,
+    pub scroll: usize,
     pub selected: usize,
     pub current_revision: Option<i32>,
     pub loading: bool,
@@ -176,6 +177,7 @@ impl HelmHistoryTabState {
             pending_history_request_id: None,
             cli_version: None,
             revisions: Vec::new(),
+            scroll: 0,
             selected: 0,
             current_revision: None,
             loading: true,
@@ -199,6 +201,7 @@ impl HelmHistoryTabState {
             })
             .unwrap_or(0)
             .min(self.revisions.len().saturating_sub(1));
+        self.scroll = 0;
         self.loading = false;
         self.error = None;
         self.pending_history_request_id = None;
@@ -208,6 +211,7 @@ impl HelmHistoryTabState {
     }
 
     pub fn set_history_error(&mut self, error: String) {
+        self.scroll = 0;
         self.loading = false;
         self.error = Some(error);
         self.pending_history_request_id = None;
@@ -215,6 +219,7 @@ impl HelmHistoryTabState {
     }
 
     pub fn refresh(&mut self, request_id: u64) {
+        self.scroll = 0;
         self.loading = true;
         self.error = None;
         self.pending_history_request_id = Some(request_id);
@@ -251,6 +256,7 @@ impl HelmHistoryTabState {
     }
 
     pub fn begin_diff(&mut self, current_revision: i32, target_revision: i32, request_id: u64) {
+        self.scroll = 0;
         self.confirm_rollback_revision = None;
         self.diff = Some(HelmValuesDiffState::new(
             current_revision,
@@ -260,18 +266,22 @@ impl HelmHistoryTabState {
     }
 
     pub fn close_diff(&mut self) {
+        self.scroll = 0;
         self.diff = None;
     }
 
     pub fn begin_rollback_confirm(&mut self, revision: i32) {
+        self.scroll = 0;
         self.confirm_rollback_revision = Some(revision);
     }
 
     pub fn cancel_rollback_confirm(&mut self) {
+        self.scroll = 0;
         self.confirm_rollback_revision = None;
     }
 
     pub fn begin_rollback(&mut self) {
+        self.scroll = 0;
         self.rollback_pending = true;
         self.confirm_rollback_revision = None;
         self.diff = None;
@@ -528,6 +538,7 @@ pub struct RolloutTabState {
     pub conditions: Vec<crate::k8s::rollout::RolloutConditionInfo>,
     pub revisions: Vec<RolloutRevisionInfo>,
     pub selected: usize,
+    pub detail_scroll: usize,
     pub loading: bool,
     pub error: Option<String>,
     pub confirm_undo_revision: Option<i64>,
@@ -548,6 +559,7 @@ impl RolloutTabState {
             conditions: Vec::new(),
             revisions: Vec::new(),
             selected: 0,
+            detail_scroll: 0,
             loading: true,
             error: None,
             confirm_undo_revision: None,
@@ -573,6 +585,7 @@ impl RolloutTabState {
             })
             .unwrap_or(0)
             .min(self.revisions.len().saturating_sub(1));
+        self.detail_scroll = 0;
         self.loading = false;
         self.error = None;
         self.pending_request_id = None;
@@ -581,6 +594,7 @@ impl RolloutTabState {
     }
 
     pub fn set_error(&mut self, error: String) {
+        self.detail_scroll = 0;
         self.loading = false;
         self.error = Some(error);
         self.pending_request_id = None;
@@ -589,6 +603,7 @@ impl RolloutTabState {
     }
 
     pub fn refresh(&mut self, request_id: u64) {
+        self.detail_scroll = 0;
         self.loading = true;
         self.error = None;
         self.pending_request_id = Some(request_id);
@@ -624,14 +639,17 @@ impl RolloutTabState {
     }
 
     pub fn begin_undo_confirm(&mut self, revision: i64) {
+        self.detail_scroll = 0;
         self.confirm_undo_revision = Some(revision);
     }
 
     pub fn cancel_undo_confirm(&mut self) {
+        self.detail_scroll = 0;
         self.confirm_undo_revision = None;
     }
 
     pub fn begin_mutation(&mut self, mutation: RolloutMutationState) {
+        self.detail_scroll = 0;
         self.confirm_undo_revision = None;
         self.mutation_pending = Some(mutation);
     }
@@ -2458,6 +2476,46 @@ mod tests {
         assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(4));
         assert_eq!(tab.current_revision, Some(6));
         assert!(tab.diff.is_none());
+    }
+
+    #[test]
+    fn helm_history_scroll_resets_when_mode_changes() {
+        let mut tab = HelmHistoryTabState::new(ResourceRef::HelmRelease(
+            "release".to_string(),
+            "default".to_string(),
+        ));
+        tab.scroll = 7;
+
+        tab.begin_rollback_confirm(3);
+        assert_eq!(tab.scroll, 0);
+
+        tab.scroll = 5;
+        tab.begin_diff(4, 3, 99);
+        assert_eq!(tab.scroll, 0);
+
+        tab.scroll = 9;
+        tab.begin_rollback();
+        assert_eq!(tab.scroll, 0);
+    }
+
+    #[test]
+    fn rollout_detail_scroll_resets_when_mode_changes() {
+        let mut tab = RolloutTabState::new(ResourceRef::Deployment(
+            "api".to_string(),
+            "default".to_string(),
+        ));
+        tab.detail_scroll = 6;
+
+        tab.begin_undo_confirm(3);
+        assert_eq!(tab.detail_scroll, 0);
+
+        tab.detail_scroll = 4;
+        tab.begin_mutation(RolloutMutationState::Restart);
+        assert_eq!(tab.detail_scroll, 0);
+
+        tab.detail_scroll = 8;
+        tab.set_error("boom".to_string());
+        assert_eq!(tab.detail_scroll, 0);
     }
 
     #[test]

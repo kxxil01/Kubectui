@@ -8,7 +8,8 @@ use ratatui::{
 };
 
 use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
-use crate::ui::truncate_message;
+use crate::ui::components::render_vertical_scrollbar;
+use crate::ui::{truncate_message, wrapped_line_count};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugContainerField {
@@ -41,6 +42,7 @@ pub struct DebugContainerDialogState {
     pub pending_request_id: Option<u64>,
     pub pending_launch: bool,
     pub error_message: Option<String>,
+    pub body_scroll: usize,
 }
 
 impl DebugContainerDialogState {
@@ -58,6 +60,7 @@ impl DebugContainerDialogState {
             pending_request_id: None,
             pending_launch: false,
             error_message: None,
+            body_scroll: 0,
         }
     }
 
@@ -71,6 +74,7 @@ impl DebugContainerDialogState {
         if self.target_containers.is_empty() {
             self.use_target_container = false;
         }
+        self.body_scroll = 0;
     }
 
     pub fn set_target_fetch_error(&mut self, error: impl Into<String>) {
@@ -78,6 +82,7 @@ impl DebugContainerDialogState {
         self.pending_request_id = None;
         self.use_target_container = false;
         self.error_message = Some(error.into());
+        self.body_scroll = 0;
     }
 
     pub fn set_pending_launch(&mut self, pending: bool) {
@@ -85,11 +90,34 @@ impl DebugContainerDialogState {
         if pending {
             self.error_message = None;
         }
+        self.body_scroll = 0;
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> DebugContainerDialogEvent {
         if self.pending_launch {
             return DebugContainerDialogEvent::None;
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.body_scroll = self.body_scroll.saturating_add(1);
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.body_scroll = self.body_scroll.saturating_sub(1);
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Char('d') | KeyCode::PageDown => {
+                    self.body_scroll = self.body_scroll.saturating_add(10);
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Char('u') | KeyCode::PageUp => {
+                    self.body_scroll = self.body_scroll.saturating_sub(10);
+                    return DebugContainerDialogEvent::None;
+                }
+                _ => {}
+            }
         }
 
         if self.is_editing_custom_image() {
@@ -475,7 +503,17 @@ pub fn render_debug_container_dialog(
             Style::default().fg(Color::DarkGray),
         )));
     }
-    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), chunks[6]);
+    let body_total = wrapped_line_count(&body, chunks[6].width);
+    let body_position = state
+        .body_scroll
+        .min(body_total.saturating_sub(chunks[6].height.max(1) as usize));
+    frame.render_widget(
+        Paragraph::new(body)
+            .wrap(Wrap { trim: false })
+            .scroll((body_position.min(u16::MAX as usize) as u16, 0)),
+        chunks[6],
+    );
+    render_vertical_scrollbar(frame, chunks[6], body_total, body_position);
 
     let launch_style = button_style(state.focus_field == DebugContainerField::Launch);
     let cancel_style = button_style(state.focus_field == DebugContainerField::Cancel);
@@ -483,6 +521,8 @@ pub fn render_debug_container_dialog(
         Paragraph::new(Line::from(vec![
             Span::styled(" [Enter] ", launch_style),
             Span::styled("Launch  ", Style::default().fg(Color::White)),
+            Span::styled(" [Ctrl+j/k] ", Style::default().fg(Color::Cyan)),
+            Span::styled("body  ", Style::default().fg(Color::White)),
             Span::styled(" [Esc] ", cancel_style),
             Span::styled("Cancel", Style::default().fg(Color::White)),
         ]))
@@ -719,5 +759,19 @@ mod tests {
             compact_debug_container_lines(&state, "ready", "busybox", "off", "enter launch", 24, 2);
         assert_eq!(lines.len(), 2);
         assert!(lines[1].to_string().contains("target off"));
+    }
+
+    #[test]
+    fn ctrl_scroll_updates_body_scroll() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        assert_eq!(state.body_scroll, 0);
+        state.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL));
+        assert_eq!(state.body_scroll, 1);
+        state.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        assert_eq!(state.body_scroll, 11);
+        state.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        assert_eq!(state.body_scroll, 1);
+        state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
+        assert_eq!(state.body_scroll, 0);
     }
 }
