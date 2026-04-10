@@ -3,8 +3,10 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph},
 };
+
+use crate::ui::truncate_message;
 
 /// Field focus for keyboard navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -384,16 +386,59 @@ fn render_compact_scale_dialog(frame: &mut Frame, popup: Rect, state: &ScaleDial
     } else {
         "enter apply  esc cancel".to_string()
     };
-    let lines = vec![
-        Line::from(format!(
-            "ns {} current {}",
-            state.namespace, state.current_replicas
-        )),
-        Line::from(format!("desired {} focus {}", desired, focus)),
-        Line::from(status),
-        Line::from("[+/-] adjust  [Tab] move"),
-    ];
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    let lines = compact_scale_lines(state, &desired, focus, &status, inner.width, inner.height);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn compact_scale_lines(
+    state: &ScaleDialogState,
+    desired: &str,
+    focus: &str,
+    status: &str,
+    width: u16,
+    height: u16,
+) -> Vec<Line<'static>> {
+    let width = usize::from(width.max(1));
+    if height <= 2 {
+        return vec![
+            compact_line(
+                format!(
+                    "ns {} cur {} want {}",
+                    state.namespace, state.current_replicas, desired
+                ),
+                width,
+            ),
+            compact_line(status, width),
+        ];
+    }
+
+    if height == 3 {
+        return vec![
+            compact_line(
+                format!(
+                    "ns {} cur {} want {}",
+                    state.namespace, state.current_replicas, desired
+                ),
+                width,
+            ),
+            compact_line(format!("focus {}  [+/-] adjust  [Tab] move", focus), width),
+            compact_line(status, width),
+        ];
+    }
+
+    vec![
+        compact_line(
+            format!("ns {} current {}", state.namespace, state.current_replicas),
+            width,
+        ),
+        compact_line(format!("desired {} focus {}", desired, focus), width),
+        compact_line(status, width),
+        compact_line("[+/-] adjust  [Tab] move", width),
+    ]
+}
+
+fn compact_line(text: impl AsRef<str>, width: usize) -> Line<'static> {
+    Line::from(truncate_message(text.as_ref(), width.max(1)).into_owned())
 }
 
 use crate::ui::centered_rect;
@@ -573,5 +618,13 @@ mod tests {
         terminal
             .draw(|frame| render_scale_dialog(frame, frame.area(), &state))
             .expect("compact scale dialog should render");
+    }
+
+    #[test]
+    fn compact_scale_lines_fit_two_line_body() {
+        let state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
+        let lines = compact_scale_lines(&state, "5", "input", "enter apply  esc cancel", 24, 2);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].to_string().contains("want 5"));
     }
 }

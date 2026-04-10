@@ -19,7 +19,7 @@ use crate::{
     secret::DecodedSecretValue,
     state::ClusterSnapshot,
     time::format_local,
-    ui::{components::default_theme, theme::Theme},
+    ui::{components::default_theme, theme::Theme, wrapped_line_count},
     workbench::{RunbookStepState, WorkbenchTab, WorkbenchTabState},
 };
 
@@ -3012,17 +3012,17 @@ fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::Run
             lines
         },
     );
-    let detail_window = scroll_window(
-        detail_lines.len(),
-        tab.detail_scroll,
-        right_inner.height.max(1) as usize,
-    );
+    let detail_total = wrapped_line_count(&detail_lines, right_inner.width);
+    let detail_scroll = tab
+        .detail_scroll
+        .min(detail_total.saturating_sub(right_inner.height.max(1) as usize));
     frame.render_widget(
-        Paragraph::new(detail_lines[detail_window.start..detail_window.end].to_vec())
-            .wrap(Wrap { trim: false }),
+        Paragraph::new(detail_lines)
+            .wrap(Wrap { trim: false })
+            .scroll((detail_scroll.min(u16::MAX as usize) as u16, 0)),
         right_inner,
     );
-    render_scrollbar(frame, right_inner, detail_lines.len(), detail_window.start);
+    render_scrollbar(frame, right_inner, detail_total, detail_scroll);
 }
 
 fn step_kind_label<'a>(
@@ -3119,12 +3119,15 @@ fn render_ai_analysis_tab(
         render_ai_section(&mut lines, "Uncertainty", &content.uncertainty, &theme);
     }
 
-    let scroll = tab.scroll.min(lines.len().saturating_sub(1));
+    let total = wrapped_line_count(&lines, area.width);
+    let scroll = tab
+        .scroll
+        .min(total.saturating_sub(area.height.max(1) as usize));
     let paragraph = Paragraph::new(lines)
         .wrap(Wrap { trim: false })
         .scroll((scroll.min(u16::MAX as usize) as u16, 0));
     frame.render_widget(paragraph, area);
-    render_scrollbar(frame, area, tab.rendered_line_count(), scroll);
+    render_scrollbar(frame, area, total, scroll);
 }
 
 fn render_ai_section(
@@ -3177,10 +3180,10 @@ mod tests {
             AccessReviewSubject, SubjectAccessReview, SubjectBindingResolution,
             SubjectRoleResolution,
         },
-        ui::{components::default_theme, truncate_message},
+        ui::{components::default_theme, truncate_message, wrapped_line_count},
         workbench::{AccessReviewTabState, AttemptedActionReview},
     };
-    use ratatui::layout::Rect;
+    use ratatui::{layout::Rect, text::Line};
 
     #[test]
     fn short_message_unchanged() {
@@ -3276,6 +3279,18 @@ mod tests {
             centered_window(10, 8, 3),
             VisibleWindow { start: 7, end: 10 }
         );
+    }
+
+    #[test]
+    fn wrapped_line_count_tracks_visual_rows_on_narrow_width() {
+        let total = wrapped_line_count(
+            &[
+                Line::from("header"),
+                Line::from("this line wraps across several rows"),
+            ],
+            10,
+        );
+        assert!(total > 2);
     }
 
     #[test]

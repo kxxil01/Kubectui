@@ -233,6 +233,22 @@ pub(crate) fn table_viewport_rows(area: Rect) -> usize {
     usize::from(area.height.saturating_sub(3)).max(1)
 }
 
+#[inline]
+pub(crate) fn wrapped_line_count(lines: &[Line<'_>], width: u16) -> usize {
+    let usable_width = usize::from(width.saturating_sub(1).max(1));
+    lines
+        .iter()
+        .map(|line| {
+            let content_width = line
+                .spans
+                .iter()
+                .map(|span| span.content.chars().count())
+                .sum::<usize>();
+            content_width.max(1).div_ceil(usable_width)
+        })
+        .sum()
+}
+
 /// Computes the visible window for a selected row, centered when possible.
 #[inline]
 pub(crate) fn table_window(total: usize, selected: usize, viewport_rows: usize) -> TableWindow {

@@ -17,20 +17,9 @@ use crate::{
             default_theme, probe_panel::render_probe_panel, render_debug_container_dialog,
             render_node_debug_dialog, scale_dialog::render_scale_dialog,
         },
-        format_age, table_window,
+        format_age, table_window, wrapped_line_count,
     },
 };
-
-fn detail_panel_viewport_rows(area: Rect) -> usize {
-    usize::from(area.height.saturating_sub(2)).max(1)
-}
-
-fn detail_panel_window(total: usize, area: Rect, scroll: usize) -> (usize, usize) {
-    let visible = detail_panel_viewport_rows(area);
-    let start = scroll.min(total.saturating_sub(visible));
-    let end = (start + visible).min(total);
-    (start, end)
-}
 
 fn render_scrollable_detail_panel<'a>(
     frame: &mut Frame,
@@ -49,9 +38,11 @@ fn render_scrollable_detail_panel<'a>(
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let (start, end) = detail_panel_window(lines.len(), area, scroll);
+    let (total, position) = detail_panel_scroll_metrics(&lines, inner, scroll);
     frame.render_widget(
-        Paragraph::new(lines[start..end].to_vec()).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
         inner,
     );
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -59,8 +50,14 @@ fn render_scrollable_detail_panel<'a>(
         .end_symbol(Some("▼"))
         .track_symbol(Some("│"))
         .thumb_symbol("█");
-    let mut scrollbar_state = ScrollbarState::new(lines.len()).position(start);
+    let mut scrollbar_state = ScrollbarState::new(total).position(position);
     frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+}
+
+fn detail_panel_scroll_metrics(lines: &[Line<'_>], area: Rect, scroll: usize) -> (usize, usize) {
+    let total = wrapped_line_count(lines, area.width);
+    let position = scroll.min(total.saturating_sub(area.height.max(1) as usize));
+    (total, position)
 }
 
 fn render_metadata_panel(frame: &mut Frame, area: Rect, detail_state: &DetailViewState) {
@@ -1171,11 +1168,16 @@ mod tests {
     }
 
     #[test]
-    fn detail_panel_window_clamps_to_last_full_page() {
+    fn detail_panel_scroll_metrics_clamp_to_last_full_page() {
+        let lines = vec![Line::from("row"); 20];
         assert_eq!(
-            detail_panel_window(20, Rect::new(0, 0, 20, 8), 99),
-            (14, 20)
+            detail_panel_scroll_metrics(&lines, Rect::new(0, 0, 18, 6), 99),
+            (20, 14)
         );
-        assert_eq!(detail_panel_window(3, Rect::new(0, 0, 20, 8), 99), (0, 3));
+        let short = vec![Line::from("row"); 3];
+        assert_eq!(
+            detail_panel_scroll_metrics(&short, Rect::new(0, 0, 18, 6), 99),
+            (3, 0)
+        );
     }
 }

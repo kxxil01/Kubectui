@@ -8,6 +8,7 @@ use ratatui::{
 };
 
 use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
+use crate::ui::truncate_message;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugContainerField {
@@ -530,17 +531,75 @@ fn render_compact_debug_container_dialog(
     } else {
         "enter launch  esc cancel".to_string()
     };
-    let lines = vec![
-        Line::from(format!(
-            "pod {}/{}  {}",
-            state.namespace, state.pod_name, status
-        )),
-        Line::from(format!("image {}", image)),
-        Line::from(format!("target {}", target)),
-        Line::from(note),
-        Line::from("[Tab] move  [h/l] change  [Space] toggle"),
-    ];
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    let lines = compact_debug_container_lines(
+        state,
+        status,
+        &image,
+        &target,
+        &note,
+        inner.width,
+        inner.height,
+    );
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn compact_debug_container_lines(
+    state: &DebugContainerDialogState,
+    status: &str,
+    image: &str,
+    target: &str,
+    note: &str,
+    width: u16,
+    height: u16,
+) -> Vec<Line<'static>> {
+    let width = usize::from(width.max(1));
+    if height <= 2 {
+        return vec![
+            compact_line(
+                format!("pod {}/{}  {}", state.namespace, state.pod_name, status),
+                width,
+            ),
+            compact_line(format!("target {}", target), width),
+        ];
+    }
+
+    if height == 3 {
+        return vec![
+            compact_line(
+                format!("pod {}/{}  {}", state.namespace, state.pod_name, status),
+                width,
+            ),
+            compact_line(format!("image {}", image), width),
+            compact_line(note, width),
+        ];
+    }
+
+    if height == 4 {
+        return vec![
+            compact_line(
+                format!("pod {}/{}  {}", state.namespace, state.pod_name, status),
+                width,
+            ),
+            compact_line(format!("image {}", image), width),
+            compact_line(format!("target {}", target), width),
+            compact_line(note, width),
+        ];
+    }
+
+    vec![
+        compact_line(
+            format!("pod {}/{}  {}", state.namespace, state.pod_name, status),
+            width,
+        ),
+        compact_line(format!("image {}", image), width),
+        compact_line(format!("target {}", target), width),
+        compact_line(note, width),
+        compact_line("[Tab] move  [h/l] change  [Space] toggle", width),
+    ]
+}
+
+fn compact_line(text: impl AsRef<str>, width: usize) -> Line<'static> {
+    Line::from(truncate_message(text.as_ref(), width.max(1)).into_owned())
 }
 
 fn focused_style(focused: bool) -> Style {
@@ -651,5 +710,14 @@ mod tests {
         terminal
             .draw(|frame| render_debug_container_dialog(frame, frame.area(), &state))
             .expect("compact debug container dialog should render");
+    }
+
+    #[test]
+    fn compact_debug_container_lines_fit_two_line_body() {
+        let state = DebugContainerDialogState::new("api-0", "default");
+        let lines =
+            compact_debug_container_lines(&state, "ready", "busybox", "off", "enter launch", 24, 2);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[1].to_string().contains("target off"));
     }
 }

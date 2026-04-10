@@ -11,6 +11,7 @@ use crate::k8s::{
     exec::DebugImagePreset,
     node_debug::{NodeDebugLaunchRequest, NodeDebugProfile, default_debug_image},
 };
+use crate::ui::truncate_message;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeDebugField {
@@ -484,18 +485,75 @@ fn render_compact_node_debug_dialog(frame: &mut Frame, popup: Rect, state: &Node
     } else {
         "general profile".to_string()
     };
-    let lines = vec![
-        Line::from(format!("node {}  {}", state.node_name, status)),
-        Line::from(format!("image {}", image)),
-        Line::from(format!(
-            "ns {}  profile {}",
-            state.selected_namespace(),
-            state.profile.label()
-        )),
-        Line::from(note),
-        Line::from("[Tab] move  [h/l] change  [Enter] launch"),
-    ];
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    let lines = compact_node_debug_lines(state, status, image, &note, inner.width, inner.height);
+    frame.render_widget(Paragraph::new(lines), inner);
+}
+
+fn compact_node_debug_lines(
+    state: &NodeDebugDialogState,
+    status: &str,
+    image: &str,
+    note: &str,
+    width: u16,
+    height: u16,
+) -> Vec<Line<'static>> {
+    let width = usize::from(width.max(1));
+    if height <= 2 {
+        return vec![
+            compact_line(format!("node {}  {}", state.node_name, status), width),
+            compact_line(
+                format!(
+                    "ns {}  profile {}",
+                    state.selected_namespace(),
+                    state.profile.label()
+                ),
+                width,
+            ),
+        ];
+    }
+
+    if height == 3 {
+        return vec![
+            compact_line(format!("node {}  {}", state.node_name, status), width),
+            compact_line(format!("image {}", image), width),
+            compact_line(note, width),
+        ];
+    }
+
+    if height == 4 {
+        return vec![
+            compact_line(format!("node {}  {}", state.node_name, status), width),
+            compact_line(format!("image {}", image), width),
+            compact_line(
+                format!(
+                    "ns {}  profile {}",
+                    state.selected_namespace(),
+                    state.profile.label()
+                ),
+                width,
+            ),
+            compact_line(note, width),
+        ];
+    }
+
+    vec![
+        compact_line(format!("node {}  {}", state.node_name, status), width),
+        compact_line(format!("image {}", image), width),
+        compact_line(
+            format!(
+                "ns {}  profile {}",
+                state.selected_namespace(),
+                state.profile.label()
+            ),
+            width,
+        ),
+        compact_line(note, width),
+        compact_line("[Tab] move  [h/l] change  [Enter] launch", width),
+    ]
+}
+
+fn compact_line(text: impl AsRef<str>, width: usize) -> Line<'static> {
+    Line::from(truncate_message(text.as_ref(), width.max(1)).into_owned())
 }
 
 fn render_field(
@@ -643,5 +701,13 @@ mod tests {
         terminal
             .draw(|frame| render_node_debug_dialog(frame, frame.area(), &state))
             .expect("compact node debug dialog should render");
+    }
+
+    #[test]
+    fn compact_node_debug_lines_fit_two_line_body() {
+        let state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        let lines = compact_node_debug_lines(&state, "ready", "busybox", "general profile", 24, 2);
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].to_string().contains("node node-0"));
     }
 }
