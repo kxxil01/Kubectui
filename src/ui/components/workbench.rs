@@ -694,6 +694,13 @@ fn render_connectivity_tab(
 
     let theme = default_theme();
     let stacked = use_stacked_connectivity_layout(area);
+    let hint = match tab.focus {
+        ConnectivityTabFocus::Filter => "[Tab] targets  [Ctrl+U] clear  [Esc] return",
+        ConnectivityTabFocus::Targets => "[Enter] run  [/] filter  [Tab] result  [Esc] return",
+        ConnectivityTabFocus::Result => {
+            "[Enter] open detail  [/] filter  [Tab] filter  [Esc] return"
+        }
+    };
     let panes = Layout::default()
         .direction(if stacked {
             Direction::Vertical
@@ -706,6 +713,8 @@ fn render_connectivity_tab(
             [Constraint::Percentage(34), Constraint::Percentage(66)]
         })
         .split(area);
+    let hint_lines = vec![Line::from(Span::styled(hint, theme.keybind_desc_style()))];
+    let hint_height = wrapped_line_count(&hint_lines, panes[0].width.max(1)).max(1) as u16;
 
     let left_rows = Layout::default()
         .direction(Direction::Vertical)
@@ -713,7 +722,7 @@ fn render_connectivity_tab(
             Constraint::Length(3),
             Constraint::Length(3),
             Constraint::Min(6),
-            Constraint::Length(2),
+            Constraint::Length(hint_height),
         ])
         .split(panes[0]);
 
@@ -812,15 +821,8 @@ fn render_connectivity_tab(
         left_rows[2],
     );
 
-    let hint = match tab.focus {
-        ConnectivityTabFocus::Filter => "[Tab] targets  [Ctrl+U] clear  [Esc] return",
-        ConnectivityTabFocus::Targets => "[Enter] run  [/] filter  [Tab] result  [Esc] return",
-        ConnectivityTabFocus::Result => {
-            "[Enter] open detail  [/] filter  [Tab] filter  [Esc] return"
-        }
-    };
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(hint, theme.keybind_desc_style()))),
+        Paragraph::new(hint_lines).wrap(Wrap { trim: false }),
         left_rows[3],
     );
 
@@ -1111,11 +1113,6 @@ fn render_resource_diff_tab(
     tab_state: &crate::workbench::ResourceDiffTabState,
 ) {
     let theme = default_theme();
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
-        .split(area);
-
     let baseline = match tab_state
         .baseline_kind
         .unwrap_or(ResourceDiffBaselineKind::Missing)
@@ -1134,14 +1131,20 @@ fn render_resource_diff_tab(
         .summary
         .clone()
         .unwrap_or_else(|| "Waiting for YAML...".to_string());
+    let header_lines = vec![Line::from(vec![
+        baseline,
+        Span::raw(" "),
+        Span::styled(summary.as_str(), Style::default().fg(theme.fg)),
+        Span::raw("  "),
+        Span::styled("[Esc] back", theme.keybind_desc_style()),
+    ])];
+    let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .split(area);
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            baseline,
-            Span::raw(" "),
-            Span::styled(summary.as_str(), Style::default().fg(theme.fg)),
-            Span::raw("  "),
-            Span::styled("[Esc] back", theme.keybind_desc_style()),
-        ])),
+        Paragraph::new(header_lines).wrap(Wrap { trim: false }),
         sections[0],
     );
 
@@ -1457,11 +1460,6 @@ fn render_helm_history_tab(
     tab: &crate::workbench::HelmHistoryTabState,
 ) {
     let theme = default_theme();
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
-        .split(area);
-
     let mode_badge = if tab.rollback_pending {
         Span::styled(" rollback:running ", theme.badge_warning_style())
     } else if tab.confirm_rollback_revision.is_some() {
@@ -1505,17 +1503,23 @@ fn render_helm_history_tab(
     } else {
         "[Enter] diff selected vs current  [R] rollback  [j/k] move"
     };
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(vec![
-                mode_badge,
-                Span::raw(" "),
-                cli_badge,
-                Span::raw(" "),
-                Span::styled(summary, Style::default().fg(theme.fg)),
-            ]),
-            Line::from(Span::styled(hint, theme.keybind_desc_style())),
+    let header_lines = vec![
+        Line::from(vec![
+            mode_badge,
+            Span::raw(" "),
+            cli_badge,
+            Span::raw(" "),
+            Span::styled(summary, Style::default().fg(theme.fg)),
         ]),
+        Line::from(Span::styled(hint, theme.keybind_desc_style())),
+    ];
+    let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(header_lines).wrap(Wrap { trim: false }),
         sections[0],
     );
 
@@ -1760,11 +1764,6 @@ fn render_decoded_secret_tab(
     tab_state: &crate::workbench::DecodedSecretTabState,
 ) {
     let theme = default_theme();
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
-        .split(area);
-
     let visibility = if tab_state.masked {
         "masked"
     } else {
@@ -1780,13 +1779,19 @@ fn render_decoded_secret_tab(
     } else {
         "[e] edit  [m] mask  [s] save  [Esc] back"
     };
+    let header_lines = vec![Line::from(vec![
+        Span::styled(format!(" {visibility} "), theme.badge_warning_style()),
+        Span::styled(dirty, theme.keybind_desc_style()),
+        Span::raw("  "),
+        Span::styled(hint, theme.keybind_desc_style()),
+    ])];
+    let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .split(area);
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(format!(" {visibility} "), theme.badge_warning_style()),
-            Span::styled(dirty, theme.keybind_desc_style()),
-            Span::raw("  "),
-            Span::styled(hint, theme.keybind_desc_style()),
-        ])),
+        Paragraph::new(header_lines).wrap(Wrap { trim: false }),
         sections[0],
     );
 
@@ -2677,15 +2682,6 @@ fn render_workload_logs_tab(
 
 fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTabState) {
     let theme = default_theme();
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(0),
-            Constraint::Length(2),
-        ])
-        .split(area);
-
     let status = if tab.loading {
         "loading"
     } else if tab.picking_container {
@@ -2695,29 +2691,39 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
     } else {
         "connected"
     };
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled(format!(" {status} "), theme.badge_warning_style()),
-                Span::raw(" "),
-                Span::styled(
-                    format!(
-                        "{} / {}",
-                        tab.pod_name,
-                        if tab.container_name.is_empty() {
-                            "container: pending"
-                        } else {
-                            tab.container_name.as_str()
-                        }
-                    ),
-                    theme.keybind_desc_style(),
+    let header_lines = vec![
+        Line::from(vec![
+            Span::styled(format!(" {status} "), theme.badge_warning_style()),
+            Span::raw(" "),
+            Span::styled(
+                format!(
+                    "{} / {}",
+                    tab.pod_name,
+                    if tab.container_name.is_empty() {
+                        "container: pending"
+                    } else {
+                        tab.container_name.as_str()
+                    }
                 ),
-            ]),
-            Line::from(Span::styled(
-                "[Enter] send  [Backspace] edit  [Esc] back",
                 theme.keybind_desc_style(),
-            )),
+            ),
         ]),
+        Line::from(Span::styled(
+            "[Enter] send  [Backspace] edit  [Esc] back",
+            theme.keybind_desc_style(),
+        )),
+    ];
+    let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(header_height),
+            Constraint::Min(0),
+            Constraint::Length(2),
+        ])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(header_lines).wrap(Wrap { trim: false }),
         sections[0],
     );
 
@@ -2811,11 +2817,6 @@ fn render_extension_output_tab(
     tab: &crate::workbench::ExtensionOutputTabState,
 ) {
     let theme = default_theme();
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Min(0)])
-        .split(area);
-
     let status_badge = if tab.loading {
         Span::styled(" running ", theme.badge_warning_style())
     } else if tab.success == Some(true) {
@@ -2829,20 +2830,26 @@ fn render_extension_output_tab(
     } else {
         tab.command_preview.clone()
     };
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(vec![
-                status_badge,
-                Span::raw(" "),
-                mode_badge,
-                Span::raw(" "),
-                Span::styled(summary, Style::default().fg(theme.fg)),
-            ]),
-            Line::from(Span::styled(
-                "[j/k] scroll  [Esc] back",
-                theme.keybind_desc_style(),
-            )),
+    let header_lines = vec![
+        Line::from(vec![
+            status_badge,
+            Span::raw(" "),
+            mode_badge,
+            Span::raw(" "),
+            Span::styled(summary, Style::default().fg(theme.fg)),
         ]),
+        Line::from(Span::styled(
+            "[j/k] scroll  [Esc] back",
+            theme.keybind_desc_style(),
+        )),
+    ];
+    let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(header_lines).wrap(Wrap { trim: false }),
         sections[0],
     );
 
@@ -2894,11 +2901,6 @@ fn render_extension_output_tab(
 
 fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::RunbookTabState) {
     let theme = default_theme();
-    let rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(0)])
-        .split(area);
-
     let banner = tab
         .banner
         .as_deref()
@@ -2917,26 +2919,32 @@ fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::Run
             )
         })
         .unwrap_or_else(|| "global".to_string());
-    frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(vec![
-                Span::styled(" runbook ", theme.badge_success_style()),
-                Span::raw(" "),
-                Span::styled(tab.runbook.title.clone(), theme.title_style()),
-                Span::raw("  "),
-                Span::styled(
-                    format!("{} complete", tab.progress_label()),
-                    theme.muted_style(),
-                ),
-                Span::raw("  "),
-                Span::styled(resource, theme.inactive_style()),
-            ]),
-            Line::from(vec![
-                Span::styled(banner, Style::default().fg(theme.fg_dim)),
-                Span::raw("  "),
-                Span::styled("[Esc] back", theme.keybind_desc_style()),
-            ]),
+    let header_lines = vec![
+        Line::from(vec![
+            Span::styled(" runbook ", theme.badge_success_style()),
+            Span::raw(" "),
+            Span::styled(tab.runbook.title.clone(), theme.title_style()),
+            Span::raw("  "),
+            Span::styled(
+                format!("{} complete", tab.progress_label()),
+                theme.muted_style(),
+            ),
+            Span::raw("  "),
+            Span::styled(resource.clone(), theme.inactive_style()),
         ]),
+        Line::from(vec![
+            Span::styled(banner, Style::default().fg(theme.fg_dim)),
+            Span::raw("  "),
+            Span::styled("[Esc] back", theme.keybind_desc_style()),
+        ]),
+    ];
+    let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(header_lines).wrap(Wrap { trim: false }),
         rows[0],
     );
 
