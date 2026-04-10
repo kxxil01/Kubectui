@@ -806,6 +806,17 @@ fn compute_palette_offset(
     offset
 }
 
+fn palette_scroll_metrics(item_heights: &[usize], offset: usize) -> (usize, usize) {
+    if item_heights.is_empty() {
+        return (1, 0);
+    }
+
+    let clamped_offset = offset.min(item_heights.len().saturating_sub(1));
+    let total = item_heights.iter().sum::<usize>().max(1);
+    let position = item_heights[..clamped_offset].iter().sum::<usize>();
+    (total, position)
+}
+
 /// Modal command palette for jumping directly to any view.
 #[derive(Debug, Clone, Default)]
 pub struct CommandPalette {
@@ -1335,11 +1346,12 @@ impl CommandPalette {
                 compute_palette_offset(&item_heights, selected_index, viewport_height)
             })
             .unwrap_or_default();
+        let (scroll_total, scroll_position) = palette_scroll_metrics(&item_heights, offset);
         let mut state = ListState::default()
             .with_selected(selected)
             .with_offset(offset);
         frame.render_stateful_widget(List::new(items).block(list_block), chunks[2], &mut state);
-        render_vertical_scrollbar(frame, chunks[2], matches.len(), offset);
+        render_vertical_scrollbar(frame, chunks[2], scroll_total, scroll_position);
 
         let footer = Line::from(vec![
             if compact {
@@ -1558,6 +1570,15 @@ mod tests {
         assert_eq!(compute_palette_offset(&heights, 0, 5), 0);
         assert_eq!(compute_palette_offset(&heights, 2, 5), 1);
         assert_eq!(compute_palette_offset(&heights, 3, 5), 2);
+    }
+
+    #[test]
+    fn palette_scroll_metrics_use_visual_row_offsets() {
+        let heights = vec![2, 3, 1, 4];
+
+        assert_eq!(palette_scroll_metrics(&heights, 0), (10, 0));
+        assert_eq!(palette_scroll_metrics(&heights, 2), (10, 5));
+        assert_eq!(palette_scroll_metrics(&heights, 99), (10, 6));
     }
 
     #[test]
