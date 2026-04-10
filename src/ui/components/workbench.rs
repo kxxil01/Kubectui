@@ -1225,9 +1225,9 @@ fn render_rollout_tab(
         .map(|kind| Span::styled(format!(" {} ", kind.label()), workload_badge_style))
         .unwrap_or_else(|| Span::styled(" Workload ", workload_badge_style));
     let hint = if tab.mutation_pending.is_some() {
-        "[mutation in progress]"
+        "[mutation in progress]  [j/k] scroll  [Ctrl+d/u] page"
     } else if tab.confirm_undo_revision.is_some() {
-        "[Enter/U] confirm undo  [Esc] cancel"
+        "[Enter/U] confirm undo  [Esc] cancel  [j/k] scroll  [Ctrl+d/u] page"
     } else if tab.kind == Some(crate::k8s::rollout::RolloutWorkloadKind::Deployment) {
         "[R] restart  [P] pause/resume  [U] undo selected  [j/k] move"
     } else {
@@ -1276,19 +1276,23 @@ fn render_rollout_tab(
     );
 
     if tab.mutation_pending.is_some() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![Line::from(Span::styled(
                 " Rollout mutation in progress...",
                 theme.inactive_style(),
-            )),
-            sections[1],
+            ))],
+            tab.detail_scroll,
         );
         return;
     }
 
     if let Some(target_revision) = tab.confirm_undo_revision {
-        frame.render_widget(
-            Paragraph::new(vec![
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![
                 Line::from(vec![Span::styled(
                     format!(" Roll back this workload to revision {target_revision}?"),
                     theme.section_title_style(),
@@ -1300,9 +1304,8 @@ fn render_rollout_tab(
                 Line::from(
                     " Kubectui will refresh rollout state and workload data after completion.",
                 ),
-            ])
-            .wrap(Wrap { trim: false }),
-            sections[1],
+            ],
+            tab.detail_scroll,
         );
         return;
     }
@@ -1319,13 +1322,14 @@ fn render_rollout_tab(
     }
 
     if let Some(error) = &tab.error {
-        frame.render_widget(
-            Paragraph::new(Span::styled(
+        render_wrapped_text_lines(
+            frame,
+            sections[1],
+            vec![Line::from(Span::styled(
                 format!(" Rollout fetch failed: {error}"),
                 theme.badge_error_style(),
-            ))
-            .wrap(Wrap { trim: false }),
-            sections[1],
+            ))],
+            tab.detail_scroll,
         );
         return;
     }
@@ -2269,7 +2273,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
             )
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), log_area);
+    frame.render_widget(Paragraph::new(lines), log_area);
     render_scrollbar(frame, log_area, total, window.start);
 }
 
@@ -2713,7 +2717,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             .collect();
         let window = centered_window(total, selected, sections[1].height.max(1) as usize);
         frame.render_widget(
-            Paragraph::new(entries[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
+            Paragraph::new(entries[window.start..window.end].to_vec()),
             sections[1],
         );
         render_scrollbar(frame, sections[1], total, window.start);
@@ -2748,10 +2752,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
                 }
             }
 
-            frame.render_widget(
-                Paragraph::new(lines).wrap(Wrap { trim: false }),
-                sections[1],
-            );
+            frame.render_widget(Paragraph::new(lines), sections[1]);
             render_scrollbar(frame, sections[1], total, window.start);
         }
     }
