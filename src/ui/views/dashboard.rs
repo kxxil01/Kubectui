@@ -365,12 +365,7 @@ fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot
         .border_style(theme.border_active_style())
         .style(Style::default().bg(theme.bg));
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_cluster_health_summary(
@@ -451,12 +446,7 @@ fn render_cluster_health_summary(
         .border_style(border_style)
         .style(Style::default().bg(theme.bg));
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 // ── resource counts ───────────────────────────────────────────────────────────
@@ -519,12 +509,7 @@ fn render_resource_counts(frame: &mut Frame, area: Rect, stats: &DashboardStats,
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.bg));
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 // ── health gauges ─────────────────────────────────────────────────────────────
@@ -609,7 +594,7 @@ fn render_compact_health_gauges(
         compact_gauge_line("Cluster Mem", u64::from(cluster_res.cluster_mem_pct), theme),
     ];
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
+    frame.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_percent_gauge(frame: &mut Frame, area: Rect, title: &str, percent: u8, theme: &Theme) {
@@ -831,12 +816,7 @@ fn render_hot_nodes(frame: &mut Frame, area: Rect, insights: &DashboardInsights,
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.bg));
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 // ── overcommit & governance ───────────────────────────────────────────────────
@@ -1192,6 +1172,8 @@ fn render_alerts(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::ClusterSnapshot;
+    use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
     fn namespace_util_widths_switch_to_compact_profile() {
@@ -1221,5 +1203,15 @@ mod tests {
         let total = wrapped_line_count(&lines, 20);
         let position = 999usize.min(total.saturating_sub(2));
         assert_eq!(position, 1);
+    }
+
+    #[test]
+    fn dashboard_renders_on_tiny_terminal_without_wrapped_card_spill() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let snapshot = ClusterSnapshot::default();
+        terminal
+            .draw(|frame| render_dashboard(frame, frame.area(), &snapshot, 0, true))
+            .unwrap();
     }
 }
