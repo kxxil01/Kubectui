@@ -259,7 +259,7 @@ fn render_action_history_tab(
         .map(|(idx, entry)| render_action_history_line(entry, idx == selected, &theme))
         .collect();
 
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    frame.render_widget(Paragraph::new(lines), area);
     render_scrollbar(frame, area, entries.len(), window.start);
 }
 
@@ -277,7 +277,7 @@ fn render_access_review_tab(
         .skip(window.start)
         .take(window.end.saturating_sub(window.start))
         .collect::<Vec<_>>();
-    frame.render_widget(Paragraph::new(visible).wrap(Wrap { trim: false }), area);
+    frame.render_widget(Paragraph::new(visible), area);
     render_scrollbar(frame, area, total_lines, window.start);
 }
 
@@ -1111,7 +1111,7 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
         vec![Line::from("")]
     };
 
-    frame.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), area);
+    frame.render_widget(Paragraph::new(body), area);
     render_scrollbar(frame, area, total, window.start);
 }
 
@@ -1415,7 +1415,7 @@ fn render_rollout_tab(
     };
     let window = scroll_window(lines.len(), scroll, sections[1].height.max(1) as usize);
     frame.render_widget(
-        Paragraph::new(lines[window.start..window.end].to_vec()).wrap(Wrap { trim: false }),
+        Paragraph::new(lines[window.start..window.end].to_vec()),
         sections[1],
     );
     render_scrollbar(frame, sections[1], lines.len(), window.start);
@@ -1617,10 +1617,7 @@ fn render_helm_history_tab(
         })
         .collect::<Vec<_>>();
 
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        sections[1],
-    );
+    frame.render_widget(Paragraph::new(lines), sections[1]);
     render_scrollbar(frame, sections[1], total, window.start);
 }
 
@@ -1743,7 +1740,7 @@ fn render_diff_lines(
         .map(render_diff_line)
         .collect::<Vec<_>>();
 
-    frame.render_widget(Paragraph::new(rendered).wrap(Wrap { trim: false }), area);
+    frame.render_widget(Paragraph::new(rendered), area);
     render_scrollbar(frame, area, total, window.start);
 }
 
@@ -1908,10 +1905,7 @@ fn render_decoded_secret_tab(
         })
         .collect();
 
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        content_area,
-    );
+    frame.render_widget(Paragraph::new(lines), content_area);
     render_scrollbar(frame, content_area, total, window.start);
 }
 
