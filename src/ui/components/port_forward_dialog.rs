@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::k8s::portforward::{PortForwardConfig, PortForwardTarget, TunnelState};
 use crate::state::port_forward::TunnelRegistry;
-use crate::ui::components::input_field::InputFieldWidget;
+use crate::ui::components::{input_field::InputFieldWidget, render_vertical_scrollbar};
 use crate::ui::{bounded_popup_rect, table_window};
 
 /// Port forward dialog modes.
@@ -543,6 +543,7 @@ impl PortForwardDialog {
 
             let tunnels_list = Paragraph::new(lines);
             frame.render_widget(tunnels_list, chunks[0]);
+            render_vertical_scrollbar(frame, chunks[0], tunnels.len(), window.start);
         }
 
         // Footer

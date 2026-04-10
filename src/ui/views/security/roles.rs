@@ -2,7 +2,7 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{Cell, Paragraph, Row},
+    widgets::{Cell, Row},
 };
 
 use super::{join_or_all, split_primary_detail};
@@ -35,7 +35,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         TableFrame, bookmarked_name_cell,
-        components::{content_block, default_theme},
+        components::default_theme,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, render_centered_message, render_table_frame,
         resource_table_title, sort_header_cell, table_viewport_rows, table_window,
@@ -115,6 +115,7 @@ pub fn render_roles(
     selected_idx: usize,
     query: &str,
     sort: Option<WorkloadSortState>,
+    detail_scroll: usize,
     focused: bool,
 ) {
     let query = query.trim();
@@ -241,9 +242,13 @@ pub fn render_roles(
         &sel_item.rules,
         &theme,
     );
-    frame.render_widget(
-        Paragraph::new((*detail).clone()).block(content_block("Selected Role Rules", focused)),
+    super::render_scrollable_security_detail(
+        frame,
         detail_area,
+        "Selected Role Rules",
+        focused,
+        (*detail).clone(),
+        detail_scroll,
     );
 }
 

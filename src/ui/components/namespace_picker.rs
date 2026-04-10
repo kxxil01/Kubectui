@@ -1,6 +1,6 @@
 //! Namespace picker modal component.
 
-use crate::ui::{contains_ci, table_window};
+use crate::ui::{components::render_vertical_scrollbar, contains_ci, table_window};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -274,6 +274,7 @@ impl NamespacePicker {
             .with_selected(selected)
             .with_offset(offset);
         frame.render_stateful_widget(List::new(items).block(list_block), chunks[2], &mut state);
+        render_vertical_scrollbar(frame, chunks[2], namespaces.len(), offset);
 
         let footer_line = Line::from(vec![
             if compact {

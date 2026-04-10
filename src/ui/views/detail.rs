@@ -15,7 +15,7 @@ use crate::{
     ui::{
         components::{
             default_theme, probe_panel::render_probe_panel, render_debug_container_dialog,
-            render_node_debug_dialog, scale_dialog::render_scale_dialog,
+            render_node_debug_dialog, render_vertical_scrollbar, scale_dialog::render_scale_dialog,
         },
         format_age, table_window, wrapped_line_count,
     },
@@ -613,6 +613,7 @@ fn render_cronjob_history_panel(frame: &mut Frame, area: Rect, detail_state: &De
         .highlight_spacing(HighlightSpacing::Always);
 
     frame.render_stateful_widget(table, rows[1], &mut table_state);
+    render_vertical_scrollbar(frame, rows[1], total, window.start);
 }
 
 const NARROW_CRONJOB_HISTORY_WIDTH: u16 = 88;

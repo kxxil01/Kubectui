@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Cell, Paragraph, Row, Wrap},
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     state::ClusterSnapshot,
     ui::{
         TableFrame,
-        components::{content_block, default_theme},
+        components::{default_theme, render_scrollable_text_block},
         render_centered_message, render_table_frame, responsive_table_widths, table_viewport_rows,
         table_window, vertical_primary_detail_chunks,
     },
@@ -30,6 +30,7 @@ pub fn render_projects(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
+    detail_scroll: usize,
     focused: bool,
 ) {
     let projects = compute_projects(cluster);
@@ -74,7 +75,13 @@ pub fn render_projects(
         search.trim(),
         focused,
     );
-    render_project_summary(frame, summary_area, selected_project, focused);
+    render_project_summary(
+        frame,
+        summary_area,
+        selected_project,
+        detail_scroll,
+        focused,
+    );
 }
 
 fn project_table_widths(area: Rect) -> [Constraint; 8] {
@@ -185,7 +192,13 @@ fn render_project_table(
     );
 }
 
-fn render_project_summary(frame: &mut Frame, area: Rect, project: &ProjectSummary, focused: bool) {
+fn render_project_summary(
+    frame: &mut Frame,
+    area: Rect,
+    project: &ProjectSummary,
+    scroll: usize,
+    focused: bool,
+) {
     let theme = default_theme();
     let mut lines = Vec::new();
     lines.push(Line::from(vec![
@@ -278,12 +291,7 @@ fn render_project_summary(frame: &mut Frame, area: Rect, project: &ProjectSummar
         lines.push(Line::from(spans));
     }
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(content_block("Project Summary", focused)),
-        area,
-    );
+    render_scrollable_text_block(frame, area, "Project Summary", focused, lines, scroll);
 }
 
 fn severity_badge(severity: AlertSeverity, issue_count: usize) -> (&'static str, Style) {
@@ -330,6 +338,7 @@ mod tests {
                     &ClusterSnapshot::default(),
                     0,
                     "",
+                    0,
                     true,
                 );
             })
@@ -352,7 +361,7 @@ mod tests {
         });
         terminal
             .draw(|frame| {
-                render_projects(frame, frame.area(), &snapshot, 0, "", true);
+                render_projects(frame, frame.area(), &snapshot, 0, "", 0, true);
             })
             .expect("render");
     }
@@ -381,7 +390,7 @@ mod tests {
         });
         terminal
             .draw(|frame| {
-                render_projects(frame, frame.area(), &snapshot, 0, "", true);
+                render_projects(frame, frame.area(), &snapshot, 0, "", 0, true);
             })
             .expect("render");
     }

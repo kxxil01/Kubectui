@@ -8,7 +8,7 @@ use ratatui::{
 use std::collections::HashSet;
 
 use crate::k8s::probes::{ContainerProbes, ProbeStatus};
-use crate::ui::table_window;
+use crate::ui::wrapped_line_count;
 
 /// State for the probe panel widget.
 #[derive(Debug, Clone, Default)]
@@ -123,10 +123,10 @@ pub fn render_probe_panel(frame: &mut Frame, area: Rect, state: &ProbePanelState
     frame.render_widget(block, area);
 
     let (lines, selected_line) = build_probe_lines(state);
-    let window = table_window(lines.len(), selected_line, probe_panel_viewport_rows(area));
-    let visible = lines[window.start..window.end].to_vec();
-
-    let widget = Paragraph::new(visible).wrap(Wrap { trim: false });
+    let (total, position) = probe_panel_scroll_metrics(&lines, inner, selected_line);
+    let widget = Paragraph::new(lines)
+        .wrap(Wrap { trim: false })
+        .scroll((position.min(u16::MAX as usize) as u16, 0));
     frame.render_widget(widget, inner);
 
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -134,12 +134,22 @@ pub fn render_probe_panel(frame: &mut Frame, area: Rect, state: &ProbePanelState
         .end_symbol(Some("▼"))
         .track_symbol(Some("│"))
         .thumb_symbol("█");
-    let mut scrollbar_state = ScrollbarState::new(lines.len()).position(window.start);
+    let mut scrollbar_state = ScrollbarState::new(total).position(position);
     frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
 }
 
-fn probe_panel_viewport_rows(area: Rect) -> usize {
-    usize::from(area.height.saturating_sub(2)).max(1)
+fn probe_panel_scroll_metrics(
+    lines: &[Line<'_>],
+    area: Rect,
+    selected_line: usize,
+) -> (usize, usize) {
+    let total = wrapped_line_count(lines, area.width);
+    let selected_offset = wrapped_line_count(&lines[..selected_line.min(lines.len())], area.width);
+    let visible = usize::from(area.height.max(1));
+    let position = selected_offset
+        .saturating_sub(visible.saturating_sub(1) / 2)
+        .min(total.saturating_sub(visible.max(1)));
+    (total, position)
 }
 
 fn clamp_probe_selection(total: usize, selected: usize) -> usize {
@@ -482,13 +492,10 @@ mod tests {
         state.selected_index = 3;
 
         let (lines, selected_line) = build_probe_lines(&state);
-        let window = table_window(
-            lines.len(),
-            selected_line,
-            probe_panel_viewport_rows(Rect::new(0, 0, 80, 6)),
-        );
+        let (total, position) =
+            probe_panel_scroll_metrics(&lines, Rect::new(0, 0, 80, 6), selected_line);
 
-        assert!(window.start <= selected_line);
-        assert!(window.end > selected_line);
+        assert!(total >= lines.len());
+        assert!(position <= total.saturating_sub(1));
     }
 }

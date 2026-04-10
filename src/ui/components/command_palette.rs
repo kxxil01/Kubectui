@@ -16,6 +16,7 @@ use crate::global_search::GlobalResourceSearchEntry;
 use crate::policy::{DetailAction, ResourceActionContext};
 use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::LoadedRunbook;
+use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::theme::Theme;
 use crate::workbench::WorkbenchTabKey;
 use crate::workspaces::display_hotkey;
@@ -1338,6 +1339,7 @@ impl CommandPalette {
             .with_selected(selected)
             .with_offset(offset);
         frame.render_stateful_widget(List::new(items).block(list_block), chunks[2], &mut state);
+        render_vertical_scrollbar(frame, chunks[2], matches.len(), offset);
 
         let footer = Line::from(vec![
             if compact {

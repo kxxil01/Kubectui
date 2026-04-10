@@ -5,6 +5,7 @@ impl Default for AppState {
         Self {
             view: AppView::Dashboard,
             selected_idx: 0,
+            content_detail_scroll: 0,
             search_query: String::new(),
             is_search_mode: false,
             should_quit: false,

@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Rect},
     prelude::{Frame, Style},
     text::{Line, Span},
-    widgets::{Cell, Paragraph, Row, Wrap},
+    widgets::{Cell, Row},
 };
 
 use crate::{
@@ -15,7 +15,7 @@ use crate::{
     state::{ClusterSnapshot, RefreshScope},
     ui::{
         TableFrame,
-        components::{content_block, default_theme},
+        components::{default_theme, render_scrollable_text_block},
         render_centered_message, render_table_frame, table_viewport_rows, table_window,
         vertical_primary_detail_chunks,
     },
@@ -60,6 +60,7 @@ pub fn render_governance(
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
+    detail_scroll: usize,
     focused: bool,
 ) {
     let summaries = compute_governance(cluster);
@@ -105,7 +106,13 @@ pub fn render_governance(
         search.trim(),
         focused,
     );
-    render_governance_summary(frame, summary_area, selected_summary, focused);
+    render_governance_summary(
+        frame,
+        summary_area,
+        selected_summary,
+        detail_scroll,
+        focused,
+    );
 }
 
 fn render_governance_table(
@@ -195,6 +202,7 @@ fn render_governance_summary(
     frame: &mut Frame,
     area: Rect,
     summary: &NamespaceGovernanceSummary,
+    scroll: usize,
     focused: bool,
 ) {
     let theme = default_theme();
@@ -261,12 +269,7 @@ fn render_governance_summary(
         lines.push(Line::from(spans));
     }
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .wrap(Wrap { trim: false })
-            .block(content_block("Governance Summary", focused)),
-        area,
-    );
+    render_scrollable_text_block(frame, area, "Governance Summary", focused, lines, scroll);
 }
 
 fn severity_badge(severity: AlertSeverity) -> (&'static str, Style) {
@@ -291,7 +294,7 @@ mod tests {
         let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
         terminal
             .draw(|frame| {
-                render_governance_summary(frame, frame.area(), summary, true);
+                render_governance_summary(frame, frame.area(), summary, 0, true);
             })
             .expect("render");
         let buffer = terminal.backend().buffer();
@@ -382,6 +385,7 @@ mod tests {
                     &ClusterSnapshot::default(),
                     0,
                     "",
+                    0,
                     true,
                 );
             })

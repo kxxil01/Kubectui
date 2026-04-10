@@ -1315,6 +1315,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.content_detail_scroll,
                 content_focused,
             ),
             AppView::Governance => views::governance::center::render_governance(
@@ -1323,6 +1324,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 cluster,
                 app.selected_idx(),
                 app.search_query(),
+                app.content_detail_scroll,
                 content_focused,
             ),
             AppView::HealthReport => views::issue_center::render_health_report(
@@ -1429,6 +1431,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                app.content_detail_scroll,
                 content_focused,
             ),
             AppView::RoleBindings => views::security::role_bindings::render_role_bindings(
@@ -1439,6 +1442,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                app.content_detail_scroll,
                 content_focused,
             ),
             AppView::ClusterRoles => views::security::cluster_roles::render_cluster_roles(
@@ -1449,6 +1453,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.workload_sort(),
+                app.content_detail_scroll,
                 content_focused,
             ),
             AppView::ClusterRoleBindings => {
@@ -1460,6 +1465,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     app.selected_idx(),
                     app.search_query(),
                     app.workload_sort(),
+                    app.content_detail_scroll,
                     content_focused,
                 )
             }

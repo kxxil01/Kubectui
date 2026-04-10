@@ -23,7 +23,7 @@ use crate::{
         },
     },
     time::format_local,
-    ui::{components::default_theme, theme::Theme, utilization_style},
+    ui::{components::default_theme, theme::Theme, utilization_style, wrapped_line_count},
 };
 
 // ── dashboard computation cache ──────────────────────────────────────────────
@@ -1163,12 +1163,60 @@ fn render_alerts(frame: &mut Frame, area: Rect, alerts: &[AlertItem], theme: &Th
         )
         .style(Style::default().bg(theme.bg));
 
+    let inner = block.inner(area);
+    let alert_lines = alert_lines_for_viewport(&alert_lines, inner, theme);
     frame.render_widget(
         Paragraph::new(alert_lines)
             .block(block)
             .wrap(Wrap { trim: false }),
         area,
     );
+}
+
+fn alert_lines_for_viewport(
+    lines: &[Line<'static>],
+    area: Rect,
+    theme: &Theme,
+) -> Vec<Line<'static>> {
+    if lines.is_empty() {
+        return Vec::new();
+    }
+
+    let visible_rows = usize::from(area.height.max(1));
+    let width = area.width.max(1);
+    let mut used = 0usize;
+    let mut visible = Vec::new();
+
+    for (idx, line) in lines.iter().enumerate() {
+        let remaining = lines.len().saturating_sub(idx + 1);
+        let reserve = usize::from(remaining > 0);
+        let line_rows = wrapped_line_count(std::slice::from_ref(line), width);
+        if used + line_rows + reserve > visible_rows {
+            if remaining > 0 && visible_rows > 0 {
+                visible.push(Line::from(vec![
+                    Span::styled("… ", Style::default().fg(theme.fg_dim)),
+                    Span::styled(
+                        format!("{remaining} more alert(s)"),
+                        Style::default()
+                            .fg(theme.fg_dim)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                ]));
+            }
+            break;
+        }
+        used += line_rows;
+        visible.push(line.clone());
+    }
+
+    if visible.is_empty() {
+        vec![Line::from(Span::styled(
+            "… alerts truncated",
+            Style::default().fg(theme.fg_dim),
+        ))]
+    } else {
+        visible
+    }
 }
 
 #[cfg(test)]
@@ -1191,5 +1239,23 @@ mod tests {
         assert_eq!(widths[1], Constraint::Length(6));
         assert_eq!(widths[4], Constraint::Length(11));
         assert_eq!(widths[7], Constraint::Min(11));
+    }
+
+    #[test]
+    fn alert_lines_for_viewport_adds_overflow_indicator() {
+        let theme = default_theme();
+        let lines = vec![
+            Line::from("alert 1"),
+            Line::from("alert 2"),
+            Line::from("alert 3"),
+        ];
+        let visible = alert_lines_for_viewport(&lines, Rect::new(0, 0, 20, 2), &theme);
+        assert_eq!(visible.len(), 2);
+        let text = visible[1]
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert!(text.contains("more alert"));
     }
 }

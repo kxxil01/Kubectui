@@ -1956,6 +1956,23 @@ impl AppState {
                 }
                 AppAction::None
             }
+            KeyCode::Char('j') | KeyCode::Down
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        self.view,
+                        AppView::Projects
+                            | AppView::Governance
+                            | AppView::RoleBindings
+                            | AppView::ClusterRoleBindings
+                            | AppView::Roles
+                            | AppView::ClusterRoles
+                    ) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_add(1);
+                AppAction::None
+            }
             KeyCode::Char('k') | KeyCode::Up
                 if self
                     .detail_view
@@ -1966,6 +1983,23 @@ impl AppState {
                 if let Some(detail) = &mut self.detail_view {
                     detail.scroll_top_panels_up(1);
                 }
+                AppAction::None
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        self.view,
+                        AppView::Projects
+                            | AppView::Governance
+                            | AppView::RoleBindings
+                            | AppView::ClusterRoleBindings
+                            | AppView::Roles
+                            | AppView::ClusterRoles
+                    ) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_sub(1);
                 AppAction::None
             }
             KeyCode::Char('d')
@@ -1980,6 +2014,23 @@ impl AppState {
                 }
                 AppAction::None
             }
+            KeyCode::Char('d')
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        self.view,
+                        AppView::Projects
+                            | AppView::Governance
+                            | AppView::RoleBindings
+                            | AppView::ClusterRoleBindings
+                            | AppView::Roles
+                            | AppView::ClusterRoles
+                    ) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
+                AppAction::None
+            }
             KeyCode::Char('u')
                 if self
                     .detail_view
@@ -1990,6 +2041,23 @@ impl AppState {
                 if let Some(detail) = &mut self.detail_view {
                     detail.scroll_top_panels_up(10);
                 }
+                AppAction::None
+            }
+            KeyCode::Char('u')
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches!(
+                        self.view,
+                        AppView::Projects
+                            | AppView::Governance
+                            | AppView::RoleBindings
+                            | AppView::ClusterRoleBindings
+                            | AppView::Roles
+                            | AppView::ClusterRoles
+                    ) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
                 AppAction::None
             }
             KeyCode::Char('j') | KeyCode::Down

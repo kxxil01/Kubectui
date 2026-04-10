@@ -1,6 +1,6 @@
 //! Security/RBAC views.
 
-use ratatui::layout::Rect;
+use ratatui::{layout::Rect, prelude::Frame, text::Line};
 
 pub mod cluster_role_bindings;
 pub mod cluster_roles;
@@ -19,6 +19,17 @@ pub(crate) fn join_or_all(items: &[String]) -> String {
 
 pub(crate) fn split_primary_detail(area: Rect) -> (Rect, Rect) {
     crate::ui::vertical_primary_detail_chunks(area, 58, 8, 24)
+}
+
+pub(crate) fn render_scrollable_security_detail<'a>(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    focused: bool,
+    lines: Vec<Line<'a>>,
+    scroll: usize,
+) {
+    crate::ui::components::render_scrollable_text_block(frame, area, title, focused, lines, scroll);
 }
 
 #[cfg(test)]

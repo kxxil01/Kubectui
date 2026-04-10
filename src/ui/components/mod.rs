@@ -43,7 +43,10 @@ use ratatui::{
     layout::{Alignment, Rect},
     prelude::{Frame, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, Paragraph, Tabs},
+    widgets::{
+        Block, BorderType, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Tabs, Wrap,
+    },
 };
 
 use crate::{
@@ -675,6 +678,40 @@ pub fn content_block(title: &str, focused: bool) -> Block<'static> {
     } else {
         default_block(title)
     }
+}
+
+pub fn render_scrollable_text_block<'a>(
+    frame: &mut Frame,
+    area: Rect,
+    title: &str,
+    focused: bool,
+    lines: Vec<Line<'a>>,
+    scroll: usize,
+) {
+    let block = content_block(title, focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let total = crate::ui::wrapped_line_count(&lines, inner.width);
+    let position = scroll.min(total.saturating_sub(inner.height.max(1) as usize));
+    frame.render_widget(
+        Paragraph::new(lines)
+            .wrap(Wrap { trim: false })
+            .scroll((position.min(u16::MAX as usize) as u16, 0)),
+        inner,
+    );
+
+    render_vertical_scrollbar(frame, inner, total, position);
+}
+
+pub fn render_vertical_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize) {
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("▲"))
+        .end_symbol(Some("▼"))
+        .track_symbol(Some("│"))
+        .thumb_symbol("█");
+    let mut state = ScrollbarState::new(total).position(position);
+    frame.render_stateful_widget(scrollbar, area, &mut state);
 }
 
 #[cfg(test)]

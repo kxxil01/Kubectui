@@ -4,6 +4,7 @@ impl AppState {
     pub fn set_namespace(&mut self, ns: String) {
         self.current_namespace = ns;
         self.selected_idx = 0;
+        self.content_detail_scroll = 0;
         self.search_query.clear();
         self.is_search_mode = false;
         self.sync_action_history_selection();
@@ -85,6 +86,7 @@ impl AppState {
         }
         self.view = view;
         self.selected_idx = 0;
+        self.content_detail_scroll = 0;
         self.search_query.clear();
         self.is_search_mode = false;
         self.sync_collapsed_to_active_view();
@@ -101,10 +103,12 @@ impl AppState {
 
     pub(super) fn select_next(&mut self) {
         self.selected_idx = self.selected_idx.saturating_add(1);
+        self.content_detail_scroll = 0;
     }
 
     pub(super) fn select_previous(&mut self) {
         self.selected_idx = self.selected_idx.saturating_sub(1);
+        self.content_detail_scroll = 0;
     }
 
     pub fn sidebar_cursor_down(&mut self) {
