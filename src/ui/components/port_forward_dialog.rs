@@ -10,7 +10,7 @@ use ratatui::{
 use crate::k8s::portforward::{PortForwardConfig, PortForwardTarget, TunnelState};
 use crate::state::port_forward::TunnelRegistry;
 use crate::ui::components::{input_field::InputFieldWidget, render_vertical_scrollbar};
-use crate::ui::{bounded_popup_rect, table_window};
+use crate::ui::{bounded_popup_rect, table_window, wrap_span_groups, wrapped_line_count};
 
 /// Port forward dialog modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -333,13 +333,23 @@ impl PortForwardDialog {
         frame.render_widget(block.clone(), popup);
 
         let inner = block.inner(popup);
+        let footer_lines = port_forward_footer_lines(
+            inner.width,
+            &[
+                ("[Tab] ", "Next"),
+                ("[Enter] ", "Create"),
+                ("[F2] ", "List"),
+                ("[Esc] ", "Close"),
+            ],
+        );
+        let footer_height = wrapped_line_count(&footer_lines, inner.width.max(1)).max(1) as u16;
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(11),
                 Constraint::Length(3),
                 Constraint::Min(5),
-                Constraint::Length(2),
+                Constraint::Length(footer_height),
             ])
             .split(inner);
 
@@ -399,8 +409,7 @@ impl PortForwardDialog {
         frame.render_widget(summary, chunks[2]);
 
         // Footer
-        let footer = Paragraph::new("[Tab] Next │ [Enter] Create │ [F2] List │ [Esc] Close")
-            .style(Style::default().fg(Color::Gray));
+        let footer = Paragraph::new(footer_lines).style(Style::default().fg(Color::Gray));
         frame.render_widget(footer, chunks[3]);
     }
 
@@ -478,7 +487,25 @@ impl PortForwardDialog {
         let inner = block.inner(popup);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(10), Constraint::Length(2)])
+            .constraints([
+                Constraint::Min(10),
+                Constraint::Length(
+                    wrapped_line_count(
+                        &port_forward_footer_lines(
+                            inner.width,
+                            &[
+                                ("[↑↓] ", "Select"),
+                                ("[d] ", "Delete"),
+                                ("[r] ", "Refresh"),
+                                ("[F1] ", "Create"),
+                                ("[Esc] ", "Close"),
+                            ],
+                        ),
+                        inner.width.max(1),
+                    )
+                    .max(1) as u16,
+                ),
+            ])
             .split(inner);
 
         if self.registry.is_empty() {
@@ -549,9 +576,17 @@ impl PortForwardDialog {
         }
 
         // Footer
-        let footer =
-            Paragraph::new("[↑↓] Select │ [d] Delete │ [r] Refresh │ [F1] Create │ [Esc] Close")
-                .style(Style::default().fg(Color::Gray));
+        let footer = Paragraph::new(port_forward_footer_lines(
+            inner.width,
+            &[
+                ("[↑↓] ", "Select"),
+                ("[d] ", "Delete"),
+                ("[r] ", "Refresh"),
+                ("[F1] ", "Create"),
+                ("[Esc] ", "Close"),
+            ],
+        ))
+        .style(Style::default().fg(Color::Gray));
         frame.render_widget(footer, chunks[1]);
     }
 
@@ -616,6 +651,19 @@ fn tunnel_scroll_metrics(total_tunnels: usize, offset: usize) -> (usize, usize) 
         total_tunnels.saturating_mul(2),
         clamped_offset.saturating_mul(2),
     )
+}
+
+fn port_forward_footer_lines(width: u16, groups: &[(&str, &str)]) -> Vec<Line<'static>> {
+    let footer_groups: Vec<Vec<Span<'static>>> = groups
+        .iter()
+        .map(|(key, label)| {
+            vec![
+                Span::styled((*key).to_string(), Style::default().fg(Color::Cyan)),
+                Span::styled((*label).to_string(), Style::default().fg(Color::Gray)),
+            ]
+        })
+        .collect();
+    wrap_span_groups(&footer_groups, width.max(1))
 }
 
 fn selected_tunnel_index(total: usize, selected: usize) -> usize {
@@ -875,5 +923,19 @@ mod tests {
         assert_eq!(tunnel_scroll_metrics(3, 0), (6, 0));
         assert_eq!(tunnel_scroll_metrics(3, 2), (6, 4));
         assert_eq!(tunnel_scroll_metrics(3, 9), (6, 4));
+    }
+
+    #[test]
+    fn footer_lines_wrap_when_width_is_tight() {
+        let lines = port_forward_footer_lines(
+            18,
+            &[
+                ("[Tab] ", "Next"),
+                ("[Enter] ", "Create"),
+                ("[F2] ", "List"),
+                ("[Esc] ", "Close"),
+            ],
+        );
+        assert!(lines.len() > 1);
     }
 }

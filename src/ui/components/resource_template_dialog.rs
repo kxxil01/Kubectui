@@ -3,7 +3,9 @@
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::{Frame, Line, Span, Style},
-    widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState},
+    widgets::{
+        Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap,
+    },
 };
 
 use crate::resource_templates::{ResourceTemplateKind, ResourceTemplateValues};
@@ -159,6 +161,26 @@ pub fn render_resource_template_dialog(
         return;
     }
 
+    let footer = if state.pending {
+        Line::from(Span::styled(
+            " Opening editor...",
+            Style::default().fg(ratatui::style::Color::Yellow),
+        ))
+    } else if let Some(error) = &state.error_message {
+        Line::from(Span::styled(
+            format!(" {error}"),
+            Style::default().fg(ratatui::style::Color::Red),
+        ))
+    } else {
+        Line::from(Span::styled(
+            " Tab / Shift+Tab: move  Enter: create  Esc: cancel ",
+            Style::default().fg(ratatui::style::Color::DarkGray),
+        ))
+    };
+    let footer_lines = vec![footer];
+    let footer_height =
+        crate::ui::wrapped_line_count(&footer_lines, popup.width.max(1)).max(1) as u16 + 1;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -166,7 +188,7 @@ pub fn render_resource_template_dialog(
             Constraint::Length(2),
             Constraint::Min(8),
             Constraint::Length(3),
-            Constraint::Length(2),
+            Constraint::Length(footer_height),
         ])
         .split(popup);
 
@@ -308,24 +330,10 @@ pub fn render_resource_template_dialog(
         chunks[3],
     );
 
-    let footer = if state.pending {
-        Line::from(Span::styled(
-            " Opening editor...",
-            Style::default().fg(ratatui::style::Color::Yellow),
-        ))
-    } else if let Some(error) = &state.error_message {
-        Line::from(Span::styled(
-            format!(" {error}"),
-            Style::default().fg(ratatui::style::Color::Red),
-        ))
-    } else {
-        Line::from(Span::styled(
-            " Tab / Shift+Tab: move  Enter: create  Esc: cancel ",
-            Style::default().fg(ratatui::style::Color::DarkGray),
-        ))
-    };
     frame.render_widget(
-        Paragraph::new(footer).block(Block::default().borders(Borders::ALL)),
+        Paragraph::new(footer_lines)
+            .wrap(Wrap { trim: false })
+            .block(Block::default().borders(Borders::ALL)),
         chunks[4],
     );
 }
