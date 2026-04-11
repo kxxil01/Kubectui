@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
-use crate::ui::truncate_message;
+use crate::ui::{truncate_message, wrapped_line_count};
 
 /// Field focus for keyboard navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -217,40 +217,76 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         return;
     }
 
-    // Layout: Title | Metadata | Input | Validation | Buttons | Footer
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(4),
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Length(2),
-        ])
-        .split(popup);
-
-    // Title
-    let title = format!(
-        "Scale {}: {}",
-        state.target_kind.label(),
-        state.workload_name
-    );
-    let title_widget = Paragraph::new(Line::from(vec![Span::styled(
-        title,
+    let title_lines = vec![Line::from(vec![Span::styled(
+        format!(
+            "Scale {}: {}",
+            state.target_kind.label(),
+            state.workload_name
+        ),
         Style::default().fg(Color::Cyan).bold(),
-    )]))
-    .block(Block::default().borders(Borders::ALL))
-    .alignment(Alignment::Center);
-    frame.render_widget(title_widget, chunks[0]);
-
-    // Metadata section
+    )])];
     let meta_lines = vec![Line::from(format!(
         "Namespace: {} | Current replicas: {}",
         state.namespace, state.current_replicas
     ))];
-    let meta_widget =
-        Paragraph::new(meta_lines).block(Block::default().borders(Borders::ALL).title("Info"));
+    let validation_line = if let Some(err) = &state.error_message {
+        Line::from(Span::styled(
+            format!("✗ {}", err),
+            Style::default().fg(Color::Red),
+        ))
+    } else if let Some(warn) = &state.warning_message {
+        Line::from(Span::styled(
+            format!("⚠ {}", warn),
+            Style::default().fg(Color::Yellow),
+        ))
+    } else if state.pending {
+        Line::from(Span::styled(
+            "⏳ Scaling...",
+            Style::default().fg(Color::Magenta),
+        ))
+    } else {
+        Line::from(Span::styled(
+            "Use +/- keys to adjust, type digits, Enter to apply",
+            Style::default().fg(Color::Gray),
+        ))
+    };
+    let footer_lines = vec![Line::from(if state.pending {
+        "[Esc] Cancel operation"
+    } else {
+        "[Enter] Confirm  [Esc] Cancel  [+/-] Adjust  [Tab] Navigate"
+    })];
+    let title_height = wrapped_line_count(&title_lines, popup.width.max(1)).max(1) as u16 + 2;
+    let meta_height = wrapped_line_count(&meta_lines, popup.width.max(1)).max(1) as u16 + 2;
+    let validation_height =
+        wrapped_line_count(std::slice::from_ref(&validation_line), popup.width.max(1)).max(1)
+            as u16
+            + 2;
+    let footer_height = wrapped_line_count(&footer_lines, popup.width.max(1)).max(1) as u16;
+
+    // Layout: Title | Metadata | Input | Validation | Buttons | Footer
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(title_height),
+            Constraint::Length(meta_height),
+            Constraint::Length(4),
+            Constraint::Length(validation_height),
+            Constraint::Length(3),
+            Constraint::Length(footer_height),
+        ])
+        .split(popup);
+
+    // Title
+    let title_widget = Paragraph::new(title_lines)
+        .block(Block::default().borders(Borders::ALL))
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .alignment(Alignment::Center);
+    frame.render_widget(title_widget, chunks[0]);
+
+    // Metadata section
+    let meta_widget = Paragraph::new(meta_lines)
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .block(Block::default().borders(Borders::ALL).title("Info"));
     frame.render_widget(meta_widget, chunks[1]);
 
     // Input section with +/- buttons
@@ -287,30 +323,9 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
     frame.render_widget(input_widget, chunks[2]);
 
     // Validation/Warning display
-    let validation_line = if let Some(err) = &state.error_message {
-        Line::from(Span::styled(
-            format!("✗ {}", err),
-            Style::default().fg(Color::Red),
-        ))
-    } else if let Some(warn) = &state.warning_message {
-        Line::from(Span::styled(
-            format!("⚠ {}", warn),
-            Style::default().fg(Color::Yellow),
-        ))
-    } else if state.pending {
-        Line::from(Span::styled(
-            "⏳ Scaling...",
-            Style::default().fg(Color::Magenta),
-        ))
-    } else {
-        Line::from(Span::styled(
-            "Use +/- keys to adjust, type digits, Enter to apply",
-            Style::default().fg(Color::Gray),
-        ))
-    };
-
-    let validation_widget =
-        Paragraph::new(validation_line).block(Block::default().borders(Borders::ALL));
+    let validation_widget = Paragraph::new(validation_line)
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .block(Block::default().borders(Borders::ALL));
     frame.render_widget(validation_widget, chunks[3]);
 
     // Buttons with focus indication
@@ -340,13 +355,8 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
     frame.render_widget(buttons_widget, chunks[4]);
 
     // Footer with key hints
-    let footer_text = if state.pending {
-        "[Esc] Cancel operation"
-    } else {
-        "[Enter] Confirm  [Esc] Cancel  [+/-] Adjust  [Tab] Navigate"
-    };
-
-    let footer_widget = Paragraph::new(footer_text)
+    let footer_widget = Paragraph::new(footer_lines)
+        .wrap(ratatui::widgets::Wrap { trim: false })
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center);
     frame.render_widget(footer_widget, chunks[5]);

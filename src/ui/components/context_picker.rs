@@ -1,8 +1,8 @@
 //! Context (kubeconfig) picker modal component.
 
 use crate::ui::{
-    components::render_vertical_scrollbar, contains_ci, table_window, wrap_span_groups,
-    wrapped_line_count,
+    components::render_vertical_scrollbar, contains_ci, cursor_visible_input_line, table_window,
+    wrap_span_groups, wrapped_line_count,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -175,25 +175,6 @@ impl ContextPicker {
         let footer_lines = wrap_span_groups(&footer_groups, inner.width.max(1));
         let footer_height = wrapped_line_count(&footer_lines, inner.width.max(1)).max(1) as u16 + 1;
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(if compact {
-                [
-                    Constraint::Length(1),
-                    Constraint::Length(3),
-                    Constraint::Min(1),
-                    Constraint::Length(footer_height),
-                ]
-            } else {
-                [
-                    Constraint::Length(2),
-                    Constraint::Length(3),
-                    Constraint::Min(3),
-                    Constraint::Length(footer_height),
-                ]
-            })
-            .split(inner);
-
         let title_line = Line::from(vec![
             Span::styled(
                 format!(" {}", crate::icons::chrome_icon("cluster").active()),
@@ -213,7 +194,24 @@ impl ContextPicker {
             .borders(Borders::BOTTOM)
             .border_style(theme.border_style())
             .style(Style::default().bg(theme.header_bg));
-        frame.render_widget(Paragraph::new(title_line).block(title_block), chunks[0]);
+        let title_lines = vec![title_line];
+        let title_height = wrapped_line_count(&title_lines, inner.width.max(1)).max(1) as u16
+            + u16::from(!compact);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(title_height),
+                Constraint::Length(3),
+                Constraint::Min(if compact { 1 } else { 3 }),
+                Constraint::Length(footer_height),
+            ])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(title_lines)
+                .block(title_block)
+                .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
 
         let search_content = if self.search_query.is_empty() {
             Line::from(vec![
@@ -221,11 +219,15 @@ impl ContextPicker {
                 Span::styled("Type to filter…", theme.inactive_style()),
             ])
         } else {
-            Line::from(vec![
-                Span::styled("  / ", theme.title_style()),
-                Span::styled(self.search_query.clone(), Style::default().fg(theme.fg)),
-                Span::styled("█", theme.title_style()),
-            ])
+            cursor_visible_input_line(
+                &[Span::styled("  / ".to_string(), theme.title_style())],
+                &self.search_query,
+                Some(self.search_query.chars().count()),
+                Style::default().fg(theme.fg),
+                theme.title_style(),
+                &[],
+                usize::from(chunks[1].width.saturating_sub(2).max(1)),
+            )
         };
 
         let search_block = Block::default()

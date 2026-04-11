@@ -10,7 +10,9 @@ use ratatui::{
 use crate::k8s::portforward::{PortForwardConfig, PortForwardTarget, TunnelState};
 use crate::state::port_forward::TunnelRegistry;
 use crate::ui::components::{input_field::InputFieldWidget, render_vertical_scrollbar};
-use crate::ui::{bounded_popup_rect, table_window, wrap_span_groups, wrapped_line_count};
+use crate::ui::{
+    bounded_popup_rect, table_window, truncate_message, wrap_span_groups, wrapped_line_count,
+};
 
 /// Port forward dialog modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -431,15 +433,18 @@ impl PortForwardDialog {
         } else {
             format!("active tunnels: {}", self.registry.active_count())
         };
+        let clamp = |text: String| {
+            Line::from(truncate_message(&text, usize::from(inner.width.max(1))).into_owned())
+        };
         let lines = vec![
-            Line::from(format!("ns {}", self.namespace_field.value)),
-            Line::from(format!("pod {}", self.pod_name_field.value)),
-            Line::from(format!(
+            clamp(format!("ns {}", self.namespace_field.value)),
+            clamp(format!("pod {}", self.pod_name_field.value)),
+            clamp(format!(
                 "remote {}  local {}",
                 self.remote_port_field.value, self.local_port_field.value
             )),
-            Line::from(format!("focus {focus}  {status}")),
-            Line::from("[Enter] create  [F2] list  [Esc] close"),
+            clamp(format!("focus {focus}  {status}")),
+            clamp("[Enter] create  [F2] list  [Esc] close".to_string()),
         ];
         frame.render_widget(Paragraph::new(lines), inner);
     }
@@ -454,9 +459,11 @@ impl PortForwardDialog {
     ) {
         let mut display_field = field.clone();
         display_field.focused = focused;
-        let styled = display_field.styled_text(focused);
-
-        let text = Line::from(vec![Span::raw(format!("{}: ", label)), styled]);
+        let text = display_field.styled_line(
+            &[Span::raw(format!("{label}: "))],
+            focused,
+            usize::from(area.width.max(1)),
+        );
 
         let paragraph = Paragraph::new(text);
         frame.render_widget(paragraph, area);
@@ -599,11 +606,14 @@ impl PortForwardDialog {
             .borders(Borders::ALL);
         let inner = block.inner(popup);
         frame.render_widget(block, popup);
+        let clamp = |text: String| {
+            Line::from(truncate_message(&text, usize::from(inner.width.max(1))).into_owned())
+        };
 
         let lines = if self.registry.is_empty() {
             vec![
-                Line::from("no active tunnels"),
-                Line::from("[F1] create  [Esc] close"),
+                clamp("no active tunnels".to_string()),
+                clamp("[F1] create  [Esc] close".to_string()),
             ]
         } else {
             let tunnels = self.registry.tunnels().values().collect::<Vec<_>>();
@@ -616,15 +626,15 @@ impl PortForwardDialog {
                 _ => "idle",
             };
             vec![
-                Line::from(format!("sel {}/{}", selected + 1, tunnels.len())),
-                Line::from(format!("pod {}", tunnel.target.pod_name)),
-                Line::from(format!("ns {}  {state}", tunnel.target.namespace)),
-                Line::from(format!(
+                clamp(format!("sel {}/{}", selected + 1, tunnels.len())),
+                clamp(format!("pod {}", tunnel.target.pod_name)),
+                clamp(format!("ns {}  {state}", tunnel.target.namespace)),
+                clamp(format!(
                     "local {} -> {}",
                     tunnel.local_addr.port(),
                     tunnel.target.remote_port
                 )),
-                Line::from("[↑↓] move  [d] stop  [Esc] close"),
+                clamp("[↑↓] move  [d] stop  [Esc] close".to_string()),
             ]
         };
         frame.render_widget(Paragraph::new(lines), inner);
