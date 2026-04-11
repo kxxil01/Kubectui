@@ -106,16 +106,14 @@ impl AppState {
     }
 
     pub fn sync_action_history_selection(&mut self) {
-        let current_scope = self.activity_scope();
-        let total = self
-            .action_history
-            .entries()
-            .iter()
-            .filter(|entry| entry.scope == current_scope)
-            .count();
+        let visible_ids = self
+            .visible_action_history_entries()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
         for tab in &mut self.workbench.tabs {
             if let WorkbenchTabState::ActionHistory(history_tab) = &mut tab.state {
-                history_tab.selected = history_tab.selected.min(total.saturating_sub(1));
+                history_tab.sync_selection(&visible_ids);
             }
         }
     }
@@ -183,6 +181,7 @@ impl AppState {
             .action_history
             .record_pending(kind, resource_label, message, scope, target);
         self.rebuild_timeline_for(affected_resource.as_ref());
+        self.sync_action_history_selection();
         id
     }
 
@@ -200,6 +199,7 @@ impl AppState {
         self.action_history
             .complete(entry_id, status, message, keep_target);
         self.rebuild_timeline_for(affected_resource.as_ref());
+        self.sync_action_history_selection();
     }
 
     fn rebuild_timeline_for(&mut self, resource: Option<&ResourceRef>) {
@@ -222,7 +222,8 @@ impl AppState {
             return None;
         };
         let entries = self.visible_action_history_entries();
-        let selected = history_tab.selected.min(entries.len().saturating_sub(1));
+        let visible_ids = entries.iter().map(|entry| entry.id).collect::<Vec<_>>();
+        let selected = history_tab.selected_index(&visible_ids);
         entries
             .get(selected)
             .copied()

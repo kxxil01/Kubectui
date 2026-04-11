@@ -291,27 +291,48 @@ impl HelmHistoryTabState {
 #[derive(Debug, Clone, Default)]
 pub struct ActionHistoryTabState {
     pub selected: usize,
+    selected_entry_id: Option<u64>,
 }
 
 impl ActionHistoryTabState {
-    pub fn select_next(&mut self, total: usize) {
-        if total == 0 {
-            self.selected = 0;
+    pub fn selected_index(&self, visible_ids: &[u64]) -> usize {
+        if visible_ids.is_empty() {
+            return 0;
+        }
+        self.selected_entry_id
+            .and_then(|id| visible_ids.iter().position(|entry_id| *entry_id == id))
+            .unwrap_or_else(|| self.selected.min(visible_ids.len().saturating_sub(1)))
+    }
+
+    pub fn sync_selection(&mut self, visible_ids: &[u64]) {
+        let selected = self.selected_index(visible_ids);
+        self.selected = selected;
+        self.selected_entry_id = visible_ids.get(selected).copied();
+    }
+
+    pub fn select_next(&mut self, visible_ids: &[u64]) {
+        self.sync_selection(visible_ids);
+        if visible_ids.is_empty() {
             return;
         }
-        self.selected = (self.selected + 1).min(total.saturating_sub(1));
+        self.selected = (self.selected + 1).min(visible_ids.len().saturating_sub(1));
+        self.selected_entry_id = visible_ids.get(self.selected).copied();
     }
 
-    pub fn select_previous(&mut self) {
+    pub fn select_previous(&mut self, visible_ids: &[u64]) {
+        self.sync_selection(visible_ids);
         self.selected = self.selected.saturating_sub(1);
+        self.selected_entry_id = visible_ids.get(self.selected).copied();
     }
 
-    pub fn select_top(&mut self) {
+    pub fn select_top(&mut self, visible_ids: &[u64]) {
         self.selected = 0;
+        self.selected_entry_id = visible_ids.first().copied();
     }
 
-    pub fn select_bottom(&mut self, total: usize) {
-        self.selected = total.saturating_sub(1);
+    pub fn select_bottom(&mut self, visible_ids: &[u64]) {
+        self.selected = visible_ids.len().saturating_sub(1);
+        self.selected_entry_id = visible_ids.get(self.selected).copied();
     }
 }
 
@@ -697,6 +718,7 @@ pub struct DecodedSecretTabState {
     pub source_yaml: Option<String>,
     pub entries: Vec<DecodedSecretEntry>,
     pub selected: usize,
+    selected_key: Option<String>,
     pub scroll: usize,
     pub loading: bool,
     pub error: Option<String>,
@@ -713,6 +735,7 @@ impl DecodedSecretTabState {
             source_yaml: None,
             entries: Vec::new(),
             selected: 0,
+            selected_key: None,
             scroll: 0,
             loading: true,
             error: None,
@@ -726,17 +749,69 @@ impl DecodedSecretTabState {
         self.entries.iter().any(DecodedSecretEntry::is_dirty)
     }
 
+    pub fn selected_index(&self) -> usize {
+        if self.entries.is_empty() {
+            return 0;
+        }
+        self.selected_key
+            .as_ref()
+            .and_then(|key| self.entries.iter().position(|entry| &entry.key == key))
+            .unwrap_or_else(|| self.selected.min(self.entries.len().saturating_sub(1)))
+    }
+
     pub fn selected_entry(&self) -> Option<&DecodedSecretEntry> {
-        self.entries.get(self.selected)
+        self.entries.get(self.selected_index())
     }
 
     pub fn selected_entry_mut(&mut self) -> Option<&mut DecodedSecretEntry> {
-        self.entries.get_mut(self.selected)
+        let selected = self.selected_index();
+        self.selected = selected;
+        self.selected_key = self.entries.get(selected).map(|entry| entry.key.clone());
+        self.entries.get_mut(selected)
+    }
+
+    pub fn select_next(&mut self) {
+        if self.entries.is_empty() {
+            self.selected = 0;
+            self.selected_key = None;
+            return;
+        }
+        let selected = self.selected_index();
+        self.selected = (selected + 1).min(self.entries.len().saturating_sub(1));
+        self.selected_key = self
+            .entries
+            .get(self.selected)
+            .map(|entry| entry.key.clone());
+    }
+
+    pub fn select_previous(&mut self) {
+        self.selected = self.selected_index().saturating_sub(1);
+        self.selected_key = self
+            .entries
+            .get(self.selected)
+            .map(|entry| entry.key.clone());
+    }
+
+    pub fn select_top(&mut self) {
+        self.selected = 0;
+        self.selected_key = self.entries.first().map(|entry| entry.key.clone());
+    }
+
+    pub fn select_bottom(&mut self) {
+        self.selected = self.entries.len().saturating_sub(1);
+        self.selected_key = self
+            .entries
+            .get(self.selected)
+            .map(|entry| entry.key.clone());
     }
 
     pub fn clamp_selected(&mut self) {
         let max = self.entries.len().saturating_sub(1);
-        self.selected = self.selected.min(max);
+        self.selected = self.selected_index().min(max);
+        self.selected_key = self
+            .entries
+            .get(self.selected)
+            .map(|entry| entry.key.clone());
         self.scroll = self.scroll.min(max);
     }
 }
@@ -1669,6 +1744,7 @@ pub struct ConnectivityTabState {
     pub targets: Vec<ConnectivityTargetOption>,
     pub filtered_target_indices: Vec<usize>,
     pub selected_target: usize,
+    selected_target_resource: Option<ResourceRef>,
     pub current_target: Option<ResourceRef>,
     pub summary_lines: Vec<String>,
     pub tree: Vec<crate::k8s::relationships::RelationNode>,
@@ -1686,6 +1762,7 @@ impl ConnectivityTabState {
             targets,
             filtered_target_indices: Vec::new(),
             selected_target: 0,
+            selected_target_resource: None,
             current_target: None,
             summary_lines: vec![
                 "Select a target pod, then press [Enter] to evaluate whether any traffic is allowed by policy intent."
@@ -1702,7 +1779,39 @@ impl ConnectivityTabState {
         tab
     }
 
+    pub fn apply_targets(&mut self, targets: Vec<ConnectivityTargetOption>) {
+        let preserved_target = self.selected_target_resource.clone().or_else(|| {
+            self.selected_target_option()
+                .map(|target| target.resource.clone())
+        });
+        self.targets = targets;
+        self.selected_target_resource = preserved_target;
+        if self
+            .current_target
+            .as_ref()
+            .is_some_and(|target| !self.targets.iter().any(|entry| entry.resource == *target))
+        {
+            self.current_target = None;
+            self.summary_lines = vec![
+                "Select a target pod, then press [Enter] to evaluate whether any traffic is allowed by policy intent."
+                    .to_string(),
+                "Result shows intent only; CNI enforcement/runtime packet filters may still differ."
+                    .to_string(),
+            ];
+            self.tree.clear();
+            self.tree_cursor = 0;
+            self.expanded.clear();
+            self.error = None;
+            self.focus = ConnectivityTabFocus::Targets;
+        }
+        self.refresh_filter();
+    }
+
     pub fn refresh_filter(&mut self) {
+        let preserved_target = self.selected_target_resource.clone().or_else(|| {
+            self.selected_target_option()
+                .map(|target| target.resource.clone())
+        });
         let query = self.filter.value.to_ascii_lowercase();
         self.filtered_target_indices = self
             .targets
@@ -1721,14 +1830,65 @@ impl ConnectivityTabState {
                 .then_some(idx)
             })
             .collect();
-        let max = self.filtered_target_indices.len().saturating_sub(1);
-        self.selected_target = self.selected_target.min(max);
+        if self.filtered_target_indices.is_empty() {
+            self.selected_target = 0;
+            self.selected_target_resource = None;
+            return;
+        }
+        self.selected_target = preserved_target
+            .as_ref()
+            .and_then(|resource| {
+                self.filtered_target_indices
+                    .iter()
+                    .position(|idx| self.targets[*idx].resource == *resource)
+            })
+            .unwrap_or_else(|| {
+                self.selected_target
+                    .min(self.filtered_target_indices.len().saturating_sub(1))
+            });
+        self.selected_target_resource = self
+            .selected_target_option()
+            .map(|target| target.resource.clone());
     }
 
     pub fn selected_target_option(&self) -> Option<&ConnectivityTargetOption> {
         self.filtered_target_indices
             .get(self.selected_target)
             .and_then(|idx| self.targets.get(*idx))
+    }
+
+    pub fn select_next_target(&mut self) {
+        if self.filtered_target_indices.is_empty() {
+            self.selected_target = 0;
+            self.selected_target_resource = None;
+            return;
+        }
+        self.selected_target =
+            (self.selected_target + 1).min(self.filtered_target_indices.len().saturating_sub(1));
+        self.selected_target_resource = self
+            .selected_target_option()
+            .map(|target| target.resource.clone());
+    }
+
+    pub fn select_previous_target(&mut self) {
+        self.selected_target = self.selected_target.saturating_sub(1);
+        self.selected_target_resource = self
+            .selected_target_option()
+            .map(|target| target.resource.clone());
+    }
+
+    pub fn select_top_target(&mut self) {
+        self.selected_target = 0;
+        self.selected_target_resource = self
+            .selected_target_option()
+            .map(|target| target.resource.clone());
+    }
+
+    pub fn select_bottom_target(&mut self) {
+        self.selected_target = self.filtered_target_indices.len().saturating_sub(1);
+        self.selected_target_resource = self
+            .selected_target_option()
+            .map(|target| target.resource.clone());
     }
 
     pub fn apply_analysis(&mut self, target: ResourceRef, analysis: ConnectivityAnalysis) {
@@ -3134,5 +3294,131 @@ mod tests {
             entry: LogEntry::from_raw("2099-01-01T00:00:00Z future line"),
             is_stderr: false,
         }));
+    }
+
+    #[test]
+    fn action_history_tab_preserves_selected_entry_identity_when_entries_prepend() {
+        let mut tab = ActionHistoryTabState::default();
+        let initial = [41_u64, 40_u64];
+        tab.select_bottom(&initial);
+
+        let refreshed = [42_u64, 41_u64, 40_u64];
+        tab.sync_selection(&refreshed);
+
+        assert_eq!(tab.selected_index(&refreshed), 2);
+    }
+
+    #[test]
+    fn action_history_tab_clamps_when_selected_entry_disappears() {
+        let mut tab = ActionHistoryTabState::default();
+        let initial = [11_u64, 10_u64];
+        tab.select_bottom(&initial);
+
+        let refreshed = [11_u64];
+        tab.sync_selection(&refreshed);
+
+        assert_eq!(tab.selected_index(&refreshed), 0);
+    }
+
+    #[test]
+    fn connectivity_target_refresh_preserves_selected_target_identity() {
+        let mut tab = ConnectivityTabState::new(
+            ResourceRef::Pod("source".into(), "default".into()),
+            vec![
+                ConnectivityTargetOption {
+                    resource: ResourceRef::Pod("api-0".into(), "default".into()),
+                    display: "api-0".into(),
+                    status: "ready".into(),
+                    pod_ip: Some("10.0.0.2".into()),
+                },
+                ConnectivityTargetOption {
+                    resource: ResourceRef::Pod("api-1".into(), "default".into()),
+                    display: "api-1".into(),
+                    status: "ready".into(),
+                    pod_ip: Some("10.0.0.3".into()),
+                },
+            ],
+        );
+        tab.select_bottom_target();
+
+        tab.apply_targets(vec![
+            ConnectivityTargetOption {
+                resource: ResourceRef::Pod("api-00".into(), "default".into()),
+                display: "api-00".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.1".into()),
+            },
+            ConnectivityTargetOption {
+                resource: ResourceRef::Pod("api-0".into(), "default".into()),
+                display: "api-0".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.2".into()),
+            },
+            ConnectivityTargetOption {
+                resource: ResourceRef::Pod("api-1".into(), "default".into()),
+                display: "api-1".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.3".into()),
+            },
+        ]);
+
+        assert_eq!(
+            tab.selected_target_option()
+                .map(|target| target.resource.clone()),
+            Some(ResourceRef::Pod("api-1".into(), "default".into()))
+        );
+    }
+
+    #[test]
+    fn decoded_secret_clamp_preserves_selected_key_identity() {
+        let mut tab =
+            DecodedSecretTabState::new(ResourceRef::Secret("app-secret".into(), "default".into()));
+        tab.entries = vec![
+            DecodedSecretEntry {
+                key: "alpha".into(),
+                value: crate::secret::DecodedSecretValue::Text {
+                    original: "a".into(),
+                    current: "a".into(),
+                },
+            },
+            DecodedSecretEntry {
+                key: "beta".into(),
+                value: crate::secret::DecodedSecretValue::Text {
+                    original: "b".into(),
+                    current: "b".into(),
+                },
+            },
+        ];
+        tab.select_bottom();
+
+        tab.entries = vec![
+            DecodedSecretEntry {
+                key: "aardvark".into(),
+                value: crate::secret::DecodedSecretValue::Text {
+                    original: "aa".into(),
+                    current: "aa".into(),
+                },
+            },
+            DecodedSecretEntry {
+                key: "alpha".into(),
+                value: crate::secret::DecodedSecretValue::Text {
+                    original: "a".into(),
+                    current: "a".into(),
+                },
+            },
+            DecodedSecretEntry {
+                key: "beta".into(),
+                value: crate::secret::DecodedSecretValue::Text {
+                    original: "b".into(),
+                    current: "b".into(),
+                },
+            },
+        ];
+        tab.clamp_selected();
+
+        assert_eq!(
+            tab.selected_entry().map(|entry| entry.key.as_str()),
+            Some("beta")
+        );
     }
 }

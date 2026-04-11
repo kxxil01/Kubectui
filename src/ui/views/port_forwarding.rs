@@ -186,6 +186,9 @@ mod tests {
                 3000 + idx as u16,
             ));
         }
+        let ordered = registry.ordered_tunnels();
+        let selected_pod = ordered[18].target.pod_name.clone();
+        let first_pod = ordered[0].target.pod_name.clone();
         let backend = TestBackend::new(72, 8);
         let mut terminal = Terminal::new(backend).expect("terminal");
 
@@ -204,8 +207,10 @@ mod tests {
             out.push('\n');
         }
 
-        assert!(out.contains("pod-18"));
-        assert!(!out.contains("pod-0"));
+        assert!(out.contains(&selected_pod));
+        if selected_pod != first_pod {
+            assert!(!out.contains(&first_pod));
+        }
     }
 
     #[test]

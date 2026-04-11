@@ -859,22 +859,40 @@ impl CommandPalette {
         self.runbooks.clear();
     }
 
-    pub fn set_activity_entries(&mut self, entries: Vec<PaletteActivityEntry>) {
-        self.activity_entries = entries;
+    fn selected_entry_snapshot(&self) -> Option<PaletteEntry> {
+        let filtered = self.filtered();
+        filtered.get(self.selected_index).cloned()
+    }
+
+    fn restore_selected_entry(&mut self, selected_entry: Option<PaletteEntry>) {
         self.cached_filtered.borrow_mut().take();
+        let filtered = self.filtered();
+        self.selected_index = selected_entry
+            .as_ref()
+            .and_then(|entry| filtered.iter().position(|candidate| candidate == entry))
+            .unwrap_or_else(|| self.selected_index.min(filtered.len().saturating_sub(1)));
+    }
+
+    pub fn set_activity_entries(&mut self, entries: Vec<PaletteActivityEntry>) {
+        let selected_entry = self.selected_entry_snapshot();
+        self.activity_entries = entries;
+        self.restore_selected_entry(selected_entry);
     }
 
     pub fn set_resource_entries(&mut self, entries: impl Into<Arc<Vec<PaletteResourceEntry>>>) {
+        let selected_entry = self.selected_entry_snapshot();
         self.resource_entries = entries.into();
-        self.cached_filtered.borrow_mut().take();
+        self.restore_selected_entry(selected_entry);
     }
 
     pub fn set_columns_info(&mut self, info: Option<Vec<(String, String, bool)>>) {
+        let selected_entry = self.selected_entry_snapshot();
         self.columns_info = info;
-        self.cached_filtered.borrow_mut().take();
+        self.restore_selected_entry(selected_entry);
     }
 
     pub fn set_extension_actions(&mut self, actions: Vec<LoadedExtensionAction>) {
+        let selected_entry = self.selected_entry_snapshot();
         self.extension_actions = actions
             .into_iter()
             .map(|action| {
@@ -888,10 +906,11 @@ impl CommandPalette {
                 }
             })
             .collect();
-        self.cached_filtered.borrow_mut().take();
+        self.restore_selected_entry(selected_entry);
     }
 
     pub fn set_runbooks(&mut self, runbooks: Vec<LoadedRunbook>, resource: Option<ResourceRef>) {
+        let selected_entry = self.selected_entry_snapshot();
         self.runbooks = runbooks
             .into_iter()
             .map(|runbook| {
@@ -910,7 +929,7 @@ impl CommandPalette {
                 }
             })
             .collect();
-        self.cached_filtered.borrow_mut().take();
+        self.restore_selected_entry(selected_entry);
     }
 
     pub fn set_workspace_info(
@@ -918,9 +937,10 @@ impl CommandPalette {
         saved_workspaces: Vec<String>,
         workspace_banks: Vec<(String, Option<String>)>,
     ) {
+        let selected_entry = self.selected_entry_snapshot();
         self.saved_workspaces = saved_workspaces;
         self.workspace_banks = workspace_banks;
-        self.cached_filtered.borrow_mut().take();
+        self.restore_selected_entry(selected_entry);
     }
 
     pub fn is_open(&self) -> bool {
@@ -1556,6 +1576,59 @@ mod tests {
         assert!(matches!(
             filtered.get(1),
             Some(PaletteEntry::Activity(PaletteActivityEntry { title, .. })) if title == "Older"
+        ));
+    }
+
+    #[test]
+    fn activity_refresh_preserves_selected_entry_identity() {
+        let mut palette = CommandPalette::default();
+        palette.set_activity_entries(vec![
+            PaletteActivityEntry {
+                title: "Pods".into(),
+                subtitle: "recent".into(),
+                aliases: vec!["pods".into()],
+                badge_label: "Recent".into(),
+                target: PaletteActivityTarget::Navigate(AppView::Pods),
+            },
+            PaletteActivityEntry {
+                title: "Services".into(),
+                subtitle: "recent".into(),
+                aliases: vec!["services".into()],
+                badge_label: "Recent".into(),
+                target: PaletteActivityTarget::Navigate(AppView::Services),
+            },
+        ]);
+        palette.open();
+        palette.handle_key(KeyEvent::from(KeyCode::Down));
+
+        palette.set_activity_entries(vec![
+            PaletteActivityEntry {
+                title: "Dashboard".into(),
+                subtitle: "recent".into(),
+                aliases: vec!["dashboard".into()],
+                badge_label: "Recent".into(),
+                target: PaletteActivityTarget::Navigate(AppView::Dashboard),
+            },
+            PaletteActivityEntry {
+                title: "Pods".into(),
+                subtitle: "recent".into(),
+                aliases: vec!["pods".into()],
+                badge_label: "Recent".into(),
+                target: PaletteActivityTarget::Navigate(AppView::Pods),
+            },
+            PaletteActivityEntry {
+                title: "Services".into(),
+                subtitle: "recent".into(),
+                aliases: vec!["services".into()],
+                badge_label: "Recent".into(),
+                target: PaletteActivityTarget::Navigate(AppView::Services),
+            },
+        ]);
+
+        let filtered = palette.filtered();
+        assert!(matches!(
+            filtered.get(palette.selected_index),
+            Some(PaletteEntry::Activity(PaletteActivityEntry { title, .. })) if title == "Services"
         ));
     }
 

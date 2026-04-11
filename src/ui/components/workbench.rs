@@ -250,7 +250,8 @@ fn render_action_history_tab(
         return;
     }
 
-    let selected = tab.selected.min(entries.len().saturating_sub(1));
+    let visible_ids = entries.iter().map(|entry| entry.id).collect::<Vec<_>>();
+    let selected = tab.selected_index(&visible_ids);
     let window = centered_window(entries.len(), selected, area.height.max(1) as usize);
     let lines: Vec<Line> = entries
         .iter()
