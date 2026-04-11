@@ -2,8 +2,10 @@
 
 use ratatui::{
     style::{Color, Modifier, Style},
-    text::Span,
+    text::{Line, Span},
 };
+
+use crate::ui::cursor_visible_input_line;
 
 /// Reusable text input widget state.
 #[derive(Debug, Clone)]
@@ -114,18 +116,13 @@ impl InputFieldWidget {
         Ok(())
     }
 
-    /// Get styled display text with cursor.
-    pub fn styled_text(&self, focused: bool) -> Span<'static> {
-        let mut display = self.value.clone();
-
-        if focused {
-            let byte_pos = display
-                .char_indices()
-                .nth(self.cursor_pos)
-                .map_or(display.len(), |(i, _)| i);
-            display.insert(byte_pos, '█');
-        }
-
+    /// Get styled display text with cursor-follow inside available width.
+    pub fn styled_line(
+        &self,
+        prefix: &[Span<'static>],
+        focused: bool,
+        width: usize,
+    ) -> Line<'static> {
         let style = if self.error {
             Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
         } else if focused {
@@ -136,7 +133,15 @@ impl InputFieldWidget {
             Style::default()
         };
 
-        Span::styled(display, style)
+        cursor_visible_input_line(
+            prefix,
+            &self.value,
+            focused.then_some(self.cursor_pos),
+            style,
+            style,
+            &[],
+            width,
+        )
     }
 
     /// Move cursor left.

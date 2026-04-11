@@ -2225,6 +2225,87 @@ pub(crate) fn truncate_message(msg: &str, max_chars: usize) -> Cow<'_, str> {
     }
 }
 
+pub(crate) fn truncate_line_content(line: &Line<'_>, width: usize) -> Line<'static> {
+    let text = line
+        .spans
+        .iter()
+        .map(|span| span.content.as_ref())
+        .collect::<String>();
+    Line::from(truncate_message(&text, width.max(1)).into_owned())
+}
+
+pub(crate) fn cursor_visible_input_line(
+    prefix: &[Span<'static>],
+    value: &str,
+    cursor_chars: Option<usize>,
+    value_style: Style,
+    cursor_style: Style,
+    suffix: &[Span<'static>],
+    width: usize,
+) -> Line<'static> {
+    let width = width.max(1);
+    let prefix_width = prefix
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>();
+    let suffix_width = suffix
+        .iter()
+        .map(|span| span.content.chars().count())
+        .sum::<usize>();
+    let cursor_width = usize::from(cursor_chars.is_some());
+    let available = width.saturating_sub(prefix_width + suffix_width + cursor_width);
+    let chars = value.chars().collect::<Vec<_>>();
+    let char_count = chars.len();
+
+    let (start, end) = if available == 0 {
+        (0, 0)
+    } else if char_count <= available {
+        (0, char_count)
+    } else if let Some(cursor) = cursor_chars {
+        let cursor = cursor.min(char_count);
+        let start = cursor
+            .saturating_sub(available / 2)
+            .min(char_count.saturating_sub(available));
+        (start, (start + available).min(char_count))
+    } else {
+        (0, available.min(char_count))
+    };
+
+    let mut visible = chars[start..end].to_vec();
+    let show_ellipses = cursor_chars.is_none() || available > 6;
+    if start > 0 && available > 3 && show_ellipses {
+        visible.splice(0..3, ['.', '.', '.']);
+    }
+    if end < char_count && available > 3 && show_ellipses {
+        let tail_start = visible.len().saturating_sub(3);
+        visible.splice(tail_start..visible.len(), ['.', '.', '.']);
+    }
+
+    let mut spans = Vec::with_capacity(prefix.len() + suffix.len() + 3);
+    spans.extend(prefix.iter().cloned());
+
+    if let Some(cursor) = cursor_chars {
+        let cursor = cursor.min(char_count);
+        let cursor_offset = cursor.saturating_sub(start).min(visible.len());
+        let before = visible[..cursor_offset].iter().collect::<String>();
+        let after = visible[cursor_offset..].iter().collect::<String>();
+        if !before.is_empty() {
+            spans.push(Span::styled(before, value_style));
+        }
+        spans.push(Span::styled("█", cursor_style));
+        if !after.is_empty() {
+            spans.push(Span::styled(after, value_style));
+        }
+    } else if !visible.is_empty() {
+        spans.push(Span::styled(
+            visible.iter().collect::<String>(),
+            value_style,
+        ));
+    }
+    spans.extend(suffix.iter().cloned());
+    Line::from(spans)
+}
+
 pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {
     let Some(image) = image else {
         return "-".to_string();
@@ -2242,7 +2323,7 @@ mod tests {
     use jiff::ToSpan;
 
     use super::resource_table_title;
-    use ratatui::{Terminal, backend::TestBackend, style::Color};
+    use ratatui::{Terminal, backend::TestBackend, style::Color, text::Span};
 
     use crate::{
         app::{AppState, AppView, DetailMetadata, DetailViewState, ResourceRef},
@@ -2293,6 +2374,64 @@ mod tests {
         terminal
             .draw(|frame| render(frame, app, snapshot))
             .expect("render should not panic");
+    }
+
+    #[test]
+    fn cursor_visible_input_line_keeps_input_tail_visible() {
+        let line = cursor_visible_input_line(
+            &[Span::raw(" / ")],
+            "very-long-search-query-tail",
+            Some("very-long-search-query-tail".chars().count()),
+            Style::default(),
+            Style::default(),
+            &[Span::raw("")],
+            12,
+        );
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(text, " / ...-tail█");
+    }
+
+    #[test]
+    fn cursor_visible_input_line_handles_tight_width_without_overflow() {
+        let line = cursor_visible_input_line(
+            &[Span::raw(" : ")],
+            "abcdef",
+            Some("abcdef".chars().count()),
+            Style::default(),
+            Style::default(),
+            &[Span::raw("")],
+            5,
+        );
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(text.chars().count(), 5);
+        assert_eq!(text, " : f█");
+    }
+
+    #[test]
+    fn cursor_visible_input_line_keeps_middle_cursor_visible() {
+        let line = cursor_visible_input_line(
+            &[Span::raw(" / ")],
+            "abcdefghi",
+            Some(3),
+            Style::default(),
+            Style::default(),
+            &[],
+            9,
+        );
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(text, " / bc█def");
     }
 
     fn terminal_to_string(terminal: &Terminal<TestBackend>) -> String {

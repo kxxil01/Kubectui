@@ -9,7 +9,7 @@ use ratatui::{
 
 use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
 use crate::ui::components::render_vertical_scrollbar;
-use crate::ui::{truncate_message, wrap_span_groups, wrapped_line_count};
+use crate::ui::{truncate_line_content, truncate_message, wrap_span_groups, wrapped_line_count};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugContainerField {
@@ -409,16 +409,21 @@ pub fn render_debug_container_dialog(
         preset.description(),
     );
     frame.render_widget(
-        Paragraph::new(vec![
-            Line::from(Span::styled(
-                preset_line,
-                focused_style(state.focus_field == DebugContainerField::Preset),
-            )),
-            Line::from(Span::styled(
-                "  Use h/l or Left/Right to change the preset.",
-                Style::default().fg(Color::DarkGray),
-            )),
-        ]),
+        Paragraph::new(
+            vec![
+                Line::from(Span::styled(
+                    preset_line,
+                    focused_style(state.focus_field == DebugContainerField::Preset),
+                )),
+                Line::from(Span::styled(
+                    "  Use h/l or Left/Right to change the preset.",
+                    Style::default().fg(Color::DarkGray),
+                )),
+            ]
+            .into_iter()
+            .map(|line| truncate_line_content(&line, usize::from(chunks[1].width.max(1))))
+            .collect::<Vec<_>>(),
+        ),
         chunks[1],
     );
 
@@ -433,16 +438,19 @@ pub fn render_debug_container_dialog(
         "Only used when the Custom preset is selected."
     };
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(
-                    "{} Custom image: ",
-                    focus_marker(state.focus_field == DebugContainerField::CustomImage)
+        Paragraph::new(truncate_line_content(
+            &Line::from(vec![
+                Span::styled(
+                    format!(
+                        "{} Custom image: ",
+                        focus_marker(state.focus_field == DebugContainerField::CustomImage)
+                    ),
+                    custom_style,
                 ),
-                custom_style,
-            ),
-            Span::styled(custom_value, custom_value_style(state)),
-        ])),
+                Span::styled(custom_value, custom_value_style(state)),
+            ]),
+            usize::from(chunks[2].width.max(1)),
+        )),
         chunks[2],
     );
 
@@ -452,27 +460,30 @@ pub fn render_debug_container_dialog(
         "off"
     };
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(
-                    "{} Process target: ",
-                    focus_marker(state.focus_field == DebugContainerField::TargetMode)
+        Paragraph::new(truncate_line_content(
+            &Line::from(vec![
+                Span::styled(
+                    format!(
+                        "{} Process target: ",
+                        focus_marker(state.focus_field == DebugContainerField::TargetMode)
+                    ),
+                    focused_style(state.focus_field == DebugContainerField::TargetMode),
                 ),
-                focused_style(state.focus_field == DebugContainerField::TargetMode),
-            ),
-            Span::styled(
-                target_mode,
-                Style::default().fg(if state.use_target_container {
-                    Color::Green
-                } else {
-                    Color::Yellow
-                }),
-            ),
-            Span::styled(
-                "  (targets a Pod container PID namespace when the runtime supports it)",
-                Style::default().fg(Color::DarkGray),
-            ),
-        ])),
+                Span::styled(
+                    target_mode,
+                    Style::default().fg(if state.use_target_container {
+                        Color::Green
+                    } else {
+                        Color::Yellow
+                    }),
+                ),
+                Span::styled(
+                    "  (targets a Pod container PID namespace when the runtime supports it)",
+                    Style::default().fg(Color::DarkGray),
+                ),
+            ]),
+            usize::from(chunks[3].width.max(1)),
+        )),
         chunks[3],
     );
 
@@ -484,16 +495,19 @@ pub fn render_debug_container_dialog(
         "No target container available.".to_string()
     };
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(
-                    "{} Target container: ",
-                    focus_marker(state.focus_field == DebugContainerField::TargetContainer)
+        Paragraph::new(truncate_line_content(
+            &Line::from(vec![
+                Span::styled(
+                    format!(
+                        "{} Target container: ",
+                        focus_marker(state.focus_field == DebugContainerField::TargetContainer)
+                    ),
+                    focused_style(state.focus_field == DebugContainerField::TargetContainer),
                 ),
-                focused_style(state.focus_field == DebugContainerField::TargetContainer),
-            ),
-            Span::styled(target_line, Style::default().fg(Color::White)),
-        ])),
+                Span::styled(target_line, Style::default().fg(Color::White)),
+            ]),
+            usize::from(chunks[4].width.max(1)),
+        )),
         chunks[4],
     );
 
@@ -501,10 +515,13 @@ pub fn render_debug_container_dialog(
         .selected_image()
         .unwrap_or_else(|| "<missing image>".to_string());
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" Launch image: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(resolved_image, Style::default().fg(Color::Cyan)),
-        ])),
+        Paragraph::new(truncate_line_content(
+            &Line::from(vec![
+                Span::styled(" Launch image: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(resolved_image, Style::default().fg(Color::Cyan)),
+            ]),
+            usize::from(chunks[5].width.max(1)),
+        )),
         chunks[5],
     );
 

@@ -19,7 +19,10 @@ use crate::{
     secret::DecodedSecretValue,
     state::ClusterSnapshot,
     time::format_local,
-    ui::{components::default_theme, theme::Theme, wrap_span_groups, wrapped_line_count},
+    ui::{
+        components::default_theme, cursor_visible_input_line, theme::Theme, wrap_span_groups,
+        wrapped_line_count,
+    },
     workbench::{RunbookStepState, WorkbenchTab, WorkbenchTabState},
 };
 
@@ -267,7 +270,7 @@ fn render_access_review_tab(
     tab: &crate::workbench::AccessReviewTabState,
 ) {
     let theme = default_theme();
-    let lines = access_review_lines(tab, &theme);
+    let lines = access_review_lines(tab, &theme, area.width);
     let total_lines = lines.len();
     let window = scroll_window(total_lines, tab.scroll, area.height.max(1) as usize);
     let visible = lines
@@ -282,6 +285,7 @@ fn render_access_review_tab(
 fn access_review_lines(
     tab: &crate::workbench::AccessReviewTabState,
     theme: &Theme,
+    width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(tab.line_count());
     let context = tab.context_name.as_deref().unwrap_or("unknown");
@@ -336,7 +340,7 @@ fn access_review_lines(
         lines.push(Line::from(""));
     }
 
-    lines.extend(render_access_review_subject_input_lines(tab, theme));
+    lines.extend(render_access_review_subject_input_lines(tab, theme, width));
 
     if let Some(subject_review) = &tab.subject_review {
         lines.extend(render_subject_access_review_lines(subject_review, theme));
@@ -364,15 +368,17 @@ fn access_review_lines(
 fn render_access_review_subject_input_lines(
     tab: &crate::workbench::AccessReviewTabState,
     theme: &Theme,
+    width: u16,
 ) -> Vec<Line<'static>> {
     let mut lines = Vec::with_capacity(5);
-    lines.push(Line::from(vec![
-        Span::styled(" Review Subject: ", theme.section_title_style()),
-        tab.subject_input.styled_text(matches!(
-            tab.focus,
-            crate::workbench::AccessReviewFocus::SubjectInput
-        )),
-    ]));
+    lines.push(tab.subject_input.styled_line(
+        &[Span::styled(
+            " Review Subject: ".to_string(),
+            theme.section_title_style(),
+        )],
+        matches!(tab.focus, crate::workbench::AccessReviewFocus::SubjectInput),
+        usize::from(width.max(1)),
+    ));
     lines.push(Line::from(vec![Span::styled(
         " Press [s] or [Tab] to edit, [Enter] to apply. Use ServiceAccount/<namespace>/<name>, User/<name>, or Group/<name>.",
         theme.muted_style(),
@@ -716,17 +722,7 @@ fn render_connectivity_tab(
     let hint_lines = vec![Line::from(Span::styled(hint, theme.keybind_desc_style()))];
     let hint_height = wrapped_line_count(&hint_lines, panes[0].width.max(1)).max(1) as u16;
 
-    let left_rows = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Length(3),
-            Constraint::Min(6),
-            Constraint::Length(hint_height),
-        ])
-        .split(panes[0]);
-
-    let source_line = Paragraph::new(vec![
+    let source_lines = vec![
         Line::from(Span::styled("Source", theme.section_title_style())),
         Line::from(Span::styled(
             format!(
@@ -738,7 +734,19 @@ fn render_connectivity_tab(
             ),
             Style::default().fg(theme.fg),
         )),
-    ]);
+    ];
+    let source_height = wrapped_line_count(&source_lines, panes[0].width.max(1)).max(1) as u16;
+    let left_rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(source_height),
+            Constraint::Length(3),
+            Constraint::Min(6),
+            Constraint::Length(hint_height),
+        ])
+        .split(panes[0]);
+
+    let source_line = Paragraph::new(source_lines).wrap(Wrap { trim: false });
     frame.render_widget(source_line, left_rows[0]);
 
     let filter_block = Block::default()
@@ -756,10 +764,11 @@ fn render_connectivity_tab(
         } else {
             theme.border_style()
         });
-    let filter_text = Paragraph::new(Line::from(vec![
-        tab.filter
-            .styled_text(tab.focus == ConnectivityTabFocus::Filter),
-    ]))
+    let filter_text = Paragraph::new(tab.filter.styled_line(
+        &[],
+        tab.focus == ConnectivityTabFocus::Filter,
+        usize::from(filter_block.inner(left_rows[1]).width.max(1)),
+    ))
     .block(filter_block);
     frame.render_widget(filter_text, left_rows[1]);
 
@@ -1626,27 +1635,28 @@ fn render_helm_values_diff(
     diff: &crate::workbench::HelmValuesDiffState,
 ) {
     let theme = default_theme();
-    let sections = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(0)])
-        .split(area);
-
     let summary = diff
         .summary
         .clone()
         .unwrap_or_else(|| "Waiting for Helm values diff...".to_string());
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(
-                    " current:{} target:{} ",
-                    diff.current_revision, diff.target_revision
-                ),
-                theme.badge_success_style(),
+    let header_lines = vec![Line::from(vec![
+        Span::styled(
+            format!(
+                " current:{} target:{} ",
+                diff.current_revision, diff.target_revision
             ),
-            Span::raw(" "),
-            Span::styled(summary.as_str(), Style::default().fg(theme.fg)),
-        ])),
+            theme.badge_success_style(),
+        ),
+        Span::raw(" "),
+        Span::styled(summary.as_str(), Style::default().fg(theme.fg)),
+    ])];
+    let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .split(area);
+    frame.render_widget(
+        Paragraph::new(header_lines).wrap(Wrap { trim: false }),
         sections[0],
     );
 
@@ -1834,10 +1844,18 @@ fn render_decoded_secret_tab(
             .constraints([Constraint::Min(0), Constraint::Length(2)])
             .split(sections[1]);
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(" edit> ", theme.section_title_style()),
-                Span::raw(tab_state.edit_input.clone()),
-            ]))
+            Paragraph::new(cursor_visible_input_line(
+                &[Span::styled(
+                    " edit> ".to_string(),
+                    theme.section_title_style(),
+                )],
+                &tab_state.edit_input,
+                Some(tab_state.edit_input.chars().count()),
+                Style::default().fg(theme.fg),
+                theme.section_title_style(),
+                &[],
+                usize::from(split[1].width.saturating_sub(2).max(1)),
+            ))
             .block(
                 Block::default()
                     .borders(Borders::TOP)
@@ -2186,11 +2204,18 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
             (" T", viewer.time_jump_input.as_str())
         };
         frame.render_widget(
-            Paragraph::new(Line::from(vec![
-                Span::styled(prefix, theme.section_title_style()),
-                Span::styled(value, Style::default().fg(theme.fg)),
-                Span::styled("_", Style::default().fg(theme.accent)),
-            ])),
+            Paragraph::new(cursor_visible_input_line(
+                &[Span::styled(
+                    prefix.to_string(),
+                    theme.section_title_style(),
+                )],
+                value,
+                Some(value.chars().count()),
+                Style::default().fg(theme.fg),
+                Style::default().fg(theme.accent),
+                &[],
+                usize::from(search_split[1].width.max(1)),
+            )),
             search_split[1],
         );
         search_split[0]
@@ -2803,10 +2828,15 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
     }
 
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(" $ ", theme.section_title_style()),
-            Span::styled(tab.input.clone(), Style::default().fg(theme.fg)),
-        ])),
+        Paragraph::new(cursor_visible_input_line(
+            &[Span::styled(" $ ".to_string(), theme.section_title_style())],
+            &tab.input,
+            Some(tab.input.chars().count()),
+            Style::default().fg(theme.fg),
+            theme.section_title_style(),
+            &[],
+            usize::from(sections[2].width.max(1)),
+        )),
         sections[2],
     );
 }
@@ -3230,8 +3260,8 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize
 #[cfg(test)]
 mod tests {
     use super::{
-        VisibleWindow, access_review_lines, centered_window, render_logs_tab,
-        render_workload_logs_tab, scroll_window,
+        VisibleWindow, access_review_lines, centered_window, render_connectivity_tab,
+        render_helm_values_diff, render_logs_tab, render_workload_logs_tab, scroll_window,
     };
     use crate::{
         app::ResourceRef,
@@ -3245,7 +3275,8 @@ mod tests {
         },
         ui::{components::default_theme, truncate_message, wrapped_line_count},
         workbench::{
-            AccessReviewTabState, AttemptedActionReview, PodLogsTabState, WorkbenchTab,
+            AccessReviewTabState, AttemptedActionReview, ConnectivityTabFocus,
+            ConnectivityTabState, HelmValuesDiffState, PodLogsTabState, WorkbenchTab,
             WorkbenchTabState, WorkloadLogsTabState,
         },
     };
@@ -3460,7 +3491,7 @@ mod tests {
             None,
         );
 
-        let rendered = access_review_lines(&tab, &default_theme())
+        let rendered = access_review_lines(&tab, &default_theme(), 120)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -3514,7 +3545,7 @@ mod tests {
             }),
         );
 
-        let rendered = access_review_lines(&tab, &default_theme())
+        let rendered = access_review_lines(&tab, &default_theme(), 120)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -3536,7 +3567,7 @@ mod tests {
             None,
         );
 
-        let rendered = access_review_lines(&tab, &default_theme())
+        let rendered = access_review_lines(&tab, &default_theme(), 120)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -3578,7 +3609,7 @@ mod tests {
             None,
         );
 
-        let rendered = access_review_lines(&tab, &default_theme())
+        let rendered = access_review_lines(&tab, &default_theme(), 120)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -3615,7 +3646,7 @@ mod tests {
             None,
         );
 
-        let rendered = access_review_lines(&tab, &default_theme())
+        let rendered = access_review_lines(&tab, &default_theme(), 120)
             .into_iter()
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
@@ -3708,7 +3739,7 @@ mod tests {
 
         assert_eq!(
             tab.line_count(),
-            access_review_lines(&tab, &default_theme()).len()
+            access_review_lines(&tab, &default_theme(), 120).len()
         );
     }
 
@@ -3742,5 +3773,40 @@ mod tests {
         terminal
             .draw(|frame| render_workload_logs_tab(frame, Rect::new(0, 0, 72, 12), &tab))
             .expect("workload logs header should wrap on narrow width");
+    }
+
+    #[test]
+    fn connectivity_source_banner_renders_on_narrow_width() {
+        let backend = TestBackend::new(72, 18);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = ConnectivityTabState::new(
+            ResourceRef::Pod(
+                "very-long-source-pod-name".into(),
+                "very-long-namespace".into(),
+            ),
+            Vec::new(),
+        );
+        tab.focus = ConnectivityTabFocus::Result;
+        tab.summary_lines = vec![
+            "first very long connectivity summary line".into(),
+            "second very long connectivity summary line".into(),
+        ];
+
+        terminal
+            .draw(|frame| render_connectivity_tab(frame, Rect::new(0, 0, 72, 18), &tab))
+            .expect("connectivity source banner should wrap on narrow width");
+    }
+
+    #[test]
+    fn helm_values_diff_header_renders_on_narrow_width() {
+        let backend = TestBackend::new(72, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut diff = HelmValuesDiffState::new(12, 27, 1);
+        diff.summary = Some("long wrapped summary for helm values diff header".into());
+        diff.loading = false;
+
+        terminal
+            .draw(|frame| render_helm_values_diff(frame, Rect::new(0, 0, 72, 12), &diff))
+            .expect("helm values diff header should wrap on narrow width");
     }
 }
