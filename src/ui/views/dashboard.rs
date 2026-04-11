@@ -23,7 +23,10 @@ use crate::{
         },
     },
     time::format_local,
-    ui::{components::default_theme, theme::Theme, utilization_style, wrapped_line_count},
+    ui::{
+        components::default_theme, theme::Theme, truncate_line_content, utilization_style,
+        wrapped_line_count,
+    },
 };
 
 // ── dashboard computation cache ──────────────────────────────────────────────
@@ -365,6 +368,11 @@ fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot
         .border_style(theme.border_active_style())
         .style(Style::default().bg(theme.bg));
 
+    let width = usize::from(block.inner(area).width.max(1));
+    let lines = lines
+        .into_iter()
+        .map(|line| truncate_line_content(&line, width))
+        .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -446,6 +454,11 @@ fn render_cluster_health_summary(
         .border_style(border_style)
         .style(Style::default().bg(theme.bg));
 
+    let width = usize::from(block.inner(area).width.max(1));
+    let lines = lines
+        .into_iter()
+        .map(|line| truncate_line_content(&line, width))
+        .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -509,6 +522,11 @@ fn render_resource_counts(frame: &mut Frame, area: Rect, stats: &DashboardStats,
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.bg));
 
+    let width = usize::from(block.inner(area).width.max(1));
+    let lines = lines
+        .into_iter()
+        .map(|line| truncate_line_content(&line, width))
+        .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -593,7 +611,11 @@ fn render_compact_health_gauges(
         compact_gauge_line("Cluster CPU", u64::from(cluster_res.cluster_cpu_pct), theme),
         compact_gauge_line("Cluster Mem", u64::from(cluster_res.cluster_mem_pct), theme),
     ];
-
+    let width = usize::from(inner.width.max(1));
+    let lines = lines
+        .into_iter()
+        .map(|line| truncate_line_content(&line, width))
+        .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -696,7 +718,13 @@ fn render_node_utilization_summary(
             Style::default().fg(theme.warning),
         ),
     ]);
-    frame.render_widget(Paragraph::new(saturation_line), rows[2]);
+    frame.render_widget(
+        Paragraph::new(truncate_line_content(
+            &saturation_line,
+            usize::from(rows[2].width.max(1)),
+        )),
+        rows[2],
+    );
 
     let coverage_line = Line::from(vec![
         Span::styled("  Coverage ", theme.inactive_style()),
@@ -708,7 +736,13 @@ fn render_node_utilization_summary(
             Style::default().fg(theme.accent2),
         ),
     ]);
-    frame.render_widget(Paragraph::new(coverage_line), rows[3]);
+    frame.render_widget(
+        Paragraph::new(truncate_line_content(
+            &coverage_line,
+            usize::from(rows[3].width.max(1)),
+        )),
+        rows[3],
+    );
 }
 
 fn render_line_gauge(
@@ -816,6 +850,11 @@ fn render_hot_nodes(frame: &mut Frame, area: Rect, insights: &DashboardInsights,
         .border_style(theme.border_style())
         .style(Style::default().bg(theme.bg));
 
+    let width = usize::from(block.inner(area).width.max(1));
+    let lines = lines
+        .into_iter()
+        .map(|line| truncate_line_content(&line, width))
+        .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
@@ -924,6 +963,11 @@ fn render_overcommit_governance(
         ]),
     ];
 
+    let width = usize::from(inner.width.max(1));
+    let lines = lines
+        .into_iter()
+        .map(|line| truncate_line_content(&line, width))
+        .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -990,7 +1034,11 @@ fn render_consumer_panel(
             Span::styled(format!("{:>8}", val), accent),
         ]));
     }
-
+    let width = usize::from(inner.width.max(1));
+    let lines = lines
+        .into_iter()
+        .map(|line| truncate_line_content(&line, width))
+        .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -1172,7 +1220,7 @@ fn render_alerts(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::state::ClusterSnapshot;
+    use crate::{k8s::dtos::ClusterInfo, state::ClusterSnapshot};
     use ratatui::{Terminal, backend::TestBackend};
 
     #[test]
@@ -1210,6 +1258,24 @@ mod tests {
         let backend = TestBackend::new(40, 10);
         let mut terminal = Terminal::new(backend).unwrap();
         let snapshot = ClusterSnapshot::default();
+        terminal
+            .draw(|frame| render_dashboard(frame, frame.area(), &snapshot, 0, true))
+            .unwrap();
+    }
+
+    #[test]
+    fn dashboard_summary_cards_render_long_metadata_without_right_edge_crop_regression() {
+        let backend = TestBackend::new(96, 28);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.cluster_info = Some(ClusterInfo {
+            context: Some(
+                "very-long-context-name-for-staging-cluster-with-extra-suffix".to_string(),
+            ),
+            server: "https://extremely-long-kubernetes-api-server-name.internal.example.com".into(),
+            git_version: Some("v1.32.0-super-long-build-metadata".into()),
+            ..ClusterInfo::default()
+        });
         terminal
             .draw(|frame| render_dashboard(frame, frame.area(), &snapshot, 0, true))
             .unwrap();

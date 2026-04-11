@@ -17,7 +17,7 @@ use crate::{
             default_theme, probe_panel::render_probe_panel, render_debug_container_dialog,
             render_node_debug_dialog, render_vertical_scrollbar, scale_dialog::render_scale_dialog,
         },
-        format_age, table_window, wrap_span_groups, wrapped_line_count,
+        format_age, table_window, truncate_line_content, wrap_span_groups, wrapped_line_count,
     },
 };
 
@@ -58,15 +58,6 @@ fn detail_panel_scroll_metrics(lines: &[Line<'_>], area: Rect, scroll: usize) ->
     let total = wrapped_line_count(lines, area.width);
     let position = scroll.min(total.saturating_sub(area.height.max(1) as usize));
     (total, position)
-}
-
-fn truncate_line_content(line: &Line<'_>, width: usize) -> Line<'static> {
-    let text = line
-        .spans
-        .iter()
-        .map(|span| span.content.as_ref())
-        .collect::<String>();
-    Line::from(crate::ui::truncate_message(&text, width.max(1)).into_owned())
 }
 
 fn detail_footer_groups(
@@ -873,18 +864,6 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
     if inner.width < 70 || inner.height < 19 {
         render_compact_detail(frame, inner, detail_state);
     } else {
-        let footer_lines = detail_footer_lines(detail_state, &theme, inner.width.max(1));
-        let footer_height = footer_lines.len().max(1) as u16 + 1;
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Min(9),
-                Constraint::Min(6),
-                Constraint::Length(footer_height),
-            ])
-            .split(inner);
-
         let (kind_label, name_label) = if let Some(resource) = &detail_state.resource {
             (
                 resource.kind().to_ascii_uppercase(),
@@ -894,7 +873,7 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
             ("RESOURCE".to_string(), "unknown".to_string())
         };
 
-        let header_line = Line::from(vec![
+        let header_lines = vec![Line::from(vec![
             Span::styled(" ◆ ", theme.title_style()),
             Span::styled(kind_label, theme.title_style()),
             Span::styled("  /  ", theme.muted_style()),
@@ -907,12 +886,30 @@ pub fn render_detail(frame: &mut Frame, area: Rect, detail_state: &DetailViewSta
             } else {
                 Span::raw("")
             },
-        ]);
+        ])];
+        let footer_lines = detail_footer_lines(detail_state, &theme, inner.width.max(1));
+        let header_height = wrapped_line_count(&header_lines, inner.width.max(1)).max(1) as u16 + 1;
+        let footer_height = footer_lines.len().max(1) as u16 + 1;
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(header_height),
+                Constraint::Min(9),
+                Constraint::Min(6),
+                Constraint::Length(footer_height),
+            ])
+            .split(inner);
+
         let header_block = Block::default()
             .borders(Borders::BOTTOM)
             .border_style(theme.border_style())
             .style(Style::default().bg(theme.header_bg));
-        frame.render_widget(Paragraph::new(header_line).block(header_block), chunks[0]);
+        frame.render_widget(
+            Paragraph::new(header_lines)
+                .block(header_block)
+                .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
 
         let info_cols = Layout::default()
             .direction(Direction::Horizontal)
@@ -1293,5 +1290,21 @@ mod tests {
         };
         let lines = detail_footer_lines(&state, &default_theme(), 32);
         assert!(lines.len() > 1);
+    }
+
+    #[test]
+    fn detail_header_renders_long_resource_name_on_narrow_width() {
+        let backend = TestBackend::new(90, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let state = DetailViewState {
+            resource: Some(ResourceRef::Pod(
+                "extremely-long-pod-name-with-many-segments-and-hash-suffix".into(),
+                "default".into(),
+            )),
+            ..DetailViewState::default()
+        };
+        terminal
+            .draw(|frame| render_detail(frame, frame.area(), &state))
+            .unwrap();
     }
 }

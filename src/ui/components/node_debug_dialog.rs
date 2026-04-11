@@ -12,7 +12,7 @@ use crate::k8s::{
     node_debug::{NodeDebugLaunchRequest, NodeDebugProfile, default_debug_image},
 };
 use crate::ui::components::render_vertical_scrollbar;
-use crate::ui::{truncate_message, wrap_span_groups, wrapped_line_count};
+use crate::ui::{truncate_line_content, truncate_message, wrap_span_groups, wrapped_line_count};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeDebugField {
@@ -631,20 +631,16 @@ fn render_field(
     } else {
         Style::default().fg(Color::Gray)
     };
-    frame.render_widget(
-        Paragraph::new(Line::from(vec![Span::styled(
-            value.to_string(),
-            value_style,
-        )]))
-        .block(
-            Block::default()
-                .title(format!(" {label} "))
-                .borders(Borders::ALL)
-                .border_type(BorderType::Rounded)
-                .border_style(border_style),
-        ),
-        area,
+    let block = Block::default()
+        .title(format!(" {label} "))
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style);
+    let value_line = truncate_line_content(
+        &Line::from(vec![Span::styled(value.to_string(), value_style)]),
+        usize::from(block.inner(area).width.max(1)),
     );
+    frame.render_widget(Paragraph::new(value_line).block(block), area);
 }
 
 fn render_button(frame: &mut Frame, area: Rect, label: &str, focused: bool, enabled: bool) {

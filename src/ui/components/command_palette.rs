@@ -18,7 +18,7 @@ use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::LoadedRunbook;
 use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::theme::Theme;
-use crate::ui::{wrap_span_groups, wrapped_line_count};
+use crate::ui::{cursor_visible_input_line, wrap_span_groups, wrapped_line_count};
 use crate::workbench::WorkbenchTabKey;
 use crate::workspaces::display_hotkey;
 
@@ -1264,25 +1264,6 @@ impl CommandPalette {
         let footer_lines = wrap_span_groups(&footer_groups, inner.width.max(1));
         let footer_height = wrapped_line_count(&footer_lines, inner.width.max(1)).max(1) as u16 + 1;
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(if compact {
-                [
-                    Constraint::Length(1),
-                    Constraint::Length(3),
-                    Constraint::Min(1),
-                    Constraint::Length(footer_height),
-                ]
-            } else {
-                [
-                    Constraint::Length(2),
-                    Constraint::Length(3),
-                    Constraint::Min(3),
-                    Constraint::Length(footer_height),
-                ]
-            })
-            .split(inner);
-
         let title = Line::from(vec![
             Span::styled(" ⌘ ", theme.title_style()),
             Span::styled("Action Palette", theme.title_style()),
@@ -1296,7 +1277,24 @@ impl CommandPalette {
             .borders(Borders::BOTTOM)
             .border_style(theme.border_style())
             .style(Style::default().bg(theme.header_bg));
-        frame.render_widget(Paragraph::new(title).block(title_block), chunks[0]);
+        let title_lines = vec![title];
+        let title_height = wrapped_line_count(&title_lines, inner.width.max(1)).max(1) as u16
+            + u16::from(!compact);
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(title_height),
+                Constraint::Length(3),
+                Constraint::Min(if compact { 1 } else { 3 }),
+                Constraint::Length(footer_height),
+            ])
+            .split(inner);
+        frame.render_widget(
+            Paragraph::new(title_lines)
+                .block(title_block)
+                .wrap(Wrap { trim: false }),
+            chunks[0],
+        );
 
         let search_content = if self.query.is_empty() {
             Line::from(vec![
@@ -1304,11 +1302,15 @@ impl CommandPalette {
                 Span::styled("pods, api, history, rollout…", theme.inactive_style()),
             ])
         } else {
-            Line::from(vec![
-                Span::styled("  : ", theme.title_style()),
-                Span::styled(self.query.clone(), Style::default().fg(theme.fg)),
-                Span::styled("█", theme.title_style()),
-            ])
+            cursor_visible_input_line(
+                &[Span::styled("  : ".to_string(), theme.title_style())],
+                &self.query,
+                Some(self.query.chars().count()),
+                Style::default().fg(theme.fg),
+                theme.title_style(),
+                &[],
+                usize::from(chunks[1].width.saturating_sub(2).max(1)),
+            )
         };
         let search_block = Block::default()
             .borders(Borders::ALL)

@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::resource_templates::{ResourceTemplateKind, ResourceTemplateValues};
-use crate::ui::table_window;
+use crate::ui::{cursor_visible_input_line, table_window, truncate_message, wrapped_line_count};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceTemplateField {
@@ -181,35 +181,39 @@ pub fn render_resource_template_dialog(
     let footer_height =
         crate::ui::wrapped_line_count(&footer_lines, popup.width.max(1)).max(1) as u16 + 1;
 
+    let title_lines = vec![Line::from(Span::styled(
+        format!("Create from Template: {}", state.values.kind.label()),
+        Style::default().fg(ratatui::style::Color::Cyan).bold(),
+    ))];
+    let hint_lines = vec![Line::from(vec![
+        Span::raw("  Fill the required fields, then "),
+        Span::styled("Create", Style::default().bold()),
+        Span::raw(" to open the manifest in your editor."),
+    ])];
+    let title_height = wrapped_line_count(&title_lines, popup.width.max(1)).max(1) as u16 + 2;
+    let hint_height = wrapped_line_count(&hint_lines, popup.width.max(1)).max(1) as u16;
+
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
-            Constraint::Length(2),
+            Constraint::Length(title_height),
+            Constraint::Length(hint_height),
             Constraint::Min(8),
             Constraint::Length(3),
             Constraint::Length(footer_height),
         ])
         .split(popup);
 
-    let title = format!("Create from Template: {}", state.values.kind.label());
     frame.render_widget(
-        Paragraph::new(Line::from(Span::styled(
-            title,
-            Style::default().fg(ratatui::style::Color::Cyan).bold(),
-        )))
-        .block(Block::default().borders(Borders::ALL))
-        .alignment(Alignment::Center),
+        Paragraph::new(title_lines)
+            .block(Block::default().borders(Borders::ALL))
+            .wrap(Wrap { trim: false })
+            .alignment(Alignment::Center),
         chunks[0],
     );
 
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::raw("  Fill the required fields, then "),
-            Span::styled("Create", Style::default().bold()),
-            Span::raw(" to open the manifest in your editor."),
-        ]))
-        .block(Block::default().borders(Borders::LEFT | Borders::RIGHT)),
+        Paragraph::new(hint_lines).block(Block::default().borders(Borders::LEFT | Borders::RIGHT)),
         chunks[1],
     );
 
@@ -261,29 +265,35 @@ pub fn render_resource_template_dialog(
                 }
             };
             let selected = *field == state.focus_field;
-            Line::from(vec![
-                Span::styled(
-                    if selected { " ▶ " } else { "   " },
-                    Style::default().fg(ratatui::style::Color::Yellow),
-                ),
-                Span::styled(format!("{label:16}"), Style::default().bold()),
-                Span::raw(" "),
-                Span::styled(
-                    value,
-                    if selected {
-                        Style::default()
-                            .fg(ratatui::style::Color::Black)
-                            .bg(ratatui::style::Color::White)
-                    } else {
-                        Style::default()
-                    },
-                ),
+            cursor_visible_input_line(
+                &[
+                    Span::styled(
+                        if selected {
+                            " ▶ ".to_string()
+                        } else {
+                            "   ".to_string()
+                        },
+                        Style::default().fg(ratatui::style::Color::Yellow),
+                    ),
+                    Span::styled(format!("{label:16} "), Style::default().bold()),
+                ],
+                value,
+                selected.then_some(value.chars().count()),
                 if selected {
-                    Span::styled("█", Style::default().fg(ratatui::style::Color::White))
+                    Style::default()
+                        .fg(ratatui::style::Color::Black)
+                        .bg(ratatui::style::Color::White)
                 } else {
-                    Span::raw("")
+                    Style::default()
                 },
-            ])
+                if selected {
+                    Style::default().fg(ratatui::style::Color::White)
+                } else {
+                    Style::default()
+                },
+                &[],
+                usize::from(field_inner.width.max(1)),
+            )
         })
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(rows), field_inner);
@@ -401,16 +411,19 @@ fn render_compact_resource_template_dialog(
     } else {
         "enter create  esc cancel".to_string()
     };
+    let compact_line = |text: String| {
+        Line::from(truncate_message(&text, usize::from(inner.width.max(1))).into_owned())
+    };
     let lines = vec![
-        Line::from(format!(
+        compact_line(format!(
             "field {}/{} {}",
             selected_idx + 1,
             editable_fields.len(),
             focus
         )),
-        Line::from(format!("{label}: {value}")),
-        Line::from(status),
-        Line::from("tab move  type edit"),
+        compact_line(format!("{label}: {value}")),
+        compact_line(status),
+        compact_line("tab move  type edit".to_string()),
     ];
     frame.render_widget(Paragraph::new(lines), inner);
 }
