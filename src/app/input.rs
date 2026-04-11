@@ -32,7 +32,11 @@ impl AppState {
             return AppAction::ToggleWorkbench;
         }
 
-        let action_history_len = self.visible_action_history_entries().len();
+        let action_history_ids = self
+            .visible_action_history_entries()
+            .into_iter()
+            .map(|entry| entry.id)
+            .collect::<Vec<_>>();
         let Some(tab) = self.workbench.active_tab_mut() else {
             return AppAction::None;
         };
@@ -41,30 +45,30 @@ impl AppState {
             WorkbenchTabState::ActionHistory(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
                 KeyCode::Char('j') | KeyCode::Down => {
-                    tab.select_next(action_history_len);
+                    tab.select_next(&action_history_ids);
                     AppAction::None
                 }
                 KeyCode::Char('k') | KeyCode::Up => {
-                    tab.select_previous();
+                    tab.select_previous(&action_history_ids);
                     AppAction::None
                 }
                 KeyCode::Char('g') => {
-                    tab.select_top();
+                    tab.select_top(&action_history_ids);
                     AppAction::None
                 }
                 KeyCode::Char('G') => {
-                    tab.select_bottom(action_history_len);
+                    tab.select_bottom(&action_history_ids);
                     AppAction::None
                 }
                 KeyCode::PageDown => {
                     for _ in 0..10 {
-                        tab.select_next(action_history_len);
+                        tab.select_next(&action_history_ids);
                     }
                     AppAction::None
                 }
                 KeyCode::PageUp => {
                     for _ in 0..10 {
-                        tab.select_previous();
+                        tab.select_previous(&action_history_ids);
                     }
                     AppAction::None
                 }
@@ -606,27 +610,23 @@ impl AppState {
                     match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
                         KeyCode::Char('j') | KeyCode::Down => {
-                            if !tab.entries.is_empty() {
-                                tab.selected =
-                                    (tab.selected + 1).min(tab.entries.len().saturating_sub(1));
-                                tab.scroll = tab.scroll.max(tab.selected.saturating_sub(1));
-                            }
+                            tab.select_next();
+                            tab.scroll = tab.scroll.max(tab.selected.saturating_sub(1));
                             AppAction::None
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
-                            tab.selected = tab.selected.saturating_sub(1);
+                            tab.select_previous();
                             tab.scroll = tab.scroll.min(tab.selected);
                             AppAction::None
                         }
                         KeyCode::Char('g') => {
-                            tab.selected = 0;
+                            tab.select_top();
                             tab.scroll = 0;
                             AppAction::None
                         }
                         KeyCode::Char('G') => {
-                            let max = tab.entries.len().saturating_sub(1);
-                            tab.selected = max;
-                            tab.scroll = max;
+                            tab.select_bottom();
+                            tab.scroll = tab.selected;
                             AppAction::None
                         }
                         KeyCode::Char('m') => {
@@ -1256,22 +1256,19 @@ impl AppState {
                         AppAction::None
                     }
                     KeyCode::Char('j') | KeyCode::Down => {
-                        if !tab.filtered_target_indices.is_empty() {
-                            tab.selected_target = (tab.selected_target + 1)
-                                .min(tab.filtered_target_indices.len().saturating_sub(1));
-                        }
+                        tab.select_next_target();
                         AppAction::None
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
-                        tab.selected_target = tab.selected_target.saturating_sub(1);
+                        tab.select_previous_target();
                         AppAction::None
                     }
                     KeyCode::Char('g') => {
-                        tab.selected_target = 0;
+                        tab.select_top_target();
                         AppAction::None
                     }
                     KeyCode::Char('G') => {
-                        tab.selected_target = tab.filtered_target_indices.len().saturating_sub(1);
+                        tab.select_bottom_target();
                         AppAction::None
                     }
                     KeyCode::Enter => AppAction::OpenNetworkConnectivity,
