@@ -23,25 +23,24 @@ impl TunnelRegistry {
     /// Update tunnels from service
     pub fn update_tunnels(&mut self, tunnels: Vec<PortForwardTunnelInfo>) {
         self.tunnels.clear();
-        self.tunnel_ids.clear();
         for tunnel in tunnels {
-            self.tunnel_ids.push(tunnel.id.clone());
             self.tunnels.insert(tunnel.id.clone(), tunnel);
         }
+        self.rebuild_order();
         self.clamp_selected_index();
     }
 
     /// Add a tunnel
     pub fn add_tunnel(&mut self, tunnel: PortForwardTunnelInfo) {
-        self.tunnel_ids.push(tunnel.id.clone());
         self.tunnels.insert(tunnel.id.clone(), tunnel);
+        self.rebuild_order();
         self.clamp_selected_index();
     }
 
     /// Remove a tunnel
     pub fn remove_tunnel(&mut self, tunnel_id: &str) {
         self.tunnels.remove(tunnel_id);
-        self.tunnel_ids.retain(|id| id != tunnel_id);
+        self.rebuild_order();
         self.clamp_selected_index();
     }
 
@@ -106,6 +105,30 @@ impl TunnelRegistry {
         } else if self.selected_index >= self.tunnel_ids.len() {
             self.selected_index = self.tunnel_ids.len() - 1;
         }
+    }
+
+    fn rebuild_order(&mut self) {
+        let mut ordered = self.tunnels.values().collect::<Vec<_>>();
+        ordered.sort_by(|left, right| {
+            (
+                left.target.namespace.as_str(),
+                left.target.pod_name.as_str(),
+                left.local_addr.port(),
+                left.target.remote_port,
+                left.id.as_str(),
+            )
+                .cmp(&(
+                    right.target.namespace.as_str(),
+                    right.target.pod_name.as_str(),
+                    right.local_addr.port(),
+                    right.target.remote_port,
+                    right.id.as_str(),
+                ))
+        });
+        self.tunnel_ids = ordered
+            .into_iter()
+            .map(|tunnel| tunnel.id.clone())
+            .collect();
     }
 }
 
@@ -182,5 +205,30 @@ mod tests {
         registry.remove_tunnel("test-2");
         assert_eq!(registry.selected().map(|t| t.id.as_str()), Some("test-1"));
         assert_eq!(registry.selected_index(), 0);
+    }
+
+    #[test]
+    fn ordered_tunnels_sort_deterministically() {
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(PortForwardTunnelInfo {
+            id: "b".to_string(),
+            target: PortForwardTarget::new("ops", "pod-b", 8081),
+            local_addr: SocketAddr::from_str("127.0.0.1:8081").unwrap(),
+            state: TunnelState::Active,
+        });
+        registry.add_tunnel(PortForwardTunnelInfo {
+            id: "a".to_string(),
+            target: PortForwardTarget::new("default", "pod-a", 8080),
+            local_addr: SocketAddr::from_str("127.0.0.1:8080").unwrap(),
+            state: TunnelState::Active,
+        });
+
+        let ordered = registry
+            .ordered_tunnels()
+            .into_iter()
+            .map(|tunnel| tunnel.id.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(ordered, vec!["a", "b"]);
     }
 }
