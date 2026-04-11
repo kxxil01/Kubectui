@@ -64,8 +64,13 @@ impl NamespacePicker {
     }
 
     pub fn set_namespaces(&mut self, namespaces: Vec<String>) {
+        let selected_namespace = self.filtered_namespaces().get(self.selected_index).cloned();
         self.namespaces = namespaces;
-        self.selected_index = 0;
+        let filtered = self.filtered_namespaces();
+        self.selected_index = selected_namespace
+            .as_ref()
+            .and_then(|namespace| filtered.iter().position(|entry| entry == namespace))
+            .unwrap_or_else(|| self.selected_index.min(filtered.len().saturating_sub(1)));
     }
 
     pub fn selected_index(&self) -> usize {
@@ -408,5 +413,24 @@ mod tests {
     fn namespace_picker_offset_keeps_selection_visible() {
         let area = Rect::new(0, 0, 40, 6);
         assert_eq!(namespace_picker_offset(10, 8, area), 6);
+    }
+
+    #[test]
+    fn namespace_picker_refresh_preserves_selected_namespace_identity() {
+        let mut picker =
+            NamespacePicker::new(vec!["default".to_string(), "kube-system".to_string()]);
+        picker.open();
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
+
+        picker.set_namespaces(vec![
+            "default".to_string(),
+            "kube-public".to_string(),
+            "kube-system".to_string(),
+        ]);
+
+        assert_eq!(
+            picker.filtered_namespaces().get(picker.selected_index()),
+            Some(&"kube-system".to_string())
+        );
     }
 }

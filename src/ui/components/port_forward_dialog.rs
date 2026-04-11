@@ -103,8 +103,21 @@ impl PortForwardDialog {
 
     /// Update tunnel registry.
     pub fn update_registry(&mut self, registry: TunnelRegistry) {
+        let selected_id = self
+            .registry
+            .ordered_tunnels()
+            .get(self.selected_tunnel)
+            .map(|tunnel| tunnel.id.clone());
         self.registry = registry;
-        if !self.registry.is_empty() && self.selected_tunnel >= self.registry.len() {
+        if let Some(selected_id) = selected_id
+            && let Some(index) = self
+                .registry
+                .ordered_tunnels()
+                .iter()
+                .position(|tunnel| tunnel.id == selected_id)
+        {
+            self.selected_tunnel = index;
+        } else if !self.registry.is_empty() && self.selected_tunnel >= self.registry.len() {
             self.selected_tunnel = self.registry.len() - 1;
         }
     }
@@ -293,8 +306,8 @@ impl PortForwardDialog {
 
     fn get_selected_tunnel(&self) -> Option<crate::k8s::portforward::PortForwardTunnelInfo> {
         self.registry
-            .tunnels()
-            .values()
+            .ordered_tunnels()
+            .into_iter()
             .nth(self.selected_tunnel)
             .cloned()
     }
@@ -521,7 +534,7 @@ impl PortForwardDialog {
             frame.render_widget(message, chunks[0]);
         } else {
             let mut lines = vec![];
-            let tunnels = self.registry.tunnels().values().collect::<Vec<_>>();
+            let tunnels = self.registry.ordered_tunnels();
             let selected = selected_tunnel_index(tunnels.len(), self.selected_tunnel);
             let window = table_window(
                 tunnels.len(),
@@ -616,7 +629,7 @@ impl PortForwardDialog {
                 clamp("[F1] create  [Esc] close".to_string()),
             ]
         } else {
-            let tunnels = self.registry.tunnels().values().collect::<Vec<_>>();
+            let tunnels = self.registry.ordered_tunnels();
             let selected = self.selected_tunnel.min(tunnels.len().saturating_sub(1));
             let tunnel = tunnels[selected];
             let state = match tunnel.state {
@@ -851,6 +864,28 @@ mod tests {
         dialog.update_registry(registry);
 
         assert_eq!(dialog.selected_tunnel, 0);
+    }
+
+    #[test]
+    fn update_registry_preserves_selected_tunnel_identity() {
+        let mut dialog = PortForwardDialog::new();
+
+        let mut initial = TunnelRegistry::new();
+        initial.add_tunnel(make_tunnel("b", "pod-b", TunnelState::Active, 5002));
+        initial.add_tunnel(make_tunnel("c", "pod-c", TunnelState::Active, 5003));
+        dialog.update_registry(initial);
+        dialog.selected_tunnel = 1;
+
+        let mut refreshed = TunnelRegistry::new();
+        refreshed.add_tunnel(make_tunnel("a", "pod-a", TunnelState::Active, 5001));
+        refreshed.add_tunnel(make_tunnel("b", "pod-b", TunnelState::Active, 5002));
+        refreshed.add_tunnel(make_tunnel("c", "pod-c", TunnelState::Active, 5003));
+        dialog.update_registry(refreshed);
+
+        let selected = dialog
+            .get_selected_tunnel()
+            .expect("selected tunnel should still exist");
+        assert_eq!(selected.id, "c");
     }
 
     #[test]

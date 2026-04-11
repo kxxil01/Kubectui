@@ -2671,3 +2671,115 @@ fn action_history_selection_clamps_when_scope_changes() {
         Some(ResourceRef::Pod("api-0".into(), "payments".into()))
     );
 }
+
+#[test]
+fn action_history_selection_preserves_selected_entry_when_newer_scope_row_prepends() {
+    let mut app = AppState::default();
+    app.current_context_name = Some("prod".into());
+    app.current_namespace = "payments".into();
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-0".into(), "payments".into())),
+        "Pod api-0",
+        "Restart requested",
+    );
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-1".into(), "payments".into())),
+        "Pod api-1",
+        "Restart requested",
+    );
+    app.open_action_history_tab(true);
+    let visible_ids = app
+        .visible_action_history_entries()
+        .into_iter()
+        .map(|entry| entry.id)
+        .collect::<Vec<_>>();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::ActionHistory(history_tab) = &mut tab.state
+    {
+        history_tab.select_bottom(&visible_ids);
+    }
+
+    app.record_action_pending(
+        ActionKind::Restart,
+        AppView::Pods,
+        Some(ResourceRef::Pod("api-2".into(), "payments".into())),
+        "Pod api-2",
+        "Restart requested",
+    );
+
+    assert_eq!(
+        app.selected_action_history_target()
+            .map(|target| target.resource.clone()),
+        Some(ResourceRef::Pod("api-0".into(), "payments".into()))
+    );
+}
+
+#[test]
+fn reopening_connectivity_tab_preserves_selected_target_identity() {
+    let mut app = AppState::default();
+    let source = ResourceRef::Pod("source".into(), "default".into());
+    app.open_connectivity_tab(
+        source.clone(),
+        vec![
+            crate::workbench::ConnectivityTargetOption {
+                resource: ResourceRef::Pod("api-0".into(), "default".into()),
+                display: "api-0".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.2".into()),
+            },
+            crate::workbench::ConnectivityTargetOption {
+                resource: ResourceRef::Pod("api-1".into(), "default".into()),
+                display: "api-1".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.3".into()),
+            },
+        ],
+    );
+
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::Connectivity(connectivity_tab) = &mut tab.state
+    {
+        connectivity_tab.select_bottom_target();
+    }
+
+    app.open_connectivity_tab(
+        source,
+        vec![
+            crate::workbench::ConnectivityTargetOption {
+                resource: ResourceRef::Pod("api-00".into(), "default".into()),
+                display: "api-00".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.1".into()),
+            },
+            crate::workbench::ConnectivityTargetOption {
+                resource: ResourceRef::Pod("api-0".into(), "default".into()),
+                display: "api-0".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.2".into()),
+            },
+            crate::workbench::ConnectivityTargetOption {
+                resource: ResourceRef::Pod("api-1".into(), "default".into()),
+                display: "api-1".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.3".into()),
+            },
+        ],
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("connectivity tab should stay open");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &tab.state else {
+        panic!("active tab should be connectivity");
+    };
+    assert_eq!(
+        connectivity_tab
+            .selected_target_option()
+            .map(|target| target.resource.clone()),
+        Some(ResourceRef::Pod("api-1".into(), "default".into()))
+    );
+}

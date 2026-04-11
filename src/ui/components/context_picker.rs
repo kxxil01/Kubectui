@@ -67,9 +67,14 @@ impl ContextPicker {
     }
 
     pub fn set_contexts(&mut self, contexts: Vec<String>, current_context: Option<String>) {
+        let selected_context = self.filtered_contexts().get(self.selected_index).cloned();
         self.contexts = contexts;
         self.current_context = current_context;
-        self.selected_index = 0;
+        let filtered = self.filtered_contexts();
+        self.selected_index = selected_context
+            .as_ref()
+            .and_then(|context| filtered.iter().position(|entry| entry == context))
+            .unwrap_or_else(|| self.selected_index.min(filtered.len().saturating_sub(1)));
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> ContextPickerAction {
@@ -451,5 +456,25 @@ mod tests {
     fn context_picker_offset_keeps_selection_visible() {
         let area = Rect::new(0, 0, 40, 6);
         assert_eq!(context_picker_offset(10, 8, area), 6);
+    }
+
+    #[test]
+    fn context_picker_refresh_preserves_selected_context_identity() {
+        let mut picker = ContextPicker::new(
+            vec!["dev".to_string(), "prod".to_string()],
+            Some("dev".to_string()),
+        );
+        picker.open();
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
+
+        picker.set_contexts(
+            vec!["dev".to_string(), "prod".to_string(), "staging".to_string()],
+            Some("dev".to_string()),
+        );
+
+        assert_eq!(
+            picker.filtered_contexts().get(picker.selected_index),
+            Some(&"prod".to_string())
+        );
     }
 }
