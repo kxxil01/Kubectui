@@ -1967,12 +1967,8 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
         return;
     }
 
-    let total = tab_state.timeline.len();
-    let window = scroll_window(total, scroll, area.height.saturating_sub(1) as usize);
-
-    // Only build Line objects for the visible window to avoid per-frame allocations
-    // for off-screen entries.
-    let lines: Vec<Line> = tab_state.timeline[window.start..window.end]
+    let lines: Vec<Line> = tab_state
+        .timeline
         .iter()
         .map(|entry| match entry {
             TimelineEntry::Event {
@@ -2000,7 +1996,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
                         Style::default().add_modifier(Modifier::BOLD).fg(theme.fg),
                     ),
                     Span::styled(
-                        crate::ui::truncate_message(&event.message, 60),
+                        crate::ui::truncate_message(&event.message, 60).to_string(),
                         Style::default().fg(theme.fg_dim),
                     ),
                     Span::styled(format!("  {ts}"), theme.muted_style()),
@@ -2035,7 +2031,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
                             .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(
-                        crate::ui::truncate_message(message, 60),
+                        crate::ui::truncate_message(message, 60).to_string(),
                         Style::default().fg(theme.fg),
                     ),
                     Span::styled(format!("  {ts}"), theme.muted_style()),
@@ -2043,9 +2039,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
             }
         })
         .collect();
-
-    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
-    render_scrollbar(frame, area, total, window.start);
+    render_wrapped_text_lines(frame, area, lines, scroll);
 }
 
 fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: usize) {
@@ -2910,9 +2904,8 @@ fn render_extension_output_tab(
         return;
     }
 
-    let total = tab.lines.len();
-    let window = scroll_window(total, tab.scroll, sections[1].height.max(1) as usize);
-    let lines = tab.lines[window.start..window.end]
+    let lines = tab
+        .lines
         .iter()
         .map(|line| {
             let style = if line.starts_with("stderr:") {
@@ -2923,11 +2916,7 @@ fn render_extension_output_tab(
             Line::from(Span::styled(line.clone(), style))
         })
         .collect::<Vec<_>>();
-    frame.render_widget(
-        Paragraph::new(lines).wrap(Wrap { trim: false }),
-        sections[1],
-    );
-    render_scrollbar(frame, sections[1], total, window.start);
+    render_wrapped_text_lines(frame, sections[1], lines, tab.scroll);
 }
 
 fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::RunbookTabState) {
@@ -3262,9 +3251,11 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize
 mod tests {
     use super::{
         VisibleWindow, access_review_lines, centered_window, render_connectivity_tab,
-        render_helm_values_diff, render_logs_tab, render_workload_logs_tab, scroll_window,
+        render_events_tab, render_extension_output_tab, render_helm_values_diff, render_logs_tab,
+        render_workload_logs_tab, scroll_window,
     };
     use crate::{
+        action_history::{ActionKind, ActionStatus},
         app::ResourceRef,
         authorization::{ActionAccessReview, DetailActionAuthorization, ResourceAccessCheck},
         k8s::dtos::RbacRule,
@@ -3274,11 +3265,12 @@ mod tests {
             AccessReviewSubject, SubjectAccessReview, SubjectBindingResolution,
             SubjectRoleResolution,
         },
+        timeline::TimelineEntry,
         ui::{components::default_theme, truncate_message, wrapped_line_count},
         workbench::{
             AccessReviewTabState, AttemptedActionReview, ConnectivityTabFocus,
-            ConnectivityTabState, HelmValuesDiffState, PodLogsTabState, WorkbenchTab,
-            WorkbenchTabState, WorkloadLogsTabState,
+            ConnectivityTabState, ExtensionOutputTabState, HelmValuesDiffState, PodLogsTabState,
+            ResourceEventsTabState, WorkbenchTab, WorkbenchTabState, WorkloadLogsTabState,
         },
     };
     use ratatui::{Terminal, backend::TestBackend, layout::Rect, text::Line};
@@ -3809,5 +3801,53 @@ mod tests {
         terminal
             .draw(|frame| render_helm_values_diff(frame, Rect::new(0, 0, 72, 12), &diff))
             .expect("helm values diff header should wrap on narrow width");
+    }
+
+    #[test]
+    fn extension_output_renders_long_wrapped_lines_on_narrow_width() {
+        let backend = TestBackend::new(72, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = ExtensionOutputTabState::new(
+            7,
+            "Describe Pod",
+            Some(ResourceRef::Pod("api-0".into(), "default".into())),
+            "BG",
+            "kubectl describe pod api-0",
+        );
+        tab.loading = false;
+        tab.lines = vec![
+            "very long extension output line that should wrap instead of clipping lower visual rows"
+                .into(),
+            "stderr: another very long extension output line for warning styling".into(),
+        ];
+
+        terminal
+            .draw(|frame| render_extension_output_tab(frame, Rect::new(0, 0, 72, 10), &tab))
+            .expect("extension output should render on narrow width");
+    }
+
+    #[test]
+    fn resource_events_timeline_renders_wrapped_lines_on_narrow_width() {
+        let backend = TestBackend::new(72, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut state =
+            ResourceEventsTabState::new(ResourceRef::Pod("api-0".into(), "default".into()));
+        state.timeline = vec![TimelineEntry::Action {
+            kind: ActionKind::ApplyYaml,
+            status: ActionStatus::Succeeded,
+            message:
+                "very long timeline message that should wrap instead of hiding lower visual rows"
+                    .into(),
+            started_at: crate::time::now(),
+            finished_at: Some(crate::time::now()),
+        }];
+        let tab = WorkbenchTab {
+            id: 1,
+            state: WorkbenchTabState::ResourceEvents(state),
+        };
+
+        terminal
+            .draw(|frame| render_events_tab(frame, Rect::new(0, 0, 72, 10), 0, &tab))
+            .expect("resource events timeline should render on narrow width");
     }
 }

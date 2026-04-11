@@ -848,8 +848,9 @@ impl ResourceEventsTabState {
             self.events.drain(..drain);
         }
         self.timeline = build_timeline(&self.events, history.entries(), &self.resource);
-        // Always clamp scroll to the new timeline length.
-        self.scroll = self.scroll.min(self.timeline.len().saturating_sub(1));
+        if self.timeline.is_empty() {
+            self.scroll = 0;
+        }
     }
 }
 
@@ -3181,6 +3182,25 @@ mod tests {
         tab.rebuild_timeline(&crate::action_history::ActionHistoryState::default());
         // timeline is empty, scroll should be 0
         assert_eq!(tab.scroll, 0);
+    }
+
+    #[test]
+    fn events_timeline_rebuild_preserves_large_scroll_when_timeline_remains_nonempty() {
+        let mut tab = ResourceEventsTabState::new(pod("pod-0"));
+        tab.scroll = 99;
+        tab.events.push(crate::k8s::events::EventInfo {
+            event_type: "Normal".into(),
+            reason: "Scheduled".into(),
+            message: "long event body".into(),
+            first_timestamp: crate::time::now(),
+            last_timestamp: crate::time::now(),
+            count: 1,
+        });
+
+        tab.rebuild_timeline(&crate::action_history::ActionHistoryState::default());
+
+        assert!(!tab.timeline.is_empty());
+        assert_eq!(tab.scroll, 99);
     }
 
     #[test]

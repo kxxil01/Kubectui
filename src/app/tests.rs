@@ -480,6 +480,98 @@ fn ai_workbench_tab_supports_scrolling_shortcuts() {
 }
 
 #[test]
+fn extension_output_shortcuts_do_not_clamp_to_logical_line_count() {
+    use crate::workbench::{ExtensionOutputTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    let mut tab = ExtensionOutputTabState::new(7, "Ext", None, "mode", "cmd");
+    tab.apply_output(
+        vec![
+            "very long wrapped extension output line".into(),
+            "second long wrapped extension output line".into(),
+        ],
+        true,
+        Some(0),
+        None,
+    );
+    let logical_max = tab.lines.len().saturating_sub(1);
+    app.workbench
+        .open_tab(WorkbenchTabState::ExtensionOutput(tab));
+    app.focus = Focus::Workbench;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('G'))),
+        AppAction::None
+    );
+
+    let scroll = match &app.workbench.active_tab().expect("tab").state {
+        WorkbenchTabState::ExtensionOutput(tab) => tab.scroll,
+        _ => panic!("expected extension output tab"),
+    };
+    assert!(scroll > logical_max);
+}
+
+#[test]
+fn resource_events_shortcuts_do_not_clamp_to_logical_line_count() {
+    use crate::k8s::events::EventInfo;
+    use crate::timeline::TimelineEntry;
+    use crate::workbench::{ResourceEventsTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    let mut tab = ResourceEventsTabState::new(ResourceRef::Pod("api-0".into(), "default".into()));
+    tab.timeline = vec![
+        TimelineEntry::Event {
+            event: EventInfo {
+                event_type: "Warning".into(),
+                reason: "BackOff".into(),
+                message: "very long wrapped event message".into(),
+                first_timestamp: crate::time::now(),
+                last_timestamp: crate::time::now(),
+                count: 1,
+            },
+            correlated_action_idx: None,
+        },
+        TimelineEntry::Event {
+            event: EventInfo {
+                event_type: "Normal".into(),
+                reason: "Pulled".into(),
+                message: "another very long wrapped event message".into(),
+                first_timestamp: crate::time::now(),
+                last_timestamp: crate::time::now(),
+                count: 1,
+            },
+            correlated_action_idx: None,
+        },
+        TimelineEntry::Event {
+            event: EventInfo {
+                event_type: "Normal".into(),
+                reason: "Started".into(),
+                message: "third wrapped event message".into(),
+                first_timestamp: crate::time::now(),
+                last_timestamp: crate::time::now(),
+                count: 1,
+            },
+            correlated_action_idx: None,
+        },
+    ];
+    let logical_max = tab.timeline.len().saturating_sub(1);
+    app.workbench
+        .open_tab(WorkbenchTabState::ResourceEvents(tab));
+    app.focus = Focus::Workbench;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('G'))),
+        AppAction::None
+    );
+
+    let scroll = match &app.workbench.active_tab().expect("tab").state {
+        WorkbenchTabState::ResourceEvents(tab) => tab.scroll,
+        _ => panic!("expected resource events tab"),
+    };
+    assert!(scroll > logical_max);
+}
+
+#[test]
 fn search_esc_resets_selected_idx() {
     let mut app = AppState::default();
     app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));

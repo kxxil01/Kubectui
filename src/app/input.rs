@@ -221,37 +221,34 @@ impl AppState {
                     _ => AppAction::None,
                 }
             }
-            WorkbenchTabState::ExtensionOutput(tab) => {
-                let max_scroll = tab.lines.len().saturating_sub(1);
-                match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
-                        AppAction::None
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        tab.scroll = tab.scroll.saturating_sub(1);
-                        AppAction::None
-                    }
-                    KeyCode::Char('g') => {
-                        tab.scroll = 0;
-                        AppAction::None
-                    }
-                    KeyCode::Char('G') => {
-                        tab.scroll = max_scroll;
-                        AppAction::None
-                    }
-                    KeyCode::PageDown => {
-                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
-                        AppAction::None
-                    }
-                    KeyCode::PageUp => {
-                        tab.scroll = tab.scroll.saturating_sub(10);
-                        AppAction::None
-                    }
-                    _ => AppAction::None,
+            WorkbenchTabState::ExtensionOutput(tab) => match key.code {
+                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    tab.scroll = tab.scroll.saturating_add(1);
+                    AppAction::None
                 }
-            }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.scroll = tab.scroll.saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.scroll = 0;
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    tab.scroll = usize::MAX;
+                    AppAction::None
+                }
+                KeyCode::PageDown => {
+                    tab.scroll = tab.scroll.saturating_add(10);
+                    AppAction::None
+                }
+                KeyCode::PageUp => {
+                    tab.scroll = tab.scroll.saturating_sub(10);
+                    AppAction::None
+                }
+                _ => AppAction::None,
+            },
             WorkbenchTabState::AiAnalysis(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
                 KeyCode::Char('j') | KeyCode::Down => {
@@ -649,37 +646,34 @@ impl AppState {
                     }
                 }
             }
-            WorkbenchTabState::ResourceEvents(tab) => {
-                let max_scroll = tab.timeline.len().saturating_sub(1);
-                match key.code {
-                    KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('j') | KeyCode::Down => {
-                        tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
-                        AppAction::None
-                    }
-                    KeyCode::Char('k') | KeyCode::Up => {
-                        tab.scroll = tab.scroll.saturating_sub(1);
-                        AppAction::None
-                    }
-                    KeyCode::Char('g') => {
-                        tab.scroll = 0;
-                        AppAction::None
-                    }
-                    KeyCode::Char('G') => {
-                        tab.scroll = max_scroll;
-                        AppAction::None
-                    }
-                    KeyCode::PageDown => {
-                        tab.scroll = tab.scroll.saturating_add(10).min(max_scroll);
-                        AppAction::None
-                    }
-                    KeyCode::PageUp => {
-                        tab.scroll = tab.scroll.saturating_sub(10);
-                        AppAction::None
-                    }
-                    _ => AppAction::None,
+            WorkbenchTabState::ResourceEvents(tab) => match key.code {
+                KeyCode::Esc => AppAction::EscapePressed,
+                KeyCode::Char('j') | KeyCode::Down => {
+                    tab.scroll = tab.scroll.saturating_add(1);
+                    AppAction::None
                 }
-            }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    tab.scroll = tab.scroll.saturating_sub(1);
+                    AppAction::None
+                }
+                KeyCode::Char('g') => {
+                    tab.scroll = 0;
+                    AppAction::None
+                }
+                KeyCode::Char('G') => {
+                    tab.scroll = usize::MAX;
+                    AppAction::None
+                }
+                KeyCode::PageDown => {
+                    tab.scroll = tab.scroll.saturating_add(10);
+                    AppAction::None
+                }
+                KeyCode::PageUp => {
+                    tab.scroll = tab.scroll.saturating_sub(10);
+                    AppAction::None
+                }
+                _ => AppAction::None,
+            },
             WorkbenchTabState::PodLogs(tab) => {
                 if tab.viewer.searching {
                     match key.code {
