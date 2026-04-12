@@ -837,6 +837,70 @@ fn command_palette_takes_precedence_over_help_shortcut() {
 }
 
 #[test]
+fn workbench_focus_supports_help_overlay_shortcut() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)),
+        AppAction::OpenHelp
+    );
+}
+
+#[test]
+fn workbench_focus_supports_command_palette_shortcut() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(':'))),
+        AppAction::OpenCommandPalette
+    );
+}
+
+#[test]
+fn workbench_local_editor_keeps_help_and_palette_shortcuts_as_text() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+        panic!("expected pod logs tab");
+    };
+    logs_tab.viewer.searching = true;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(':'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(logs_tab.viewer.search_input, ":?");
+    assert!(!app.help_overlay.is_open());
+}
+
+#[test]
 fn pod_logs_shortcuts_toggle_regex_and_structured_view() {
     use crate::events::input::apply_action;
     use crate::log_investigation::LogQueryMode;

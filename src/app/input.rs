@@ -71,6 +71,26 @@ impl AppState {
         }
     }
 
+    fn workbench_global_overlay_action(&self, key: KeyEvent) -> Option<AppAction> {
+        if self.focus != Focus::Workbench
+            || !self.workbench.open
+            || self.workbench_local_editor_active()
+            || self
+                .detail_view
+                .as_ref()
+                .is_some_and(DetailViewState::has_confirmation_dialog)
+        {
+            return None;
+        }
+
+        match key.code {
+            KeyCode::Char(':') => Some(AppAction::OpenCommandPalette),
+            KeyCode::Char('?') => Some(AppAction::OpenHelp),
+            KeyCode::Char('~') => Some(AppAction::OpenNamespacePicker),
+            _ => None,
+        }
+    }
+
     fn handle_workbench_key_event(&mut self, key: KeyEvent) -> AppAction {
         use crate::ui::components::port_forward_dialog::PortForwardAction;
 
@@ -1633,6 +1653,10 @@ impl AppState {
         }
 
         if let Some(action) = self.workbench_refresh_action(key) {
+            return action;
+        }
+
+        if let Some(action) = self.workbench_global_overlay_action(key) {
             return action;
         }
 
