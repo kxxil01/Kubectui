@@ -43,7 +43,7 @@ use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
     app::{
-        AppAction, AppView, DetailViewState, LogsViewerState, ResourceRef, load_config, save_config,
+        AppAction, AppView, DetailViewState, ResourceRef, load_config, save_config,
     },
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
@@ -4740,18 +4740,11 @@ pub(crate) async fn run_app_inner(
                     {
                         logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
                         let request_id = logs_viewer_request_seq;
-                        logs_tab.viewer = LogsViewerState {
-                            pod_name: pod_name.clone(),
-                            pod_namespace: pod_ns.clone(),
-                            loading: true,
-                            pending_container_request_id: Some(request_id),
-                            pending_logs_request_id: None,
-                            container_cursor: 0,
-                            container_name: String::new(),
-                            containers: Vec::new(),
-                            picking_container: false,
-                            ..Default::default()
-                        };
+                        logs_tab.restart_viewer_for_pod(
+                            pod_name.clone(),
+                            pod_ns.clone(),
+                            request_id,
+                        );
                         container_request = Some((request_id, pod_name, pod_ns));
                     }
 

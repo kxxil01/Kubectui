@@ -133,6 +133,28 @@ impl Default for LogsViewerState {
 }
 
 impl LogsViewerState {
+    pub fn restart_for_pod(&mut self, pod_name: String, pod_namespace: String, request_id: u64) {
+        self.scroll_offset = 0;
+        self.lines.clear();
+        self.pod_name = pod_name;
+        self.pod_namespace = pod_namespace;
+        self.containers.clear();
+        self.picking_container = false;
+        self.container_cursor = 0;
+        self.pending_container_request_id = Some(request_id);
+        self.pending_logs_request_id = None;
+        self.loading = true;
+        self.error = None;
+        self.correlation_request_id = None;
+        self.search_input = self.search_query.clone();
+        self.search_cursor = self.search_input.chars().count();
+        self.searching = false;
+        self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
+        self.jumping_to_time = false;
+        self.time_jump_error = None;
+    }
+
     pub fn apply_containers(&mut self, containers: Vec<String>) {
         let selected_container = if self.picking_container {
             self.containers.get(self.container_cursor).cloned()

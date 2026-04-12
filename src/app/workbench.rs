@@ -410,12 +410,26 @@ impl AppState {
     }
 
     pub fn open_pod_logs_tab(&mut self, resource: ResourceRef) {
+        let key = WorkbenchTabKey::PodLogs(resource.clone());
+        if self.workbench.activate_tab(&key) {
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(resource)));
         self.focus = Focus::Workbench;
     }
 
     pub fn open_workload_logs_tab(&mut self, resource: ResourceRef, session_id: u64) {
+        let key = WorkbenchTabKey::WorkloadLogs(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::WorkloadLogs(tab) = &mut tab.state
+        {
+            tab.restart_session(session_id);
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
                 resource, session_id,

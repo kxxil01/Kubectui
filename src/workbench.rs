@@ -886,6 +886,16 @@ impl PodLogsTabState {
             viewer: LogsViewerState::default(),
         }
     }
+
+    pub fn restart_viewer_for_pod(
+        &mut self,
+        pod_name: String,
+        pod_namespace: String,
+        request_id: u64,
+    ) {
+        self.viewer
+            .restart_for_pod(pod_name, pod_namespace, request_id);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -966,6 +976,29 @@ impl WorkloadLogsTabState {
             available_pods: Vec::new(),
             available_containers: Vec::new(),
         }
+    }
+
+    pub fn restart_session(&mut self, session_id: u64) {
+        self.session_id = session_id;
+        self.sources.clear();
+        self.pod_labels.clear();
+        self.lines.clear();
+        self.scroll = 0;
+        self.loading = true;
+        self.error = None;
+        self.notice = None;
+        self.correlation_request_id = None;
+        self.filter_input = self.text_filter.clone();
+        self.filter_input_cursor = self.filter_input.chars().count();
+        self.editing_text_filter = false;
+        self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
+        self.jumping_to_time = false;
+        self.time_jump_error = None;
+        self.available_labels.clear();
+        self.matching_label_pods = None;
+        self.available_pods.clear();
+        self.available_containers.clear();
     }
 
     pub fn update_targets(&mut self, targets: &[crate::k8s::workload_logs::WorkloadLogTarget]) {

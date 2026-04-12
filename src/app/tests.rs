@@ -2678,6 +2678,89 @@ fn reopen_resource_events_tab_preserves_scroll_during_refresh() {
 }
 
 #[test]
+fn reopen_pod_logs_tab_preserves_investigation_settings() {
+    use crate::log_investigation::{LogQueryMode, LogTimeWindow};
+    use crate::workbench::{PodLogsTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = PodLogsTabState::new(resource.clone());
+    tab.viewer.container_name = "app".into();
+    tab.viewer.previous_logs = true;
+    tab.viewer.show_timestamps = true;
+    tab.viewer.search_query = "error".into();
+    tab.viewer.search_mode = LogQueryMode::Regex;
+    tab.viewer.time_window = LogTimeWindow::Last1Hour;
+    tab.viewer.structured_view = false;
+    app.workbench.open_tab(WorkbenchTabState::PodLogs(tab));
+
+    app.open_pod_logs_tab(resource);
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing pod logs tab");
+    };
+    let WorkbenchTabState::PodLogs(tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(tab.viewer.container_name, "app");
+    assert!(tab.viewer.previous_logs);
+    assert!(tab.viewer.show_timestamps);
+    assert_eq!(tab.viewer.search_query, "error");
+    assert_eq!(tab.viewer.search_mode, LogQueryMode::Regex);
+    assert_eq!(tab.viewer.time_window, LogTimeWindow::Last1Hour);
+    assert!(!tab.viewer.structured_view);
+}
+
+#[test]
+fn reopen_workload_logs_tab_preserves_filters_while_resetting_session() {
+    use crate::log_investigation::{LogQueryMode, LogTimeWindow};
+    use crate::workbench::{WorkbenchTabState, WorkloadLogsTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Deployment("api".into(), "prod".into());
+    let mut tab = WorkloadLogsTabState::new(resource.clone(), 7);
+    tab.text_filter = "timeout".into();
+    tab.filter_input = "timeout".into();
+    tab.text_filter_mode = LogQueryMode::Regex;
+    tab.time_window = LogTimeWindow::Last15Minutes;
+    tab.structured_view = false;
+    tab.label_filter = Some("app=api".into());
+    tab.pod_filter = Some("api-0".into());
+    tab.container_filter = Some("main".into());
+    tab.follow_mode = false;
+    tab.lines.push(crate::workbench::WorkloadLogLine {
+        pod_name: "api-0".into(),
+        container_name: "main".into(),
+        entry: crate::log_investigation::LogEntry::from_raw("hello"),
+        is_stderr: false,
+    });
+    app.workbench.open_tab(WorkbenchTabState::WorkloadLogs(tab));
+
+    app.open_workload_logs_tab(resource, 99);
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing workload logs tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(tab) = &tab.state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(tab.session_id, 99);
+    assert!(tab.lines.is_empty());
+    assert_eq!(tab.text_filter, "timeout");
+    assert_eq!(tab.filter_input, "timeout");
+    assert_eq!(tab.text_filter_mode, LogQueryMode::Regex);
+    assert_eq!(tab.time_window, LogTimeWindow::Last15Minutes);
+    assert!(!tab.structured_view);
+    assert_eq!(tab.label_filter.as_deref(), Some("app=api"));
+    assert_eq!(tab.pod_filter.as_deref(), Some("api-0"));
+    assert_eq!(tab.container_filter.as_deref(), Some("main"));
+    assert!(!tab.follow_mode);
+    assert!(tab.loading);
+}
+
+#[test]
 fn u_key_does_not_uncordon_for_pod_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
