@@ -2087,6 +2087,7 @@ fn access_review_subject_delete_removes_character_at_cursor() {
 
 #[test]
 fn reopen_access_review_tab_preserves_existing_subject_input_state() {
+    use crate::policy::DetailAction;
     use crate::workbench::{AccessReviewFocus, AccessReviewTabState, WorkbenchTabState};
 
     let mut app = AppState::default();
@@ -2105,15 +2106,32 @@ fn reopen_access_review_tab_preserves_existing_subject_input_state() {
     tab.subject_input.cursor_pos = tab.subject_input.value.chars().count();
     tab.focus = AccessReviewFocus::SubjectInput;
     tab.scroll = 7;
+    tab.entries = vec![crate::authorization::ActionAccessReview {
+        action: DetailAction::Logs,
+        authorization: None,
+        strict: false,
+        checks: Vec::new(),
+    }];
     app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
 
     app.open_access_review_tab(
         resource,
-        Some("prod".to_string()),
-        "ns".to_string(),
-        Vec::new(),
+        Some("staging".to_string()),
+        "payments".to_string(),
+        vec![crate::authorization::ActionAccessReview {
+            action: DetailAction::Delete,
+            authorization: None,
+            strict: true,
+            checks: Vec::new(),
+        }],
         None,
-        None,
+        Some(crate::workbench::AttemptedActionReview {
+            action: DetailAction::Delete,
+            authorization: None,
+            strict: true,
+            checks: Vec::new(),
+            note: Some("fresh".into()),
+        }),
     );
 
     let Some(tab) = app.workbench.active_tab() else {
@@ -2125,6 +2143,14 @@ fn reopen_access_review_tab_preserves_existing_subject_input_state() {
     assert_eq!(tab.focus, AccessReviewFocus::SubjectInput);
     assert_eq!(tab.subject_input.value, "User/alice@example.com");
     assert_eq!(tab.scroll, 7);
+    assert_eq!(tab.context_name.as_deref(), Some("staging"));
+    assert_eq!(tab.namespace_scope, "payments");
+    assert_eq!(tab.entries.len(), 1);
+    assert_eq!(tab.entries[0].action, DetailAction::Delete);
+    assert_eq!(
+        tab.attempted_review.as_ref().map(|review| review.action),
+        Some(DetailAction::Delete)
+    );
 }
 
 #[test]
@@ -2447,7 +2473,28 @@ fn reopen_runbook_tab_preserves_existing_progress_and_selection() {
     tab.detail_scroll = 4;
     tab.toggle_done();
 
-    app.open_runbook_tab(runbook, resource);
+    let refreshed_runbook = LoadedRunbook {
+        title: "Pod Failure Triage v2".into(),
+        steps: vec![
+            LoadedRunbookStep {
+                title: "Checklist".into(),
+                description: Some("fresh".into()),
+                kind: LoadedRunbookStepKind::Checklist {
+                    items: vec!["Inspect events".into(), "Inspect probes".into()],
+                },
+            },
+            LoadedRunbookStep {
+                title: "Open logs".into(),
+                description: Some("updated".into()),
+                kind: LoadedRunbookStepKind::DetailAction {
+                    action: RunbookDetailAction::Logs,
+                },
+            },
+        ],
+        ..runbook
+    };
+
+    app.open_runbook_tab(refreshed_runbook, resource);
 
     let Some(tab) = app.workbench.active_tab() else {
         panic!("missing runbook tab");
@@ -2458,6 +2505,13 @@ fn reopen_runbook_tab_preserves_existing_progress_and_selection() {
     assert_eq!(tab.selected, 1);
     assert_eq!(tab.detail_scroll, 4);
     assert_eq!(tab.steps[1].state, crate::workbench::RunbookStepState::Done);
+    assert_eq!(tab.runbook.title, "Pod Failure Triage v2");
+    assert_eq!(tab.steps[0].step.description.as_deref(), Some("fresh"));
+    let crate::runbooks::LoadedRunbookStepKind::Checklist { items } = &tab.steps[0].step.kind
+    else {
+        panic!("expected checklist step");
+    };
+    assert_eq!(items.len(), 2);
 }
 
 #[test]

@@ -139,7 +139,11 @@ impl AppState {
         attempted_review: Option<AttemptedActionReview>,
     ) {
         let key = WorkbenchTabKey::AccessReview(resource.clone());
-        if self.workbench.activate_tab(&key) {
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::AccessReview(tab) = &mut tab.state
+        {
+            tab.refresh_payload(context_name, namespace_scope, entries, attempted_review);
+            self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
             return;
         }
@@ -398,7 +402,11 @@ impl AppState {
 
     pub fn open_runbook_tab(&mut self, runbook: LoadedRunbook, resource: Option<ResourceRef>) {
         let key = WorkbenchTabKey::Runbook(runbook.id.clone(), resource.clone());
-        if self.workbench.activate_tab(&key) {
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::Runbook(tab) = &mut tab.state
+        {
+            tab.refresh_runbook(runbook);
+            self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
             return;
         }

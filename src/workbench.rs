@@ -416,6 +416,20 @@ impl AccessReviewTabState {
         header_lines + attempted_lines + subject_input_lines + subject_lines + entry_lines
     }
 
+    pub fn refresh_payload(
+        &mut self,
+        context_name: Option<String>,
+        namespace_scope: String,
+        entries: Vec<ActionAccessReview>,
+        attempted_review: Option<AttemptedActionReview>,
+    ) {
+        self.context_name = context_name;
+        self.namespace_scope = namespace_scope;
+        self.entries = entries;
+        self.attempted_review = attempted_review;
+        self.scroll = self.scroll.min(self.line_count().saturating_sub(1));
+    }
+
     #[cfg(test)]
     fn action_line_offset(&self, action: crate::policy::DetailAction) -> Option<usize> {
         let mut offset = 4usize;
@@ -1474,6 +1488,47 @@ impl RunbookTabState {
             detail_scroll: 0,
             steps,
         }
+    }
+
+    pub fn refresh_runbook(&mut self, runbook: LoadedRunbook) {
+        let selected_step = self
+            .steps
+            .get(self.selected.min(self.steps.len().saturating_sub(1)))
+            .map(|step| (step.step.title.clone(), step.step.kind.clone()));
+        let previous_states = self
+            .steps
+            .iter()
+            .map(|step| {
+                (
+                    (step.step.title.clone(), step.step.kind.clone()),
+                    step.state,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        self.steps = runbook
+            .steps
+            .iter()
+            .cloned()
+            .map(|step| {
+                let state = previous_states
+                    .iter()
+                    .find_map(|((title, kind), state)| {
+                        (title == &step.title && kind == &step.kind).then_some(*state)
+                    })
+                    .unwrap_or(RunbookStepState::Pending);
+                RunbookStepRuntime { step, state }
+            })
+            .collect();
+        self.runbook = runbook;
+        self.selected = selected_step
+            .and_then(|(title, kind)| {
+                self.steps
+                    .iter()
+                    .position(|step| step.step.title == title && step.step.kind == kind)
+            })
+            .unwrap_or(0)
+            .min(self.steps.len().saturating_sub(1));
     }
 
     pub fn select_next(&mut self) {
