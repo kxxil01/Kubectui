@@ -65,10 +65,18 @@ impl DebugContainerDialogState {
     }
 
     pub fn set_target_containers(&mut self, target_containers: Vec<String>) {
+        let selected_target = self.target_containers.get(self.target_index).cloned();
         self.target_containers = target_containers;
-        self.target_index = self
-            .target_index
-            .min(self.target_containers.len().saturating_sub(1));
+        self.target_index = selected_target
+            .and_then(|target| {
+                self.target_containers
+                    .iter()
+                    .position(|candidate| candidate == &target)
+            })
+            .unwrap_or_else(|| {
+                self.target_index
+                    .min(self.target_containers.len().saturating_sub(1))
+            });
         self.loading_targets = false;
         self.pending_request_id = None;
         self.error_message = None;
@@ -815,6 +823,30 @@ mod tests {
         assert_eq!(
             state.selected_target_container().map(String::as_str),
             Some("main")
+        );
+    }
+
+    #[test]
+    fn set_target_containers_preserves_selected_target_identity() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.loading_targets = false;
+        state.target_containers = vec![
+            "main".to_string(),
+            "sidecar".to_string(),
+            "metrics".to_string(),
+        ];
+        state.target_index = 1;
+
+        state.set_target_containers(vec![
+            "sidecar".to_string(),
+            "metrics".to_string(),
+            "main".to_string(),
+        ]);
+
+        assert_eq!(state.target_index, 0);
+        assert_eq!(
+            state.selected_target_container().map(String::as_str),
+            Some("sidecar")
         );
     }
 

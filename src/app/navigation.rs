@@ -54,7 +54,8 @@ impl AppState {
     }
 
     pub fn open_namespace_picker(&mut self) {
-        self.namespace_picker.open();
+        self.namespace_picker
+            .open_with_current(self.current_namespace.as_str());
     }
 
     pub fn close_namespace_picker(&mut self) {
@@ -74,10 +75,23 @@ impl AppState {
         instances: Vec<CustomResourceInfo>,
         error: Option<String>,
     ) {
+        let selected_resource = (self.extension_selected_crd.as_deref() == Some(crd_name.as_str()))
+            .then(|| {
+                self.extension_instances
+                    .get(self.extension_instance_cursor)
+                    .map(|resource| (resource.name.clone(), resource.namespace.clone()))
+            })
+            .flatten();
         self.extension_selected_crd = Some(crd_name);
         self.extension_instances = instances;
         self.extension_error = error;
-        self.extension_instance_cursor = 0;
+        self.extension_instance_cursor = selected_resource
+            .and_then(|(name, namespace)| {
+                self.extension_instances
+                    .iter()
+                    .position(|resource| resource.name == name && resource.namespace == namespace)
+            })
+            .unwrap_or(0);
     }
 
     pub fn navigate_to_view(&mut self, view: AppView) {
@@ -240,5 +254,91 @@ impl AppState {
         } else {
             self.set_expanded_group(None, Some(SidebarItem::Group(group)), true);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn custom_resource(name: &str, namespace: Option<&str>) -> CustomResourceInfo {
+        CustomResourceInfo {
+            name: name.to_string(),
+            namespace: namespace.map(str::to_string),
+            ..CustomResourceInfo::default()
+        }
+    }
+
+    #[test]
+    fn set_extension_instances_preserves_selected_identity_on_refresh() {
+        let mut app = AppState::default();
+        app.set_extension_instances(
+            "widgets.demo.io".to_string(),
+            vec![
+                custom_resource("alpha", Some("team-a")),
+                custom_resource("beta", Some("team-b")),
+            ],
+            None,
+        );
+        app.extension_instance_cursor = 1;
+
+        app.set_extension_instances(
+            "widgets.demo.io".to_string(),
+            vec![
+                custom_resource("beta", Some("team-b")),
+                custom_resource("alpha", Some("team-a")),
+            ],
+            None,
+        );
+
+        assert_eq!(app.extension_instance_cursor, 0);
+        assert_eq!(
+            app.extension_instances[app.extension_instance_cursor].name,
+            "beta"
+        );
+    }
+
+    #[test]
+    fn set_extension_instances_resets_cursor_for_new_crd() {
+        let mut app = AppState::default();
+        app.set_extension_instances(
+            "widgets.demo.io".to_string(),
+            vec![
+                custom_resource("alpha", Some("team-a")),
+                custom_resource("beta", Some("team-b")),
+            ],
+            None,
+        );
+        app.extension_instance_cursor = 1;
+
+        app.set_extension_instances(
+            "gadgets.demo.io".to_string(),
+            vec![custom_resource("gamma", Some("team-c"))],
+            None,
+        );
+
+        assert_eq!(app.extension_instance_cursor, 0);
+        assert_eq!(app.extension_instances[0].name, "gamma");
+    }
+
+    #[test]
+    fn open_namespace_picker_selects_current_namespace() {
+        let mut app = AppState::default();
+        app.current_namespace = "payments".to_string();
+        app.set_available_namespaces(vec![
+            "all".to_string(),
+            "default".to_string(),
+            "payments".to_string(),
+        ]);
+
+        app.open_namespace_picker();
+
+        assert_eq!(app.namespace_picker.selected_index(), 2);
+        assert_eq!(
+            app.namespace_picker
+                .filtered_namespaces()
+                .get(app.namespace_picker.selected_index()),
+            Some(&"payments".to_string())
+        );
     }
 }

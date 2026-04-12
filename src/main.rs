@@ -1697,8 +1697,7 @@ pub(crate) async fn run_app_inner(
                                         viewer.pending_container_request_id = None;
                                         match &result {
                                             Ok(containers) => {
-                                                viewer.containers = containers.clone();
-                                                viewer.container_cursor = 0;
+                                                viewer.apply_containers(containers.clone());
                                                 viewer.lines.clear();
                                                 viewer.scroll_offset = 0;
                                                 viewer.error = None;

@@ -54,8 +54,13 @@ impl ContextPicker {
 
     pub fn open(&mut self) {
         self.is_open = true;
-        self.selected_index = 0;
         self.search_query.clear();
+        let filtered = self.filtered_contexts();
+        self.selected_index = self
+            .current_context
+            .as_ref()
+            .and_then(|context| filtered.iter().position(|entry| entry == context))
+            .unwrap_or(0);
     }
 
     pub fn close(&mut self) {
@@ -404,6 +409,22 @@ mod tests {
 
         let action = picker.handle_key(KeyEvent::from(KeyCode::Enter));
         assert_eq!(action, ContextPickerAction::Select("staging".to_string()));
+    }
+
+    #[test]
+    fn context_picker_open_selects_current_context() {
+        let mut picker = ContextPicker::new(
+            vec!["dev".to_string(), "prod".to_string(), "staging".to_string()],
+            Some("staging".to_string()),
+        );
+
+        picker.open();
+
+        assert_eq!(picker.selected_index, 2);
+        assert_eq!(
+            picker.filtered_contexts().get(picker.selected_index),
+            Some(&"staging".to_string())
+        );
     }
 
     #[test]

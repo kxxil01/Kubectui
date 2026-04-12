@@ -1575,18 +1575,33 @@ impl ExecTabState {
     }
 
     pub fn set_containers(&mut self, containers: Vec<String>) {
+        let selected_container = if self.picking_container {
+            self.containers.get(self.container_cursor).cloned()
+        } else if self.container_name.is_empty() {
+            None
+        } else {
+            Some(self.container_name.clone())
+        };
         self.containers = containers;
-        self.container_cursor = 0;
         self.exited = false;
         self.error = None;
         if self.containers.is_empty() {
+            self.container_cursor = 0;
             self.picking_container = false;
             self.loading = false;
             self.error = Some("No containers found in this pod.".to_string());
         } else if self.containers.len() > 1 {
+            self.container_cursor = selected_container
+                .and_then(|name| {
+                    self.containers
+                        .iter()
+                        .position(|container| container == &name)
+                })
+                .unwrap_or(0);
             self.picking_container = true;
             self.loading = false;
         } else if let Some(container) = self.containers.first() {
+            self.container_cursor = 0;
             self.container_name = container.clone();
             self.picking_container = false;
         }
@@ -1685,6 +1700,52 @@ pub struct NetworkPolicyTabState {
     pub error: Option<String>,
 }
 
+fn default_expanded_relation_tree(
+    tree: &[crate::k8s::relationships::RelationNode],
+) -> std::collections::HashSet<usize> {
+    let mut expanded = std::collections::HashSet::new();
+    let mut counter = 0usize;
+    for section in tree {
+        expanded.insert(counter);
+        counter += 1;
+        for child in &section.children {
+            expanded.insert(counter);
+            counter += 1;
+            crate::k8s::relationships::count_descendants(&child.children, &mut counter);
+        }
+    }
+    expanded
+}
+
+fn preserved_relation_cursor(
+    previous_tree: &[crate::k8s::relationships::RelationNode],
+    previous_expanded: &std::collections::HashSet<usize>,
+    previous_cursor: usize,
+    next_tree: &[crate::k8s::relationships::RelationNode],
+    next_expanded: &std::collections::HashSet<usize>,
+) -> usize {
+    let previous_flat = crate::k8s::relationships::flatten_tree(previous_tree, previous_expanded);
+    let selected = previous_flat.get(previous_cursor.min(previous_flat.len().saturating_sub(1)));
+    let next_flat = crate::k8s::relationships::flatten_tree(next_tree, next_expanded);
+
+    selected
+        .and_then(|node| {
+            if let Some(resource) = &node.resource {
+                next_flat
+                    .iter()
+                    .position(|candidate| candidate.resource.as_ref() == Some(resource))
+            } else {
+                next_flat.iter().position(|candidate| {
+                    candidate.resource.is_none()
+                        && candidate.relation == node.relation
+                        && candidate.namespace == node.namespace
+                        && candidate.label == node.label
+                })
+            }
+        })
+        .unwrap_or_else(|| previous_cursor.min(next_flat.len().saturating_sub(1)))
+}
+
 impl NetworkPolicyTabState {
     pub fn new(resource: ResourceRef) -> Self {
         Self {
@@ -1699,24 +1760,18 @@ impl NetworkPolicyTabState {
     }
 
     pub fn apply_analysis(&mut self, analysis: NetworkPolicyAnalysis) {
-        let mut expanded = std::collections::HashSet::new();
-        let mut counter = 0usize;
-        for section in &analysis.tree {
-            expanded.insert(counter);
-            counter += 1;
-            for child in &section.children {
-                expanded.insert(counter);
-                counter += 1;
-                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
-            }
-        }
+        let expanded = default_expanded_relation_tree(&analysis.tree);
+        let cursor = preserved_relation_cursor(
+            &self.tree,
+            &self.expanded,
+            self.cursor,
+            &analysis.tree,
+            &expanded,
+        );
         self.summary_lines = analysis.summary_lines;
         self.tree = analysis.tree;
         self.expanded = expanded;
-        let flat = crate::k8s::relationships::flatten_tree(&self.tree, &self.expanded);
-        if self.cursor >= flat.len() {
-            self.cursor = flat.len().saturating_sub(1);
-        }
+        self.cursor = cursor;
         self.loading = false;
         self.error = None;
     }
@@ -1949,24 +2004,18 @@ impl TrafficDebugTabState {
     }
 
     pub fn apply_analysis(&mut self, analysis: TrafficDebugAnalysis) {
-        let mut expanded = std::collections::HashSet::new();
-        let mut counter = 0usize;
-        for section in &analysis.tree {
-            expanded.insert(counter);
-            counter += 1;
-            for child in &section.children {
-                expanded.insert(counter);
-                counter += 1;
-                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
-            }
-        }
+        let expanded = default_expanded_relation_tree(&analysis.tree);
+        let cursor = preserved_relation_cursor(
+            &self.tree,
+            &self.expanded,
+            self.cursor,
+            &analysis.tree,
+            &expanded,
+        );
         self.summary_lines = analysis.summary_lines;
         self.tree = analysis.tree;
         self.expanded = expanded;
-        let flat = crate::k8s::relationships::flatten_tree(&self.tree, &self.expanded);
-        if self.cursor >= flat.len() {
-            self.cursor = flat.len().saturating_sub(1);
-        }
+        self.cursor = cursor;
         self.error = None;
     }
 }
@@ -1987,24 +2036,12 @@ impl RelationsTabState {
     /// Populate the tree and auto-expand section headers and their immediate
     /// children so the user sees a useful overview on first open.
     pub fn set_tree(&mut self, tree: Vec<crate::k8s::relationships::RelationNode>) {
-        let mut expanded = std::collections::HashSet::new();
-        let mut counter = 0usize;
-        for section in &tree {
-            expanded.insert(counter);
-            counter += 1;
-            for child in &section.children {
-                expanded.insert(counter);
-                counter += 1;
-                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
-            }
-        }
+        let expanded = default_expanded_relation_tree(&tree);
+        let cursor =
+            preserved_relation_cursor(&self.tree, &self.expanded, self.cursor, &tree, &expanded);
         self.expanded = expanded;
         self.tree = tree;
-        // Clamp cursor so it stays valid if the new tree is smaller.
-        let flat = crate::k8s::relationships::flatten_tree(&self.tree, &self.expanded);
-        if self.cursor >= flat.len() {
-            self.cursor = flat.len().saturating_sub(1);
-        }
+        self.cursor = cursor;
     }
 }
 
@@ -3070,6 +3107,72 @@ mod tests {
     }
 
     #[test]
+    fn relations_tab_set_tree_preserves_selected_resource_identity() {
+        let mut tab = RelationsTabState::new(pod("pod-0"));
+        tab.set_tree(vec![crate::k8s::relationships::RelationNode {
+            resource: None,
+            label: "Owned".to_string(),
+            status: None,
+            namespace: None,
+            relation: crate::k8s::relationships::RelationKind::SectionHeader,
+            not_found: false,
+            children: vec![
+                crate::k8s::relationships::RelationNode {
+                    resource: Some(pod("pod-a")),
+                    label: "Pod pod-a".to_string(),
+                    status: None,
+                    namespace: Some("default".to_string()),
+                    relation: crate::k8s::relationships::RelationKind::Owned,
+                    not_found: false,
+                    children: Vec::new(),
+                },
+                crate::k8s::relationships::RelationNode {
+                    resource: Some(pod("pod-b")),
+                    label: "Pod pod-b".to_string(),
+                    status: None,
+                    namespace: Some("default".to_string()),
+                    relation: crate::k8s::relationships::RelationKind::Owned,
+                    not_found: false,
+                    children: Vec::new(),
+                },
+            ],
+        }]);
+        tab.cursor = 2;
+
+        tab.set_tree(vec![crate::k8s::relationships::RelationNode {
+            resource: None,
+            label: "Owned".to_string(),
+            status: None,
+            namespace: None,
+            relation: crate::k8s::relationships::RelationKind::SectionHeader,
+            not_found: false,
+            children: vec![
+                crate::k8s::relationships::RelationNode {
+                    resource: Some(pod("pod-b")),
+                    label: "Pod pod-b".to_string(),
+                    status: None,
+                    namespace: Some("default".to_string()),
+                    relation: crate::k8s::relationships::RelationKind::Owned,
+                    not_found: false,
+                    children: Vec::new(),
+                },
+                crate::k8s::relationships::RelationNode {
+                    resource: Some(pod("pod-a")),
+                    label: "Pod pod-a".to_string(),
+                    status: None,
+                    namespace: Some("default".to_string()),
+                    relation: crate::k8s::relationships::RelationKind::Owned,
+                    not_found: false,
+                    children: Vec::new(),
+                },
+            ],
+        }]);
+
+        let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+        assert_eq!(flat[tab.cursor].resource, Some(pod("pod-b")));
+    }
+
+    #[test]
     fn close_active_tab_clears_maximized() {
         let mut state = WorkbenchState::default();
         state.open_tab(WorkbenchTabState::ActionHistory(
@@ -3127,6 +3230,20 @@ mod tests {
         assert!(!tab.exited);
         assert!(tab.error.is_none());
         assert_eq!(tab.container_name, "main");
+    }
+
+    #[test]
+    fn exec_set_containers_preserves_selected_container_identity() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.set_containers(vec!["main".into(), "sidecar".into(), "metrics".into()]);
+        tab.container_cursor = 1;
+        tab.picking_container = true;
+
+        tab.set_containers(vec!["sidecar".into(), "metrics".into(), "main".into()]);
+
+        assert!(tab.picking_container);
+        assert_eq!(tab.container_cursor, 0);
+        assert_eq!(tab.containers[tab.container_cursor], "sidecar");
     }
 
     #[test]

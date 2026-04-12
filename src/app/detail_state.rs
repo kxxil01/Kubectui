@@ -129,6 +129,24 @@ impl Default for LogsViewerState {
 }
 
 impl LogsViewerState {
+    pub fn apply_containers(&mut self, containers: Vec<String>) {
+        let selected_container = if self.picking_container {
+            self.containers.get(self.container_cursor).cloned()
+        } else if self.container_name.is_empty() {
+            None
+        } else {
+            Some(self.container_name.clone())
+        };
+        self.containers = containers;
+        self.container_cursor = selected_container
+            .and_then(|name| {
+                self.containers
+                    .iter()
+                    .position(|container| container == &name)
+            })
+            .unwrap_or(0);
+    }
+
     /// Appends a log line, evicting the oldest lines if the buffer exceeds [`MAX_LOG_LINES`].
     pub fn push_line(&mut self, line: String) {
         const MAX_LINE_BYTES: usize = 10_000;
@@ -568,5 +586,33 @@ impl DetailViewState {
                 .and_then(|_| self.selected_detail_resource()),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logs_viewer_apply_containers_preserves_selected_identity() {
+        let mut viewer = LogsViewerState {
+            containers: vec![
+                "main".to_string(),
+                "sidecar".to_string(),
+                "metrics".to_string(),
+            ],
+            picking_container: true,
+            container_cursor: 1,
+            ..LogsViewerState::default()
+        };
+
+        viewer.apply_containers(vec![
+            "sidecar".to_string(),
+            "metrics".to_string(),
+            "main".to_string(),
+        ]);
+
+        assert_eq!(viewer.container_cursor, 0);
+        assert_eq!(viewer.containers[viewer.container_cursor], "sidecar");
     }
 }

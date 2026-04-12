@@ -52,7 +52,20 @@ impl NamespacePicker {
     pub fn open(&mut self) {
         self.is_open = true;
         self.search_query.clear();
-        self.selected_index = 0;
+        self.selected_index = self
+            .selected_index
+            .min(self.namespaces.len().saturating_sub(1));
+    }
+
+    pub fn open_with_current(&mut self, current_namespace: &str) {
+        self.open();
+        if let Some(index) = self
+            .namespaces
+            .iter()
+            .position(|namespace| namespace == current_namespace)
+        {
+            self.selected_index = index;
+        }
     }
 
     pub fn close(&mut self) {
@@ -390,6 +403,23 @@ mod tests {
 
         picker.close();
         assert!(!picker.is_open());
+    }
+
+    #[test]
+    fn namespace_picker_open_with_current_selects_active_namespace() {
+        let mut picker = NamespacePicker::new(vec![
+            "all".to_string(),
+            "default".to_string(),
+            "payments".to_string(),
+        ]);
+
+        picker.open_with_current("payments");
+
+        assert_eq!(picker.selected_index(), 2);
+        assert_eq!(
+            picker.filtered_namespaces().get(picker.selected_index()),
+            Some(&"payments".to_string())
+        );
     }
 
     #[test]
