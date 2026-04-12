@@ -2703,7 +2703,7 @@ pub(crate) async fn run_app_inner(
                             && detail.resource.as_ref() == Some(&result.resource)
                             && let Some(dialog) = detail.debug_dialog.as_mut()
                         {
-                            dialog.set_pending_launch(false);
+                            dialog.clear_launch_if_matches(result.action_history_id);
                             dialog.error_message = Some(
                                 "Debug container launch was cancelled because the active context changed."
                                     .to_string(),
@@ -2816,7 +2816,7 @@ pub(crate) async fn run_app_inner(
                                         && detail.resource.as_ref() == Some(&result.resource)
                                         && let Some(dialog) = detail.debug_dialog.as_mut()
                                     {
-                                        dialog.set_pending_launch(false);
+                                        dialog.clear_launch_if_matches(result.action_history_id);
                                         dialog.error_message = Some(error_message.clone());
                                     }
                                     status_message_clear_at = None;
@@ -2835,7 +2835,7 @@ pub(crate) async fn run_app_inner(
                                 && detail.resource.as_ref() == Some(&result.resource)
                                 && let Some(dialog) = detail.debug_dialog.as_mut()
                             {
-                                dialog.set_pending_launch(false);
+                                dialog.clear_launch_if_matches(result.action_history_id);
                                 dialog.error_message = Some(err);
                             } else {
                                 status_message_clear_at = None;
@@ -2856,7 +2856,7 @@ pub(crate) async fn run_app_inner(
                                     && detail.resource.as_ref() == Some(&result.resource)
                                     && let Some(dialog) = detail.node_debug_dialog.as_mut()
                                 {
-                                    dialog.set_pending_launch(false);
+                                    dialog.clear_launch_if_matches(result.action_history_id);
                                     dialog.error_message = Some(
                                         "Node debug shell launch was cancelled because the active context changed."
                                             .to_string(),
@@ -2962,7 +2962,7 @@ pub(crate) async fn run_app_inner(
                                         && detail.resource.as_ref() == Some(&result.resource)
                                         && let Some(dialog) = detail.node_debug_dialog.as_mut()
                                     {
-                                        dialog.set_pending_launch(false);
+                                        dialog.clear_launch_if_matches(result.action_history_id);
                                         dialog.error_message =
                                             Some(format!("{error_message}. Cleanup requested."));
                                     }
@@ -2981,7 +2981,7 @@ pub(crate) async fn run_app_inner(
                                 && detail.resource.as_ref() == Some(&result.resource)
                                 && let Some(dialog) = detail.node_debug_dialog.as_mut()
                             {
-                                dialog.set_pending_launch(false);
+                                dialog.clear_launch_if_matches(result.action_history_id);
                                 dialog.error_message = Some(err);
                             } else {
                                 app.set_error(format!("Node debug shell launch failed: {err}"));

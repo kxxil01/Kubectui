@@ -44,6 +44,7 @@ pub struct DebugContainerDialogState {
     pub loading_targets: bool,
     pub pending_request_id: Option<u64>,
     pub pending_launch: bool,
+    pub pending_launch_action_history_id: Option<u64>,
     pub error_message: Option<String>,
     pub body_scroll: usize,
     pub custom_image_cursor: usize,
@@ -63,6 +64,7 @@ impl DebugContainerDialogState {
             loading_targets: true,
             pending_request_id: None,
             pending_launch: false,
+            pending_launch_action_history_id: None,
             error_message: None,
             body_scroll: 0,
             custom_image_cursor: 0,
@@ -99,12 +101,18 @@ impl DebugContainerDialogState {
         self.body_scroll = 0;
     }
 
-    pub fn set_pending_launch(&mut self, pending: bool) {
-        self.pending_launch = pending;
-        if pending {
-            self.error_message = None;
-        }
+    pub fn begin_launch(&mut self, action_history_id: u64) {
+        self.pending_launch = true;
+        self.pending_launch_action_history_id = Some(action_history_id);
+        self.error_message = None;
         self.body_scroll = 0;
+    }
+
+    pub fn clear_launch_if_matches(&mut self, action_history_id: u64) {
+        if self.pending_launch_action_history_id == Some(action_history_id) {
+            self.pending_launch = false;
+            self.pending_launch_action_history_id = None;
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> DebugContainerDialogEvent {
@@ -916,7 +924,7 @@ mod tests {
     #[test]
     fn pending_launch_still_allows_escape_close() {
         let mut state = DebugContainerDialogState::new("api-0", "default");
-        state.set_pending_launch(true);
+        state.begin_launch(41);
 
         assert_eq!(
             state.handle_key(KeyEvent::from(KeyCode::Esc)),
@@ -926,6 +934,20 @@ mod tests {
             state.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
             DebugContainerDialogEvent::None
         );
+    }
+
+    #[test]
+    fn clear_launch_ignores_stale_action() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.begin_launch(41);
+
+        state.clear_launch_if_matches(42);
+        assert!(state.pending_launch);
+        assert_eq!(state.pending_launch_action_history_id, Some(41));
+
+        state.clear_launch_if_matches(41);
+        assert!(!state.pending_launch);
+        assert!(state.pending_launch_action_history_id.is_none());
     }
 
     #[test]
