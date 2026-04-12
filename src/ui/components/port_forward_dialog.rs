@@ -1,6 +1,6 @@
 //! Port forward dialog and tunnel list UI with enhanced form validation
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
@@ -182,7 +182,7 @@ impl PortForwardDialog {
                 self.current_field_mut().cursor_right();
                 PortForwardAction::None
             }
-            KeyCode::Char(c) => {
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Port fields: only allow digits
                 match self.focus {
                     FormField::RemotePort | FormField::LocalPort => {
@@ -847,6 +847,17 @@ mod tests {
         dialog.handle_key(KeyEvent::from(KeyCode::Char('9')));
 
         assert_eq!(dialog.remote_port_field.value, "9");
+    }
+
+    #[test]
+    fn ctrl_modified_chars_do_not_edit_create_fields() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.focus = FormField::PodName;
+
+        dialog.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        dialog.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+
+        assert!(dialog.pod_name_field.value.is_empty());
     }
 
     #[test]

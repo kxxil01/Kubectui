@@ -122,7 +122,7 @@ impl ContextPicker {
                 self.selected_index = 0;
                 ContextPickerAction::None
             }
-            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE => {
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.search_query.push(c);
                 self.selected_index = 0;
                 ContextPickerAction::None
@@ -400,6 +400,19 @@ mod tests {
         picker.handle_key(KeyEvent::from(KeyCode::Char('k')));
         assert_eq!(picker.search_query, "k");
         assert_eq!(picker.selected_index, 0);
+    }
+
+    #[test]
+    fn context_picker_accepts_shift_modified_search_chars() {
+        let mut picker = ContextPicker::new(
+            vec!["arn:prod".to_string(), "dev".to_string()],
+            Some("dev".to_string()),
+        );
+        picker.open();
+
+        picker.handle_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
+
+        assert_eq!(picker.search_query, ":");
     }
 
     #[test]

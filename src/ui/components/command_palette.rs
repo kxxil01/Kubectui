@@ -1040,7 +1040,11 @@ impl CommandPalette {
                 self.cached_filtered.borrow_mut().take();
                 CommandPaletteAction::None
             }
-            KeyCode::Char(c) => {
+            KeyCode::Char(c)
+                if !key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
                 self.query.push(c);
                 self.selected_index = 0;
                 self.cached_filtered.borrow_mut().take();
@@ -1546,6 +1550,21 @@ mod tests {
         p.handle_key(KeyEvent::from(KeyCode::Char('k')));
         assert_eq!(p.query, "jk");
         assert_eq!(p.selected_index, 0);
+    }
+
+    #[test]
+    fn ctrl_modified_chars_do_not_edit_query() {
+        let mut p = CommandPalette::default();
+        p.open();
+        p.handle_key(KeyEvent::new(
+            KeyCode::Char('u'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+        p.handle_key(KeyEvent::new(
+            KeyCode::Char('j'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+        assert!(p.query.is_empty());
     }
 
     #[test]

@@ -134,7 +134,7 @@ impl NamespacePicker {
                 self.selected_index = 0;
                 NamespacePickerAction::None
             }
-            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE => {
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.search_query.push(c);
                 self.selected_index = 0;
                 NamespacePickerAction::None
@@ -390,6 +390,17 @@ mod tests {
         // 'k' should filter to "kube-system", not navigate
         let filtered = picker.filtered_namespaces();
         assert!(filtered.iter().any(|ns| ns.contains("kube")));
+    }
+
+    #[test]
+    fn test_namespace_picker_accepts_shift_modified_search_chars() {
+        let mut picker =
+            NamespacePicker::new(vec!["default".to_string(), "kube-system".to_string()]);
+        picker.open();
+
+        picker.handle_key(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+
+        assert_eq!(picker.search_query(), "D");
     }
 
     #[test]
