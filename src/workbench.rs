@@ -158,6 +158,7 @@ impl HelmValuesDiffState {
 pub struct HelmHistoryTabState {
     pub resource: ResourceRef,
     pub pending_history_request_id: Option<u64>,
+    pub pending_rollback_action_history_id: Option<u64>,
     pub cli_version: Option<String>,
     pub revisions: Vec<HelmReleaseRevisionInfo>,
     pub scroll: usize,
@@ -175,6 +176,7 @@ impl HelmHistoryTabState {
         Self {
             resource,
             pending_history_request_id: None,
+            pending_rollback_action_history_id: None,
             cli_version: None,
             revisions: Vec::new(),
             scroll: 0,
@@ -206,6 +208,7 @@ impl HelmHistoryTabState {
         self.loading = false;
         self.error = None;
         self.pending_history_request_id = None;
+        self.pending_rollback_action_history_id = None;
         self.confirm_rollback_revision = None;
         self.rollback_pending = false;
         self.diff = None;
@@ -216,6 +219,7 @@ impl HelmHistoryTabState {
         self.loading = false;
         self.error = Some(error);
         self.pending_history_request_id = None;
+        self.pending_rollback_action_history_id = None;
         self.rollback_pending = false;
     }
 
@@ -281,11 +285,19 @@ impl HelmHistoryTabState {
         self.confirm_rollback_revision = None;
     }
 
-    pub fn begin_rollback(&mut self) {
+    pub fn begin_rollback(&mut self, action_history_id: u64) {
         self.scroll = 0;
         self.rollback_pending = true;
+        self.pending_rollback_action_history_id = Some(action_history_id);
         self.confirm_rollback_revision = None;
         self.diff = None;
+    }
+
+    pub fn clear_rollback_if_matches(&mut self, action_history_id: u64) {
+        if self.pending_rollback_action_history_id == Some(action_history_id) {
+            self.rollback_pending = false;
+            self.pending_rollback_action_history_id = None;
+        }
     }
 }
 
@@ -593,6 +605,7 @@ pub struct RolloutTabState {
     pub error: Option<String>,
     pub confirm_undo_revision: Option<i64>,
     pub mutation_pending: Option<RolloutMutationState>,
+    pub pending_mutation_action_history_id: Option<u64>,
 }
 
 impl RolloutTabState {
@@ -614,6 +627,7 @@ impl RolloutTabState {
             error: None,
             confirm_undo_revision: None,
             mutation_pending: None,
+            pending_mutation_action_history_id: None,
         }
     }
 
@@ -642,6 +656,7 @@ impl RolloutTabState {
         self.pending_request_id = None;
         self.confirm_undo_revision = None;
         self.mutation_pending = None;
+        self.pending_mutation_action_history_id = None;
     }
 
     pub fn set_error(&mut self, error: String) {
@@ -651,6 +666,7 @@ impl RolloutTabState {
         self.pending_request_id = None;
         self.confirm_undo_revision = None;
         self.mutation_pending = None;
+        self.pending_mutation_action_history_id = None;
     }
 
     pub fn refresh(&mut self, request_id: u64) {
@@ -699,10 +715,18 @@ impl RolloutTabState {
         self.confirm_undo_revision = None;
     }
 
-    pub fn begin_mutation(&mut self, mutation: RolloutMutationState) {
+    pub fn begin_mutation(&mut self, mutation: RolloutMutationState, action_history_id: u64) {
         self.detail_scroll = 0;
         self.confirm_undo_revision = None;
         self.mutation_pending = Some(mutation);
+        self.pending_mutation_action_history_id = Some(action_history_id);
+    }
+
+    pub fn clear_mutation_if_matches(&mut self, action_history_id: u64) {
+        if self.pending_mutation_action_history_id == Some(action_history_id) {
+            self.mutation_pending = None;
+            self.pending_mutation_action_history_id = None;
+        }
     }
 }
 
@@ -2834,8 +2858,27 @@ mod tests {
         assert_eq!(tab.scroll, 0);
 
         tab.scroll = 9;
-        tab.begin_rollback();
+        tab.begin_rollback(41);
         assert_eq!(tab.scroll, 0);
+    }
+
+    #[test]
+    fn helm_history_clear_rollback_ignores_stale_action() {
+        let mut tab = HelmHistoryTabState::new(ResourceRef::HelmRelease(
+            "release".to_string(),
+            "default".to_string(),
+        ));
+        tab.begin_rollback(41);
+
+        tab.clear_rollback_if_matches(42);
+
+        assert!(tab.rollback_pending);
+        assert_eq!(tab.pending_rollback_action_history_id, Some(41));
+
+        tab.clear_rollback_if_matches(41);
+
+        assert!(!tab.rollback_pending);
+        assert!(tab.pending_rollback_action_history_id.is_none());
     }
 
     #[test]
@@ -2850,12 +2893,31 @@ mod tests {
         assert_eq!(tab.detail_scroll, 0);
 
         tab.detail_scroll = 4;
-        tab.begin_mutation(RolloutMutationState::Restart);
+        tab.begin_mutation(RolloutMutationState::Restart, 21);
         assert_eq!(tab.detail_scroll, 0);
 
         tab.detail_scroll = 8;
         tab.set_error("boom".to_string());
         assert_eq!(tab.detail_scroll, 0);
+    }
+
+    #[test]
+    fn rollout_clear_mutation_ignores_stale_action() {
+        let mut tab = RolloutTabState::new(ResourceRef::Deployment(
+            "api".to_string(),
+            "default".to_string(),
+        ));
+        tab.begin_mutation(RolloutMutationState::Restart, 21);
+
+        tab.clear_mutation_if_matches(22);
+
+        assert_eq!(tab.mutation_pending, Some(RolloutMutationState::Restart));
+        assert_eq!(tab.pending_mutation_action_history_id, Some(21));
+
+        tab.clear_mutation_if_matches(21);
+
+        assert!(tab.mutation_pending.is_none());
+        assert!(tab.pending_mutation_action_history_id.is_none());
     }
 
     #[test]
