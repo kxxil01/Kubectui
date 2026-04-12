@@ -109,7 +109,10 @@ impl DebugContainerDialogState {
 
     pub fn handle_key(&mut self, key: KeyEvent) -> DebugContainerDialogEvent {
         if self.pending_launch {
-            return DebugContainerDialogEvent::None;
+            return match key.code {
+                KeyCode::Esc => DebugContainerDialogEvent::Close,
+                _ => DebugContainerDialogEvent::None,
+            };
         }
 
         if self.is_editing_custom_image() {
@@ -908,6 +911,21 @@ mod tests {
 
         assert_eq!(state.body_scroll, 7);
         assert_eq!(state.custom_image, "");
+    }
+
+    #[test]
+    fn pending_launch_still_allows_escape_close() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.set_pending_launch(true);
+
+        assert_eq!(
+            state.handle_key(KeyEvent::from(KeyCode::Esc)),
+            DebugContainerDialogEvent::Close
+        );
+        assert_eq!(
+            state.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+            DebugContainerDialogEvent::None
+        );
     }
 
     #[test]

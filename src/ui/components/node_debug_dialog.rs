@@ -115,7 +115,10 @@ impl NodeDebugDialogState {
 
     pub fn handle_key(&mut self, key: KeyEvent) -> NodeDebugDialogEvent {
         if self.pending_launch {
-            return NodeDebugDialogEvent::None;
+            return match key.code {
+                KeyCode::Esc => NodeDebugDialogEvent::Close,
+                _ => NodeDebugDialogEvent::None,
+            };
         }
 
         if self.is_editing_custom_image() {
@@ -883,6 +886,21 @@ mod tests {
 
         assert_eq!(state.notes_scroll, 7);
         assert_eq!(state.custom_image, "");
+    }
+
+    #[test]
+    fn pending_launch_still_allows_escape_close() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.set_pending_launch(true);
+
+        assert_eq!(
+            state.handle_key(KeyEvent::from(KeyCode::Esc)),
+            NodeDebugDialogEvent::Close
+        );
+        assert_eq!(
+            state.handle_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::CONTROL)),
+            NodeDebugDialogEvent::None
+        );
     }
 
     #[test]
