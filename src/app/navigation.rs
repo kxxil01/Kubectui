@@ -64,6 +64,14 @@ impl AppState {
     }
 
     pub fn begin_extension_instances_load(&mut self, crd_name: String) {
+        self.extension_pending_selection = (self.extension_selected_crd.as_deref()
+            == Some(crd_name.as_str()))
+        .then(|| {
+            self.extension_instances
+                .get(self.extension_instance_cursor)
+                .map(|resource| (resource.name.clone(), resource.namespace.clone()))
+        })
+        .flatten();
         self.extension_selected_crd = Some(crd_name);
         self.extension_instances.clear();
         self.extension_error = None;
@@ -76,13 +84,19 @@ impl AppState {
         instances: Vec<CustomResourceInfo>,
         error: Option<String>,
     ) {
-        let selected_resource = (self.extension_selected_crd.as_deref() == Some(crd_name.as_str()))
-            .then(|| {
-                self.extension_instances
-                    .get(self.extension_instance_cursor)
-                    .map(|resource| (resource.name.clone(), resource.namespace.clone()))
-            })
-            .flatten();
+        let selected_resource = self
+            .extension_pending_selection
+            .take()
+            .filter(|_| self.extension_selected_crd.as_deref() == Some(crd_name.as_str()))
+            .or_else(|| {
+                (self.extension_selected_crd.as_deref() == Some(crd_name.as_str()))
+                    .then(|| {
+                        self.extension_instances
+                            .get(self.extension_instance_cursor)
+                            .map(|resource| (resource.name.clone(), resource.namespace.clone()))
+                    })
+                    .flatten()
+            });
         self.extension_selected_crd = Some(crd_name);
         self.extension_instances = instances;
         self.extension_error = error;
@@ -321,6 +335,33 @@ mod tests {
 
         assert_eq!(app.extension_instance_cursor, 0);
         assert_eq!(app.extension_instances[0].name, "gamma");
+    }
+
+    #[test]
+    fn begin_extension_instances_load_preserves_selected_identity_for_refresh() {
+        let mut app = AppState::default();
+        app.set_extension_instances(
+            "widgets.demo.io".to_string(),
+            vec![
+                custom_resource("alpha", Some("team-a")),
+                custom_resource("beta", Some("team-b")),
+            ],
+            None,
+        );
+        app.extension_instance_cursor = 1;
+
+        app.begin_extension_instances_load("widgets.demo.io".to_string());
+        app.set_extension_instances(
+            "widgets.demo.io".to_string(),
+            vec![
+                custom_resource("beta", Some("team-b")),
+                custom_resource("alpha", Some("team-a")),
+            ],
+            None,
+        );
+
+        assert_eq!(app.extension_instance_cursor, 0);
+        assert_eq!(app.extension_instances[0].name, "beta");
     }
 
     #[test]

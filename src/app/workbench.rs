@@ -129,6 +129,11 @@ impl AppState {
         subject_review: Option<SubjectAccessReview>,
         attempted_review: Option<AttemptedActionReview>,
     ) {
+        let key = WorkbenchTabKey::AccessReview(resource.clone());
+        if self.workbench.activate_tab(&key) {
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::AccessReview(AccessReviewTabState::new(
                 resource,
@@ -203,6 +208,11 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::DecodedSecret(resource.clone());
+        if self.workbench.activate_tab(&key) {
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = DecodedSecretTabState::new(resource);
         tab.source_yaml = source_yaml;
         tab.loading = tab.source_yaml.is_none() && error.is_none();
@@ -294,6 +304,11 @@ impl AppState {
     }
 
     pub fn open_runbook_tab(&mut self, runbook: LoadedRunbook, resource: Option<ResourceRef>) {
+        let key = WorkbenchTabKey::Runbook(runbook.id.clone(), resource.clone());
+        if self.workbench.activate_tab(&key) {
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::Runbook(Box::new(RunbookTabState::new(
                 runbook, resource,
@@ -364,6 +379,14 @@ impl AppState {
         resource: Option<ResourceRef>,
         dialog: PortForwardDialog,
     ) {
+        if let Some(tab) = self.workbench.find_tab_mut(&WorkbenchTabKey::PortForward)
+            && let WorkbenchTabState::PortForward(existing) = &mut tab.state
+            && existing.target == resource
+        {
+            self.workbench.activate_tab(&WorkbenchTabKey::PortForward);
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
                 resource, dialog,

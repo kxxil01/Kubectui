@@ -2086,6 +2086,48 @@ fn access_review_subject_delete_removes_character_at_cursor() {
 }
 
 #[test]
+fn reopen_access_review_tab_preserves_existing_subject_input_state() {
+    use crate::workbench::{AccessReviewFocus, AccessReviewTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+    let mut tab = AccessReviewTabState::new(
+        resource.clone(),
+        Some("prod".to_string()),
+        "ns".to_string(),
+        Vec::new(),
+        None,
+        None,
+    );
+    tab.start_subject_input();
+    tab.subject_input.value = "User/alice@example.com".to_string();
+    tab.subject_input.cursor_pos = tab.subject_input.value.chars().count();
+    tab.focus = AccessReviewFocus::SubjectInput;
+    tab.scroll = 7;
+    app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+    app.open_access_review_tab(
+        resource,
+        Some("prod".to_string()),
+        "ns".to_string(),
+        Vec::new(),
+        None,
+        None,
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing access review tab");
+    };
+    let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+        panic!("expected access review tab");
+    };
+    assert_eq!(tab.focus, AccessReviewFocus::SubjectInput);
+    assert_eq!(tab.subject_input.value, "User/alice@example.com");
+    assert_eq!(tab.scroll, 7);
+}
+
+#[test]
 fn t_key_opens_traffic_debug_for_service_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -2362,6 +2404,131 @@ fn runbook_workbench_shortcuts_dispatch_expected_actions() {
     } else {
         panic!("expected active runbook tab");
     }
+}
+
+#[test]
+fn reopen_runbook_tab_preserves_existing_progress_and_selection() {
+    let mut app = AppState::default();
+    let resource = Some(ResourceRef::Pod("api".into(), "prod".into()));
+    let runbook = LoadedRunbook {
+        id: "pod_failure".into(),
+        title: "Pod Failure Triage".into(),
+        description: None,
+        aliases: vec!["incident".into()],
+        resource_kinds: vec!["Pod".into()],
+        shortcut: None,
+        steps: vec![
+            LoadedRunbookStep {
+                title: "Checklist".into(),
+                description: None,
+                kind: LoadedRunbookStepKind::Checklist {
+                    items: vec!["Inspect events".into()],
+                },
+            },
+            LoadedRunbookStep {
+                title: "Open logs".into(),
+                description: None,
+                kind: LoadedRunbookStepKind::DetailAction {
+                    action: RunbookDetailAction::Logs,
+                },
+            },
+        ],
+    };
+
+    app.focus = Focus::Workbench;
+    app.open_runbook_tab(runbook.clone(), resource.clone());
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("missing runbook tab");
+    };
+    let WorkbenchTabState::Runbook(tab) = &mut tab.state else {
+        panic!("expected runbook tab");
+    };
+    tab.selected = 1;
+    tab.detail_scroll = 4;
+    tab.toggle_done();
+
+    app.open_runbook_tab(runbook, resource);
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing runbook tab");
+    };
+    let WorkbenchTabState::Runbook(tab) = &tab.state else {
+        panic!("expected runbook tab");
+    };
+    assert_eq!(tab.selected, 1);
+    assert_eq!(tab.detail_scroll, 4);
+    assert_eq!(tab.steps[1].state, crate::workbench::RunbookStepState::Done);
+}
+
+#[test]
+fn reopen_same_target_port_forward_tab_preserves_dialog_state() {
+    use crate::ui::components::port_forward_dialog::{PortForwardDialog, PortForwardMode};
+    use crate::workbench::WorkbenchTabState;
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = Some(ResourceRef::Pod("api".into(), "prod".into()));
+    let mut dialog = PortForwardDialog::with_target("prod", "api", 8080);
+    dialog.mode = PortForwardMode::List;
+    dialog.selected_tunnel = 2;
+    app.open_port_forward_tab(resource.clone(), dialog);
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("missing port-forward tab");
+    };
+    let WorkbenchTabState::PortForward(tab) = &mut tab.state else {
+        panic!("expected port-forward tab");
+    };
+    tab.dialog.selected_tunnel = 1;
+    tab.dialog.success = Some("keep".into());
+
+    app.open_port_forward_tab(resource, PortForwardDialog::new());
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing port-forward tab");
+    };
+    let WorkbenchTabState::PortForward(tab) = &tab.state else {
+        panic!("expected port-forward tab");
+    };
+    assert_eq!(tab.dialog.mode, PortForwardMode::List);
+    assert_eq!(tab.dialog.selected_tunnel, 1);
+    assert_eq!(tab.dialog.success.as_deref(), Some("keep"));
+}
+
+#[test]
+fn reopen_decoded_secret_tab_preserves_unsaved_edit_state() {
+    use crate::secret::{DecodedSecretEntry, DecodedSecretValue};
+    use crate::workbench::{DecodedSecretTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Secret("app-secret".into(), "prod".into());
+    let mut tab = DecodedSecretTabState::new(resource.clone());
+    tab.entries = vec![DecodedSecretEntry {
+        key: "TOKEN".into(),
+        value: DecodedSecretValue::Text {
+            current: "new-value".into(),
+            original: "old-value".into(),
+        },
+    }];
+    tab.selected = 0;
+    tab.editing = true;
+    tab.edit_input = "new-value".into();
+    tab.edit_cursor = tab.edit_input.len();
+    app.workbench.open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+    app.open_decoded_secret_tab(resource, Some("kind: Secret".into()), None, Some(42));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing decoded secret tab");
+    };
+    let WorkbenchTabState::DecodedSecret(tab) = &tab.state else {
+        panic!("expected decoded secret tab");
+    };
+    assert!(tab.editing);
+    assert_eq!(tab.edit_input, "new-value");
+    assert!(tab.has_unsaved_changes());
+    assert_eq!(tab.selected_entry().map(|entry| entry.key.as_str()), Some("TOKEN"));
 }
 
 #[test]
