@@ -28,6 +28,7 @@ pub struct ContextPicker {
     current_context: Option<String>,
     selected_index: usize,
     search_query: String,
+    search_cursor: usize,
     is_open: bool,
 }
 
@@ -48,6 +49,7 @@ impl ContextPicker {
             current_context,
             selected_index: 0,
             search_query: String::new(),
+            search_cursor: 0,
             is_open: false,
         }
     }
@@ -55,6 +57,7 @@ impl ContextPicker {
     pub fn open(&mut self) {
         self.is_open = true;
         self.search_query.clear();
+        self.search_cursor = 0;
         let filtered = self.filtered_contexts();
         self.selected_index = self
             .current_context
@@ -118,12 +121,56 @@ impl ContextPicker {
                 ContextPickerAction::None
             }
             KeyCode::Backspace => {
-                self.search_query.pop();
+                if self.search_cursor > 0
+                    && let Some((byte_idx, _)) =
+                        self.search_query.char_indices().nth(self.search_cursor - 1)
+                {
+                    self.search_query.remove(byte_idx);
+                    self.search_cursor = self.search_cursor.saturating_sub(1);
+                }
+                self.selected_index = 0;
+                ContextPickerAction::None
+            }
+            KeyCode::Delete => {
+                if let Some((byte_idx, _)) =
+                    self.search_query.char_indices().nth(self.search_cursor)
+                {
+                    self.search_query.remove(byte_idx);
+                }
+                self.selected_index = 0;
+                ContextPickerAction::None
+            }
+            KeyCode::Left => {
+                self.search_cursor = self.search_cursor.saturating_sub(1);
+                ContextPickerAction::None
+            }
+            KeyCode::Right => {
+                self.search_cursor =
+                    (self.search_cursor + 1).min(self.search_query.chars().count());
+                ContextPickerAction::None
+            }
+            KeyCode::Home => {
+                self.search_cursor = 0;
+                ContextPickerAction::None
+            }
+            KeyCode::End => {
+                self.search_cursor = self.search_query.chars().count();
+                ContextPickerAction::None
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.search_query.clear();
+                self.search_cursor = 0;
                 self.selected_index = 0;
                 ContextPickerAction::None
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.search_query.push(c);
+                let byte_idx = self
+                    .search_query
+                    .char_indices()
+                    .nth(self.search_cursor)
+                    .map_or(self.search_query.len(), |(idx, _)| idx);
+                self.search_query.insert(byte_idx, c);
+                self.search_cursor += 1;
                 self.selected_index = 0;
                 ContextPickerAction::None
             }
@@ -236,7 +283,7 @@ impl ContextPicker {
             cursor_visible_input_line(
                 &[Span::styled("  / ".to_string(), theme.title_style())],
                 &self.search_query,
-                Some(self.search_query.chars().count()),
+                Some(self.search_cursor),
                 Style::default().fg(theme.fg),
                 theme.title_style(),
                 &[],
@@ -413,6 +460,19 @@ mod tests {
         picker.handle_key(KeyEvent::new(KeyCode::Char(':'), KeyModifiers::SHIFT));
 
         assert_eq!(picker.search_query, ":");
+    }
+
+    #[test]
+    fn context_picker_search_supports_cursor_editing() {
+        let mut picker = ContextPicker::new(vec!["default".to_string()], None);
+        picker.open();
+
+        picker.handle_key(KeyEvent::from(KeyCode::Char('a')));
+        picker.handle_key(KeyEvent::from(KeyCode::Char('c')));
+        picker.handle_key(KeyEvent::from(KeyCode::Left));
+        picker.handle_key(KeyEvent::from(KeyCode::Char('b')));
+
+        assert_eq!(picker.search_query, "abc");
     }
 
     #[test]

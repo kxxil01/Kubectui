@@ -282,6 +282,7 @@ pub struct AppState {
     /// Shared vertical scroll offset for lower detail panes in split content views.
     pub content_detail_scroll: usize,
     pub search_query: String,
+    pub search_cursor: usize,
     pub is_search_mode: bool,
     pub should_quit: bool,
     pub confirm_quit: bool,

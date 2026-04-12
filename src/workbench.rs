@@ -725,6 +725,7 @@ pub struct DecodedSecretTabState {
     pub masked: bool,
     pub editing: bool,
     pub edit_input: String,
+    pub edit_cursor: usize,
 }
 
 impl DecodedSecretTabState {
@@ -742,6 +743,7 @@ impl DecodedSecretTabState {
             masked: true,
             editing: false,
             edit_input: String::new(),
+            edit_cursor: 0,
         }
     }
 
@@ -896,8 +898,10 @@ pub struct WorkloadLogsTabState {
     pub time_window: LogTimeWindow,
     pub correlation_request_id: Option<String>,
     pub filter_input: String,
+    pub filter_input_cursor: usize,
     pub editing_text_filter: bool,
     pub time_jump_input: String,
+    pub time_jump_cursor: usize,
     pub jumping_to_time: bool,
     pub time_jump_error: Option<String>,
     pub structured_view: bool,
@@ -930,8 +934,10 @@ impl WorkloadLogsTabState {
             time_window: LogTimeWindow::All,
             correlation_request_id: None,
             filter_input: String::new(),
+            filter_input_cursor: 0,
             editing_text_filter: false,
             time_jump_input: String::new(),
+            time_jump_cursor: 0,
             jumping_to_time: false,
             time_jump_error: None,
             structured_view: true,
@@ -1053,6 +1059,7 @@ impl WorkloadLogsTabState {
             .and_then(|line| line.entry.timestamp())
             .map(format_jump_target)
             .unwrap_or_default();
+        self.time_jump_cursor = self.time_jump_input.chars().count();
     }
 
     pub fn commit_time_jump(&mut self) {
@@ -1179,7 +1186,9 @@ impl WorkloadLogsTabState {
         self.jumping_to_time = false;
         self.text_filter = preset.query.clone();
         self.filter_input = self.text_filter.clone();
+        self.filter_input_cursor = self.filter_input.chars().count();
         self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
         self.time_jump_error = None;
         self.text_filter_mode = preset.mode;
         self.time_window = preset.time_window;
@@ -1288,6 +1297,7 @@ pub struct ExecTabState {
     pub picking_container: bool,
     pub container_cursor: usize,
     pub input: String,
+    pub input_cursor: usize,
     pub lines: Vec<String>,
     pub scroll: usize,
     pub loading: bool,
@@ -1564,6 +1574,7 @@ impl ExecTabState {
             picking_container: false,
             container_cursor: 0,
             input: String::new(),
+            input_cursor: 0,
             lines: Vec::new(),
             scroll: 0,
             loading: true,
@@ -1888,7 +1899,6 @@ impl ConnectivityTabState {
             .collect();
         if self.filtered_target_indices.is_empty() {
             self.selected_target = 0;
-            self.selected_target_resource = None;
             return;
         }
         self.selected_target = preserved_target
@@ -3353,6 +3363,31 @@ mod tests {
     }
 
     #[test]
+    fn workload_log_apply_preset_syncs_edit_cursors() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.filter_input = "old".into();
+        tab.filter_input_cursor = 1;
+        tab.time_jump_input = "2026-01-01T00:00:00Z".into();
+        tab.time_jump_cursor = 5;
+
+        tab.apply_preset(&WorkloadLogPreset {
+            name: String::new(),
+            query: "needle".into(),
+            mode: LogQueryMode::Regex,
+            time_window: LogTimeWindow::Last1Hour,
+            structured_view: false,
+            label_filter: None,
+            pod_filter: None,
+            container_filter: None,
+        });
+
+        assert_eq!(tab.filter_input, "needle");
+        assert_eq!(tab.filter_input_cursor, "needle".chars().count());
+        assert!(tab.time_jump_input.is_empty());
+        assert_eq!(tab.time_jump_cursor, 0);
+    }
+
+    #[test]
     fn workload_log_label_filter_matches_precomputed_pod_set() {
         let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
         tab.update_targets(&[
@@ -3503,6 +3538,42 @@ mod tests {
             tab.selected_target_option()
                 .map(|target| target.resource.clone()),
             Some(ResourceRef::Pod("api-1".into(), "default".into()))
+        );
+    }
+
+    #[test]
+    fn connectivity_filter_zero_results_preserves_selected_identity_for_restore() {
+        let selected = ResourceRef::Pod("api-1".into(), "default".into());
+        let mut tab = ConnectivityTabState::new(
+            ResourceRef::Pod("source".into(), "default".into()),
+            vec![
+                ConnectivityTargetOption {
+                    resource: ResourceRef::Pod("api-0".into(), "default".into()),
+                    display: "api-0".into(),
+                    status: "ready".into(),
+                    pod_ip: Some("10.0.0.2".into()),
+                },
+                ConnectivityTargetOption {
+                    resource: selected.clone(),
+                    display: "api-1".into(),
+                    status: "ready".into(),
+                    pod_ip: Some("10.0.0.3".into()),
+                },
+            ],
+        );
+        tab.select_bottom_target();
+
+        tab.filter.value = "zzz".into();
+        tab.refresh_filter();
+        assert!(tab.selected_target_option().is_none());
+
+        tab.filter.value.clear();
+        tab.refresh_filter();
+
+        assert_eq!(
+            tab.selected_target_option()
+                .map(|target| target.resource.clone()),
+            Some(selected)
         );
     }
 

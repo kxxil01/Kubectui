@@ -87,8 +87,10 @@ pub struct LogsViewerState {
     pub time_window: LogTimeWindow,
     pub correlation_request_id: Option<String>,
     pub search_input: String,
+    pub search_cursor: usize,
     pub searching: bool,
     pub time_jump_input: String,
+    pub time_jump_cursor: usize,
     pub jumping_to_time: bool,
     pub time_jump_error: Option<String>,
     pub structured_view: bool,
@@ -119,8 +121,10 @@ impl Default for LogsViewerState {
             time_window: LogTimeWindow::All,
             correlation_request_id: None,
             search_input: String::new(),
+            search_cursor: 0,
             searching: false,
             time_jump_input: String::new(),
+            time_jump_cursor: 0,
             jumping_to_time: false,
             time_jump_error: None,
             structured_view: true,
@@ -174,6 +178,7 @@ impl LogsViewerState {
         self.jumping_to_time = false;
         self.time_jump_error = None;
         self.search_input = self.search_query.clone();
+        self.search_cursor = self.search_input.chars().count();
     }
 
     pub fn commit_search(&mut self) {
@@ -194,6 +199,7 @@ impl LogsViewerState {
 
     pub fn cancel_search(&mut self) {
         self.search_input = self.search_query.clone();
+        self.search_cursor = self.search_input.chars().count();
         self.searching = false;
     }
 
@@ -205,6 +211,7 @@ impl LogsViewerState {
             .and_then(LogEntry::timestamp)
             .map(format_jump_target)
             .unwrap_or_default();
+        self.time_jump_cursor = self.time_jump_input.chars().count();
     }
 
     pub fn commit_time_jump(&mut self) {
@@ -238,6 +245,7 @@ impl LogsViewerState {
         self.jumping_to_time = false;
         self.time_jump_error = None;
         self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
     }
 
     pub fn toggle_search_mode(&mut self) {
@@ -405,7 +413,9 @@ impl LogsViewerState {
         self.jumping_to_time = false;
         self.search_query = preset.query.clone();
         self.search_input = self.search_query.clone();
+        self.search_cursor = self.search_input.chars().count();
         self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
         self.time_jump_error = None;
         self.search_mode = preset.mode;
         self.time_window = preset.time_window;

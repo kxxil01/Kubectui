@@ -6,6 +6,7 @@ impl AppState {
         self.selected_idx = 0;
         self.content_detail_scroll = 0;
         self.search_query.clear();
+        self.search_cursor = 0;
         self.is_search_mode = false;
         self.sync_action_history_selection();
     }
@@ -102,6 +103,7 @@ impl AppState {
         self.selected_idx = 0;
         self.content_detail_scroll = 0;
         self.search_query.clear();
+        self.search_cursor = 0;
         self.is_search_mode = false;
         self.sync_collapsed_to_active_view();
         self.apply_sort_from_preferences(crate::columns::view_key(self.view));

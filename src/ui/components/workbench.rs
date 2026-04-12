@@ -1851,7 +1851,7 @@ fn render_decoded_secret_tab(
                     theme.section_title_style(),
                 )],
                 &tab_state.edit_input,
-                Some(tab_state.edit_input.chars().count()),
+                Some(tab_state.edit_cursor),
                 Style::default().fg(theme.fg),
                 theme.section_title_style(),
                 &[],
@@ -2205,7 +2205,11 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
                     theme.section_title_style(),
                 )],
                 value,
-                Some(value.chars().count()),
+                Some(if viewer.searching {
+                    viewer.search_cursor
+                } else {
+                    viewer.time_jump_cursor
+                }),
                 Style::default().fg(theme.fg),
                 Style::default().fg(theme.accent),
                 &[],
@@ -2537,22 +2541,28 @@ fn render_workload_logs_tab(
 
     let mut header_lines = wrap_span_groups(&header_groups, area.width.max(1));
     header_lines.extend(if tab.editing_text_filter {
-        vec![Line::from(Span::styled(
-            format!(
-                " Editing {} filter: {}  [Enter] apply  [Esc] cancel  [Ctrl+U] clear",
-                tab.text_filter_mode.label(),
-                tab.filter_input,
-            ),
-            theme.keybind_desc_style(),
-        ))]
+        wrap_span_groups(
+            &[
+                vec![Span::styled(
+                    format!("Editing {} filter  ", tab.text_filter_mode.label()),
+                    theme.keybind_desc_style(),
+                )],
+                vec![Span::styled("[Enter] apply  ", theme.keybind_desc_style())],
+                vec![Span::styled("[Esc] cancel  ", theme.keybind_desc_style())],
+                vec![Span::styled("[Ctrl+U] clear", theme.keybind_desc_style())],
+            ],
+            area.width.max(1),
+        )
     } else if tab.jumping_to_time {
-        vec![Line::from(Span::styled(
-            format!(
-                " Jump to time: {}  [Enter] jump  [Esc] cancel  [Ctrl+U] clear",
-                tab.time_jump_input,
-            ),
-            theme.keybind_desc_style(),
-        ))]
+        wrap_span_groups(
+            &[
+                vec![Span::styled("Jump to time  ", theme.keybind_desc_style())],
+                vec![Span::styled("[Enter] jump  ", theme.keybind_desc_style())],
+                vec![Span::styled("[Esc] cancel  ", theme.keybind_desc_style())],
+                vec![Span::styled("[Ctrl+U] clear", theme.keybind_desc_style())],
+            ],
+            area.width.max(1),
+        )
     } else {
         wrap_span_groups(
             &[
@@ -2610,15 +2620,57 @@ fn render_workload_logs_tab(
     if !info_spans.is_empty() {
         header_lines.push(Line::from(info_spans));
     }
+    let input_line = if tab.editing_text_filter {
+        Some(cursor_visible_input_line(
+            &[Span::styled(
+                format!(" /{} ", tab.text_filter_mode.label()),
+                theme.section_title_style(),
+            )],
+            &tab.filter_input,
+            Some(tab.filter_input_cursor),
+            Style::default().fg(theme.fg),
+            Style::default().fg(theme.accent),
+            &[],
+            usize::from(area.width.max(1)),
+        ))
+    } else if tab.jumping_to_time {
+        Some(cursor_visible_input_line(
+            &[Span::styled(" T ".to_string(), theme.section_title_style())],
+            &tab.time_jump_input,
+            Some(tab.time_jump_cursor),
+            Style::default().fg(theme.fg),
+            Style::default().fg(theme.accent),
+            &[],
+            usize::from(area.width.max(1)),
+        ))
+    } else {
+        None
+    };
     let header_height = wrapped_line_count(&header_lines, area.width.max(1)).max(1) as u16;
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(header_height), Constraint::Min(0)])
+        .constraints(if input_line.is_some() {
+            vec![
+                Constraint::Length(header_height),
+                Constraint::Length(1),
+                Constraint::Min(0),
+            ]
+        } else {
+            vec![Constraint::Length(header_height), Constraint::Min(0)]
+        })
         .split(area);
     frame.render_widget(
         Paragraph::new(header_lines).wrap(Wrap { trim: false }),
         sections[0],
     );
+    if let Some(line) = input_line.as_ref() {
+        frame.render_widget(Paragraph::new(line.clone()), sections[1]);
+    }
+    let content_area = if input_line.is_some() {
+        sections[2]
+    } else {
+        sections[1]
+    };
 
     if let Some(error) = &tab.error {
         frame.render_widget(
@@ -2626,7 +2678,7 @@ fn render_workload_logs_tab(
                 format!(" Error: {error}"),
                 theme.badge_error_style(),
             )),
-            sections[1],
+            content_area,
         );
         return;
     }
@@ -2826,7 +2878,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
         Paragraph::new(cursor_visible_input_line(
             &[Span::styled(" $ ".to_string(), theme.section_title_style())],
             &tab.input,
-            Some(tab.input.chars().count()),
+            Some(tab.input_cursor),
             Style::default().fg(theme.fg),
             theme.section_title_style(),
             &[],

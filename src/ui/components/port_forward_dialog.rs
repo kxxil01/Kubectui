@@ -157,7 +157,7 @@ impl PortForwardDialog {
                 }
             },
             KeyCode::Backspace => {
-                self.current_field_mut().delete_char();
+                self.current_field_mut().backspace_char();
                 self.error = None;
                 PortForwardAction::None
             }
@@ -180,6 +180,11 @@ impl PortForwardDialog {
             }
             KeyCode::Right => {
                 self.current_field_mut().cursor_right();
+                PortForwardAction::None
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.current_field_mut().clear();
+                self.error = None;
                 PortForwardAction::None
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -850,14 +855,41 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_modified_chars_do_not_edit_create_fields() {
+    fn ctrl_modified_chars_do_not_insert_unrelated_chars_into_create_fields() {
         let mut dialog = PortForwardDialog::new();
         dialog.focus = FormField::PodName;
+        dialog.pod_name_field.value = "api".to_string();
+        dialog.pod_name_field.cursor_pos = dialog.pod_name_field.value.chars().count();
 
-        dialog.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
         dialog.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
 
+        assert_eq!(dialog.pod_name_field.value, "api");
+    }
+
+    #[test]
+    fn ctrl_u_clears_active_create_field() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.focus = FormField::PodName;
+        dialog.pod_name_field.value = "api".to_string();
+        dialog.pod_name_field.cursor_pos = dialog.pod_name_field.value.chars().count();
+
+        dialog.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
         assert!(dialog.pod_name_field.value.is_empty());
+        assert_eq!(dialog.pod_name_field.cursor_pos, 0);
+    }
+
+    #[test]
+    fn delete_removes_character_at_cursor_in_create_field() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.focus = FormField::PodName;
+        dialog.pod_name_field.value = "abcd".to_string();
+        dialog.pod_name_field.cursor_pos = 1;
+
+        dialog.handle_key(KeyEvent::from(KeyCode::Delete));
+
+        assert_eq!(dialog.pod_name_field.value, "acd");
+        assert_eq!(dialog.pod_name_field.cursor_pos, 1);
     }
 
     #[test]

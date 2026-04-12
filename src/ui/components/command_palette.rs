@@ -822,6 +822,7 @@ fn palette_scroll_metrics(item_heights: &[usize], offset: usize) -> (usize, usiz
 #[derive(Debug, Clone, Default)]
 pub struct CommandPalette {
     query: String,
+    query_cursor: usize,
     selected_index: usize,
     is_open: bool,
     cached_filtered: RefCell<Option<Vec<PaletteEntry>>>,
@@ -843,6 +844,7 @@ impl CommandPalette {
 
     pub fn open_with_context(&mut self, resource: Option<ResourceActionContext>) {
         self.query.clear();
+        self.query_cursor = 0;
         self.selected_index = 0;
         self.is_open = true;
         self.resource_context = resource;
@@ -1035,7 +1037,48 @@ impl CommandPalette {
                 CommandPaletteAction::None
             }
             KeyCode::Backspace => {
-                self.query.pop();
+                if self.query_cursor > 0
+                    && let Some((byte_idx, _)) =
+                        self.query.char_indices().nth(self.query_cursor - 1)
+                {
+                    self.query.remove(byte_idx);
+                    self.query_cursor = self.query_cursor.saturating_sub(1);
+                }
+                self.selected_index = 0;
+                self.cached_filtered.borrow_mut().take();
+                CommandPaletteAction::None
+            }
+            KeyCode::Delete => {
+                if let Some((byte_idx, _)) = self.query.char_indices().nth(self.query_cursor) {
+                    self.query.remove(byte_idx);
+                }
+                self.selected_index = 0;
+                self.cached_filtered.borrow_mut().take();
+                CommandPaletteAction::None
+            }
+            KeyCode::Left => {
+                self.query_cursor = self.query_cursor.saturating_sub(1);
+                CommandPaletteAction::None
+            }
+            KeyCode::Right => {
+                self.query_cursor = (self.query_cursor + 1).min(self.query.chars().count());
+                CommandPaletteAction::None
+            }
+            KeyCode::Home => {
+                self.query_cursor = 0;
+                CommandPaletteAction::None
+            }
+            KeyCode::End => {
+                self.query_cursor = self.query.chars().count();
+                CommandPaletteAction::None
+            }
+            KeyCode::Char('u')
+                if key
+                    .modifiers
+                    .contains(crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                self.query.clear();
+                self.query_cursor = 0;
                 self.selected_index = 0;
                 self.cached_filtered.borrow_mut().take();
                 CommandPaletteAction::None
@@ -1045,7 +1088,13 @@ impl CommandPalette {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                self.query.push(c);
+                let byte_idx = self
+                    .query
+                    .char_indices()
+                    .nth(self.query_cursor)
+                    .map_or(self.query.len(), |(idx, _)| idx);
+                self.query.insert(byte_idx, c);
+                self.query_cursor += 1;
                 self.selected_index = 0;
                 self.cached_filtered.borrow_mut().take();
                 CommandPaletteAction::None
@@ -1329,7 +1378,7 @@ impl CommandPalette {
             cursor_visible_input_line(
                 &[Span::styled("  : ".to_string(), theme.title_style())],
                 &self.query,
-                Some(self.query.chars().count()),
+                Some(self.query_cursor),
                 Style::default().fg(theme.fg),
                 theme.title_style(),
                 &[],
@@ -1565,6 +1614,18 @@ mod tests {
             crossterm::event::KeyModifiers::CONTROL,
         ));
         assert!(p.query.is_empty());
+    }
+
+    #[test]
+    fn query_supports_cursor_editing() {
+        let mut p = CommandPalette::default();
+        p.open();
+        p.handle_key(KeyEvent::from(KeyCode::Char('a')));
+        p.handle_key(KeyEvent::from(KeyCode::Char('c')));
+        p.handle_key(KeyEvent::from(KeyCode::Left));
+        p.handle_key(KeyEvent::from(KeyCode::Char('b')));
+
+        assert_eq!(p.query, "abc");
     }
 
     #[test]

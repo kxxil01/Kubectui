@@ -90,6 +90,9 @@ impl ScaleDialogState {
                 self.validate_and_update();
             }
             ScaleAction::DeleteChar => {
+                if self.input_buffer.is_empty() {
+                    self.input_buffer = self.current_replicas.to_string();
+                }
                 self.input_buffer.pop();
                 self.validate_and_update();
             }
@@ -107,7 +110,11 @@ impl ScaleDialogState {
             }
             ScaleAction::Submit => {
                 if self.is_valid() {
-                    self.desired_replicas = self.input_buffer.clone();
+                    self.desired_replicas = if self.input_buffer.is_empty() {
+                        self.current_replicas.to_string()
+                    } else {
+                        self.input_buffer.clone()
+                    };
                 }
             }
             _ => {}
@@ -162,7 +169,7 @@ impl ScaleDialogState {
     /// Returns true if the current input is valid for submission.
     pub fn is_valid(&self) -> bool {
         if self.input_buffer.is_empty() {
-            return false;
+            return (0..=100).contains(&self.current_replicas);
         }
 
         if self.input_buffer.len() > 1 && self.input_buffer.starts_with('0') {
@@ -177,7 +184,9 @@ impl ScaleDialogState {
 
     /// Returns the desired replica count as an integer (or None if invalid).
     pub fn desired_replicas_as_int(&self) -> Option<i32> {
-        if self.is_valid() {
+        if self.input_buffer.is_empty() {
+            Some(self.current_replicas).filter(|n| (0..=100).contains(n))
+        } else if self.is_valid() {
             self.input_buffer.parse().ok()
         } else {
             None
@@ -507,6 +516,14 @@ mod tests {
     }
 
     #[test]
+    fn test_backspace_edits_visible_current_replicas_when_buffer_empty() {
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 12);
+        state.handle_action(ScaleAction::DeleteChar);
+        assert_eq!(state.input_buffer, "1");
+        assert_eq!(state.desired_replicas, "1");
+    }
+
+    #[test]
     fn test_validation_range() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.input_buffer = "101".to_string();
@@ -569,6 +586,13 @@ mod tests {
     }
 
     #[test]
+    fn test_submit_keeps_current_replicas_when_input_untouched() {
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
+        state.handle_action(ScaleAction::Submit);
+        assert_eq!(state.desired_replicas, "3");
+    }
+
+    #[test]
     fn test_submit_ignored_for_invalid_input() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
         state.input_buffer = "500".to_string();
@@ -578,9 +602,10 @@ mod tests {
     }
 
     #[test]
-    fn test_desired_replicas_as_int_only_when_valid() {
+    fn test_desired_replicas_as_int_defaults_to_current_replicas() {
         let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
-        assert_eq!(state.desired_replicas_as_int(), None);
+        assert_eq!(state.desired_replicas_as_int(), Some(3));
+        assert!(state.is_valid());
 
         state.handle_action(ScaleAction::AddChar('7'));
         assert_eq!(state.desired_replicas_as_int(), Some(7));

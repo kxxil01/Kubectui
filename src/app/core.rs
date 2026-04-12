@@ -7,6 +7,7 @@ impl Default for AppState {
             selected_idx: 0,
             content_detail_scroll: 0,
             search_query: String::new(),
+            search_cursor: 0,
             is_search_mode: false,
             should_quit: false,
             confirm_quit: false,
@@ -72,6 +73,10 @@ impl AppState {
 
     pub fn search_query(&self) -> &str {
         &self.search_query
+    }
+
+    pub fn search_cursor(&self) -> usize {
+        self.search_cursor
     }
 
     pub fn pod_sort(&self) -> Option<PodSortState> {

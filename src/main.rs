@@ -4328,6 +4328,7 @@ pub(crate) async fn run_app_inner(
                     global_state.begin_loading_transition(true);
                     app.selected_idx = 0;
                     app.search_query.clear();
+                    app.search_cursor = 0;
                     app.is_search_mode = false;
                     app.detail_view = None;
                     app.workbench.close_resource_tabs();

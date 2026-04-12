@@ -2,6 +2,7 @@ use super::*;
 use crate::cronjob::CronJobHistoryEntry;
 use crate::k8s::dtos::PodInfo;
 use crate::k8s::rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind};
+use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::{
     LoadedRunbook, LoadedRunbookStep, LoadedRunbookStepKind, RunbookDetailAction,
 };
@@ -111,6 +112,19 @@ fn search_query_add_backspace_and_clear() {
     assert_eq!(app.search_query(), "");
 }
 
+#[test]
+fn search_query_supports_cursor_editing() {
+    let mut app = AppState::default();
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('c')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Left));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('b')));
+
+    assert_eq!(app.search_query(), "abc");
+}
+
 /// Verifies pressing Esc in search mode exits mode and clears query.
 #[test]
 fn search_mode_esc_clears_and_exits() {
@@ -211,6 +225,27 @@ fn tilde_opens_namespace_picker_action() {
     let mut app = AppState::default();
     let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('~')));
     assert_eq!(action, AppAction::OpenNamespacePicker);
+}
+
+#[test]
+fn resource_template_dialog_ctrl_u_clears_active_field() {
+    let mut app = AppState::default();
+    app.resource_template_dialog = Some(crate::ui::components::ResourceTemplateDialogState::new(
+        ResourceTemplateKind::Deployment,
+        "default",
+    ));
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+    assert_eq!(action, AppAction::None);
+    assert_eq!(
+        app.resource_template_dialog
+            .as_ref()
+            .expect("dialog should remain open")
+            .values
+            .name,
+        ""
+    );
 }
 
 #[test]
@@ -762,6 +797,42 @@ fn workbench_common_shortcuts_do_not_leak_into_connectivity_filter() {
 }
 
 #[test]
+fn connectivity_filter_delete_removes_character_at_cursor() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Connectivity(
+        crate::workbench::ConnectivityTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            Vec::new(),
+        ),
+    ));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &mut tab.state else {
+        panic!("expected connectivity tab");
+    };
+    connectivity_tab.focus = crate::workbench::ConnectivityTabFocus::Filter;
+    connectivity_tab.filter.value = "abcd".into();
+    connectivity_tab.filter.cursor_pos = 1;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Delete)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &tab.state else {
+        panic!("expected connectivity tab");
+    };
+    assert_eq!(connectivity_tab.filter.value, "acd");
+    assert_eq!(connectivity_tab.filter.cursor_pos, 1);
+}
+
+#[test]
 fn workload_logs_filter_mode_supports_ctrl_u_clear() {
     let mut app = AppState::default();
     app.workbench
@@ -792,6 +863,136 @@ fn workload_logs_filter_mode_supports_ctrl_u_clear() {
         panic!("expected workload logs tab");
     };
     assert!(logs_tab.filter_input.is_empty());
+}
+
+#[test]
+fn pod_logs_search_supports_cursor_editing() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+        panic!("expected pod logs tab");
+    };
+    logs_tab.viewer.searching = true;
+    logs_tab.viewer.search_input = "abcd".into();
+    logs_tab.viewer.search_cursor = 2;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Left)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Delete)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(logs_tab.viewer.search_input, "axcd");
+    assert_eq!(logs_tab.viewer.search_cursor, 2);
+}
+
+#[test]
+fn workload_logs_filter_supports_cursor_editing() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state else {
+        panic!("expected workload logs tab");
+    };
+    logs_tab.editing_text_filter = true;
+    logs_tab.filter_input = "abcd".into();
+    logs_tab.filter_input_cursor = 2;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Left)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Delete)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(logs_tab) = &tab.state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(logs_tab.filter_input, "axcd");
+    assert_eq!(logs_tab.filter_input_cursor, 2);
+}
+
+#[test]
+fn exec_input_supports_cursor_editing() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Exec(
+        crate::workbench::ExecTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+            "pod-1".into(),
+            "default".into(),
+        ),
+    ));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &mut tab.state else {
+        panic!("expected exec tab");
+    };
+    exec_tab.input = "abcd".into();
+    exec_tab.input_cursor = 2;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Left)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Delete)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(exec_tab.input, "axcd");
+    assert_eq!(exec_tab.input_cursor, 2);
 }
 
 #[test]
@@ -1848,6 +2049,40 @@ fn access_review_subject_input_treats_r_and_b_as_text() {
         panic!("expected access review tab");
     };
     assert_eq!(tab.subject_input.value, "rb");
+}
+
+#[test]
+fn access_review_subject_delete_removes_character_at_cursor() {
+    use crate::workbench::{AccessReviewTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab = AccessReviewTabState::new(
+        ResourceRef::Pod("pod-0".to_string(), "ns".to_string()),
+        Some("prod".to_string()),
+        "ns".to_string(),
+        Vec::new(),
+        None,
+        None,
+    );
+    tab.start_subject_input();
+    tab.subject_input.value = "abcd".to_string();
+    tab.subject_input.cursor_pos = 1;
+    app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing access review tab");
+    };
+    let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+        panic!("expected access review tab");
+    };
+    assert_eq!(tab.subject_input.value, "acd");
+    assert_eq!(tab.subject_input.cursor_pos, 1);
 }
 
 #[test]

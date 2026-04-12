@@ -191,7 +191,12 @@ impl AppState {
                             tab.stop_subject_input();
                             AppAction::None
                         }
-                        KeyCode::Backspace | KeyCode::Delete => {
+                        KeyCode::Backspace => {
+                            tab.subject_input.backspace_char();
+                            tab.subject_input_error = None;
+                            AppAction::None
+                        }
+                        KeyCode::Delete => {
                             tab.subject_input.delete_char();
                             tab.subject_input_error = None;
                             AppAction::None
@@ -659,18 +664,51 @@ impl AppState {
                                 entry.commit_edit(edited);
                             }
                             tab.editing = false;
+                            tab.edit_cursor = 0;
                             AppAction::None
                         }
                         KeyCode::Backspace => {
-                            tab.edit_input.pop();
+                            crate::ui::delete_char_left_at_cursor(
+                                &mut tab.edit_input,
+                                &mut tab.edit_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Delete => {
+                            crate::ui::delete_char_right_at_cursor(
+                                &mut tab.edit_input,
+                                tab.edit_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Left => {
+                            tab.edit_cursor = tab.edit_cursor.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Right => {
+                            tab.edit_cursor =
+                                (tab.edit_cursor + 1).min(tab.edit_input.chars().count());
+                            AppAction::None
+                        }
+                        KeyCode::Home => {
+                            tab.edit_cursor = 0;
+                            AppAction::None
+                        }
+                        KeyCode::End => {
+                            tab.edit_cursor = tab.edit_input.chars().count();
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.edit_input.clear();
+                            tab.edit_cursor = 0;
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            tab.edit_input.push(c);
+                            crate::ui::insert_char_at_cursor(
+                                &mut tab.edit_input,
+                                &mut tab.edit_cursor,
+                                c,
+                            );
                             AppAction::None
                         }
                         _ => AppAction::None,
@@ -707,6 +745,7 @@ impl AppState {
                                 && let Some(value) = entry.editable_text()
                             {
                                 tab.edit_input = value.to_string();
+                                tab.edit_cursor = tab.edit_input.chars().count();
                                 tab.editing = true;
                             }
                             AppAction::None
@@ -752,15 +791,47 @@ impl AppState {
                         KeyCode::Esc => AppAction::LogsViewerSearchCancel,
                         KeyCode::Enter => AppAction::LogsViewerSearchClose,
                         KeyCode::Backspace => {
-                            tab.viewer.search_input.pop();
+                            crate::ui::delete_char_left_at_cursor(
+                                &mut tab.viewer.search_input,
+                                &mut tab.viewer.search_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Delete => {
+                            crate::ui::delete_char_right_at_cursor(
+                                &mut tab.viewer.search_input,
+                                tab.viewer.search_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Left => {
+                            tab.viewer.search_cursor = tab.viewer.search_cursor.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Right => {
+                            tab.viewer.search_cursor = (tab.viewer.search_cursor + 1)
+                                .min(tab.viewer.search_input.chars().count());
+                            AppAction::None
+                        }
+                        KeyCode::Home => {
+                            tab.viewer.search_cursor = 0;
+                            AppAction::None
+                        }
+                        KeyCode::End => {
+                            tab.viewer.search_cursor = tab.viewer.search_input.chars().count();
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.viewer.search_input.clear();
+                            tab.viewer.search_cursor = 0;
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            tab.viewer.search_input.push(c);
+                            crate::ui::insert_char_at_cursor(
+                                &mut tab.viewer.search_input,
+                                &mut tab.viewer.search_cursor,
+                                c,
+                            );
                             AppAction::None
                         }
                         _ => AppAction::None,
@@ -770,15 +841,49 @@ impl AppState {
                         KeyCode::Esc => AppAction::CancelLogTimeJump,
                         KeyCode::Enter => AppAction::ApplyLogTimeJump,
                         KeyCode::Backspace => {
-                            tab.viewer.time_jump_input.pop();
+                            crate::ui::delete_char_left_at_cursor(
+                                &mut tab.viewer.time_jump_input,
+                                &mut tab.viewer.time_jump_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Delete => {
+                            crate::ui::delete_char_right_at_cursor(
+                                &mut tab.viewer.time_jump_input,
+                                tab.viewer.time_jump_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Left => {
+                            tab.viewer.time_jump_cursor =
+                                tab.viewer.time_jump_cursor.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Right => {
+                            tab.viewer.time_jump_cursor = (tab.viewer.time_jump_cursor + 1)
+                                .min(tab.viewer.time_jump_input.chars().count());
+                            AppAction::None
+                        }
+                        KeyCode::Home => {
+                            tab.viewer.time_jump_cursor = 0;
+                            AppAction::None
+                        }
+                        KeyCode::End => {
+                            tab.viewer.time_jump_cursor =
+                                tab.viewer.time_jump_input.chars().count();
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.viewer.time_jump_input.clear();
+                            tab.viewer.time_jump_cursor = 0;
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            tab.viewer.time_jump_input.push(c);
+                            crate::ui::insert_char_at_cursor(
+                                &mut tab.viewer.time_jump_input,
+                                &mut tab.viewer.time_jump_cursor,
+                                c,
+                            );
                             AppAction::None
                         }
                         _ => AppAction::None,
@@ -889,15 +994,47 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Backspace => {
-                            tab.filter_input.pop();
+                            crate::ui::delete_char_left_at_cursor(
+                                &mut tab.filter_input,
+                                &mut tab.filter_input_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Delete => {
+                            crate::ui::delete_char_right_at_cursor(
+                                &mut tab.filter_input,
+                                tab.filter_input_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Left => {
+                            tab.filter_input_cursor = tab.filter_input_cursor.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Right => {
+                            tab.filter_input_cursor =
+                                (tab.filter_input_cursor + 1).min(tab.filter_input.chars().count());
+                            AppAction::None
+                        }
+                        KeyCode::Home => {
+                            tab.filter_input_cursor = 0;
+                            AppAction::None
+                        }
+                        KeyCode::End => {
+                            tab.filter_input_cursor = tab.filter_input.chars().count();
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.filter_input.clear();
+                            tab.filter_input_cursor = 0;
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            tab.filter_input.push(c);
+                            crate::ui::insert_char_at_cursor(
+                                &mut tab.filter_input,
+                                &mut tab.filter_input_cursor,
+                                c,
+                            );
                             AppAction::None
                         }
                         _ => AppAction::None,
@@ -907,15 +1044,47 @@ impl AppState {
                         KeyCode::Esc => AppAction::CancelLogTimeJump,
                         KeyCode::Enter => AppAction::ApplyLogTimeJump,
                         KeyCode::Backspace => {
-                            tab.time_jump_input.pop();
+                            crate::ui::delete_char_left_at_cursor(
+                                &mut tab.time_jump_input,
+                                &mut tab.time_jump_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Delete => {
+                            crate::ui::delete_char_right_at_cursor(
+                                &mut tab.time_jump_input,
+                                tab.time_jump_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Left => {
+                            tab.time_jump_cursor = tab.time_jump_cursor.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Right => {
+                            tab.time_jump_cursor =
+                                (tab.time_jump_cursor + 1).min(tab.time_jump_input.chars().count());
+                            AppAction::None
+                        }
+                        KeyCode::Home => {
+                            tab.time_jump_cursor = 0;
+                            AppAction::None
+                        }
+                        KeyCode::End => {
+                            tab.time_jump_cursor = tab.time_jump_input.chars().count();
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.time_jump_input.clear();
+                            tab.time_jump_cursor = 0;
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            tab.time_jump_input.push(c);
+                            crate::ui::insert_char_at_cursor(
+                                &mut tab.time_jump_input,
+                                &mut tab.time_jump_cursor,
+                                c,
+                            );
                             AppAction::None
                         }
                         _ => AppAction::None,
@@ -963,6 +1132,7 @@ impl AppState {
                         KeyCode::Char('/') => {
                             tab.editing_text_filter = true;
                             tab.filter_input = tab.text_filter.clone();
+                            tab.filter_input_cursor = tab.filter_input.chars().count();
                             AppAction::None
                         }
                         KeyCode::Char('p') => {
@@ -1023,7 +1193,34 @@ impl AppState {
                         KeyCode::Esc => AppAction::EscapePressed,
                         KeyCode::Enter => AppAction::ExecSendInput,
                         KeyCode::Backspace => {
-                            tab.input.pop();
+                            crate::ui::delete_char_left_at_cursor(
+                                &mut tab.input,
+                                &mut tab.input_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Delete => {
+                            crate::ui::delete_char_right_at_cursor(
+                                &mut tab.input,
+                                tab.input_cursor,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Left => {
+                            tab.input_cursor = tab.input_cursor.saturating_sub(1);
+                            AppAction::None
+                        }
+                        KeyCode::Right => {
+                            tab.input_cursor =
+                                (tab.input_cursor + 1).min(tab.input.chars().count());
+                            AppAction::None
+                        }
+                        KeyCode::Home => {
+                            tab.input_cursor = 0;
+                            AppAction::None
+                        }
+                        KeyCode::End => {
+                            tab.input_cursor = tab.input.chars().count();
                             AppAction::None
                         }
                         KeyCode::Up => {
@@ -1043,7 +1240,16 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            tab.input.push(c);
+                            crate::ui::insert_char_at_cursor(
+                                &mut tab.input,
+                                &mut tab.input_cursor,
+                                c,
+                            );
+                            AppAction::None
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            tab.input.clear();
+                            tab.input_cursor = 0;
                             AppAction::None
                         }
                         _ => AppAction::None,
@@ -1270,7 +1476,12 @@ impl AppState {
                         tab.focus = ConnectivityTabFocus::Result;
                         AppAction::None
                     }
-                    KeyCode::Backspace | KeyCode::Delete => {
+                    KeyCode::Backspace => {
+                        tab.filter.backspace_char();
+                        tab.refresh_filter();
+                        AppAction::None
+                    }
+                    KeyCode::Delete => {
                         tab.filter.delete_char();
                         tab.refresh_filter();
                         AppAction::None
@@ -1620,8 +1831,32 @@ impl AppState {
                     dialog.prev_field();
                     AppAction::None
                 }
+                KeyCode::Left => {
+                    dialog.cursor_left();
+                    AppAction::None
+                }
+                KeyCode::Right => {
+                    dialog.cursor_right();
+                    AppAction::None
+                }
+                KeyCode::Home => {
+                    dialog.cursor_home();
+                    AppAction::None
+                }
+                KeyCode::End => {
+                    dialog.cursor_end();
+                    AppAction::None
+                }
                 KeyCode::Backspace => {
                     dialog.backspace();
+                    AppAction::None
+                }
+                KeyCode::Delete => {
+                    dialog.delete_char();
+                    AppAction::None
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    dialog.clear_active();
                     AppAction::None
                 }
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -2358,6 +2593,7 @@ impl AppState {
             }
             KeyCode::Char('/') => {
                 self.is_search_mode = true;
+                self.search_cursor = self.search_query.chars().count();
                 AppAction::None
             }
             KeyCode::Char('~') => AppAction::OpenNamespacePicker,
@@ -2500,6 +2736,7 @@ impl AppState {
         match key.code {
             KeyCode::Esc => {
                 self.search_query.clear();
+                self.search_cursor = 0;
                 self.is_search_mode = false;
                 // Reset selection so the user doesn't land on a stale filtered index.
                 self.selected_idx = 0;
@@ -2508,13 +2745,46 @@ impl AppState {
                 self.is_search_mode = false;
             }
             KeyCode::Backspace => {
-                self.search_query.pop();
+                if self.search_cursor > 0
+                    && let Some((byte_idx, _)) =
+                        self.search_query.char_indices().nth(self.search_cursor - 1)
+                {
+                    self.search_query.remove(byte_idx);
+                    self.search_cursor = self.search_cursor.saturating_sub(1);
+                }
+            }
+            KeyCode::Delete => {
+                if let Some((byte_idx, _)) =
+                    self.search_query.char_indices().nth(self.search_cursor)
+                {
+                    self.search_query.remove(byte_idx);
+                }
+            }
+            KeyCode::Left => {
+                self.search_cursor = self.search_cursor.saturating_sub(1);
+            }
+            KeyCode::Right => {
+                self.search_cursor =
+                    (self.search_cursor + 1).min(self.search_query.chars().count());
+            }
+            KeyCode::Home => {
+                self.search_cursor = 0;
+            }
+            KeyCode::End => {
+                self.search_cursor = self.search_query.chars().count();
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.search_query.clear();
+                self.search_cursor = 0;
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.search_query.push(c);
+                let byte_idx = self
+                    .search_query
+                    .char_indices()
+                    .nth(self.search_cursor)
+                    .map_or(self.search_query.len(), |(idx, _)| idx);
+                self.search_query.insert(byte_idx, c);
+                self.search_cursor += 1;
             }
             _ => {}
         }
