@@ -94,6 +94,8 @@ impl ContextPicker {
             return ContextPickerAction::None;
         }
 
+        let selected_context = self.filtered_contexts().get(self.selected_index).cloned();
+
         match key.code {
             KeyCode::Esc => ContextPickerAction::Close,
             KeyCode::Enter => self
@@ -128,7 +130,7 @@ impl ContextPicker {
                     self.search_query.remove(byte_idx);
                     self.search_cursor = self.search_cursor.saturating_sub(1);
                 }
-                self.selected_index = 0;
+                self.restore_selected_context(selected_context);
                 ContextPickerAction::None
             }
             KeyCode::Delete => {
@@ -137,7 +139,7 @@ impl ContextPicker {
                 {
                     self.search_query.remove(byte_idx);
                 }
-                self.selected_index = 0;
+                self.restore_selected_context(selected_context);
                 ContextPickerAction::None
             }
             KeyCode::Left => {
@@ -160,7 +162,7 @@ impl ContextPicker {
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.search_query.clear();
                 self.search_cursor = 0;
-                self.selected_index = 0;
+                self.restore_selected_context(selected_context);
                 ContextPickerAction::None
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -171,11 +173,21 @@ impl ContextPicker {
                     .map_or(self.search_query.len(), |(idx, _)| idx);
                 self.search_query.insert(byte_idx, c);
                 self.search_cursor += 1;
-                self.selected_index = 0;
+                self.restore_selected_context(selected_context);
                 ContextPickerAction::None
             }
             _ => ContextPickerAction::None,
         }
+    }
+
+    fn restore_selected_context(&mut self, selected_context: Option<String>) {
+        self.selected_index = selected_context
+            .and_then(|selected| {
+                self.filtered_contexts()
+                    .iter()
+                    .position(|candidate| candidate == &selected)
+            })
+            .unwrap_or(0);
     }
 
     pub fn filtered_contexts(&self) -> Vec<String> {
@@ -521,6 +533,31 @@ mod tests {
 
         let filtered = picker.filtered_contexts();
         assert_eq!(filtered, vec!["prod-us", "prod-eu"]);
+    }
+
+    #[test]
+    fn context_picker_search_preserves_selected_context_when_still_visible() {
+        let mut picker = ContextPicker::new(
+            vec![
+                "dev-east".to_string(),
+                "prod-east".to_string(),
+                "prod-west".to_string(),
+            ],
+            Some("prod-east".to_string()),
+        );
+        picker.open();
+        assert_eq!(
+            picker.filtered_contexts().get(picker.selected_index),
+            Some(&"prod-east".to_string())
+        );
+
+        picker.handle_key(KeyEvent::from(KeyCode::Char('p')));
+
+        assert_eq!(picker.search_query, "p");
+        assert_eq!(
+            picker.filtered_contexts().get(picker.selected_index),
+            Some(&"prod-east".to_string())
+        );
     }
 
     #[test]

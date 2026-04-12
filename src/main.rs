@@ -2703,7 +2703,7 @@ pub(crate) async fn run_app_inner(
                             && detail.resource.as_ref() == Some(&result.resource)
                             && let Some(dialog) = detail.debug_dialog.as_mut()
                         {
-                            dialog.set_pending_launch(false);
+                            dialog.clear_launch_if_matches(result.action_history_id);
                             dialog.error_message = Some(
                                 "Debug container launch was cancelled because the active context changed."
                                     .to_string(),
@@ -2816,7 +2816,7 @@ pub(crate) async fn run_app_inner(
                                         && detail.resource.as_ref() == Some(&result.resource)
                                         && let Some(dialog) = detail.debug_dialog.as_mut()
                                     {
-                                        dialog.set_pending_launch(false);
+                                        dialog.clear_launch_if_matches(result.action_history_id);
                                         dialog.error_message = Some(error_message.clone());
                                     }
                                     status_message_clear_at = None;
@@ -2835,7 +2835,7 @@ pub(crate) async fn run_app_inner(
                                 && detail.resource.as_ref() == Some(&result.resource)
                                 && let Some(dialog) = detail.debug_dialog.as_mut()
                             {
-                                dialog.set_pending_launch(false);
+                                dialog.clear_launch_if_matches(result.action_history_id);
                                 dialog.error_message = Some(err);
                             } else {
                                 status_message_clear_at = None;
@@ -2856,7 +2856,7 @@ pub(crate) async fn run_app_inner(
                                     && detail.resource.as_ref() == Some(&result.resource)
                                     && let Some(dialog) = detail.node_debug_dialog.as_mut()
                                 {
-                                    dialog.set_pending_launch(false);
+                                    dialog.clear_launch_if_matches(result.action_history_id);
                                     dialog.error_message = Some(
                                         "Node debug shell launch was cancelled because the active context changed."
                                             .to_string(),
@@ -2962,7 +2962,7 @@ pub(crate) async fn run_app_inner(
                                         && detail.resource.as_ref() == Some(&result.resource)
                                         && let Some(dialog) = detail.node_debug_dialog.as_mut()
                                     {
-                                        dialog.set_pending_launch(false);
+                                        dialog.clear_launch_if_matches(result.action_history_id);
                                         dialog.error_message =
                                             Some(format!("{error_message}. Cleanup requested."));
                                     }
@@ -2981,7 +2981,7 @@ pub(crate) async fn run_app_inner(
                                 && detail.resource.as_ref() == Some(&result.resource)
                                 && let Some(dialog) = detail.node_debug_dialog.as_mut()
                             {
-                                dialog.set_pending_launch(false);
+                                dialog.clear_launch_if_matches(result.action_history_id);
                                 dialog.error_message = Some(err);
                             } else {
                                 app.set_error(format!("Node debug shell launch failed: {err}"));
@@ -3122,18 +3122,32 @@ pub(crate) async fn run_app_inner(
                     needs_redraw = true;
                     if let Some(detail) = &mut app.detail_view
                         && detail.resource.as_ref() == Some(&result.resource)
+                        && let ResourceRef::Pod(pod_name, namespace) = result.resource
                     {
-                        use kubectui::ui::components::probe_panel::ProbePanelState;
-                        if let ResourceRef::Pod(pod_name, namespace) = result.resource {
-                            detail.probe_panel = Some(match result.result {
-                                Ok(probes) => ProbePanelState::new(pod_name, namespace, probes),
-                                Err(error) => {
-                                    let mut state =
-                                        ProbePanelState::new(pod_name, namespace, Vec::new());
-                                    state.error = Some(error);
-                                    state
+                        match detail.probe_panel.as_mut() {
+                            Some(state)
+                                if state.pod_name == pod_name
+                                    && state.namespace == namespace =>
+                            {
+                                match result.result {
+                                    Ok(probes) => state.update_probes(probes),
+                                    Err(error) => state.set_error(error),
                                 }
-                            });
+                            }
+                            _ => {
+                                use kubectui::ui::components::probe_panel::ProbePanelState;
+                                detail.probe_panel = Some(match result.result {
+                                    Ok(probes) => {
+                                        ProbePanelState::new(pod_name, namespace, probes)
+                                    }
+                                    Err(error) => {
+                                        let mut state =
+                                            ProbePanelState::new(pod_name, namespace, Vec::new());
+                                        state.set_error(error);
+                                        state
+                                    }
+                                });
+                            }
                         }
                     }
                 }

@@ -54,6 +54,7 @@ impl ProbePanelState {
             .get(self.selected_index)
             .map(|(name, _)| name.clone());
         self.container_probes = probes;
+        self.error = None;
         self.selected_index = selected_container
             .and_then(|name| {
                 self.container_probes
@@ -63,6 +64,12 @@ impl ProbePanelState {
             .unwrap_or_else(|| {
                 clamp_probe_selection(self.container_probes.len(), self.selected_index)
             });
+    }
+
+    pub fn set_error(&mut self, error: impl Into<String>) {
+        self.error = Some(error.into());
+        self.selected_index =
+            clamp_probe_selection(self.container_probes.len(), self.selected_index);
     }
 
     /// Handle navigation: move to next container.
@@ -385,6 +392,21 @@ mod tests {
 
         assert_eq!(state.selected_index, 0);
         assert_eq!(state.container_probes[state.selected_index].0, "container2");
+    }
+
+    #[test]
+    fn test_set_error_preserves_existing_selection() {
+        let probes = vec![
+            ("container1".to_string(), ContainerProbes::default()),
+            ("container2".to_string(), ContainerProbes::default()),
+        ];
+        let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
+        state.selected_index = 1;
+
+        state.set_error("fetch failed");
+
+        assert_eq!(state.container_probes[state.selected_index].0, "container2");
+        assert_eq!(state.error.as_deref(), Some("fetch failed"));
     }
 
     #[test]
