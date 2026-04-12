@@ -293,11 +293,6 @@ pub async fn handle_execute_helm_rollback(
         }
         return true;
     }
-    if let Some(tab) = app.workbench.active_tab_mut()
-        && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
-    {
-        history_tab.begin_rollback();
-    };
     let resource_label = format!("Helm release '{name}' in namespace '{namespace}'");
     let origin_view = app.view();
     let action_history_id = app.record_action_pending(
@@ -307,6 +302,11 @@ pub async fn handle_execute_helm_rollback(
         resource_label.clone(),
         format!("Rolling back {resource_label} to revision {target_revision}..."),
     );
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+    {
+        history_tab.begin_rollback(action_history_id);
+    };
     let resource_label_message =
         format!("Rolling back {resource_label} to revision {target_revision}...");
     let tx = rollback_tx.clone();
