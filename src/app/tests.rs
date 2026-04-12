@@ -2,6 +2,7 @@ use super::*;
 use crate::cronjob::CronJobHistoryEntry;
 use crate::k8s::dtos::PodInfo;
 use crate::k8s::rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind};
+use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::{
     LoadedRunbook, LoadedRunbookStep, LoadedRunbookStepKind, RunbookDetailAction,
 };
@@ -111,6 +112,19 @@ fn search_query_add_backspace_and_clear() {
     assert_eq!(app.search_query(), "");
 }
 
+#[test]
+fn search_query_supports_cursor_editing() {
+    let mut app = AppState::default();
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('c')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Left));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('b')));
+
+    assert_eq!(app.search_query(), "abc");
+}
+
 /// Verifies pressing Esc in search mode exits mode and clears query.
 #[test]
 fn search_mode_esc_clears_and_exits() {
@@ -211,6 +225,27 @@ fn tilde_opens_namespace_picker_action() {
     let mut app = AppState::default();
     let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('~')));
     assert_eq!(action, AppAction::OpenNamespacePicker);
+}
+
+#[test]
+fn resource_template_dialog_ctrl_u_clears_active_field() {
+    let mut app = AppState::default();
+    app.resource_template_dialog = Some(crate::ui::components::ResourceTemplateDialogState::new(
+        ResourceTemplateKind::Deployment,
+        "default",
+    ));
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+    assert_eq!(action, AppAction::None);
+    assert_eq!(
+        app.resource_template_dialog
+            .as_ref()
+            .expect("dialog should remain open")
+            .values
+            .name,
+        ""
+    );
 }
 
 #[test]
@@ -656,6 +691,148 @@ fn pod_logs_search_mode_accepts_shortcut_characters_as_text() {
 }
 
 #[test]
+fn workbench_common_shortcuts_do_not_leak_into_pod_logs_search() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+        panic!("expected pod logs tab");
+    };
+    logs_tab.viewer.searching = true;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(logs_tab.viewer.search_input, "bz");
+    assert!(app.workbench.open);
+}
+
+#[test]
+fn workbench_common_shortcuts_do_not_leak_into_exec_input() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Exec(
+        crate::workbench::ExecTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+            "pod-1".into(),
+            "default".into(),
+        ),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(exec_tab.input, "bz");
+    assert!(app.workbench.open);
+}
+
+#[test]
+fn workbench_common_shortcuts_do_not_leak_into_connectivity_filter() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Connectivity(
+        crate::workbench::ConnectivityTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            Vec::new(),
+        ),
+    ));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &mut tab.state else {
+        panic!("expected connectivity tab");
+    };
+    connectivity_tab.focus = crate::workbench::ConnectivityTabFocus::Filter;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &tab.state else {
+        panic!("expected connectivity tab");
+    };
+    assert_eq!(connectivity_tab.filter.value, "bz");
+    assert!(app.workbench.open);
+}
+
+#[test]
+fn connectivity_filter_delete_removes_character_at_cursor() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Connectivity(
+        crate::workbench::ConnectivityTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            Vec::new(),
+        ),
+    ));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &mut tab.state else {
+        panic!("expected connectivity tab");
+    };
+    connectivity_tab.focus = crate::workbench::ConnectivityTabFocus::Filter;
+    connectivity_tab.filter.value = "abcd".into();
+    connectivity_tab.filter.cursor_pos = 1;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Delete)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &tab.state else {
+        panic!("expected connectivity tab");
+    };
+    assert_eq!(connectivity_tab.filter.value, "acd");
+    assert_eq!(connectivity_tab.filter.cursor_pos, 1);
+}
+
+#[test]
 fn workload_logs_filter_mode_supports_ctrl_u_clear() {
     let mut app = AppState::default();
     app.workbench
@@ -686,6 +863,242 @@ fn workload_logs_filter_mode_supports_ctrl_u_clear() {
         panic!("expected workload logs tab");
     };
     assert!(logs_tab.filter_input.is_empty());
+}
+
+#[test]
+fn pod_logs_search_supports_cursor_editing() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+        panic!("expected pod logs tab");
+    };
+    logs_tab.viewer.searching = true;
+    logs_tab.viewer.search_input = "abcd".into();
+    logs_tab.viewer.search_cursor = 2;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Left)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Delete)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(logs_tab.viewer.search_input, "axcd");
+    assert_eq!(logs_tab.viewer.search_cursor, 2);
+}
+
+#[test]
+fn workload_logs_filter_supports_cursor_editing() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(logs_tab) = &mut tab.state else {
+        panic!("expected workload logs tab");
+    };
+    logs_tab.editing_text_filter = true;
+    logs_tab.filter_input = "abcd".into();
+    logs_tab.filter_input_cursor = 2;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Left)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Delete)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(logs_tab) = &tab.state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(logs_tab.filter_input, "axcd");
+    assert_eq!(logs_tab.filter_input_cursor, 2);
+}
+
+#[test]
+fn exec_input_supports_cursor_editing() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Exec(
+        crate::workbench::ExecTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+            "pod-1".into(),
+            "default".into(),
+        ),
+    ));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &mut tab.state else {
+        panic!("expected exec tab");
+    };
+    exec_tab.input = "abcd".into();
+    exec_tab.input_cursor = 2;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Left)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Delete)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(exec_tab.input, "axcd");
+    assert_eq!(exec_tab.input_cursor, 2);
+}
+
+#[test]
+fn context_picker_takes_precedence_over_global_context_shortcut() {
+    let mut app = AppState::default();
+    app.context_picker.open();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('c'))),
+        AppAction::None
+    );
+
+    assert!(app.context_picker.is_open());
+    assert_eq!(app.context_picker.search_query(), "c");
+}
+
+#[test]
+fn namespace_picker_takes_precedence_over_global_context_shortcut() {
+    let mut app = AppState::default();
+    app.namespace_picker.open();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('c'))),
+        AppAction::None
+    );
+
+    assert!(app.namespace_picker.is_open());
+    assert_eq!(app.namespace_picker.search_query(), "c");
+}
+
+#[test]
+fn command_palette_takes_precedence_over_help_shortcut() {
+    let mut app = AppState::default();
+    app.command_palette.open();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)),
+        AppAction::None
+    );
+
+    assert!(app.command_palette.is_open());
+    assert!(!app.help_overlay.is_open());
+}
+
+#[test]
+fn workbench_focus_supports_help_overlay_shortcut() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)),
+        AppAction::OpenHelp
+    );
+}
+
+#[test]
+fn workbench_focus_supports_command_palette_shortcut() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(':'))),
+        AppAction::OpenCommandPalette
+    );
+}
+
+#[test]
+fn workbench_local_editor_keeps_help_and_palette_shortcuts_as_text() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+        panic!("expected pod logs tab");
+    };
+    logs_tab.viewer.searching = true;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(':'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(logs_tab.viewer.search_input, ":?");
+    assert!(!app.help_overlay.is_open());
 }
 
 #[test]
@@ -1639,6 +2052,108 @@ fn access_review_subject_input_treats_r_and_b_as_text() {
 }
 
 #[test]
+fn access_review_subject_delete_removes_character_at_cursor() {
+    use crate::workbench::{AccessReviewTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab = AccessReviewTabState::new(
+        ResourceRef::Pod("pod-0".to_string(), "ns".to_string()),
+        Some("prod".to_string()),
+        "ns".to_string(),
+        Vec::new(),
+        None,
+        None,
+    );
+    tab.start_subject_input();
+    tab.subject_input.value = "abcd".to_string();
+    tab.subject_input.cursor_pos = 1;
+    app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing access review tab");
+    };
+    let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+        panic!("expected access review tab");
+    };
+    assert_eq!(tab.subject_input.value, "acd");
+    assert_eq!(tab.subject_input.cursor_pos, 1);
+}
+
+#[test]
+fn reopen_access_review_tab_preserves_existing_subject_input_state() {
+    use crate::policy::DetailAction;
+    use crate::workbench::{AccessReviewFocus, AccessReviewTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("pod-0".to_string(), "ns".to_string());
+    let mut tab = AccessReviewTabState::new(
+        resource.clone(),
+        Some("prod".to_string()),
+        "ns".to_string(),
+        Vec::new(),
+        None,
+        None,
+    );
+    tab.start_subject_input();
+    tab.subject_input.value = "User/alice@example.com".to_string();
+    tab.subject_input.cursor_pos = tab.subject_input.value.chars().count();
+    tab.focus = AccessReviewFocus::SubjectInput;
+    tab.scroll = 7;
+    tab.entries = vec![crate::authorization::ActionAccessReview {
+        action: DetailAction::Logs,
+        authorization: None,
+        strict: false,
+        checks: Vec::new(),
+    }];
+    app.workbench.open_tab(WorkbenchTabState::AccessReview(tab));
+
+    app.open_access_review_tab(
+        resource,
+        Some("staging".to_string()),
+        "payments".to_string(),
+        vec![crate::authorization::ActionAccessReview {
+            action: DetailAction::Delete,
+            authorization: None,
+            strict: true,
+            checks: Vec::new(),
+        }],
+        None,
+        Some(crate::workbench::AttemptedActionReview {
+            action: DetailAction::Delete,
+            authorization: None,
+            strict: true,
+            checks: Vec::new(),
+            note: Some("fresh".into()),
+        }),
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing access review tab");
+    };
+    let WorkbenchTabState::AccessReview(tab) = &tab.state else {
+        panic!("expected access review tab");
+    };
+    assert_eq!(tab.focus, AccessReviewFocus::SubjectInput);
+    assert_eq!(tab.subject_input.value, "User/alice@example.com");
+    assert_eq!(tab.scroll, 7);
+    assert_eq!(tab.context_name.as_deref(), Some("staging"));
+    assert_eq!(tab.namespace_scope, "payments");
+    assert_eq!(tab.entries.len(), 1);
+    assert_eq!(tab.entries[0].action, DetailAction::Delete);
+    assert_eq!(
+        tab.attempted_review.as_ref().map(|review| review.action),
+        Some(DetailAction::Delete)
+    );
+}
+
+#[test]
 fn t_key_opens_traffic_debug_for_service_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -1918,6 +2433,419 @@ fn runbook_workbench_shortcuts_dispatch_expected_actions() {
 }
 
 #[test]
+fn reopen_runbook_tab_preserves_existing_progress_and_selection() {
+    let mut app = AppState::default();
+    let resource = Some(ResourceRef::Pod("api".into(), "prod".into()));
+    let runbook = LoadedRunbook {
+        id: "pod_failure".into(),
+        title: "Pod Failure Triage".into(),
+        description: None,
+        aliases: vec!["incident".into()],
+        resource_kinds: vec!["Pod".into()],
+        shortcut: None,
+        steps: vec![
+            LoadedRunbookStep {
+                title: "Checklist".into(),
+                description: None,
+                kind: LoadedRunbookStepKind::Checklist {
+                    items: vec!["Inspect events".into()],
+                },
+            },
+            LoadedRunbookStep {
+                title: "Open logs".into(),
+                description: None,
+                kind: LoadedRunbookStepKind::DetailAction {
+                    action: RunbookDetailAction::Logs,
+                },
+            },
+        ],
+    };
+
+    app.focus = Focus::Workbench;
+    app.open_runbook_tab(runbook.clone(), resource.clone());
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("missing runbook tab");
+    };
+    let WorkbenchTabState::Runbook(tab) = &mut tab.state else {
+        panic!("expected runbook tab");
+    };
+    tab.selected = 1;
+    tab.detail_scroll = 4;
+    tab.toggle_done();
+
+    let refreshed_runbook = LoadedRunbook {
+        title: "Pod Failure Triage v2".into(),
+        steps: vec![
+            LoadedRunbookStep {
+                title: "Checklist".into(),
+                description: Some("fresh".into()),
+                kind: LoadedRunbookStepKind::Checklist {
+                    items: vec!["Inspect events".into(), "Inspect probes".into()],
+                },
+            },
+            LoadedRunbookStep {
+                title: "Open logs".into(),
+                description: Some("updated".into()),
+                kind: LoadedRunbookStepKind::DetailAction {
+                    action: RunbookDetailAction::Logs,
+                },
+            },
+        ],
+        ..runbook
+    };
+
+    app.open_runbook_tab(refreshed_runbook, resource);
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing runbook tab");
+    };
+    let WorkbenchTabState::Runbook(tab) = &tab.state else {
+        panic!("expected runbook tab");
+    };
+    assert_eq!(tab.selected, 1);
+    assert_eq!(tab.detail_scroll, 4);
+    assert_eq!(tab.steps[1].state, crate::workbench::RunbookStepState::Done);
+    assert_eq!(tab.runbook.title, "Pod Failure Triage v2");
+    assert_eq!(tab.steps[0].step.description.as_deref(), Some("fresh"));
+    let crate::runbooks::LoadedRunbookStepKind::Checklist { items } = &tab.steps[0].step.kind
+    else {
+        panic!("expected checklist step");
+    };
+    assert_eq!(items.len(), 2);
+}
+
+#[test]
+fn reopen_same_target_port_forward_tab_preserves_dialog_state() {
+    use crate::ui::components::port_forward_dialog::{PortForwardDialog, PortForwardMode};
+    use crate::workbench::WorkbenchTabState;
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = Some(ResourceRef::Pod("api".into(), "prod".into()));
+    let mut dialog = PortForwardDialog::with_target("prod", "api", 8080);
+    dialog.mode = PortForwardMode::List;
+    dialog.selected_tunnel = 2;
+    app.open_port_forward_tab(resource.clone(), dialog);
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("missing port-forward tab");
+    };
+    let WorkbenchTabState::PortForward(tab) = &mut tab.state else {
+        panic!("expected port-forward tab");
+    };
+    tab.dialog.selected_tunnel = 1;
+    tab.dialog.success = Some("keep".into());
+
+    app.open_port_forward_tab(resource, PortForwardDialog::new());
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing port-forward tab");
+    };
+    let WorkbenchTabState::PortForward(tab) = &tab.state else {
+        panic!("expected port-forward tab");
+    };
+    assert_eq!(tab.dialog.mode, PortForwardMode::List);
+    assert_eq!(tab.dialog.selected_tunnel, 1);
+    assert_eq!(tab.dialog.success.as_deref(), Some("keep"));
+}
+
+#[test]
+fn reopen_decoded_secret_tab_preserves_unsaved_edit_state() {
+    use crate::secret::{DecodedSecretEntry, DecodedSecretValue};
+    use crate::workbench::{DecodedSecretTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Secret("app-secret".into(), "prod".into());
+    let mut tab = DecodedSecretTabState::new(resource.clone());
+    tab.entries = vec![DecodedSecretEntry {
+        key: "TOKEN".into(),
+        value: DecodedSecretValue::Text {
+            current: "new-value".into(),
+            original: "old-value".into(),
+        },
+    }];
+    tab.selected = 0;
+    tab.editing = true;
+    tab.edit_input = "new-value".into();
+    tab.edit_cursor = tab.edit_input.len();
+    app.workbench
+        .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+    app.open_decoded_secret_tab(resource, Some("kind: Secret".into()), None, Some(42));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing decoded secret tab");
+    };
+    let WorkbenchTabState::DecodedSecret(tab) = &tab.state else {
+        panic!("expected decoded secret tab");
+    };
+    assert!(tab.editing);
+    assert_eq!(tab.edit_input, "new-value");
+    assert!(tab.has_unsaved_changes());
+    assert_eq!(
+        tab.selected_entry().map(|entry| entry.key.as_str()),
+        Some("TOKEN")
+    );
+}
+
+#[test]
+fn reopen_resource_yaml_tab_preserves_scroll_while_refreshing_payload() {
+    use crate::workbench::{ResourceYamlTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = ResourceYamlTabState::new(resource.clone());
+    tab.yaml = Some("kind: Pod\nmetadata:\n  name: api".into());
+    tab.loading = false;
+    tab.scroll = 9;
+    app.workbench.open_tab(WorkbenchTabState::ResourceYaml(tab));
+
+    app.open_resource_yaml_tab(resource, None, None, Some(77));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing yaml tab");
+    };
+    let WorkbenchTabState::ResourceYaml(tab) = &tab.state else {
+        panic!("expected yaml tab");
+    };
+    assert_eq!(tab.scroll, 9);
+    assert!(tab.loading);
+    assert_eq!(tab.pending_request_id, Some(77));
+}
+
+#[test]
+fn reopen_rollout_tab_preserves_revision_selection_and_detail_scroll() {
+    use crate::k8s::rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind};
+    use crate::workbench::{RolloutTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Deployment("api".into(), "prod".into());
+    let mut tab = RolloutTabState::new(resource.clone());
+    tab.revisions = vec![
+        RolloutRevisionInfo {
+            revision: 1,
+            name: "rev-1".into(),
+            created: None,
+            summary: "first".into(),
+            change_cause: None,
+            is_current: false,
+            is_update_target: false,
+        },
+        RolloutRevisionInfo {
+            revision: 2,
+            name: "rev-2".into(),
+            created: None,
+            summary: "second".into(),
+            change_cause: None,
+            is_current: true,
+            is_update_target: true,
+        },
+    ];
+    tab.selected = 1;
+    tab.detail_scroll = 6;
+    tab.loading = false;
+    app.workbench.open_tab(WorkbenchTabState::Rollout(tab));
+
+    app.open_rollout_tab(
+        resource,
+        Some(RolloutInspection {
+            kind: RolloutWorkloadKind::Deployment,
+            strategy: "RollingUpdate".into(),
+            paused: false,
+            current_revision: Some(2),
+            update_target_revision: Some(2),
+            summary_lines: vec!["healthy".into()],
+            conditions: Vec::new(),
+            revisions: vec![
+                RolloutRevisionInfo {
+                    revision: 2,
+                    name: "rev-2".into(),
+                    created: None,
+                    summary: "second".into(),
+                    change_cause: None,
+                    is_current: true,
+                    is_update_target: true,
+                },
+                RolloutRevisionInfo {
+                    revision: 3,
+                    name: "rev-3".into(),
+                    created: None,
+                    summary: "third".into(),
+                    change_cause: None,
+                    is_current: false,
+                    is_update_target: false,
+                },
+            ],
+        }),
+        None,
+        None,
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing rollout tab");
+    };
+    let WorkbenchTabState::Rollout(tab) = &tab.state else {
+        panic!("expected rollout tab");
+    };
+    assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(2));
+    assert_eq!(tab.detail_scroll, 6);
+}
+
+#[test]
+fn reopen_resource_events_tab_preserves_scroll_during_refresh() {
+    use crate::k8s::events::EventInfo;
+    use crate::time::now;
+    use crate::workbench::{ResourceEventsTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = ResourceEventsTabState::new(resource.clone());
+    tab.events = vec![EventInfo {
+        event_type: "Normal".into(),
+        reason: "Pulled".into(),
+        message: "image".into(),
+        first_timestamp: now(),
+        last_timestamp: now(),
+        count: 1,
+    }];
+    tab.rebuild_timeline(&app.action_history);
+    tab.scroll = 5;
+    tab.loading = false;
+    app.workbench
+        .open_tab(WorkbenchTabState::ResourceEvents(tab));
+
+    app.open_resource_events_tab(resource, Vec::new(), true, None, Some(33));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing events tab");
+    };
+    let WorkbenchTabState::ResourceEvents(tab) = &tab.state else {
+        panic!("expected events tab");
+    };
+    assert_eq!(tab.scroll, 5);
+    assert!(tab.loading);
+    assert_eq!(tab.pending_request_id, Some(33));
+}
+
+#[test]
+fn reopen_pod_logs_tab_preserves_investigation_settings() {
+    use crate::log_investigation::{LogQueryMode, LogTimeWindow};
+    use crate::workbench::{PodLogsTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = PodLogsTabState::new(resource.clone());
+    tab.viewer.container_name = "app".into();
+    tab.viewer.previous_logs = true;
+    tab.viewer.show_timestamps = true;
+    tab.viewer.search_query = "error".into();
+    tab.viewer.search_mode = LogQueryMode::Regex;
+    tab.viewer.time_window = LogTimeWindow::Last1Hour;
+    tab.viewer.structured_view = false;
+    app.workbench.open_tab(WorkbenchTabState::PodLogs(tab));
+
+    app.open_pod_logs_tab(resource);
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing pod logs tab");
+    };
+    let WorkbenchTabState::PodLogs(tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(tab.viewer.container_name, "app");
+    assert!(tab.viewer.previous_logs);
+    assert!(tab.viewer.show_timestamps);
+    assert_eq!(tab.viewer.search_query, "error");
+    assert_eq!(tab.viewer.search_mode, LogQueryMode::Regex);
+    assert_eq!(tab.viewer.time_window, LogTimeWindow::Last1Hour);
+    assert!(!tab.viewer.structured_view);
+}
+
+#[test]
+fn reopen_workload_logs_tab_preserves_filters_while_resetting_session() {
+    use crate::log_investigation::{LogQueryMode, LogTimeWindow};
+    use crate::workbench::{WorkbenchTabState, WorkloadLogsTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Deployment("api".into(), "prod".into());
+    let mut tab = WorkloadLogsTabState::new(resource.clone(), 7);
+    tab.text_filter = "timeout".into();
+    tab.filter_input = "timeout".into();
+    tab.text_filter_mode = LogQueryMode::Regex;
+    tab.time_window = LogTimeWindow::Last15Minutes;
+    tab.structured_view = false;
+    tab.label_filter = Some("app=api".into());
+    tab.pod_filter = Some("api-0".into());
+    tab.container_filter = Some("main".into());
+    tab.follow_mode = false;
+    tab.lines.push(crate::workbench::WorkloadLogLine {
+        pod_name: "api-0".into(),
+        container_name: "main".into(),
+        entry: crate::log_investigation::LogEntry::from_raw("hello"),
+        is_stderr: false,
+    });
+    app.workbench.open_tab(WorkbenchTabState::WorkloadLogs(tab));
+
+    app.open_workload_logs_tab(resource, 99);
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing workload logs tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(tab) = &tab.state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(tab.session_id, 99);
+    assert!(tab.lines.is_empty());
+    assert_eq!(tab.text_filter, "timeout");
+    assert_eq!(tab.filter_input, "timeout");
+    assert_eq!(tab.text_filter_mode, LogQueryMode::Regex);
+    assert_eq!(tab.time_window, LogTimeWindow::Last15Minutes);
+    assert!(!tab.structured_view);
+    assert_eq!(tab.label_filter.as_deref(), Some("app=api"));
+    assert_eq!(tab.pod_filter.as_deref(), Some("api-0"));
+    assert_eq!(tab.container_filter.as_deref(), Some("main"));
+    assert!(!tab.follow_mode);
+    assert!(tab.loading);
+}
+
+#[test]
+fn reopen_exec_tab_preserves_selected_container_while_resetting_session() {
+    use crate::workbench::{ExecTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = ExecTabState::new(resource.clone(), 7, "api".into(), "prod".into());
+    tab.container_name = "sidecar".into();
+    tab.containers = vec!["main".into(), "sidecar".into()];
+    tab.lines = vec!["old output".into()];
+    tab.scroll = 4;
+    tab.loading = false;
+    app.workbench.open_tab(WorkbenchTabState::Exec(tab));
+
+    app.open_exec_tab(resource, 19, "api".into(), "prod".into());
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing exec tab");
+    };
+    let WorkbenchTabState::Exec(tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(tab.session_id, 19);
+    assert_eq!(tab.container_name, "sidecar");
+    assert!(tab.containers.is_empty());
+    assert!(tab.lines.is_empty());
+    assert_eq!(tab.scroll, 0);
+    assert!(tab.loading);
+}
+
+#[test]
 fn u_key_does_not_uncordon_for_pod_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -1966,6 +2894,19 @@ fn y_key_blocked_during_drain_confirm_does_not_open_yaml() {
     });
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
     assert_ne!(action, AppAction::OpenResourceYaml);
+}
+
+#[test]
+fn metadata_toggle_blocked_during_drain_confirm() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        confirm_drain: true,
+        ..DetailViewState::default()
+    });
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]

@@ -9,7 +9,10 @@ use ratatui::{
 
 use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
 use crate::ui::components::render_vertical_scrollbar;
-use crate::ui::{truncate_line_content, truncate_message, wrap_span_groups, wrapped_line_count};
+use crate::ui::{
+    cursor_visible_input_line, truncate_line_content, truncate_message, wrap_span_groups,
+    wrapped_line_count,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugContainerField {
@@ -43,6 +46,7 @@ pub struct DebugContainerDialogState {
     pub pending_launch: bool,
     pub error_message: Option<String>,
     pub body_scroll: usize,
+    pub custom_image_cursor: usize,
 }
 
 impl DebugContainerDialogState {
@@ -61,16 +65,26 @@ impl DebugContainerDialogState {
             pending_launch: false,
             error_message: None,
             body_scroll: 0,
+            custom_image_cursor: 0,
         }
     }
 
     pub fn set_target_containers(&mut self, target_containers: Vec<String>) {
+        let selected_target = self.target_containers.get(self.target_index).cloned();
         self.target_containers = target_containers;
-        self.target_index = self
-            .target_index
-            .min(self.target_containers.len().saturating_sub(1));
+        self.target_index = selected_target
+            .and_then(|target| {
+                self.target_containers
+                    .iter()
+                    .position(|candidate| candidate == &target)
+            })
+            .unwrap_or_else(|| {
+                self.target_index
+                    .min(self.target_containers.len().saturating_sub(1))
+            });
         self.loading_targets = false;
         self.pending_request_id = None;
+        self.error_message = None;
         if self.target_containers.is_empty() {
             self.use_target_container = false;
         }
@@ -98,6 +112,71 @@ impl DebugContainerDialogState {
             return DebugContainerDialogEvent::None;
         }
 
+        if self.is_editing_custom_image() {
+            match key.code {
+                KeyCode::Esc => return DebugContainerDialogEvent::Close,
+                KeyCode::Tab | KeyCode::Down => {
+                    self.error_message = None;
+                    self.focus_field = self.focus_field.next();
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    self.error_message = None;
+                    self.focus_field = self.focus_field.previous();
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Enter => return self.activate_focused(),
+                KeyCode::Backspace => {
+                    self.delete_custom_image_left();
+                    self.error_message = None;
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Delete => {
+                    self.delete_custom_image_right();
+                    self.error_message = None;
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Left => {
+                    self.custom_image_cursor = self.custom_image_cursor.saturating_sub(1);
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Right => {
+                    self.custom_image_cursor =
+                        (self.custom_image_cursor + 1).min(self.custom_image.chars().count());
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Home => {
+                    self.custom_image_cursor = 0;
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::End => {
+                    self.custom_image_cursor = self.custom_image.chars().count();
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.custom_image.clear();
+                    self.custom_image_cursor = 0;
+                    self.error_message = None;
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    let byte_idx = self
+                        .custom_image
+                        .char_indices()
+                        .nth(self.custom_image_cursor)
+                        .map_or(self.custom_image.len(), |(idx, _)| idx);
+                    self.custom_image.insert(byte_idx, c);
+                    self.custom_image_cursor += 1;
+                    self.error_message = None;
+                    return DebugContainerDialogEvent::None;
+                }
+                _ => {}
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                return DebugContainerDialogEvent::None;
+            }
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
@@ -114,34 +193,6 @@ impl DebugContainerDialogState {
                 }
                 KeyCode::Char('u') | KeyCode::PageUp => {
                     self.body_scroll = self.body_scroll.saturating_sub(10);
-                    return DebugContainerDialogEvent::None;
-                }
-                _ => {}
-            }
-        }
-
-        if self.is_editing_custom_image() {
-            match key.code {
-                KeyCode::Esc => return DebugContainerDialogEvent::Close,
-                KeyCode::Tab | KeyCode::Down => {
-                    self.error_message = None;
-                    self.focus_field = self.focus_field.next();
-                    return DebugContainerDialogEvent::None;
-                }
-                KeyCode::BackTab | KeyCode::Up => {
-                    self.error_message = None;
-                    self.focus_field = self.focus_field.previous();
-                    return DebugContainerDialogEvent::None;
-                }
-                KeyCode::Enter => return self.activate_focused(),
-                KeyCode::Backspace => {
-                    self.custom_image.pop();
-                    self.error_message = None;
-                    return DebugContainerDialogEvent::None;
-                }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.custom_image.push(c);
-                    self.error_message = None;
                     return DebugContainerDialogEvent::None;
                 }
                 _ => {}
@@ -218,6 +269,30 @@ impl DebugContainerDialogState {
     fn is_editing_custom_image(&self) -> bool {
         self.focus_field == DebugContainerField::CustomImage
             && self.selected_preset == DebugImagePreset::Custom
+    }
+
+    fn delete_custom_image_left(&mut self) {
+        if self.custom_image_cursor == 0 {
+            return;
+        }
+        if let Some((byte_idx, _)) = self
+            .custom_image
+            .char_indices()
+            .nth(self.custom_image_cursor - 1)
+        {
+            self.custom_image.remove(byte_idx);
+            self.custom_image_cursor = self.custom_image_cursor.saturating_sub(1);
+        }
+    }
+
+    fn delete_custom_image_right(&mut self) {
+        if let Some((byte_idx, _)) = self
+            .custom_image
+            .char_indices()
+            .nth(self.custom_image_cursor)
+        {
+            self.custom_image.remove(byte_idx);
+        }
     }
 
     fn activate_focused(&mut self) -> DebugContainerDialogEvent {
@@ -437,8 +512,25 @@ pub fn render_debug_container_dialog(
     } else {
         "Only used when the Custom preset is selected."
     };
-    frame.render_widget(
-        Paragraph::new(truncate_line_content(
+    let custom_line = if state.selected_preset == DebugImagePreset::Custom {
+        cursor_visible_input_line(
+            &[Span::styled(
+                format!(
+                    "{} Custom image: ",
+                    focus_marker(state.focus_field == DebugContainerField::CustomImage)
+                ),
+                custom_style,
+            )],
+            &state.custom_image,
+            (state.focus_field == DebugContainerField::CustomImage)
+                .then_some(state.custom_image_cursor),
+            custom_value_style(state),
+            custom_value_style(state),
+            &[],
+            usize::from(chunks[2].width.max(1)),
+        )
+    } else {
+        truncate_line_content(
             &Line::from(vec![
                 Span::styled(
                     format!(
@@ -450,9 +542,9 @@ pub fn render_debug_container_dialog(
                 Span::styled(custom_value, custom_value_style(state)),
             ]),
             usize::from(chunks[2].width.max(1)),
-        )),
-        chunks[2],
-    );
+        )
+    };
+    frame.render_widget(Paragraph::new(custom_line), chunks[2]);
 
     let target_mode = if state.use_target_container {
         "on"
@@ -800,6 +892,74 @@ mod tests {
         assert_eq!(state.body_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.body_scroll, 0);
+    }
+
+    #[test]
+    fn ctrl_scroll_shortcuts_do_not_fire_while_editing_custom_image() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = DebugContainerField::CustomImage;
+        state.custom_image = "busybox".to_string();
+        state.custom_image_cursor = state.custom_image.len();
+        state.body_scroll = 7;
+
+        state.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        state.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+        assert_eq!(state.body_scroll, 7);
+        assert_eq!(state.custom_image, "");
+    }
+
+    #[test]
+    fn custom_image_editor_inserts_at_cursor() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = DebugContainerField::CustomImage;
+        state.custom_image = "busybox".to_string();
+        state.custom_image_cursor = 4;
+
+        state.handle_key(KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT));
+
+        assert_eq!(state.custom_image, "busyXbox");
+    }
+
+    #[test]
+    fn set_target_containers_clears_stale_fetch_error() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.set_target_fetch_error("failed to load containers");
+        assert!(state.error_message.is_some());
+
+        state.set_target_containers(vec!["main".to_string()]);
+
+        assert!(state.error_message.is_none());
+        assert_eq!(
+            state.selected_target_container().map(String::as_str),
+            Some("main")
+        );
+    }
+
+    #[test]
+    fn set_target_containers_preserves_selected_target_identity() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.loading_targets = false;
+        state.target_containers = vec![
+            "main".to_string(),
+            "sidecar".to_string(),
+            "metrics".to_string(),
+        ];
+        state.target_index = 1;
+
+        state.set_target_containers(vec![
+            "sidecar".to_string(),
+            "metrics".to_string(),
+            "main".to_string(),
+        ]);
+
+        assert_eq!(state.target_index, 0);
+        assert_eq!(
+            state.selected_target_container().map(String::as_str),
+            Some("sidecar")
+        );
     }
 
     #[test]

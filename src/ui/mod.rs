@@ -1007,26 +1007,39 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     if let Some(search_rect) = search_area {
         let theme = default_theme();
-        let query_text = app.search_query();
-        let mut spans = vec![
-            Span::styled(
-                " / ",
+        let content = if app.search_query().is_empty() && app.is_search_mode() {
+            Line::from(vec![
+                Span::styled(
+                    " / ",
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("type to filter", Style::default().fg(theme.muted)),
+            ])
+        } else {
+            cursor_visible_input_line(
+                &[Span::styled(
+                    " / ".to_string(),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
+                )],
+                app.search_query(),
+                app.is_search_mode().then_some(app.search_cursor()),
+                Style::default().fg(theme.fg),
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
-            ),
-            Span::raw(query_text),
-        ];
-        if app.is_search_mode() {
-            spans.push(Span::styled("█", Style::default().fg(theme.accent)));
-        } else {
-            spans.push(Span::styled(
-                "  [Esc] clear",
-                Style::default().fg(theme.muted),
-            ));
-        }
+                &[Span::styled(
+                    "  [Esc] clear".to_string(),
+                    Style::default().fg(theme.muted),
+                )],
+                usize::from(search_rect.width.max(1)),
+            )
+        };
         frame.render_widget(
-            Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg_surface)),
+            Paragraph::new(content).style(Style::default().bg(theme.bg_surface)),
             search_rect,
         );
     }
@@ -2304,6 +2317,31 @@ pub(crate) fn cursor_visible_input_line(
     }
     spans.extend(suffix.iter().cloned());
     Line::from(spans)
+}
+
+pub(crate) fn insert_char_at_cursor(value: &mut String, cursor: &mut usize, ch: char) {
+    let byte_idx = value
+        .char_indices()
+        .nth(*cursor)
+        .map_or(value.len(), |(idx, _)| idx);
+    value.insert(byte_idx, ch);
+    *cursor += 1;
+}
+
+pub(crate) fn delete_char_left_at_cursor(value: &mut String, cursor: &mut usize) {
+    if *cursor == 0 {
+        return;
+    }
+    if let Some((byte_idx, _)) = value.char_indices().nth(*cursor - 1) {
+        value.remove(byte_idx);
+        *cursor = cursor.saturating_sub(1);
+    }
+}
+
+pub(crate) fn delete_char_right_at_cursor(value: &mut String, cursor: usize) {
+    if let Some((byte_idx, _)) = value.char_indices().nth(cursor) {
+        value.remove(byte_idx);
+    }
 }
 
 pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {

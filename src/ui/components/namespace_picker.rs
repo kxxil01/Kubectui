@@ -26,6 +26,7 @@ pub struct NamespacePicker {
     namespaces: Vec<String>,
     selected_index: usize,
     search_query: String,
+    search_cursor: usize,
     is_open: bool,
 }
 
@@ -45,6 +46,7 @@ impl NamespacePicker {
             namespaces,
             selected_index: 0,
             search_query: String::new(),
+            search_cursor: 0,
             is_open: false,
         }
     }
@@ -52,7 +54,21 @@ impl NamespacePicker {
     pub fn open(&mut self) {
         self.is_open = true;
         self.search_query.clear();
-        self.selected_index = 0;
+        self.search_cursor = 0;
+        self.selected_index = self
+            .selected_index
+            .min(self.namespaces.len().saturating_sub(1));
+    }
+
+    pub fn open_with_current(&mut self, current_namespace: &str) {
+        self.open();
+        if let Some(index) = self
+            .namespaces
+            .iter()
+            .position(|namespace| namespace == current_namespace)
+        {
+            self.selected_index = index;
+        }
     }
 
     pub fn close(&mut self) {
@@ -117,12 +133,56 @@ impl NamespacePicker {
                 NamespacePickerAction::None
             }
             KeyCode::Backspace => {
-                self.search_query.pop();
+                if self.search_cursor > 0
+                    && let Some((byte_idx, _)) =
+                        self.search_query.char_indices().nth(self.search_cursor - 1)
+                {
+                    self.search_query.remove(byte_idx);
+                    self.search_cursor = self.search_cursor.saturating_sub(1);
+                }
                 self.selected_index = 0;
                 NamespacePickerAction::None
             }
-            KeyCode::Char(c) if key.modifiers == KeyModifiers::NONE => {
-                self.search_query.push(c);
+            KeyCode::Delete => {
+                if let Some((byte_idx, _)) =
+                    self.search_query.char_indices().nth(self.search_cursor)
+                {
+                    self.search_query.remove(byte_idx);
+                }
+                self.selected_index = 0;
+                NamespacePickerAction::None
+            }
+            KeyCode::Left => {
+                self.search_cursor = self.search_cursor.saturating_sub(1);
+                NamespacePickerAction::None
+            }
+            KeyCode::Right => {
+                self.search_cursor =
+                    (self.search_cursor + 1).min(self.search_query.chars().count());
+                NamespacePickerAction::None
+            }
+            KeyCode::Home => {
+                self.search_cursor = 0;
+                NamespacePickerAction::None
+            }
+            KeyCode::End => {
+                self.search_cursor = self.search_query.chars().count();
+                NamespacePickerAction::None
+            }
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.search_query.clear();
+                self.search_cursor = 0;
+                self.selected_index = 0;
+                NamespacePickerAction::None
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let byte_idx = self
+                    .search_query
+                    .char_indices()
+                    .nth(self.search_cursor)
+                    .map_or(self.search_query.len(), |(idx, _)| idx);
+                self.search_query.insert(byte_idx, c);
+                self.search_cursor += 1;
                 self.selected_index = 0;
                 NamespacePickerAction::None
             }
@@ -229,7 +289,7 @@ impl NamespacePicker {
             cursor_visible_input_line(
                 &[Span::styled("  / ".to_string(), theme.title_style())],
                 &self.search_query,
-                Some(self.search_query.chars().count()),
+                Some(self.search_cursor),
                 Style::default().fg(theme.fg),
                 theme.title_style(),
                 &[],
@@ -380,6 +440,30 @@ mod tests {
     }
 
     #[test]
+    fn test_namespace_picker_accepts_shift_modified_search_chars() {
+        let mut picker =
+            NamespacePicker::new(vec!["default".to_string(), "kube-system".to_string()]);
+        picker.open();
+
+        picker.handle_key(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
+
+        assert_eq!(picker.search_query(), "D");
+    }
+
+    #[test]
+    fn test_namespace_picker_search_supports_cursor_editing() {
+        let mut picker = NamespacePicker::new(vec!["default".to_string()]);
+        picker.open();
+
+        picker.handle_key(KeyEvent::from(KeyCode::Char('a')));
+        picker.handle_key(KeyEvent::from(KeyCode::Char('c')));
+        picker.handle_key(KeyEvent::from(KeyCode::Left));
+        picker.handle_key(KeyEvent::from(KeyCode::Char('b')));
+
+        assert_eq!(picker.search_query(), "abc");
+    }
+
+    #[test]
     fn test_namespace_picker_select() {
         let mut picker = NamespacePicker::new(vec!["all".to_string(), "default".to_string()]);
         picker.open();
@@ -390,6 +474,23 @@ mod tests {
 
         picker.close();
         assert!(!picker.is_open());
+    }
+
+    #[test]
+    fn namespace_picker_open_with_current_selects_active_namespace() {
+        let mut picker = NamespacePicker::new(vec![
+            "all".to_string(),
+            "default".to_string(),
+            "payments".to_string(),
+        ]);
+
+        picker.open_with_current("payments");
+
+        assert_eq!(picker.selected_index(), 2);
+        assert_eq!(
+            picker.filtered_namespaces().get(picker.selected_index()),
+            Some(&"payments".to_string())
+        );
     }
 
     #[test]

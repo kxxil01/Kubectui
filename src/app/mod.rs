@@ -282,6 +282,7 @@ pub struct AppState {
     /// Shared vertical scroll offset for lower detail panes in split content views.
     pub content_detail_scroll: usize,
     pub search_query: String,
+    pub search_cursor: usize,
     pub is_search_mode: bool,
     pub should_quit: bool,
     pub confirm_quit: bool,
@@ -303,6 +304,7 @@ pub struct AppState {
     pub extension_instances: Vec<CustomResourceInfo>,
     pub extension_error: Option<String>,
     pub extension_selected_crd: Option<String>,
+    pub extension_pending_selection: Option<(String, Option<String>)>,
     /// When true, keyboard focus is on the instances pane (right) instead of CRD picker (left).
     pub extension_in_instances: bool,
     /// Cursor index within the instances list.

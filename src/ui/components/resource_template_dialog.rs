@@ -31,6 +31,14 @@ pub struct ResourceTemplateDialogState {
     pub focus_field: ResourceTemplateField,
     pub error_message: Option<String>,
     pub pending: bool,
+    name_cursor: usize,
+    namespace_cursor: usize,
+    image_cursor: usize,
+    replicas_cursor: usize,
+    container_port_cursor: usize,
+    service_port_cursor: usize,
+    config_key_cursor: usize,
+    config_value_cursor: usize,
 }
 
 impl ResourceTemplateDialogState {
@@ -56,7 +64,16 @@ impl ResourceTemplateDialogState {
             focus_field: ResourceTemplateField::Name,
             error_message: None,
             pending: false,
+            name_cursor: 0,
+            namespace_cursor: 0,
+            image_cursor: 0,
+            replicas_cursor: 0,
+            container_port_cursor: 0,
+            service_port_cursor: 0,
+            config_key_cursor: 0,
+            config_value_cursor: 0,
         };
+        state.sync_cursors_to_values();
         state.revalidate();
         state
     }
@@ -84,17 +101,77 @@ impl ResourceTemplateDialogState {
     }
 
     pub fn add_char(&mut self, c: char) {
+        let cursor = self.active_cursor();
         if let Some(field) = self.active_buffer_mut() {
-            field.push(c);
+            let byte_pos = field
+                .char_indices()
+                .nth(cursor)
+                .map_or(field.len(), |(idx, _)| idx);
+            field.insert(byte_pos, c);
+            *self.active_cursor_mut() = cursor.saturating_add(1);
             self.revalidate();
         }
     }
 
     pub fn backspace(&mut self) {
+        let cursor = self.active_cursor();
+        if cursor == 0 {
+            return;
+        }
         if let Some(field) = self.active_buffer_mut() {
-            field.pop();
+            let byte_pos = field
+                .char_indices()
+                .nth(cursor - 1)
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            field.remove(byte_pos);
+            *self.active_cursor_mut() = cursor.saturating_sub(1);
             self.revalidate();
         }
+    }
+
+    pub fn delete_char(&mut self) {
+        let cursor = self.active_cursor();
+        if let Some(field) = self.active_buffer_mut() {
+            if cursor >= field.chars().count() {
+                return;
+            }
+            let byte_pos = field
+                .char_indices()
+                .nth(cursor)
+                .map(|(idx, _)| idx)
+                .unwrap_or(field.len());
+            field.remove(byte_pos);
+            self.revalidate();
+        }
+    }
+
+    pub fn clear_active(&mut self) {
+        if let Some(field) = self.active_buffer_mut() {
+            field.clear();
+            *self.active_cursor_mut() = 0;
+            self.revalidate();
+        }
+    }
+
+    pub fn cursor_left(&mut self) {
+        *self.active_cursor_mut() = self.active_cursor().saturating_sub(1);
+    }
+
+    pub fn cursor_right(&mut self) {
+        let next = self
+            .active_cursor()
+            .saturating_add(1)
+            .min(self.active_len());
+        *self.active_cursor_mut() = next;
+    }
+
+    pub fn cursor_home(&mut self) {
+        *self.active_cursor_mut() = 0;
+    }
+
+    pub fn cursor_end(&mut self) {
+        *self.active_cursor_mut() = self.active_len();
     }
 
     pub fn is_valid(&self) -> bool {
@@ -142,6 +219,81 @@ impl ResourceTemplateDialogState {
             ResourceTemplateField::ConfigValue => Some(&mut self.values.config_value),
             ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => None,
         }
+    }
+
+    fn active_cursor(&self) -> usize {
+        match self.focus_field {
+            ResourceTemplateField::Name => self.name_cursor,
+            ResourceTemplateField::Namespace => self.namespace_cursor,
+            ResourceTemplateField::Image => self.image_cursor,
+            ResourceTemplateField::Replicas => self.replicas_cursor,
+            ResourceTemplateField::ContainerPort => self.container_port_cursor,
+            ResourceTemplateField::ServicePort => self.service_port_cursor,
+            ResourceTemplateField::ConfigKey => self.config_key_cursor,
+            ResourceTemplateField::ConfigValue => self.config_value_cursor,
+            ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => 0,
+        }
+    }
+
+    fn active_cursor_mut(&mut self) -> &mut usize {
+        match self.focus_field {
+            ResourceTemplateField::Name => &mut self.name_cursor,
+            ResourceTemplateField::Namespace => &mut self.namespace_cursor,
+            ResourceTemplateField::Image => &mut self.image_cursor,
+            ResourceTemplateField::Replicas => &mut self.replicas_cursor,
+            ResourceTemplateField::ContainerPort => &mut self.container_port_cursor,
+            ResourceTemplateField::ServicePort => &mut self.service_port_cursor,
+            ResourceTemplateField::ConfigKey => &mut self.config_key_cursor,
+            ResourceTemplateField::ConfigValue => &mut self.config_value_cursor,
+            ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => {
+                &mut self.name_cursor
+            }
+        }
+    }
+
+    fn active_len(&self) -> usize {
+        self.active_buffer()
+            .map(|value| value.chars().count())
+            .unwrap_or(0)
+    }
+
+    fn active_buffer(&self) -> Option<&str> {
+        match self.focus_field {
+            ResourceTemplateField::Name => Some(self.values.name.as_str()),
+            ResourceTemplateField::Namespace => Some(self.values.namespace.as_str()),
+            ResourceTemplateField::Image => Some(self.values.image.as_str()),
+            ResourceTemplateField::Replicas => Some(self.values.replicas.as_str()),
+            ResourceTemplateField::ContainerPort => Some(self.values.container_port.as_str()),
+            ResourceTemplateField::ServicePort => Some(self.values.service_port.as_str()),
+            ResourceTemplateField::ConfigKey => Some(self.values.config_key.as_str()),
+            ResourceTemplateField::ConfigValue => Some(self.values.config_value.as_str()),
+            ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => None,
+        }
+    }
+
+    fn cursor_for(&self, field: ResourceTemplateField) -> usize {
+        match field {
+            ResourceTemplateField::Name => self.name_cursor,
+            ResourceTemplateField::Namespace => self.namespace_cursor,
+            ResourceTemplateField::Image => self.image_cursor,
+            ResourceTemplateField::Replicas => self.replicas_cursor,
+            ResourceTemplateField::ContainerPort => self.container_port_cursor,
+            ResourceTemplateField::ServicePort => self.service_port_cursor,
+            ResourceTemplateField::ConfigKey => self.config_key_cursor,
+            ResourceTemplateField::ConfigValue => self.config_value_cursor,
+            ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => 0,
+        }
+    }
+
+    fn sync_cursors_to_values(&mut self) {
+        self.name_cursor = self.values.name.chars().count();
+        self.namespace_cursor = self.values.namespace.chars().count();
+        self.image_cursor = self.values.image.chars().count();
+        self.replicas_cursor = self.values.replicas.chars().count();
+        self.container_port_cursor = self.values.container_port.chars().count();
+        self.service_port_cursor = self.values.service_port.chars().count();
+        self.config_key_cursor = self.values.config_key.chars().count();
+        self.config_value_cursor = self.values.config_value.chars().count();
     }
 
     fn revalidate(&mut self) {
@@ -278,7 +430,7 @@ pub fn render_resource_template_dialog(
                     Span::styled(format!("{label:16} "), Style::default().bold()),
                 ],
                 value,
-                selected.then_some(value.chars().count()),
+                selected.then_some(state.cursor_for(*field)),
                 if selected {
                     Style::default()
                         .fg(ratatui::style::Color::Black)
@@ -480,5 +632,28 @@ mod tests {
         terminal
             .draw(|frame| render_resource_template_dialog(frame, frame.area(), &state))
             .expect("compact resource template dialog should render");
+    }
+
+    #[test]
+    fn template_dialog_edits_at_cursor_position() {
+        let mut state =
+            ResourceTemplateDialogState::new(ResourceTemplateKind::Deployment, "default");
+        state.focus_field = ResourceTemplateField::Name;
+        state.cursor_home();
+        state.cursor_right();
+        state.add_char('X');
+
+        assert_eq!(state.values.name, "sXample-app");
+    }
+
+    #[test]
+    fn template_dialog_ctrl_u_clear_resets_cursor() {
+        let mut state =
+            ResourceTemplateDialogState::new(ResourceTemplateKind::Deployment, "default");
+        state.focus_field = ResourceTemplateField::Namespace;
+        state.clear_active();
+
+        assert!(state.values.namespace.is_empty());
+        assert_eq!(state.cursor_for(ResourceTemplateField::Namespace), 0);
     }
 }

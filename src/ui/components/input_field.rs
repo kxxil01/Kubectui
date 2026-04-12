@@ -62,7 +62,7 @@ impl InputFieldWidget {
     }
 
     /// Delete character before cursor.
-    pub fn delete_char(&mut self) {
+    pub fn backspace_char(&mut self) {
         if self.cursor_pos > 0 {
             let byte_pos = self
                 .value
@@ -72,6 +72,14 @@ impl InputFieldWidget {
                 .unwrap_or(0);
             self.value.remove(byte_pos);
             self.cursor_pos -= 1;
+            self.error = false;
+        }
+    }
+
+    /// Delete character at cursor.
+    pub fn delete_char(&mut self) {
+        if let Some((byte_pos, _)) = self.value.char_indices().nth(self.cursor_pos) {
+            self.value.remove(byte_pos);
             self.error = false;
         }
     }
@@ -175,6 +183,24 @@ mod tests {
         field.add_char('a');
         field.add_char('b');
         assert_eq!(field.value, "ab");
+    }
+
+    #[test]
+    fn test_backspace_char_removes_previous_character() {
+        let mut field = InputFieldWidget::with_value("abcd", 10);
+        field.cursor_pos = 2;
+        field.backspace_char();
+        assert_eq!(field.value, "acd");
+        assert_eq!(field.cursor_pos, 1);
+    }
+
+    #[test]
+    fn test_delete_char_removes_character_at_cursor() {
+        let mut field = InputFieldWidget::with_value("abcd", 10);
+        field.cursor_pos = 1;
+        field.delete_char();
+        assert_eq!(field.value, "acd");
+        assert_eq!(field.cursor_pos, 1);
     }
 
     #[test]

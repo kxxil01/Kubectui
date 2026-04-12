@@ -110,6 +110,15 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::ResourceYaml(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::ResourceYaml(tab) = &mut tab.state
+        {
+            tab.update_content(yaml, error, pending_request_id);
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = ResourceYamlTabState::new(resource);
         tab.yaml = yaml;
         tab.loading = tab.yaml.is_none() && error.is_none();
@@ -129,6 +138,15 @@ impl AppState {
         subject_review: Option<SubjectAccessReview>,
         attempted_review: Option<AttemptedActionReview>,
     ) {
+        let key = WorkbenchTabKey::AccessReview(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::AccessReview(tab) = &mut tab.state
+        {
+            tab.refresh_payload(context_name, namespace_scope, entries, attempted_review);
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::AccessReview(AccessReviewTabState::new(
                 resource,
@@ -148,6 +166,21 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::ResourceDiff(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::ResourceDiff(tab) = &mut tab.state
+        {
+            if let Some(diff) = diff {
+                tab.apply_result(diff);
+            } else {
+                tab.loading = error.is_none();
+                tab.error = error;
+                tab.pending_request_id = pending_request_id;
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = ResourceDiffTabState::new(resource);
         tab.loading = diff.is_none() && error.is_none();
         tab.error = error;
@@ -167,6 +200,21 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::Rollout(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::Rollout(tab) = &mut tab.state
+        {
+            if let Some(inspection) = inspection {
+                tab.apply_inspection(inspection);
+            } else {
+                tab.loading = error.is_none();
+                tab.error = error;
+                tab.pending_request_id = pending_request_id;
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = RolloutTabState::new(resource);
         tab.loading = inspection.is_none() && error.is_none();
         tab.error = error;
@@ -185,6 +233,21 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::HelmHistory(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::HelmHistory(tab) = &mut tab.state
+        {
+            if let Some(history) = history {
+                tab.apply_history(history);
+            } else {
+                tab.loading = error.is_none();
+                tab.error = error;
+                tab.pending_history_request_id = pending_request_id;
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = HelmHistoryTabState::new(resource);
         tab.loading = history.is_none() && error.is_none();
         tab.error = error;
@@ -203,6 +266,11 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::DecodedSecret(resource.clone());
+        if self.workbench.activate_tab(&key) {
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = DecodedSecretTabState::new(resource);
         tab.source_yaml = source_yaml;
         tab.loading = tab.source_yaml.is_none() && error.is_none();
@@ -221,6 +289,21 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::ResourceEvents(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::ResourceEvents(tab) = &mut tab.state
+        {
+            if !loading || error.is_some() || !events.is_empty() {
+                tab.events = events;
+                tab.rebuild_timeline(&self.action_history);
+            }
+            tab.loading = loading;
+            tab.error = error;
+            tab.pending_request_id = pending_request_id;
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = ResourceEventsTabState::new(resource);
         tab.events = events;
         tab.loading = loading;
@@ -238,6 +321,18 @@ impl AppState {
         analysis: Option<NetworkPolicyAnalysis>,
         error: Option<String>,
     ) {
+        let key = WorkbenchTabKey::NetworkPolicy(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::NetworkPolicy(tab) = &mut tab.state
+        {
+            tab.error = error;
+            if let Some(analysis) = analysis {
+                tab.apply_analysis(analysis);
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = NetworkPolicyTabState::new(resource);
         tab.error = error;
         if let Some(analysis) = analysis {
@@ -283,6 +378,18 @@ impl AppState {
         analysis: Option<TrafficDebugAnalysis>,
         error: Option<String>,
     ) {
+        let key = WorkbenchTabKey::TrafficDebug(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::TrafficDebug(tab) = &mut tab.state
+        {
+            tab.error = error;
+            if let Some(analysis) = analysis {
+                tab.apply_analysis(analysis);
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = TrafficDebugTabState::new(resource);
         tab.error = error;
         if let Some(analysis) = analysis {
@@ -294,6 +401,15 @@ impl AppState {
     }
 
     pub fn open_runbook_tab(&mut self, runbook: LoadedRunbook, resource: Option<ResourceRef>) {
+        let key = WorkbenchTabKey::Runbook(runbook.id.clone(), resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::Runbook(tab) = &mut tab.state
+        {
+            tab.refresh_runbook(runbook);
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::Runbook(Box::new(RunbookTabState::new(
                 runbook, resource,
@@ -302,12 +418,26 @@ impl AppState {
     }
 
     pub fn open_pod_logs_tab(&mut self, resource: ResourceRef) {
+        let key = WorkbenchTabKey::PodLogs(resource.clone());
+        if self.workbench.activate_tab(&key) {
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(resource)));
         self.focus = Focus::Workbench;
     }
 
     pub fn open_workload_logs_tab(&mut self, resource: ResourceRef, session_id: u64) {
+        let key = WorkbenchTabKey::WorkloadLogs(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::WorkloadLogs(tab) = &mut tab.state
+        {
+            tab.restart_session(session_id);
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
                 resource, session_id,
@@ -322,6 +452,15 @@ impl AppState {
         pod_name: String,
         namespace: String,
     ) {
+        let key = WorkbenchTabKey::Exec(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+        {
+            exec_tab.restart_session(session_id, pod_name, namespace, None);
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::Exec(ExecTabState::new(
                 resource, session_id, pod_name, namespace,
@@ -337,6 +476,15 @@ impl AppState {
         namespace: String,
         container_name: String,
     ) {
+        let key = WorkbenchTabKey::Exec(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+        {
+            exec_tab.restart_session(session_id, pod_name, namespace, Some(container_name));
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = ExecTabState::new(resource, session_id, pod_name, namespace);
         tab.preset_container(container_name);
         self.workbench.open_tab(WorkbenchTabState::Exec(tab));
@@ -364,6 +512,14 @@ impl AppState {
         resource: Option<ResourceRef>,
         dialog: PortForwardDialog,
     ) {
+        if let Some(tab) = self.workbench.find_tab_mut(&WorkbenchTabKey::PortForward)
+            && let WorkbenchTabState::PortForward(existing) = &mut tab.state
+            && existing.target == resource
+        {
+            self.workbench.activate_tab(&WorkbenchTabKey::PortForward);
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::PortForward(PortForwardTabState::new(
                 resource, dialog,

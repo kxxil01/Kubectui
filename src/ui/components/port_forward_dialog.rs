@@ -1,6 +1,6 @@
 //! Port forward dialog and tunnel list UI with enhanced form validation
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
@@ -142,7 +142,7 @@ impl PortForwardDialog {
                 PortForwardAction::None
             }
             KeyCode::F(2) => {
-                self.mode = PortForwardMode::List;
+                self.switch_mode(PortForwardMode::List);
                 PortForwardAction::None
             }
             KeyCode::Enter => match self.validate() {
@@ -157,7 +157,7 @@ impl PortForwardDialog {
                 }
             },
             KeyCode::Backspace => {
-                self.current_field_mut().delete_char();
+                self.current_field_mut().backspace_char();
                 self.error = None;
                 PortForwardAction::None
             }
@@ -182,7 +182,12 @@ impl PortForwardDialog {
                 self.current_field_mut().cursor_right();
                 PortForwardAction::None
             }
-            KeyCode::Char(c) => {
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.current_field_mut().clear();
+                self.error = None;
+                PortForwardAction::None
+            }
+            KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Port fields: only allow digits
                 match self.focus {
                     FormField::RemotePort | FormField::LocalPort => {
@@ -205,7 +210,7 @@ impl PortForwardDialog {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => PortForwardAction::Close,
             KeyCode::F(1) => {
-                self.mode = PortForwardMode::Create;
+                self.switch_mode(PortForwardMode::Create);
                 PortForwardAction::None
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -255,6 +260,12 @@ impl PortForwardDialog {
             FormField::RemotePort => FormField::PodName,
             FormField::LocalPort => FormField::RemotePort,
         };
+    }
+
+    fn switch_mode(&mut self, mode: PortForwardMode) {
+        self.mode = mode;
+        self.error = None;
+        self.success = None;
     }
 
     /// Validate form and build configuration.
@@ -793,6 +804,29 @@ mod tests {
         assert_eq!(dialog.mode, PortForwardMode::Create);
         dialog.handle_key(KeyEvent::from(KeyCode::F(2)));
         assert_eq!(dialog.mode, PortForwardMode::List);
+        assert!(dialog.error.is_none());
+        assert!(dialog.success.is_none());
+    }
+
+    #[test]
+    fn mode_switching_clears_stale_status_messages() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.error = Some("create error".to_string());
+        dialog.success = Some("create ok".to_string());
+
+        dialog.handle_key(KeyEvent::from(KeyCode::F(2)));
+
+        assert_eq!(dialog.mode, PortForwardMode::List);
+        assert!(dialog.error.is_none());
+        assert!(dialog.success.is_none());
+
+        dialog.error = Some("list error".to_string());
+        dialog.success = Some("list ok".to_string());
+        dialog.handle_key(KeyEvent::from(KeyCode::F(1)));
+
+        assert_eq!(dialog.mode, PortForwardMode::Create);
+        assert!(dialog.error.is_none());
+        assert!(dialog.success.is_none());
     }
 
     #[test]
@@ -818,6 +852,44 @@ mod tests {
         dialog.handle_key(KeyEvent::from(KeyCode::Char('9')));
 
         assert_eq!(dialog.remote_port_field.value, "9");
+    }
+
+    #[test]
+    fn ctrl_modified_chars_do_not_insert_unrelated_chars_into_create_fields() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.focus = FormField::PodName;
+        dialog.pod_name_field.value = "api".to_string();
+        dialog.pod_name_field.cursor_pos = dialog.pod_name_field.value.chars().count();
+
+        dialog.handle_key(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL));
+
+        assert_eq!(dialog.pod_name_field.value, "api");
+    }
+
+    #[test]
+    fn ctrl_u_clears_active_create_field() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.focus = FormField::PodName;
+        dialog.pod_name_field.value = "api".to_string();
+        dialog.pod_name_field.cursor_pos = dialog.pod_name_field.value.chars().count();
+
+        dialog.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+        assert!(dialog.pod_name_field.value.is_empty());
+        assert_eq!(dialog.pod_name_field.cursor_pos, 0);
+    }
+
+    #[test]
+    fn delete_removes_character_at_cursor_in_create_field() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.focus = FormField::PodName;
+        dialog.pod_name_field.value = "abcd".to_string();
+        dialog.pod_name_field.cursor_pos = 1;
+
+        dialog.handle_key(KeyEvent::from(KeyCode::Delete));
+
+        assert_eq!(dialog.pod_name_field.value, "acd");
+        assert_eq!(dialog.pod_name_field.cursor_pos, 1);
     }
 
     #[test]
