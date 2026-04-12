@@ -2151,15 +2151,15 @@ pub(crate) async fn run_app_inner(
             }
 
             result = rollout_rx.recv() => {
-                if let Some(result) = result {
-                    if result.context_generation != refresh_state.context_generation {
-                        if let Some(tab) = app
-                            .workbench_mut()
-                            .find_tab_mut(&WorkbenchTabKey::Rollout(result.resource.clone()))
-                            && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
-                        {
-                            rollout_tab.mutation_pending = None;
-                        }
+                    if let Some(result) = result {
+                        if result.context_generation != refresh_state.context_generation {
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::Rollout(result.resource.clone()))
+                                && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+                            {
+                                rollout_tab.clear_mutation_if_matches(result.action_history_id);
+                            }
                         app.complete_action_history(
                             result.action_history_id,
                             ActionStatus::Failed,
@@ -2241,7 +2241,7 @@ pub(crate) async fn run_app_inner(
                                 .find_tab_mut(&WorkbenchTabKey::Rollout(result.resource.clone()))
                                 && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
                             {
-                                rollout_tab.mutation_pending = None;
+                                rollout_tab.clear_mutation_if_matches(result.action_history_id);
                             }
                             let failure_message = match result.kind {
                                 RolloutMutationKind::Restart => format!("Restart failed: {err}"),
@@ -2455,12 +2455,19 @@ pub(crate) async fn run_app_inner(
             }
 
             result = helm_rollback_rx.recv() => {
-                if let Some(result) = result {
-                    if result.context_generation != refresh_state.context_generation {
-                        app.complete_action_history(
-                            result.action_history_id,
-                            ActionStatus::Failed,
-                            "Helm rollback verification was cancelled because the active context changed.",
+                    if let Some(result) = result {
+                        if result.context_generation != refresh_state.context_generation {
+                            if let Some(tab) = app
+                                .workbench_mut()
+                                .find_tab_mut(&WorkbenchTabKey::HelmHistory(result.resource.clone()))
+                                && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
+                            {
+                                history_tab.clear_rollback_if_matches(result.action_history_id);
+                            }
+                            app.complete_action_history(
+                                result.action_history_id,
+                                ActionStatus::Failed,
+                                "Helm rollback verification was cancelled because the active context changed.",
                             true,
                         );
                         continue;
@@ -2484,7 +2491,7 @@ pub(crate) async fn run_app_inner(
                                 .find_tab_mut(&WorkbenchTabKey::HelmHistory(result.resource.clone()))
                                 && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
                             {
-                                history_tab.rollback_pending = false;
+                                history_tab.clear_rollback_if_matches(result.action_history_id);
                             }
                             action::helm::refresh_helm_history_tab(
                                 &mut app,
@@ -2529,7 +2536,7 @@ pub(crate) async fn run_app_inner(
                                 .find_tab_mut(&WorkbenchTabKey::HelmHistory(result.resource.clone()))
                                 && let WorkbenchTabState::HelmHistory(history_tab) = &mut tab.state
                             {
-                                history_tab.rollback_pending = false;
+                                history_tab.clear_rollback_if_matches(result.action_history_id);
                             }
                             app.complete_action_history(
                                 result.action_history_id,

@@ -144,7 +144,7 @@ pub async fn handle_rollout_restart(
         format!("Requesting restart for {resource_label}..."),
     );
     if let Some(tab) = rollout_tab_mut(app, &resource) {
-        tab.begin_mutation(RolloutMutationState::Restart);
+        tab.begin_mutation(RolloutMutationState::Restart, action_history_id);
     }
     set_transient_status(
         app,
@@ -231,11 +231,14 @@ pub async fn handle_toggle_rollout_pause_resume(
         format!("{verb} rollout for {resource_label}..."),
     );
     if let Some(tab) = rollout_tab_mut(app, &resource) {
-        tab.begin_mutation(if next_paused {
-            RolloutMutationState::Pause
-        } else {
-            RolloutMutationState::Resume
-        });
+        tab.begin_mutation(
+            if next_paused {
+                RolloutMutationState::Pause
+            } else {
+                RolloutMutationState::Resume
+            },
+            action_history_id,
+        );
     }
     set_transient_status(
         app,
@@ -317,9 +320,6 @@ pub async fn handle_execute_rollout_undo(
         clear_rollout_undo_confirm(app, &resource);
         return true;
     }
-    if let Some(tab) = rollout_tab_mut(app, &resource) {
-        tab.begin_mutation(RolloutMutationState::Undo(target_revision));
-    }
     let (kind, name, namespace) = workload_identity(&resource);
     let resource_label = format!("{kind} '{name}' in namespace '{namespace}'");
     let origin_view = app.view();
@@ -330,6 +330,12 @@ pub async fn handle_execute_rollout_undo(
         resource_label.clone(),
         format!("Rolling back {resource_label} to revision {target_revision}..."),
     );
+    if let Some(tab) = rollout_tab_mut(app, &resource) {
+        tab.begin_mutation(
+            RolloutMutationState::Undo(target_revision),
+            action_history_id,
+        );
+    }
     set_transient_status(
         app,
         status_message_clear_at,
