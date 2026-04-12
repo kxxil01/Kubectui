@@ -2515,7 +2515,8 @@ fn reopen_decoded_secret_tab_preserves_unsaved_edit_state() {
     tab.editing = true;
     tab.edit_input = "new-value".into();
     tab.edit_cursor = tab.edit_input.len();
-    app.workbench.open_tab(WorkbenchTabState::DecodedSecret(tab));
+    app.workbench
+        .open_tab(WorkbenchTabState::DecodedSecret(tab));
 
     app.open_decoded_secret_tab(resource, Some("kind: Secret".into()), None, Some(42));
 
@@ -2528,7 +2529,152 @@ fn reopen_decoded_secret_tab_preserves_unsaved_edit_state() {
     assert!(tab.editing);
     assert_eq!(tab.edit_input, "new-value");
     assert!(tab.has_unsaved_changes());
-    assert_eq!(tab.selected_entry().map(|entry| entry.key.as_str()), Some("TOKEN"));
+    assert_eq!(
+        tab.selected_entry().map(|entry| entry.key.as_str()),
+        Some("TOKEN")
+    );
+}
+
+#[test]
+fn reopen_resource_yaml_tab_preserves_scroll_while_refreshing_payload() {
+    use crate::workbench::{ResourceYamlTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = ResourceYamlTabState::new(resource.clone());
+    tab.yaml = Some("kind: Pod\nmetadata:\n  name: api".into());
+    tab.loading = false;
+    tab.scroll = 9;
+    app.workbench.open_tab(WorkbenchTabState::ResourceYaml(tab));
+
+    app.open_resource_yaml_tab(resource, None, None, Some(77));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing yaml tab");
+    };
+    let WorkbenchTabState::ResourceYaml(tab) = &tab.state else {
+        panic!("expected yaml tab");
+    };
+    assert_eq!(tab.scroll, 9);
+    assert!(tab.loading);
+    assert_eq!(tab.pending_request_id, Some(77));
+}
+
+#[test]
+fn reopen_rollout_tab_preserves_revision_selection_and_detail_scroll() {
+    use crate::k8s::rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind};
+    use crate::workbench::{RolloutTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Deployment("api".into(), "prod".into());
+    let mut tab = RolloutTabState::new(resource.clone());
+    tab.revisions = vec![
+        RolloutRevisionInfo {
+            revision: 1,
+            name: "rev-1".into(),
+            created: None,
+            summary: "first".into(),
+            change_cause: None,
+            is_current: false,
+            is_update_target: false,
+        },
+        RolloutRevisionInfo {
+            revision: 2,
+            name: "rev-2".into(),
+            created: None,
+            summary: "second".into(),
+            change_cause: None,
+            is_current: true,
+            is_update_target: true,
+        },
+    ];
+    tab.selected = 1;
+    tab.detail_scroll = 6;
+    tab.loading = false;
+    app.workbench.open_tab(WorkbenchTabState::Rollout(tab));
+
+    app.open_rollout_tab(
+        resource,
+        Some(RolloutInspection {
+            kind: RolloutWorkloadKind::Deployment,
+            strategy: "RollingUpdate".into(),
+            paused: false,
+            current_revision: Some(2),
+            update_target_revision: Some(2),
+            summary_lines: vec!["healthy".into()],
+            conditions: Vec::new(),
+            revisions: vec![
+                RolloutRevisionInfo {
+                    revision: 2,
+                    name: "rev-2".into(),
+                    created: None,
+                    summary: "second".into(),
+                    change_cause: None,
+                    is_current: true,
+                    is_update_target: true,
+                },
+                RolloutRevisionInfo {
+                    revision: 3,
+                    name: "rev-3".into(),
+                    created: None,
+                    summary: "third".into(),
+                    change_cause: None,
+                    is_current: false,
+                    is_update_target: false,
+                },
+            ],
+        }),
+        None,
+        None,
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing rollout tab");
+    };
+    let WorkbenchTabState::Rollout(tab) = &tab.state else {
+        panic!("expected rollout tab");
+    };
+    assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(2));
+    assert_eq!(tab.detail_scroll, 6);
+}
+
+#[test]
+fn reopen_resource_events_tab_preserves_scroll_during_refresh() {
+    use crate::k8s::events::EventInfo;
+    use crate::time::now;
+    use crate::workbench::{ResourceEventsTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = ResourceEventsTabState::new(resource.clone());
+    tab.events = vec![EventInfo {
+        event_type: "Normal".into(),
+        reason: "Pulled".into(),
+        message: "image".into(),
+        first_timestamp: now(),
+        last_timestamp: now(),
+        count: 1,
+    }];
+    tab.rebuild_timeline(&app.action_history);
+    tab.scroll = 5;
+    tab.loading = false;
+    app.workbench
+        .open_tab(WorkbenchTabState::ResourceEvents(tab));
+
+    app.open_resource_events_tab(resource, Vec::new(), true, None, Some(33));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing events tab");
+    };
+    let WorkbenchTabState::ResourceEvents(tab) = &tab.state else {
+        panic!("expected events tab");
+    };
+    assert_eq!(tab.scroll, 5);
+    assert!(tab.loading);
+    assert_eq!(tab.pending_request_id, Some(33));
 }
 
 #[test]

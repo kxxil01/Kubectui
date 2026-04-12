@@ -190,6 +190,7 @@ impl HelmHistoryTabState {
 
     pub fn apply_history(&mut self, history: crate::k8s::helm::HelmHistoryResult) {
         let selected_revision = self.selected_revision().map(|entry| entry.revision);
+        let scroll = self.scroll;
         self.cli_version = Some(history.cli_version);
         self.revisions = history.revisions;
         self.current_revision = self.revisions.iter().map(|entry| entry.revision).max();
@@ -201,7 +202,7 @@ impl HelmHistoryTabState {
             })
             .unwrap_or(0)
             .min(self.revisions.len().saturating_sub(1));
-        self.scroll = 0;
+        self.scroll = scroll.min(self.revisions.len().saturating_sub(1));
         self.loading = false;
         self.error = None;
         self.pending_history_request_id = None;
@@ -524,6 +525,20 @@ impl ResourceYamlTabState {
             error: None,
         }
     }
+
+    pub fn update_content(
+        &mut self,
+        yaml: Option<String>,
+        error: Option<String>,
+        pending_request_id: Option<u64>,
+    ) {
+        if yaml.is_some() || error.is_some() || pending_request_id.is_none() {
+            self.yaml = yaml;
+        }
+        self.loading = pending_request_id.is_some() || (self.yaml.is_none() && error.is_none());
+        self.error = error;
+        self.pending_request_id = pending_request_id;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -590,6 +605,7 @@ impl RolloutTabState {
 
     pub fn apply_inspection(&mut self, inspection: RolloutInspection) {
         let selected_revision = self.selected_revision().map(|entry| entry.revision);
+        let detail_scroll = self.detail_scroll;
         self.kind = Some(inspection.kind);
         self.strategy = Some(inspection.strategy);
         self.paused = inspection.paused;
@@ -606,7 +622,7 @@ impl RolloutTabState {
             })
             .unwrap_or(0)
             .min(self.revisions.len().saturating_sub(1));
-        self.detail_scroll = 0;
+        self.detail_scroll = detail_scroll;
         self.loading = false;
         self.error = None;
         self.pending_request_id = None;
@@ -691,10 +707,11 @@ impl ResourceDiffTabState {
     }
 
     pub fn apply_result(&mut self, diff: ResourceDiffResult) {
+        let scroll = self.scroll;
         self.baseline_kind = Some(diff.baseline_kind);
         self.summary = Some(diff.summary);
         self.lines = diff.lines;
-        self.scroll = 0;
+        self.scroll = scroll.min(self.lines.len().saturating_sub(1));
         self.loading = false;
         self.error = None;
         self.pending_request_id = None;

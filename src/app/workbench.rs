@@ -110,6 +110,15 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::ResourceYaml(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::ResourceYaml(tab) = &mut tab.state
+        {
+            tab.update_content(yaml, error, pending_request_id);
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = ResourceYamlTabState::new(resource);
         tab.yaml = yaml;
         tab.loading = tab.yaml.is_none() && error.is_none();
@@ -153,6 +162,21 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::ResourceDiff(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::ResourceDiff(tab) = &mut tab.state
+        {
+            if let Some(diff) = diff {
+                tab.apply_result(diff);
+            } else {
+                tab.loading = error.is_none();
+                tab.error = error;
+                tab.pending_request_id = pending_request_id;
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = ResourceDiffTabState::new(resource);
         tab.loading = diff.is_none() && error.is_none();
         tab.error = error;
@@ -172,6 +196,21 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::Rollout(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::Rollout(tab) = &mut tab.state
+        {
+            if let Some(inspection) = inspection {
+                tab.apply_inspection(inspection);
+            } else {
+                tab.loading = error.is_none();
+                tab.error = error;
+                tab.pending_request_id = pending_request_id;
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = RolloutTabState::new(resource);
         tab.loading = inspection.is_none() && error.is_none();
         tab.error = error;
@@ -190,6 +229,21 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::HelmHistory(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::HelmHistory(tab) = &mut tab.state
+        {
+            if let Some(history) = history {
+                tab.apply_history(history);
+            } else {
+                tab.loading = error.is_none();
+                tab.error = error;
+                tab.pending_history_request_id = pending_request_id;
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = HelmHistoryTabState::new(resource);
         tab.loading = history.is_none() && error.is_none();
         tab.error = error;
@@ -231,6 +285,21 @@ impl AppState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
+        let key = WorkbenchTabKey::ResourceEvents(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::ResourceEvents(tab) = &mut tab.state
+        {
+            if !loading || error.is_some() || !events.is_empty() {
+                tab.events = events;
+                tab.rebuild_timeline(&self.action_history);
+            }
+            tab.loading = loading;
+            tab.error = error;
+            tab.pending_request_id = pending_request_id;
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = ResourceEventsTabState::new(resource);
         tab.events = events;
         tab.loading = loading;
@@ -248,6 +317,18 @@ impl AppState {
         analysis: Option<NetworkPolicyAnalysis>,
         error: Option<String>,
     ) {
+        let key = WorkbenchTabKey::NetworkPolicy(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::NetworkPolicy(tab) = &mut tab.state
+        {
+            tab.error = error;
+            if let Some(analysis) = analysis {
+                tab.apply_analysis(analysis);
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = NetworkPolicyTabState::new(resource);
         tab.error = error;
         if let Some(analysis) = analysis {
@@ -293,6 +374,18 @@ impl AppState {
         analysis: Option<TrafficDebugAnalysis>,
         error: Option<String>,
     ) {
+        let key = WorkbenchTabKey::TrafficDebug(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::TrafficDebug(tab) = &mut tab.state
+        {
+            tab.error = error;
+            if let Some(analysis) = analysis {
+                tab.apply_analysis(analysis);
+            }
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = TrafficDebugTabState::new(resource);
         tab.error = error;
         if let Some(analysis) = analysis {

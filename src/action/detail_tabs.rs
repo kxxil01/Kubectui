@@ -556,11 +556,22 @@ pub fn handle_open_relationships(
     };
     app.detail_view = None;
     let request_id = next_request_id(relations_request_seq);
-    let mut relations_tab = kubectui::workbench::RelationsTabState::new(resource.clone());
-    relations_tab.pending_request_id = Some(request_id);
-    app.workbench
-        .open_tab(WorkbenchTabState::Relations(relations_tab));
-    app.focus = kubectui::app::Focus::Workbench;
+    let key = kubectui::workbench::WorkbenchTabKey::Relations(resource.clone());
+    if let Some(tab) = app.workbench.find_tab_mut(&key)
+        && let WorkbenchTabState::Relations(relations_tab) = &mut tab.state
+    {
+        relations_tab.loading = true;
+        relations_tab.error = None;
+        relations_tab.pending_request_id = Some(request_id);
+        app.workbench.activate_tab(&key);
+        app.focus = kubectui::app::Focus::Workbench;
+    } else {
+        let mut relations_tab = kubectui::workbench::RelationsTabState::new(resource.clone());
+        relations_tab.pending_request_id = Some(request_id);
+        app.workbench
+            .open_tab(WorkbenchTabState::Relations(relations_tab));
+        app.focus = kubectui::app::Focus::Workbench;
+    }
 
     let tx = relations_tx.clone();
     let client_clone = client.clone();
