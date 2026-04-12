@@ -110,25 +110,29 @@ pub async fn handle_debug_container_dialog_submit(
         return true;
     }
 
-    let Some(dialog) = app
+    let request = match app
         .detail_view
-        .as_mut()
-        .and_then(|detail| detail.debug_dialog.as_mut())
-    else {
-        app.set_error("Debug container dialog is not open.".to_string());
-        return true;
-    };
-    let request = match dialog.build_launch_request() {
-        Ok(request) => request,
-        Err(error) => {
-            dialog.error_message = Some(error);
+        .as_ref()
+        .and_then(|detail| detail.debug_dialog.as_ref())
+    {
+        Some(dialog) => match dialog.build_launch_request() {
+            Ok(request) => request,
+            Err(error) => {
+                if let Some(dialog) = app
+                    .detail_view
+                    .as_mut()
+                    .and_then(|detail| detail.debug_dialog.as_mut())
+                {
+                    dialog.error_message = Some(error);
+                }
+                return true;
+            }
+        },
+        None => {
+            app.set_error("Debug container dialog is not open.".to_string());
             return true;
         }
     };
-
-    let session_id = *next_exec_session_id;
-    *next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
-    dialog.set_pending_launch(true);
 
     let resource_label = format!("Pod '{pod_name}' in namespace '{namespace}'");
     let origin_view = app.view();
@@ -139,6 +143,15 @@ pub async fn handle_debug_container_dialog_submit(
         resource_label.clone(),
         format!("Launching debug container for {resource_label}..."),
     );
+    let session_id = *next_exec_session_id;
+    *next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
+    if let Some(dialog) = app
+        .detail_view
+        .as_mut()
+        .and_then(|detail| detail.debug_dialog.as_mut())
+    {
+        dialog.begin_launch(action_history_id);
+    }
 
     let tx = launch_tx.clone();
     let client_clone = client.clone();

@@ -1,5 +1,7 @@
 //! Keybinding help overlay displayed with `?`.
 
+use std::cell::Cell;
+
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Modifier, Style},
@@ -17,6 +19,7 @@ use crate::{app::DetailViewState, policy::DetailAction};
 pub struct HelpOverlay {
     is_open: bool,
     scroll: usize,
+    last_visible_height: Cell<usize>,
 }
 
 const DETAIL_BASE_BINDINGS: &[(&str, &str)] = &[
@@ -209,10 +212,12 @@ impl HelpOverlay {
     pub fn open(&mut self) {
         self.is_open = true;
         self.scroll = 0;
+        self.last_visible_height.set(0);
     }
 
     pub fn close(&mut self) {
         self.is_open = false;
+        self.last_visible_height.set(0);
     }
 
     pub fn toggle(&mut self) {
@@ -227,12 +232,33 @@ impl HelpOverlay {
         self.is_open
     }
 
+    pub fn scroll(&self) -> usize {
+        self.scroll
+    }
+
     pub fn scroll_down(&mut self) {
         self.scroll = self.scroll.saturating_add(1);
     }
 
     pub fn scroll_up(&mut self) {
         self.scroll = self.scroll.saturating_sub(1);
+    }
+
+    pub fn scroll_page_down(&mut self) {
+        self.scroll = self.scroll.saturating_add(self.page_step());
+    }
+
+    pub fn scroll_page_up(&mut self) {
+        self.scroll = self.scroll.saturating_sub(self.page_step());
+    }
+
+    fn page_step(&self) -> usize {
+        let last_visible_height = self.last_visible_height.get();
+        if last_visible_height == 0 {
+            10
+        } else {
+            last_visible_height.saturating_sub(1).max(1)
+        }
     }
 
     pub fn total_lines() -> usize {
@@ -320,6 +346,7 @@ impl HelpOverlay {
             .split(inner);
 
         let visible_height = sections[0].height as usize;
+        self.last_visible_height.set(visible_height);
         let (scroll, end, total) =
             help_overlay_window(&lines, sections[0].width, visible_height, self.scroll);
 
@@ -339,7 +366,7 @@ impl HelpOverlay {
 
         let footer_lines = vec![Line::from(vec![
             Span::styled(
-                " [?/Esc] close  [j/k] scroll ",
+                " [?/Esc] close  [j/k] line  [PgUp/PgDn] page ",
                 Style::default().fg(theme.fg_dim),
             ),
             Span::styled(
@@ -433,6 +460,19 @@ mod tests {
         overlay.scroll_up();
         assert_eq!(overlay.scroll, 0);
         overlay.scroll_up();
+        assert_eq!(overlay.scroll, 0);
+    }
+
+    #[test]
+    fn help_overlay_page_scroll_uses_last_visible_height() {
+        let mut overlay = HelpOverlay::default();
+        overlay.open();
+        overlay.last_visible_height.set(12);
+
+        overlay.scroll_page_down();
+        assert_eq!(overlay.scroll, 11);
+
+        overlay.scroll_page_up();
         assert_eq!(overlay.scroll, 0);
     }
 

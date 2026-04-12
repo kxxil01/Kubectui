@@ -97,11 +97,23 @@ impl AppState {
         let local_editor_active = self.workbench_local_editor_active();
 
         // Common workbench keys (apply to all tab types)
-        if !local_editor_active && key.code == KeyCode::Char('z') {
-            return AppAction::WorkbenchToggleMaximize;
-        }
-        if !local_editor_active && key.code == KeyCode::Char('b') {
-            return AppAction::ToggleWorkbench;
+        if !local_editor_active {
+            match key.code {
+                KeyCode::Char('z') => return AppAction::WorkbenchToggleMaximize,
+                KeyCode::Char('b') => return AppAction::ToggleWorkbench,
+                KeyCode::Char('[') => return AppAction::WorkbenchPreviousTab,
+                KeyCode::Char(']') => return AppAction::WorkbenchNextTab,
+                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return AppAction::WorkbenchCloseActiveTab;
+                }
+                KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return AppAction::WorkbenchIncreaseHeight;
+                }
+                KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return AppAction::WorkbenchDecreaseHeight;
+                }
+                _ => {}
+            }
         }
 
         let action_history_ids = self
@@ -1757,6 +1769,14 @@ impl AppState {
         if self.help_overlay.is_open() {
             return match key.code {
                 KeyCode::Esc | KeyCode::Char('?') => AppAction::CloseHelp,
+                KeyCode::PageDown => {
+                    self.help_overlay.scroll_page_down();
+                    AppAction::None
+                }
+                KeyCode::PageUp => {
+                    self.help_overlay.scroll_page_up();
+                    AppAction::None
+                }
                 KeyCode::Char('j') | KeyCode::Down => {
                     self.help_overlay.scroll_down();
                     AppAction::None

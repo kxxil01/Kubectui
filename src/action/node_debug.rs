@@ -71,19 +71,26 @@ pub async fn handle_node_debug_dialog_submit(
         return true;
     }
 
-    let Some(dialog) = app
+    let request = match app
         .detail_view
-        .as_mut()
-        .and_then(|detail| detail.node_debug_dialog.as_mut())
-    else {
-        app.set_error("Node debug dialog is not open.".to_string());
-        return true;
-    };
-
-    let request = match dialog.build_launch_request() {
-        Ok(request) => request,
-        Err(error) => {
-            dialog.error_message = Some(error);
+        .as_ref()
+        .and_then(|detail| detail.node_debug_dialog.as_ref())
+    {
+        Some(dialog) => match dialog.build_launch_request() {
+            Ok(request) => request,
+            Err(error) => {
+                if let Some(dialog) = app
+                    .detail_view
+                    .as_mut()
+                    .and_then(|detail| detail.node_debug_dialog.as_mut())
+                {
+                    dialog.error_message = Some(error);
+                }
+                return true;
+            }
+        },
+        None => {
+            app.set_error("Node debug dialog is not open.".to_string());
             return true;
         }
     };
@@ -110,10 +117,6 @@ pub async fn handle_node_debug_dialog_submit(
         None => unreachable!("node debug attempted review always includes authorization"),
     }
 
-    let session_id = *next_exec_session_id;
-    *next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
-    dialog.set_pending_launch(true);
-
     let resource_label = format!("Node '{node_name}'");
     let action_history_id = app.record_action_pending(
         ActionKind::NodeDebug,
@@ -126,6 +129,15 @@ pub async fn handle_node_debug_dialog_submit(
             request.namespace
         ),
     );
+    let session_id = *next_exec_session_id;
+    *next_exec_session_id = next_exec_session_id.wrapping_add(1).max(1);
+    if let Some(dialog) = app
+        .detail_view
+        .as_mut()
+        .and_then(|detail| detail.node_debug_dialog.as_mut())
+    {
+        dialog.begin_launch(action_history_id);
+    }
 
     let tx = launch_tx.clone();
     let client_clone = client.clone();

@@ -462,6 +462,77 @@ fn workbench_b_key_toggles_from_workbench_focus() {
 }
 
 #[test]
+fn workbench_focus_supports_tab_resize_and_close_shortcuts() {
+    use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        ActionHistoryTabState::default(),
+    ));
+    app.focus = Focus::Workbench;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(']'))),
+        AppAction::WorkbenchNextTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+        AppAction::WorkbenchPreviousTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+        AppAction::WorkbenchCloseActiveTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::CONTROL)),
+        AppAction::WorkbenchIncreaseHeight
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Down, KeyModifiers::CONTROL)),
+        AppAction::WorkbenchDecreaseHeight
+    );
+}
+
+#[test]
+fn workbench_local_editor_blocks_global_tab_shortcuts() {
+    use crate::workbench::{PodLogsTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus = Focus::Workbench;
+
+    {
+        let Some(tab) = app.workbench.active_tab_mut() else {
+            panic!("expected active workbench tab");
+        };
+        let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+            panic!("expected pod logs tab");
+        };
+        logs_tab.viewer.searching = true;
+    }
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(logs_tab.viewer.search_input, "[");
+}
+
+#[test]
 fn ai_workbench_tab_supports_scrolling_shortcuts() {
     use crate::workbench::{AiAnalysisTabState, WorkbenchTabState};
 
@@ -1049,6 +1120,28 @@ fn workbench_focus_supports_help_overlay_shortcut() {
         app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)),
         AppAction::OpenHelp
     );
+}
+
+#[test]
+fn help_overlay_page_keys_scroll_overlay() {
+    let mut app = AppState::default();
+    app.help_overlay.open();
+    app.help_overlay.scroll_down();
+    app.help_overlay.scroll_down();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::PageDown)),
+        AppAction::None
+    );
+    assert!(app.help_overlay.is_open());
+    assert!(app.help_overlay.scroll() > 2);
+
+    let scrolled = app.help_overlay.scroll();
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::PageUp)),
+        AppAction::None
+    );
+    assert!(app.help_overlay.scroll() < scrolled);
 }
 
 #[test]
