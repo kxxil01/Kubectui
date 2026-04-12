@@ -3122,18 +3122,32 @@ pub(crate) async fn run_app_inner(
                     needs_redraw = true;
                     if let Some(detail) = &mut app.detail_view
                         && detail.resource.as_ref() == Some(&result.resource)
+                        && let ResourceRef::Pod(pod_name, namespace) = result.resource
                     {
-                        use kubectui::ui::components::probe_panel::ProbePanelState;
-                        if let ResourceRef::Pod(pod_name, namespace) = result.resource {
-                            detail.probe_panel = Some(match result.result {
-                                Ok(probes) => ProbePanelState::new(pod_name, namespace, probes),
-                                Err(error) => {
-                                    let mut state =
-                                        ProbePanelState::new(pod_name, namespace, Vec::new());
-                                    state.error = Some(error);
-                                    state
+                        match detail.probe_panel.as_mut() {
+                            Some(state)
+                                if state.pod_name == pod_name
+                                    && state.namespace == namespace =>
+                            {
+                                match result.result {
+                                    Ok(probes) => state.update_probes(probes),
+                                    Err(error) => state.set_error(error),
                                 }
-                            });
+                            }
+                            _ => {
+                                use kubectui::ui::components::probe_panel::ProbePanelState;
+                                detail.probe_panel = Some(match result.result {
+                                    Ok(probes) => {
+                                        ProbePanelState::new(pod_name, namespace, probes)
+                                    }
+                                    Err(error) => {
+                                        let mut state =
+                                            ProbePanelState::new(pod_name, namespace, Vec::new());
+                                        state.set_error(error);
+                                        state
+                                    }
+                                });
+                            }
                         }
                     }
                 }
