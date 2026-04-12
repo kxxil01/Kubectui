@@ -498,6 +498,7 @@ impl AppState {
     pub fn apply_workspace_snapshot(&mut self, snapshot: &crate::workspaces::WorkspaceSnapshot) {
         self.detail_view = None;
         self.search_query = snapshot.search_query.clone().unwrap_or_default();
+        self.search_cursor = self.search_query.chars().count();
         self.is_search_mode = false;
         self.selected_idx = 0;
         self.extension_in_instances = false;

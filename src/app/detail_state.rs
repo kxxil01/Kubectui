@@ -87,8 +87,10 @@ pub struct LogsViewerState {
     pub time_window: LogTimeWindow,
     pub correlation_request_id: Option<String>,
     pub search_input: String,
+    pub search_cursor: usize,
     pub searching: bool,
     pub time_jump_input: String,
+    pub time_jump_cursor: usize,
     pub jumping_to_time: bool,
     pub time_jump_error: Option<String>,
     pub structured_view: bool,
@@ -119,8 +121,10 @@ impl Default for LogsViewerState {
             time_window: LogTimeWindow::All,
             correlation_request_id: None,
             search_input: String::new(),
+            search_cursor: 0,
             searching: false,
             time_jump_input: String::new(),
+            time_jump_cursor: 0,
             jumping_to_time: false,
             time_jump_error: None,
             structured_view: true,
@@ -129,6 +133,46 @@ impl Default for LogsViewerState {
 }
 
 impl LogsViewerState {
+    pub fn restart_for_pod(&mut self, pod_name: String, pod_namespace: String, request_id: u64) {
+        self.scroll_offset = 0;
+        self.lines.clear();
+        self.pod_name = pod_name;
+        self.pod_namespace = pod_namespace;
+        self.containers.clear();
+        self.picking_container = false;
+        self.container_cursor = 0;
+        self.pending_container_request_id = Some(request_id);
+        self.pending_logs_request_id = None;
+        self.loading = true;
+        self.error = None;
+        self.correlation_request_id = None;
+        self.search_input = self.search_query.clone();
+        self.search_cursor = self.search_input.chars().count();
+        self.searching = false;
+        self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
+        self.jumping_to_time = false;
+        self.time_jump_error = None;
+    }
+
+    pub fn apply_containers(&mut self, containers: Vec<String>) {
+        let selected_container = if self.picking_container {
+            self.containers.get(self.container_cursor).cloned()
+        } else if self.container_name.is_empty() {
+            None
+        } else {
+            Some(self.container_name.clone())
+        };
+        self.containers = containers;
+        self.container_cursor = selected_container
+            .and_then(|name| {
+                self.containers
+                    .iter()
+                    .position(|container| container == &name)
+            })
+            .unwrap_or(0);
+    }
+
     /// Appends a log line, evicting the oldest lines if the buffer exceeds [`MAX_LOG_LINES`].
     pub fn push_line(&mut self, line: String) {
         const MAX_LINE_BYTES: usize = 10_000;
@@ -156,6 +200,7 @@ impl LogsViewerState {
         self.jumping_to_time = false;
         self.time_jump_error = None;
         self.search_input = self.search_query.clone();
+        self.search_cursor = self.search_input.chars().count();
     }
 
     pub fn commit_search(&mut self) {
@@ -176,6 +221,7 @@ impl LogsViewerState {
 
     pub fn cancel_search(&mut self) {
         self.search_input = self.search_query.clone();
+        self.search_cursor = self.search_input.chars().count();
         self.searching = false;
     }
 
@@ -187,6 +233,7 @@ impl LogsViewerState {
             .and_then(LogEntry::timestamp)
             .map(format_jump_target)
             .unwrap_or_default();
+        self.time_jump_cursor = self.time_jump_input.chars().count();
     }
 
     pub fn commit_time_jump(&mut self) {
@@ -220,6 +267,7 @@ impl LogsViewerState {
         self.jumping_to_time = false;
         self.time_jump_error = None;
         self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
     }
 
     pub fn toggle_search_mode(&mut self) {
@@ -387,7 +435,9 @@ impl LogsViewerState {
         self.jumping_to_time = false;
         self.search_query = preset.query.clone();
         self.search_input = self.search_query.clone();
+        self.search_cursor = self.search_input.chars().count();
         self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
         self.time_jump_error = None;
         self.search_mode = preset.mode;
         self.time_window = preset.time_window;
@@ -568,5 +618,33 @@ impl DetailViewState {
                 .and_then(|_| self.selected_detail_resource()),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn logs_viewer_apply_containers_preserves_selected_identity() {
+        let mut viewer = LogsViewerState {
+            containers: vec![
+                "main".to_string(),
+                "sidecar".to_string(),
+                "metrics".to_string(),
+            ],
+            picking_container: true,
+            container_cursor: 1,
+            ..LogsViewerState::default()
+        };
+
+        viewer.apply_containers(vec![
+            "sidecar".to_string(),
+            "metrics".to_string(),
+            "main".to_string(),
+        ]);
+
+        assert_eq!(viewer.container_cursor, 0);
+        assert_eq!(viewer.containers[viewer.container_cursor], "sidecar");
     }
 }

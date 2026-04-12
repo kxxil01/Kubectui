@@ -244,6 +244,7 @@ pub fn compute_dashboard_insights(snapshot: &ClusterSnapshot) -> DashboardInsigh
         b.cpu_pct
             .cmp(&a.cpu_pct)
             .then_with(|| b.cpu_used_m.cmp(&a.cpu_used_m))
+            .then_with(|| a.name.cmp(&b.name))
     });
     hot_cpu_nodes.truncate(HOT_NODE_LIMIT);
 
@@ -252,6 +253,7 @@ pub fn compute_dashboard_insights(snapshot: &ClusterSnapshot) -> DashboardInsigh
         b.mem_pct
             .cmp(&a.mem_pct)
             .then_with(|| b.mem_used_mib.cmp(&a.mem_used_mib))
+            .then_with(|| a.name.cmp(&b.name))
     });
     hot_mem_nodes.truncate(HOT_NODE_LIMIT);
 
@@ -372,7 +374,12 @@ pub fn compute_alerts(snapshot: &ClusterSnapshot) -> Vec<AlertItem> {
         },
     ];
 
-    alerts.sort_unstable_by_key(|item| severity_rank(item.severity));
+    alerts.sort_unstable_by(|a, b| {
+        severity_rank(a.severity)
+            .cmp(&severity_rank(b.severity))
+            .then_with(|| a.title.cmp(&b.title))
+            .then_with(|| a.message.cmp(&b.message))
+    });
     alerts.truncate(5);
     alerts
 }
@@ -598,10 +605,22 @@ pub fn compute_top_pod_consumers(
         .collect();
 
     // Sort by CPU, take top N, then re-sort remainder by memory
-    consumers.sort_unstable_by(|a, b| b.cpu_usage_m.cmp(&a.cpu_usage_m));
+    consumers.sort_unstable_by(|a, b| {
+        b.cpu_usage_m
+            .cmp(&a.cpu_usage_m)
+            .then_with(|| b.mem_usage_mib.cmp(&a.mem_usage_mib))
+            .then_with(|| a.namespace.cmp(&b.namespace))
+            .then_with(|| a.name.cmp(&b.name))
+    });
     let by_cpu: Vec<PodConsumerSummary> = consumers.iter().take(TOP_N).cloned().collect();
 
-    consumers.sort_unstable_by(|a, b| b.mem_usage_mib.cmp(&a.mem_usage_mib));
+    consumers.sort_unstable_by(|a, b| {
+        b.mem_usage_mib
+            .cmp(&a.mem_usage_mib)
+            .then_with(|| b.cpu_usage_m.cmp(&a.cpu_usage_m))
+            .then_with(|| a.namespace.cmp(&b.namespace))
+            .then_with(|| a.name.cmp(&b.name))
+    });
     consumers.truncate(TOP_N);
 
     (by_cpu, consumers)
@@ -683,7 +702,12 @@ pub fn compute_namespace_utilization(
         };
     }
 
-    result.sort_unstable_by(|a, b| b.cpu_usage_m.cmp(&a.cpu_usage_m));
+    result.sort_unstable_by(|a, b| {
+        b.cpu_usage_m
+            .cmp(&a.cpu_usage_m)
+            .then_with(|| b.mem_usage_mib.cmp(&a.mem_usage_mib))
+            .then_with(|| a.namespace.cmp(&b.namespace))
+    });
     result
 }
 
@@ -1004,6 +1028,34 @@ mod tests {
         assert_eq!(insights.avg_mem_pct, 62);
         assert_eq!(insights.hot_cpu_nodes[0].name, "node-b");
         assert_eq!(insights.hot_mem_nodes[0].name, "node-b");
+    }
+
+    #[test]
+    fn compute_dashboard_insights_hot_nodes_tie_break_by_name() {
+        let mut snapshot = ClusterSnapshot::default();
+        for name in ["node-b", "node-a"] {
+            snapshot.nodes.push(NodeInfo {
+                name: name.to_string(),
+                ready: true,
+                cpu_allocatable: Some("1000m".to_string()),
+                memory_allocatable: Some("1024Mi".to_string()),
+                ..NodeInfo::default()
+            });
+            snapshot
+                .node_metrics
+                .push(crate::k8s::dtos::NodeMetricsInfo {
+                    name: name.to_string(),
+                    cpu: "900m".to_string(),
+                    memory: "800Mi".to_string(),
+                    ..crate::k8s::dtos::NodeMetricsInfo::default()
+                });
+        }
+
+        let insights = compute_dashboard_insights(&snapshot);
+        assert_eq!(insights.hot_cpu_nodes[0].name, "node-a");
+        assert_eq!(insights.hot_cpu_nodes[1].name, "node-b");
+        assert_eq!(insights.hot_mem_nodes[0].name, "node-a");
+        assert_eq!(insights.hot_mem_nodes[1].name, "node-b");
     }
 
     #[test]
@@ -1415,6 +1467,31 @@ mod tests {
     }
 
     #[test]
+    fn compute_top_pod_consumers_tie_break_by_namespace_then_name() {
+        use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
+
+        let mut snapshot = ClusterSnapshot::default();
+        for (namespace, name) in [("team-b", "pod-b"), ("team-a", "pod-a")] {
+            snapshot.pod_metrics.push(PodMetricsInfo {
+                name: name.to_string(),
+                namespace: namespace.to_string(),
+                containers: vec![ContainerMetrics {
+                    name: "c1".to_string(),
+                    cpu: "500m".to_string(),
+                    memory: "512Mi".to_string(),
+                }],
+                ..PodMetricsInfo::default()
+            });
+        }
+
+        let (by_cpu, by_mem) = compute_top_pod_consumers(&snapshot);
+        assert_eq!(by_cpu[0].namespace, "team-a");
+        assert_eq!(by_cpu[0].name, "pod-a");
+        assert_eq!(by_mem[0].namespace, "team-a");
+        assert_eq!(by_mem[0].name, "pod-a");
+    }
+
+    #[test]
     fn compute_top_pod_consumers_fewer_than_5() {
         use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
 
@@ -1552,6 +1629,71 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].cpu_req_utilization_pct, Some(300));
         assert_eq!(result[0].mem_req_utilization_pct, Some(300));
+    }
+
+    #[test]
+    fn compute_namespace_utilization_tie_breaks_by_memory_then_namespace() {
+        use crate::k8s::dtos::{ContainerMetrics, PodMetricsInfo};
+
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.pods.push(PodInfo {
+            name: "a-1".to_string(),
+            namespace: "ns-b".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        snapshot.pods.push(PodInfo {
+            name: "b-1".to_string(),
+            namespace: "ns-a".to_string(),
+            status: "Running".to_string(),
+            ..PodInfo::default()
+        });
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "a-1".to_string(),
+            namespace: "ns-b".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "100m".to_string(),
+                memory: "700Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+        snapshot.pod_metrics.push(PodMetricsInfo {
+            name: "b-1".to_string(),
+            namespace: "ns-a".to_string(),
+            containers: vec![ContainerMetrics {
+                name: "c1".to_string(),
+                cpu: "100m".to_string(),
+                memory: "500Mi".to_string(),
+            }],
+            ..PodMetricsInfo::default()
+        });
+
+        let result = compute_namespace_utilization(&snapshot);
+        assert_eq!(result[0].namespace, "ns-b");
+        assert_eq!(result[1].namespace, "ns-a");
+    }
+
+    #[test]
+    fn compute_alerts_tie_breaks_by_title() {
+        let mut snapshot = ClusterSnapshot::default();
+        let mut crash = pod("crash", "Running");
+        crash.waiting_reasons = vec!["CrashLoopBackOff".to_string()];
+
+        let mut image = pod("image", "Running");
+        image.waiting_reasons = vec!["ImagePullBackOff".to_string()];
+
+        snapshot.pods.push(image);
+        snapshot.pods.push(crash);
+
+        let alerts = compute_alerts(&snapshot);
+        let error_titles = alerts
+            .iter()
+            .filter(|item| item.severity == AlertSeverity::Error)
+            .map(|item| item.title.as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(error_titles, vec!["CrashLoopBackOff", "ImagePullBackOff"]);
     }
 
     #[test]

@@ -22,11 +22,19 @@ impl TunnelRegistry {
 
     /// Update tunnels from service
     pub fn update_tunnels(&mut self, tunnels: Vec<PortForwardTunnelInfo>) {
+        let selected_id = self.selected().map(|tunnel| tunnel.id.clone());
         self.tunnels.clear();
         for tunnel in tunnels {
             self.tunnels.insert(tunnel.id.clone(), tunnel);
         }
         self.rebuild_order();
+        self.selected_index = selected_id
+            .and_then(|id| {
+                self.tunnel_ids
+                    .iter()
+                    .position(|candidate| candidate == &id)
+            })
+            .unwrap_or(self.selected_index);
         self.clamp_selected_index();
     }
 
@@ -230,5 +238,49 @@ mod tests {
             .collect::<Vec<_>>();
 
         assert_eq!(ordered, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn update_tunnels_preserves_selected_tunnel_identity() {
+        let mut registry = TunnelRegistry::new();
+        registry.update_tunnels(vec![
+            PortForwardTunnelInfo {
+                id: "alpha".to_string(),
+                target: PortForwardTarget::new("team-b", "api", 8080),
+                local_addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+                state: TunnelState::Active,
+            },
+            PortForwardTunnelInfo {
+                id: "beta".to_string(),
+                target: PortForwardTarget::new("team-a", "api", 8080),
+                local_addr: SocketAddr::from_str("127.0.0.1:9001").unwrap(),
+                state: TunnelState::Active,
+            },
+        ]);
+        registry.select_next();
+        assert_eq!(
+            registry.selected().map(|tunnel| tunnel.id.as_str()),
+            Some("alpha")
+        );
+
+        registry.update_tunnels(vec![
+            PortForwardTunnelInfo {
+                id: "alpha".to_string(),
+                target: PortForwardTarget::new("team-a", "api", 8080),
+                local_addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+                state: TunnelState::Active,
+            },
+            PortForwardTunnelInfo {
+                id: "beta".to_string(),
+                target: PortForwardTarget::new("team-b", "api", 8080),
+                local_addr: SocketAddr::from_str("127.0.0.1:9001").unwrap(),
+                state: TunnelState::Active,
+            },
+        ]);
+
+        assert_eq!(
+            registry.selected().map(|tunnel| tunnel.id.as_str()),
+            Some("alpha")
+        );
     }
 }

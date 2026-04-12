@@ -223,6 +223,16 @@ impl<T: Clone> ResourceStore<T> {
 // the API is namespace-scoped or cluster-scoped.
 
 macro_rules! define_watcher {
+    (@sort $items:ident, namespaced) => {
+        $items.sort_unstable_by(|a, b| {
+            a.name
+                .cmp(&b.name)
+                .then_with(|| a.namespace.cmp(&b.namespace))
+        });
+    };
+    (@sort $items:ident, cluster) => {
+        $items.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+    };
     (
         name: $name:ident,
         k8s_type: $K8sType:ty,
@@ -267,7 +277,7 @@ macro_rules! define_watcher {
     (@impl $name:ident, $ApiType:ty, $EventType:ty, $DtoType:ty, $converter:path, $variant:ident, $scope:ident, $watch_fn:path) => {
         paste::paste! {
             fn [<sort_ $name s>](items: &mut [$DtoType]) {
-                items.sort_unstable_by(|a, b| a.name.cmp(&b.name));
+                define_watcher!(@sort items, $scope);
             }
 
             fn [<start_ $name _watch>](
@@ -633,6 +643,15 @@ mod tests {
         }
     }
 
+    fn make_pod_info_ns(name: &str, namespace: &str) -> PodInfo {
+        PodInfo {
+            name: name.to_string(),
+            namespace: namespace.to_string(),
+            status: "Running".to_string(),
+            ..Default::default()
+        }
+    }
+
     fn make_pod(name: &str, uid: &str) -> Pod {
         Pod {
             metadata: ObjectMeta {
@@ -731,6 +750,23 @@ mod tests {
         assert_eq!(snapshot[0].name, "pod-a");
         assert_eq!(snapshot[1].name, "pod-b");
         assert_eq!(snapshot[2].name, "pod-c");
+    }
+
+    #[test]
+    fn sort_pods_tie_breaks_same_name_by_namespace() {
+        let mut snapshot = vec![
+            make_pod_info_ns("api", "team-b"),
+            make_pod_info_ns("api", "team-a"),
+            make_pod_info_ns("worker", "team-a"),
+        ];
+
+        sort_pods(&mut snapshot);
+
+        assert_eq!(snapshot[0].namespace, "team-a");
+        assert_eq!(snapshot[0].name, "api");
+        assert_eq!(snapshot[1].namespace, "team-b");
+        assert_eq!(snapshot[1].name, "api");
+        assert_eq!(snapshot[2].name, "worker");
     }
 
     #[test]

@@ -7,6 +7,7 @@ impl Default for AppState {
             selected_idx: 0,
             content_detail_scroll: 0,
             search_query: String::new(),
+            search_cursor: 0,
             is_search_mode: false,
             should_quit: false,
             confirm_quit: false,
@@ -24,6 +25,7 @@ impl Default for AppState {
             extension_instances: Vec::new(),
             extension_error: None,
             extension_selected_crd: None,
+            extension_pending_selection: None,
             extension_in_instances: false,
             extension_instance_cursor: 0,
             refresh_interval_secs: 30,
@@ -72,6 +74,10 @@ impl AppState {
 
     pub fn search_query(&self) -> &str {
         &self.search_query
+    }
+
+    pub fn search_cursor(&self) -> usize {
+        self.search_cursor
     }
 
     pub fn pod_sort(&self) -> Option<PodSortState> {

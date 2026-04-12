@@ -42,9 +42,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
-    app::{
-        AppAction, AppView, DetailViewState, LogsViewerState, ResourceRef, load_config, save_config,
-    },
+    app::{AppAction, AppView, DetailViewState, ResourceRef, load_config, save_config},
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
     extensions::{
@@ -1697,8 +1695,7 @@ pub(crate) async fn run_app_inner(
                                         viewer.pending_container_request_id = None;
                                         match &result {
                                             Ok(containers) => {
-                                                viewer.containers = containers.clone();
-                                                viewer.container_cursor = 0;
+                                                viewer.apply_containers(containers.clone());
                                                 viewer.lines.clear();
                                                 viewer.scroll_offset = 0;
                                                 viewer.error = None;
@@ -2653,6 +2650,7 @@ pub(crate) async fn run_app_inner(
                                     .workbench_mut()
                                     .find_tab_mut(&WorkbenchTabKey::Exec(result.resource.clone()))
                                     && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                    && exec_tab.session_id == session_id
                                 {
                                     exec_tab.container_name = container_name;
                                     exec_tab.loading = true;
@@ -2663,6 +2661,7 @@ pub(crate) async fn run_app_inner(
                                     .workbench_mut()
                                     .find_tab_mut(&WorkbenchTabKey::Exec(result.resource.clone()))
                                     && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                    && exec_tab.session_id == session_id
                                 {
                                     exec_tab.loading = false;
                                     exec_tab.error = Some(format!("{err:#}"));
@@ -4329,6 +4328,7 @@ pub(crate) async fn run_app_inner(
                     global_state.begin_loading_transition(true);
                     app.selected_idx = 0;
                     app.search_query.clear();
+                    app.search_cursor = 0;
                     app.is_search_mode = false;
                     app.detail_view = None;
                     app.workbench.close_resource_tabs();
@@ -4740,18 +4740,11 @@ pub(crate) async fn run_app_inner(
                     {
                         logs_viewer_request_seq = logs_viewer_request_seq.wrapping_add(1);
                         let request_id = logs_viewer_request_seq;
-                        logs_tab.viewer = LogsViewerState {
-                            pod_name: pod_name.clone(),
-                            pod_namespace: pod_ns.clone(),
-                            loading: true,
-                            pending_container_request_id: Some(request_id),
-                            pending_logs_request_id: None,
-                            container_cursor: 0,
-                            container_name: String::new(),
-                            containers: Vec::new(),
-                            picking_container: false,
-                            ..Default::default()
-                        };
+                        logs_tab.restart_viewer_for_pod(
+                            pod_name.clone(),
+                            pod_ns.clone(),
+                            request_id,
+                        );
                         container_request = Some((request_id, pod_name, pod_ns));
                     }
 
@@ -4932,6 +4925,7 @@ pub(crate) async fn run_app_inner(
                                     .workbench_mut()
                                     .find_tab_mut(&WorkbenchTabKey::Exec(resource))
                                     && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                    && exec_tab.session_id == session_id
                                 {
                                     exec_tab.loading = false;
                                     exec_tab.error = Some(format!("{err:#}"));

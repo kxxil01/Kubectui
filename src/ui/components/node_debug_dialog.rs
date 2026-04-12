@@ -12,7 +12,10 @@ use crate::k8s::{
     node_debug::{NodeDebugLaunchRequest, NodeDebugProfile, default_debug_image},
 };
 use crate::ui::components::render_vertical_scrollbar;
-use crate::ui::{truncate_line_content, truncate_message, wrap_span_groups, wrapped_line_count};
+use crate::ui::{
+    cursor_visible_input_line, truncate_line_content, truncate_message, wrap_span_groups,
+    wrapped_line_count,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeDebugField {
@@ -43,6 +46,7 @@ pub struct NodeDebugDialogState {
     pub pending_launch: bool,
     pub error_message: Option<String>,
     pub notes_scroll: usize,
+    pub custom_image_cursor: usize,
 }
 
 impl NodeDebugDialogState {
@@ -79,6 +83,7 @@ impl NodeDebugDialogState {
             pending_launch: false,
             error_message: None,
             notes_scroll: 0,
+            custom_image_cursor: 0,
         }
     }
 
@@ -113,6 +118,71 @@ impl NodeDebugDialogState {
             return NodeDebugDialogEvent::None;
         }
 
+        if self.is_editing_custom_image() {
+            match key.code {
+                KeyCode::Esc => return NodeDebugDialogEvent::Close,
+                KeyCode::Tab | KeyCode::Down => {
+                    self.error_message = None;
+                    self.focus_field = self.focus_field.next();
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::BackTab | KeyCode::Up => {
+                    self.error_message = None;
+                    self.focus_field = self.focus_field.previous();
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Enter => return self.activate_focused(),
+                KeyCode::Backspace => {
+                    self.delete_custom_image_left();
+                    self.error_message = None;
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Delete => {
+                    self.delete_custom_image_right();
+                    self.error_message = None;
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Left => {
+                    self.custom_image_cursor = self.custom_image_cursor.saturating_sub(1);
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Right => {
+                    self.custom_image_cursor =
+                        (self.custom_image_cursor + 1).min(self.custom_image.chars().count());
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Home => {
+                    self.custom_image_cursor = 0;
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::End => {
+                    self.custom_image_cursor = self.custom_image.chars().count();
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    self.custom_image.clear();
+                    self.custom_image_cursor = 0;
+                    self.error_message = None;
+                    return NodeDebugDialogEvent::None;
+                }
+                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    let byte_idx = self
+                        .custom_image
+                        .char_indices()
+                        .nth(self.custom_image_cursor)
+                        .map_or(self.custom_image.len(), |(idx, _)| idx);
+                    self.custom_image.insert(byte_idx, c);
+                    self.custom_image_cursor += 1;
+                    self.error_message = None;
+                    return NodeDebugDialogEvent::None;
+                }
+                _ => {}
+            }
+            if key.modifiers.contains(KeyModifiers::CONTROL) {
+                return NodeDebugDialogEvent::None;
+            }
+        }
+
         if key.modifiers.contains(KeyModifiers::CONTROL) {
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
@@ -129,34 +199,6 @@ impl NodeDebugDialogState {
                 }
                 KeyCode::Char('u') | KeyCode::PageUp => {
                     self.notes_scroll = self.notes_scroll.saturating_sub(10);
-                    return NodeDebugDialogEvent::None;
-                }
-                _ => {}
-            }
-        }
-
-        if self.is_editing_custom_image() {
-            match key.code {
-                KeyCode::Esc => return NodeDebugDialogEvent::Close,
-                KeyCode::Tab | KeyCode::Down => {
-                    self.error_message = None;
-                    self.focus_field = self.focus_field.next();
-                    return NodeDebugDialogEvent::None;
-                }
-                KeyCode::BackTab | KeyCode::Up => {
-                    self.error_message = None;
-                    self.focus_field = self.focus_field.previous();
-                    return NodeDebugDialogEvent::None;
-                }
-                KeyCode::Enter => return self.activate_focused(),
-                KeyCode::Backspace => {
-                    self.custom_image.pop();
-                    self.error_message = None;
-                    return NodeDebugDialogEvent::None;
-                }
-                KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.custom_image.push(c);
-                    self.error_message = None;
                     return NodeDebugDialogEvent::None;
                 }
                 _ => {}
@@ -272,6 +314,30 @@ impl NodeDebugDialogState {
     fn is_editing_custom_image(&self) -> bool {
         self.focus_field == NodeDebugField::CustomImage
             && self.selected_preset == DebugImagePreset::Custom
+    }
+
+    fn delete_custom_image_left(&mut self) {
+        if self.custom_image_cursor == 0 {
+            return;
+        }
+        if let Some((byte_idx, _)) = self
+            .custom_image
+            .char_indices()
+            .nth(self.custom_image_cursor - 1)
+        {
+            self.custom_image.remove(byte_idx);
+            self.custom_image_cursor = self.custom_image_cursor.saturating_sub(1);
+        }
+    }
+
+    fn delete_custom_image_right(&mut self) {
+        if let Some((byte_idx, _)) = self
+            .custom_image
+            .char_indices()
+            .nth(self.custom_image_cursor)
+        {
+            self.custom_image.remove(byte_idx);
+        }
     }
 }
 
@@ -395,18 +461,7 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
         state.focus_field == NodeDebugField::Preset,
         false,
     );
-    render_field(
-        frame,
-        chunks[2],
-        "Custom Image",
-        if state.selected_preset == DebugImagePreset::Custom {
-            state.custom_image.as_str()
-        } else {
-            "select Custom preset to edit"
-        },
-        state.focus_field == NodeDebugField::CustomImage,
-        state.selected_preset == DebugImagePreset::Custom,
-    );
+    render_custom_image_field(frame, chunks[2], state);
     render_field(
         frame,
         chunks[3],
@@ -643,6 +698,42 @@ fn render_field(
     frame.render_widget(Paragraph::new(value_line).block(block), area);
 }
 
+fn render_custom_image_field(frame: &mut Frame, area: Rect, state: &NodeDebugDialogState) {
+    let editable = state.selected_preset == DebugImagePreset::Custom;
+    let focused = state.focus_field == NodeDebugField::CustomImage;
+    let border_style = if focused {
+        Style::default().fg(Color::Cyan)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+    let block = Block::default()
+        .title(" Custom Image ")
+        .borders(Borders::ALL)
+        .border_type(BorderType::Rounded)
+        .border_style(border_style);
+    let inner = block.inner(area);
+    let line = if editable {
+        cursor_visible_input_line(
+            &[],
+            &state.custom_image,
+            focused.then_some(state.custom_image_cursor),
+            Style::default().fg(Color::White),
+            Style::default().fg(Color::White),
+            &[],
+            usize::from(inner.width.max(1)),
+        )
+    } else {
+        truncate_line_content(
+            &Line::from(vec![Span::styled(
+                "select Custom preset to edit",
+                Style::default().fg(Color::Gray),
+            )]),
+            usize::from(inner.width.max(1)),
+        )
+    };
+    frame.render_widget(Paragraph::new(line).block(block), area);
+}
+
 fn render_button(frame: &mut Frame, area: Rect, label: &str, focused: bool, enabled: bool) {
     let style = if !enabled {
         Style::default().fg(Color::DarkGray)
@@ -776,6 +867,35 @@ mod tests {
         assert_eq!(state.notes_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.notes_scroll, 0);
+    }
+
+    #[test]
+    fn ctrl_scroll_shortcuts_do_not_fire_while_editing_custom_image() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = NodeDebugField::CustomImage;
+        state.custom_image = "busybox".to_string();
+        state.custom_image_cursor = state.custom_image.len();
+        state.notes_scroll = 7;
+
+        state.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        state.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+        assert_eq!(state.notes_scroll, 7);
+        assert_eq!(state.custom_image, "");
+    }
+
+    #[test]
+    fn custom_image_editor_inserts_at_cursor() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = NodeDebugField::CustomImage;
+        state.custom_image = "busybox".to_string();
+        state.custom_image_cursor = 4;
+
+        state.handle_key(KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT));
+
+        assert_eq!(state.custom_image, "busyXbox");
     }
 
     #[test]

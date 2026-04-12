@@ -190,6 +190,7 @@ impl HelmHistoryTabState {
 
     pub fn apply_history(&mut self, history: crate::k8s::helm::HelmHistoryResult) {
         let selected_revision = self.selected_revision().map(|entry| entry.revision);
+        let scroll = self.scroll;
         self.cli_version = Some(history.cli_version);
         self.revisions = history.revisions;
         self.current_revision = self.revisions.iter().map(|entry| entry.revision).max();
@@ -201,7 +202,7 @@ impl HelmHistoryTabState {
             })
             .unwrap_or(0)
             .min(self.revisions.len().saturating_sub(1));
-        self.scroll = 0;
+        self.scroll = scroll.min(self.revisions.len().saturating_sub(1));
         self.loading = false;
         self.error = None;
         self.pending_history_request_id = None;
@@ -415,6 +416,20 @@ impl AccessReviewTabState {
         header_lines + attempted_lines + subject_input_lines + subject_lines + entry_lines
     }
 
+    pub fn refresh_payload(
+        &mut self,
+        context_name: Option<String>,
+        namespace_scope: String,
+        entries: Vec<ActionAccessReview>,
+        attempted_review: Option<AttemptedActionReview>,
+    ) {
+        self.context_name = context_name;
+        self.namespace_scope = namespace_scope;
+        self.entries = entries;
+        self.attempted_review = attempted_review;
+        self.scroll = self.scroll.min(self.line_count().saturating_sub(1));
+    }
+
     #[cfg(test)]
     fn action_line_offset(&self, action: crate::policy::DetailAction) -> Option<usize> {
         let mut offset = 4usize;
@@ -524,6 +539,20 @@ impl ResourceYamlTabState {
             error: None,
         }
     }
+
+    pub fn update_content(
+        &mut self,
+        yaml: Option<String>,
+        error: Option<String>,
+        pending_request_id: Option<u64>,
+    ) {
+        if yaml.is_some() || error.is_some() || pending_request_id.is_none() {
+            self.yaml = yaml;
+        }
+        self.loading = pending_request_id.is_some() || (self.yaml.is_none() && error.is_none());
+        self.error = error;
+        self.pending_request_id = pending_request_id;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -590,6 +619,7 @@ impl RolloutTabState {
 
     pub fn apply_inspection(&mut self, inspection: RolloutInspection) {
         let selected_revision = self.selected_revision().map(|entry| entry.revision);
+        let detail_scroll = self.detail_scroll;
         self.kind = Some(inspection.kind);
         self.strategy = Some(inspection.strategy);
         self.paused = inspection.paused;
@@ -606,7 +636,7 @@ impl RolloutTabState {
             })
             .unwrap_or(0)
             .min(self.revisions.len().saturating_sub(1));
-        self.detail_scroll = 0;
+        self.detail_scroll = detail_scroll;
         self.loading = false;
         self.error = None;
         self.pending_request_id = None;
@@ -691,10 +721,11 @@ impl ResourceDiffTabState {
     }
 
     pub fn apply_result(&mut self, diff: ResourceDiffResult) {
+        let scroll = self.scroll;
         self.baseline_kind = Some(diff.baseline_kind);
         self.summary = Some(diff.summary);
         self.lines = diff.lines;
-        self.scroll = 0;
+        self.scroll = scroll.min(self.lines.len().saturating_sub(1));
         self.loading = false;
         self.error = None;
         self.pending_request_id = None;
@@ -725,6 +756,7 @@ pub struct DecodedSecretTabState {
     pub masked: bool,
     pub editing: bool,
     pub edit_input: String,
+    pub edit_cursor: usize,
 }
 
 impl DecodedSecretTabState {
@@ -742,6 +774,7 @@ impl DecodedSecretTabState {
             masked: true,
             editing: false,
             edit_input: String::new(),
+            edit_cursor: 0,
         }
     }
 
@@ -867,6 +900,16 @@ impl PodLogsTabState {
             viewer: LogsViewerState::default(),
         }
     }
+
+    pub fn restart_viewer_for_pod(
+        &mut self,
+        pod_name: String,
+        pod_namespace: String,
+        request_id: u64,
+    ) {
+        self.viewer
+            .restart_for_pod(pod_name, pod_namespace, request_id);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -896,8 +939,10 @@ pub struct WorkloadLogsTabState {
     pub time_window: LogTimeWindow,
     pub correlation_request_id: Option<String>,
     pub filter_input: String,
+    pub filter_input_cursor: usize,
     pub editing_text_filter: bool,
     pub time_jump_input: String,
+    pub time_jump_cursor: usize,
     pub jumping_to_time: bool,
     pub time_jump_error: Option<String>,
     pub structured_view: bool,
@@ -930,8 +975,10 @@ impl WorkloadLogsTabState {
             time_window: LogTimeWindow::All,
             correlation_request_id: None,
             filter_input: String::new(),
+            filter_input_cursor: 0,
             editing_text_filter: false,
             time_jump_input: String::new(),
+            time_jump_cursor: 0,
             jumping_to_time: false,
             time_jump_error: None,
             structured_view: true,
@@ -943,6 +990,29 @@ impl WorkloadLogsTabState {
             available_pods: Vec::new(),
             available_containers: Vec::new(),
         }
+    }
+
+    pub fn restart_session(&mut self, session_id: u64) {
+        self.session_id = session_id;
+        self.sources.clear();
+        self.pod_labels.clear();
+        self.lines.clear();
+        self.scroll = 0;
+        self.loading = true;
+        self.error = None;
+        self.notice = None;
+        self.correlation_request_id = None;
+        self.filter_input = self.text_filter.clone();
+        self.filter_input_cursor = self.filter_input.chars().count();
+        self.editing_text_filter = false;
+        self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
+        self.jumping_to_time = false;
+        self.time_jump_error = None;
+        self.available_labels.clear();
+        self.matching_label_pods = None;
+        self.available_pods.clear();
+        self.available_containers.clear();
     }
 
     pub fn update_targets(&mut self, targets: &[crate::k8s::workload_logs::WorkloadLogTarget]) {
@@ -1053,6 +1123,7 @@ impl WorkloadLogsTabState {
             .and_then(|line| line.entry.timestamp())
             .map(format_jump_target)
             .unwrap_or_default();
+        self.time_jump_cursor = self.time_jump_input.chars().count();
     }
 
     pub fn commit_time_jump(&mut self) {
@@ -1179,7 +1250,9 @@ impl WorkloadLogsTabState {
         self.jumping_to_time = false;
         self.text_filter = preset.query.clone();
         self.filter_input = self.text_filter.clone();
+        self.filter_input_cursor = self.filter_input.chars().count();
         self.time_jump_input.clear();
+        self.time_jump_cursor = 0;
         self.time_jump_error = None;
         self.text_filter_mode = preset.mode;
         self.time_window = preset.time_window;
@@ -1288,6 +1361,7 @@ pub struct ExecTabState {
     pub picking_container: bool,
     pub container_cursor: usize,
     pub input: String,
+    pub input_cursor: usize,
     pub lines: Vec<String>,
     pub scroll: usize,
     pub loading: bool,
@@ -1414,6 +1488,47 @@ impl RunbookTabState {
             detail_scroll: 0,
             steps,
         }
+    }
+
+    pub fn refresh_runbook(&mut self, runbook: LoadedRunbook) {
+        let selected_step = self
+            .steps
+            .get(self.selected.min(self.steps.len().saturating_sub(1)))
+            .map(|step| (step.step.title.clone(), step.step.kind.clone()));
+        let previous_states = self
+            .steps
+            .iter()
+            .map(|step| {
+                (
+                    (step.step.title.clone(), step.step.kind.clone()),
+                    step.state,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        self.steps = runbook
+            .steps
+            .iter()
+            .cloned()
+            .map(|step| {
+                let state = previous_states
+                    .iter()
+                    .find_map(|((title, kind), state)| {
+                        (title == &step.title && kind == &step.kind).then_some(*state)
+                    })
+                    .unwrap_or(RunbookStepState::Pending);
+                RunbookStepRuntime { step, state }
+            })
+            .collect();
+        self.runbook = runbook;
+        self.selected = selected_step
+            .and_then(|(title, kind)| {
+                self.steps
+                    .iter()
+                    .position(|step| step.step.title == title && step.step.kind == kind)
+            })
+            .unwrap_or(0)
+            .min(self.steps.len().saturating_sub(1));
     }
 
     pub fn select_next(&mut self) {
@@ -1564,6 +1679,7 @@ impl ExecTabState {
             picking_container: false,
             container_cursor: 0,
             input: String::new(),
+            input_cursor: 0,
             lines: Vec::new(),
             scroll: 0,
             loading: true,
@@ -1575,20 +1691,62 @@ impl ExecTabState {
     }
 
     pub fn set_containers(&mut self, containers: Vec<String>) {
+        let selected_container = if self.picking_container {
+            self.containers.get(self.container_cursor).cloned()
+        } else if self.container_name.is_empty() {
+            None
+        } else {
+            Some(self.container_name.clone())
+        };
         self.containers = containers;
-        self.container_cursor = 0;
         self.exited = false;
         self.error = None;
         if self.containers.is_empty() {
+            self.container_cursor = 0;
             self.picking_container = false;
             self.loading = false;
             self.error = Some("No containers found in this pod.".to_string());
         } else if self.containers.len() > 1 {
+            self.container_cursor = selected_container
+                .and_then(|name| {
+                    self.containers
+                        .iter()
+                        .position(|container| container == &name)
+                })
+                .unwrap_or(0);
             self.picking_container = true;
             self.loading = false;
         } else if let Some(container) = self.containers.first() {
+            self.container_cursor = 0;
             self.container_name = container.clone();
             self.picking_container = false;
+        }
+    }
+
+    pub fn restart_session(
+        &mut self,
+        session_id: u64,
+        pod_name: String,
+        namespace: String,
+        preset_container: Option<String>,
+    ) {
+        self.session_id = session_id;
+        self.pod_name = pod_name;
+        self.namespace = namespace;
+        self.lines.clear();
+        self.scroll = 0;
+        self.loading = true;
+        self.shell_name = None;
+        self.error = None;
+        self.exited = false;
+        self.pending_fragment.clear();
+        self.picking_container = false;
+        self.container_cursor = 0;
+        if let Some(container_name) = preset_container {
+            self.container_name = container_name.clone();
+            self.containers = vec![container_name];
+        } else {
+            self.containers.clear();
         }
     }
 
@@ -1685,6 +1843,52 @@ pub struct NetworkPolicyTabState {
     pub error: Option<String>,
 }
 
+fn default_expanded_relation_tree(
+    tree: &[crate::k8s::relationships::RelationNode],
+) -> std::collections::HashSet<usize> {
+    let mut expanded = std::collections::HashSet::new();
+    let mut counter = 0usize;
+    for section in tree {
+        expanded.insert(counter);
+        counter += 1;
+        for child in &section.children {
+            expanded.insert(counter);
+            counter += 1;
+            crate::k8s::relationships::count_descendants(&child.children, &mut counter);
+        }
+    }
+    expanded
+}
+
+fn preserved_relation_cursor(
+    previous_tree: &[crate::k8s::relationships::RelationNode],
+    previous_expanded: &std::collections::HashSet<usize>,
+    previous_cursor: usize,
+    next_tree: &[crate::k8s::relationships::RelationNode],
+    next_expanded: &std::collections::HashSet<usize>,
+) -> usize {
+    let previous_flat = crate::k8s::relationships::flatten_tree(previous_tree, previous_expanded);
+    let selected = previous_flat.get(previous_cursor.min(previous_flat.len().saturating_sub(1)));
+    let next_flat = crate::k8s::relationships::flatten_tree(next_tree, next_expanded);
+
+    selected
+        .and_then(|node| {
+            if let Some(resource) = &node.resource {
+                next_flat
+                    .iter()
+                    .position(|candidate| candidate.resource.as_ref() == Some(resource))
+            } else {
+                next_flat.iter().position(|candidate| {
+                    candidate.resource.is_none()
+                        && candidate.relation == node.relation
+                        && candidate.namespace == node.namespace
+                        && candidate.label == node.label
+                })
+            }
+        })
+        .unwrap_or_else(|| previous_cursor.min(next_flat.len().saturating_sub(1)))
+}
+
 impl NetworkPolicyTabState {
     pub fn new(resource: ResourceRef) -> Self {
         Self {
@@ -1699,24 +1903,18 @@ impl NetworkPolicyTabState {
     }
 
     pub fn apply_analysis(&mut self, analysis: NetworkPolicyAnalysis) {
-        let mut expanded = std::collections::HashSet::new();
-        let mut counter = 0usize;
-        for section in &analysis.tree {
-            expanded.insert(counter);
-            counter += 1;
-            for child in &section.children {
-                expanded.insert(counter);
-                counter += 1;
-                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
-            }
-        }
+        let expanded = default_expanded_relation_tree(&analysis.tree);
+        let cursor = preserved_relation_cursor(
+            &self.tree,
+            &self.expanded,
+            self.cursor,
+            &analysis.tree,
+            &expanded,
+        );
         self.summary_lines = analysis.summary_lines;
         self.tree = analysis.tree;
         self.expanded = expanded;
-        let flat = crate::k8s::relationships::flatten_tree(&self.tree, &self.expanded);
-        if self.cursor >= flat.len() {
-            self.cursor = flat.len().saturating_sub(1);
-        }
+        self.cursor = cursor;
         self.loading = false;
         self.error = None;
     }
@@ -1833,7 +2031,6 @@ impl ConnectivityTabState {
             .collect();
         if self.filtered_target_indices.is_empty() {
             self.selected_target = 0;
-            self.selected_target_resource = None;
             return;
         }
         self.selected_target = preserved_target
@@ -1949,24 +2146,18 @@ impl TrafficDebugTabState {
     }
 
     pub fn apply_analysis(&mut self, analysis: TrafficDebugAnalysis) {
-        let mut expanded = std::collections::HashSet::new();
-        let mut counter = 0usize;
-        for section in &analysis.tree {
-            expanded.insert(counter);
-            counter += 1;
-            for child in &section.children {
-                expanded.insert(counter);
-                counter += 1;
-                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
-            }
-        }
+        let expanded = default_expanded_relation_tree(&analysis.tree);
+        let cursor = preserved_relation_cursor(
+            &self.tree,
+            &self.expanded,
+            self.cursor,
+            &analysis.tree,
+            &expanded,
+        );
         self.summary_lines = analysis.summary_lines;
         self.tree = analysis.tree;
         self.expanded = expanded;
-        let flat = crate::k8s::relationships::flatten_tree(&self.tree, &self.expanded);
-        if self.cursor >= flat.len() {
-            self.cursor = flat.len().saturating_sub(1);
-        }
+        self.cursor = cursor;
         self.error = None;
     }
 }
@@ -1987,24 +2178,12 @@ impl RelationsTabState {
     /// Populate the tree and auto-expand section headers and their immediate
     /// children so the user sees a useful overview on first open.
     pub fn set_tree(&mut self, tree: Vec<crate::k8s::relationships::RelationNode>) {
-        let mut expanded = std::collections::HashSet::new();
-        let mut counter = 0usize;
-        for section in &tree {
-            expanded.insert(counter);
-            counter += 1;
-            for child in &section.children {
-                expanded.insert(counter);
-                counter += 1;
-                crate::k8s::relationships::count_descendants(&child.children, &mut counter);
-            }
-        }
+        let expanded = default_expanded_relation_tree(&tree);
+        let cursor =
+            preserved_relation_cursor(&self.tree, &self.expanded, self.cursor, &tree, &expanded);
         self.expanded = expanded;
         self.tree = tree;
-        // Clamp cursor so it stays valid if the new tree is smaller.
-        let flat = crate::k8s::relationships::flatten_tree(&self.tree, &self.expanded);
-        if self.cursor >= flat.len() {
-            self.cursor = flat.len().saturating_sub(1);
-        }
+        self.cursor = cursor;
     }
 }
 
@@ -3070,6 +3249,72 @@ mod tests {
     }
 
     #[test]
+    fn relations_tab_set_tree_preserves_selected_resource_identity() {
+        let mut tab = RelationsTabState::new(pod("pod-0"));
+        tab.set_tree(vec![crate::k8s::relationships::RelationNode {
+            resource: None,
+            label: "Owned".to_string(),
+            status: None,
+            namespace: None,
+            relation: crate::k8s::relationships::RelationKind::SectionHeader,
+            not_found: false,
+            children: vec![
+                crate::k8s::relationships::RelationNode {
+                    resource: Some(pod("pod-a")),
+                    label: "Pod pod-a".to_string(),
+                    status: None,
+                    namespace: Some("default".to_string()),
+                    relation: crate::k8s::relationships::RelationKind::Owned,
+                    not_found: false,
+                    children: Vec::new(),
+                },
+                crate::k8s::relationships::RelationNode {
+                    resource: Some(pod("pod-b")),
+                    label: "Pod pod-b".to_string(),
+                    status: None,
+                    namespace: Some("default".to_string()),
+                    relation: crate::k8s::relationships::RelationKind::Owned,
+                    not_found: false,
+                    children: Vec::new(),
+                },
+            ],
+        }]);
+        tab.cursor = 2;
+
+        tab.set_tree(vec![crate::k8s::relationships::RelationNode {
+            resource: None,
+            label: "Owned".to_string(),
+            status: None,
+            namespace: None,
+            relation: crate::k8s::relationships::RelationKind::SectionHeader,
+            not_found: false,
+            children: vec![
+                crate::k8s::relationships::RelationNode {
+                    resource: Some(pod("pod-b")),
+                    label: "Pod pod-b".to_string(),
+                    status: None,
+                    namespace: Some("default".to_string()),
+                    relation: crate::k8s::relationships::RelationKind::Owned,
+                    not_found: false,
+                    children: Vec::new(),
+                },
+                crate::k8s::relationships::RelationNode {
+                    resource: Some(pod("pod-a")),
+                    label: "Pod pod-a".to_string(),
+                    status: None,
+                    namespace: Some("default".to_string()),
+                    relation: crate::k8s::relationships::RelationKind::Owned,
+                    not_found: false,
+                    children: Vec::new(),
+                },
+            ],
+        }]);
+
+        let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
+        assert_eq!(flat[tab.cursor].resource, Some(pod("pod-b")));
+    }
+
+    #[test]
     fn close_active_tab_clears_maximized() {
         let mut state = WorkbenchState::default();
         state.open_tab(WorkbenchTabState::ActionHistory(
@@ -3127,6 +3372,43 @@ mod tests {
         assert!(!tab.exited);
         assert!(tab.error.is_none());
         assert_eq!(tab.container_name, "main");
+    }
+
+    #[test]
+    fn exec_set_containers_preserves_selected_container_identity() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.set_containers(vec!["main".into(), "sidecar".into(), "metrics".into()]);
+        tab.container_cursor = 1;
+        tab.picking_container = true;
+
+        tab.set_containers(vec!["sidecar".into(), "metrics".into(), "main".into()]);
+
+        assert!(tab.picking_container);
+        assert_eq!(tab.container_cursor, 0);
+        assert_eq!(tab.containers[tab.container_cursor], "sidecar");
+    }
+
+    #[test]
+    fn exec_restart_session_preserves_selected_container_identity() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.input = "echo hi".into();
+        tab.input_cursor = tab.input.chars().count();
+        tab.set_containers(vec!["main".into(), "sidecar".into(), "metrics".into()]);
+        tab.container_name = "sidecar".into();
+        tab.lines = vec!["old".into()];
+        tab.scroll = 3;
+        tab.loading = false;
+
+        tab.restart_session(9, "pod-0".into(), "default".into(), None);
+
+        assert_eq!(tab.session_id, 9);
+        assert_eq!(tab.container_name, "sidecar");
+        assert!(tab.containers.is_empty());
+        assert!(tab.lines.is_empty());
+        assert_eq!(tab.scroll, 0);
+        assert!(tab.loading);
+        assert_eq!(tab.input, "echo hi");
+        assert_eq!(tab.input_cursor, "echo hi".chars().count());
     }
 
     #[test]
@@ -3233,6 +3515,31 @@ mod tests {
             ),
             is_stderr: false,
         }));
+    }
+
+    #[test]
+    fn workload_log_apply_preset_syncs_edit_cursors() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.filter_input = "old".into();
+        tab.filter_input_cursor = 1;
+        tab.time_jump_input = "2026-01-01T00:00:00Z".into();
+        tab.time_jump_cursor = 5;
+
+        tab.apply_preset(&WorkloadLogPreset {
+            name: String::new(),
+            query: "needle".into(),
+            mode: LogQueryMode::Regex,
+            time_window: LogTimeWindow::Last1Hour,
+            structured_view: false,
+            label_filter: None,
+            pod_filter: None,
+            container_filter: None,
+        });
+
+        assert_eq!(tab.filter_input, "needle");
+        assert_eq!(tab.filter_input_cursor, "needle".chars().count());
+        assert!(tab.time_jump_input.is_empty());
+        assert_eq!(tab.time_jump_cursor, 0);
     }
 
     #[test]
@@ -3386,6 +3693,42 @@ mod tests {
             tab.selected_target_option()
                 .map(|target| target.resource.clone()),
             Some(ResourceRef::Pod("api-1".into(), "default".into()))
+        );
+    }
+
+    #[test]
+    fn connectivity_filter_zero_results_preserves_selected_identity_for_restore() {
+        let selected = ResourceRef::Pod("api-1".into(), "default".into());
+        let mut tab = ConnectivityTabState::new(
+            ResourceRef::Pod("source".into(), "default".into()),
+            vec![
+                ConnectivityTargetOption {
+                    resource: ResourceRef::Pod("api-0".into(), "default".into()),
+                    display: "api-0".into(),
+                    status: "ready".into(),
+                    pod_ip: Some("10.0.0.2".into()),
+                },
+                ConnectivityTargetOption {
+                    resource: selected.clone(),
+                    display: "api-1".into(),
+                    status: "ready".into(),
+                    pod_ip: Some("10.0.0.3".into()),
+                },
+            ],
+        );
+        tab.select_bottom_target();
+
+        tab.filter.value = "zzz".into();
+        tab.refresh_filter();
+        assert!(tab.selected_target_option().is_none());
+
+        tab.filter.value.clear();
+        tab.refresh_filter();
+
+        assert_eq!(
+            tab.selected_target_option()
+                .map(|target| target.resource.clone()),
+            Some(selected)
         );
     }
 
