@@ -444,6 +444,15 @@ impl AppState {
         pod_name: String,
         namespace: String,
     ) {
+        let key = WorkbenchTabKey::Exec(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+        {
+            exec_tab.restart_session(session_id, pod_name, namespace, None);
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         self.workbench
             .open_tab(WorkbenchTabState::Exec(ExecTabState::new(
                 resource, session_id, pod_name, namespace,
@@ -459,6 +468,15 @@ impl AppState {
         namespace: String,
         container_name: String,
     ) {
+        let key = WorkbenchTabKey::Exec(resource.clone());
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+        {
+            exec_tab.restart_session(session_id, pod_name, namespace, Some(container_name));
+            self.workbench.activate_tab(&key);
+            self.focus = Focus::Workbench;
+            return;
+        }
         let mut tab = ExecTabState::new(resource, session_id, pod_name, namespace);
         tab.preset_container(container_name);
         self.workbench.open_tab(WorkbenchTabState::Exec(tab));

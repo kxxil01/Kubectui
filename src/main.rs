@@ -42,9 +42,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
-    app::{
-        AppAction, AppView, DetailViewState, ResourceRef, load_config, save_config,
-    },
+    app::{AppAction, AppView, DetailViewState, ResourceRef, load_config, save_config},
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
     extensions::{
@@ -2652,6 +2650,7 @@ pub(crate) async fn run_app_inner(
                                     .workbench_mut()
                                     .find_tab_mut(&WorkbenchTabKey::Exec(result.resource.clone()))
                                     && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                    && exec_tab.session_id == session_id
                                 {
                                     exec_tab.container_name = container_name;
                                     exec_tab.loading = true;
@@ -2662,6 +2661,7 @@ pub(crate) async fn run_app_inner(
                                     .workbench_mut()
                                     .find_tab_mut(&WorkbenchTabKey::Exec(result.resource.clone()))
                                     && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                    && exec_tab.session_id == session_id
                                 {
                                     exec_tab.loading = false;
                                     exec_tab.error = Some(format!("{err:#}"));
@@ -4925,6 +4925,7 @@ pub(crate) async fn run_app_inner(
                                     .workbench_mut()
                                     .find_tab_mut(&WorkbenchTabKey::Exec(resource))
                                     && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
+                                    && exec_tab.session_id == session_id
                                 {
                                     exec_tab.loading = false;
                                     exec_tab.error = Some(format!("{err:#}"));

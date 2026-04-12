@@ -1668,6 +1668,33 @@ impl ExecTabState {
         }
     }
 
+    pub fn restart_session(
+        &mut self,
+        session_id: u64,
+        pod_name: String,
+        namespace: String,
+        preset_container: Option<String>,
+    ) {
+        self.session_id = session_id;
+        self.pod_name = pod_name;
+        self.namespace = namespace;
+        self.lines.clear();
+        self.scroll = 0;
+        self.loading = true;
+        self.shell_name = None;
+        self.error = None;
+        self.exited = false;
+        self.pending_fragment.clear();
+        self.picking_container = false;
+        self.container_cursor = 0;
+        if let Some(container_name) = preset_container {
+            self.container_name = container_name.clone();
+            self.containers = vec![container_name];
+        } else {
+            self.containers.clear();
+        }
+    }
+
     pub fn preset_container(&mut self, container_name: impl Into<String>) {
         let container_name = container_name.into();
         self.container_name = container_name.clone();
@@ -3304,6 +3331,29 @@ mod tests {
         assert!(tab.picking_container);
         assert_eq!(tab.container_cursor, 0);
         assert_eq!(tab.containers[tab.container_cursor], "sidecar");
+    }
+
+    #[test]
+    fn exec_restart_session_preserves_selected_container_identity() {
+        let mut tab = ExecTabState::new(pod("pod-0"), 1, "pod-0".into(), "default".into());
+        tab.input = "echo hi".into();
+        tab.input_cursor = tab.input.chars().count();
+        tab.set_containers(vec!["main".into(), "sidecar".into(), "metrics".into()]);
+        tab.container_name = "sidecar".into();
+        tab.lines = vec!["old".into()];
+        tab.scroll = 3;
+        tab.loading = false;
+
+        tab.restart_session(9, "pod-0".into(), "default".into(), None);
+
+        assert_eq!(tab.session_id, 9);
+        assert_eq!(tab.container_name, "sidecar");
+        assert!(tab.containers.is_empty());
+        assert!(tab.lines.is_empty());
+        assert_eq!(tab.scroll, 0);
+        assert!(tab.loading);
+        assert_eq!(tab.input, "echo hi");
+        assert_eq!(tab.input_cursor, "echo hi".chars().count());
     }
 
     #[test]

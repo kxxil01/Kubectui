@@ -2761,6 +2761,37 @@ fn reopen_workload_logs_tab_preserves_filters_while_resetting_session() {
 }
 
 #[test]
+fn reopen_exec_tab_preserves_selected_container_while_resetting_session() {
+    use crate::workbench::{ExecTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = ExecTabState::new(resource.clone(), 7, "api".into(), "prod".into());
+    tab.container_name = "sidecar".into();
+    tab.containers = vec!["main".into(), "sidecar".into()];
+    tab.lines = vec!["old output".into()];
+    tab.scroll = 4;
+    tab.loading = false;
+    app.workbench.open_tab(WorkbenchTabState::Exec(tab));
+
+    app.open_exec_tab(resource, 19, "api".into(), "prod".into());
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing exec tab");
+    };
+    let WorkbenchTabState::Exec(tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(tab.session_id, 19);
+    assert_eq!(tab.container_name, "sidecar");
+    assert!(tab.containers.is_empty());
+    assert!(tab.lines.is_empty());
+    assert_eq!(tab.scroll, 0);
+    assert!(tab.loading);
+}
+
+#[test]
 fn u_key_does_not_uncordon_for_pod_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
