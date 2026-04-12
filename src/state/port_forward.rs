@@ -29,7 +29,11 @@ impl TunnelRegistry {
         }
         self.rebuild_order();
         self.selected_index = selected_id
-            .and_then(|id| self.tunnel_ids.iter().position(|candidate| candidate == &id))
+            .and_then(|id| {
+                self.tunnel_ids
+                    .iter()
+                    .position(|candidate| candidate == &id)
+            })
             .unwrap_or(self.selected_index);
         self.clamp_selected_index();
     }
@@ -254,7 +258,10 @@ mod tests {
             },
         ]);
         registry.select_next();
-        assert_eq!(registry.selected().map(|tunnel| tunnel.id.as_str()), Some("alpha"));
+        assert_eq!(
+            registry.selected().map(|tunnel| tunnel.id.as_str()),
+            Some("alpha")
+        );
 
         registry.update_tunnels(vec![
             PortForwardTunnelInfo {
@@ -271,6 +278,9 @@ mod tests {
             },
         ]);
 
-        assert_eq!(registry.selected().map(|tunnel| tunnel.id.as_str()), Some("alpha"));
+        assert_eq!(
+            registry.selected().map(|tunnel| tunnel.id.as_str()),
+            Some("alpha")
+        );
     }
 }

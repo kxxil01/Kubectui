@@ -656,6 +656,112 @@ fn pod_logs_search_mode_accepts_shortcut_characters_as_text() {
 }
 
 #[test]
+fn workbench_common_shortcuts_do_not_leak_into_pod_logs_search() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state else {
+        panic!("expected pod logs tab");
+    };
+    logs_tab.viewer.searching = true;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::PodLogs(logs_tab) = &tab.state else {
+        panic!("expected pod logs tab");
+    };
+    assert_eq!(logs_tab.viewer.search_input, "bz");
+    assert!(app.workbench.open);
+}
+
+#[test]
+fn workbench_common_shortcuts_do_not_leak_into_exec_input() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Exec(
+        crate::workbench::ExecTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+            "pod-1".into(),
+            "default".into(),
+        ),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Exec(exec_tab) = &tab.state else {
+        panic!("expected exec tab");
+    };
+    assert_eq!(exec_tab.input, "bz");
+    assert!(app.workbench.open);
+}
+
+#[test]
+fn workbench_common_shortcuts_do_not_leak_into_connectivity_filter() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::Connectivity(
+        crate::workbench::ConnectivityTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            Vec::new(),
+        ),
+    ));
+    app.focus_workbench();
+
+    let Some(tab) = app.workbench.active_tab_mut() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &mut tab.state else {
+        panic!("expected connectivity tab");
+    };
+    connectivity_tab.focus = crate::workbench::ConnectivityTabFocus::Filter;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::None
+    );
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::Connectivity(connectivity_tab) = &tab.state else {
+        panic!("expected connectivity tab");
+    };
+    assert_eq!(connectivity_tab.filter.value, "bz");
+    assert!(app.workbench.open);
+}
+
+#[test]
 fn workload_logs_filter_mode_supports_ctrl_u_clear() {
     let mut app = AppState::default();
     app.workbench
@@ -686,6 +792,48 @@ fn workload_logs_filter_mode_supports_ctrl_u_clear() {
         panic!("expected workload logs tab");
     };
     assert!(logs_tab.filter_input.is_empty());
+}
+
+#[test]
+fn context_picker_takes_precedence_over_global_context_shortcut() {
+    let mut app = AppState::default();
+    app.context_picker.open();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('c'))),
+        AppAction::None
+    );
+
+    assert!(app.context_picker.is_open());
+    assert_eq!(app.context_picker.search_query(), "c");
+}
+
+#[test]
+fn namespace_picker_takes_precedence_over_global_context_shortcut() {
+    let mut app = AppState::default();
+    app.namespace_picker.open();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('c'))),
+        AppAction::None
+    );
+
+    assert!(app.namespace_picker.is_open());
+    assert_eq!(app.namespace_picker.search_query(), "c");
+}
+
+#[test]
+fn command_palette_takes_precedence_over_help_shortcut() {
+    let mut app = AppState::default();
+    app.command_palette.open();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)),
+        AppAction::None
+    );
+
+    assert!(app.command_palette.is_open());
+    assert!(!app.help_overlay.is_open());
 }
 
 #[test]
@@ -1966,6 +2114,19 @@ fn y_key_blocked_during_drain_confirm_does_not_open_yaml() {
     });
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE));
     assert_ne!(action, AppAction::OpenResourceYaml);
+}
+
+#[test]
+fn metadata_toggle_blocked_during_drain_confirm() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        confirm_drain: true,
+        ..DetailViewState::default()
+    });
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]

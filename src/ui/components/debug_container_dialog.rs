@@ -107,28 +107,6 @@ impl DebugContainerDialogState {
             return DebugContainerDialogEvent::None;
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
-            match key.code {
-                KeyCode::Char('j') | KeyCode::Down => {
-                    self.body_scroll = self.body_scroll.saturating_add(1);
-                    return DebugContainerDialogEvent::None;
-                }
-                KeyCode::Char('k') | KeyCode::Up => {
-                    self.body_scroll = self.body_scroll.saturating_sub(1);
-                    return DebugContainerDialogEvent::None;
-                }
-                KeyCode::Char('d') | KeyCode::PageDown => {
-                    self.body_scroll = self.body_scroll.saturating_add(10);
-                    return DebugContainerDialogEvent::None;
-                }
-                KeyCode::Char('u') | KeyCode::PageUp => {
-                    self.body_scroll = self.body_scroll.saturating_sub(10);
-                    return DebugContainerDialogEvent::None;
-                }
-                _ => {}
-            }
-        }
-
         if self.is_editing_custom_image() {
             match key.code {
                 KeyCode::Esc => return DebugContainerDialogEvent::Close,
@@ -151,6 +129,28 @@ impl DebugContainerDialogState {
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                     self.custom_image.push(c);
                     self.error_message = None;
+                    return DebugContainerDialogEvent::None;
+                }
+                _ => {}
+            }
+        }
+
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.body_scroll = self.body_scroll.saturating_add(1);
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.body_scroll = self.body_scroll.saturating_sub(1);
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Char('d') | KeyCode::PageDown => {
+                    self.body_scroll = self.body_scroll.saturating_add(10);
+                    return DebugContainerDialogEvent::None;
+                }
+                KeyCode::Char('u') | KeyCode::PageUp => {
+                    self.body_scroll = self.body_scroll.saturating_sub(10);
                     return DebugContainerDialogEvent::None;
                 }
                 _ => {}
@@ -809,6 +809,19 @@ mod tests {
         assert_eq!(state.body_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.body_scroll, 0);
+    }
+
+    #[test]
+    fn ctrl_scroll_shortcuts_do_not_fire_while_editing_custom_image() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = DebugContainerField::CustomImage;
+        state.body_scroll = 7;
+
+        state.handle_key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+        state.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+        assert_eq!(state.body_scroll, 7);
     }
 
     #[test]

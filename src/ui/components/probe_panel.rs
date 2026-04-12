@@ -60,7 +60,9 @@ impl ProbePanelState {
                     .iter()
                     .position(|(container_name, _)| container_name == &name)
             })
-            .unwrap_or_else(|| clamp_probe_selection(self.container_probes.len(), self.selected_index));
+            .unwrap_or_else(|| {
+                clamp_probe_selection(self.container_probes.len(), self.selected_index)
+            });
     }
 
     /// Handle navigation: move to next container.

@@ -71,6 +71,10 @@ impl ContextPicker {
         self.is_open
     }
 
+    pub fn search_query(&self) -> &str {
+        &self.search_query
+    }
+
     pub fn set_contexts(&mut self, contexts: Vec<String>, current_context: Option<String>) {
         let selected_context = self.filtered_contexts().get(self.selected_index).cloned();
         self.contexts = contexts;

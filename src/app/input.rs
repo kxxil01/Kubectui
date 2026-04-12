@@ -13,22 +13,74 @@ use crate::{
 };
 
 impl AppState {
+    fn handle_detail_confirmation_key(&mut self, key: KeyEvent) -> Option<AppAction> {
+        let detail = self.detail_view.as_mut()?;
+        if !detail.has_confirmation_dialog() {
+            return None;
+        }
+
+        let action = match key.code {
+            KeyCode::Esc => {
+                detail.confirm_delete = false;
+                detail.confirm_drain = false;
+                detail.confirm_cronjob_suspend = None;
+                AppAction::None
+            }
+            KeyCode::Char('F') if detail.confirm_drain => AppAction::ForceDrainNode,
+            KeyCode::Char('D') | KeyCode::Char('y') | KeyCode::Enter if detail.confirm_drain => {
+                AppAction::DrainNode
+            }
+            KeyCode::Char('F') if detail.confirm_delete => AppAction::ForceDeleteResource,
+            KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Char('y') | KeyCode::Enter
+                if detail.confirm_delete =>
+            {
+                AppAction::DeleteResource
+            }
+            KeyCode::Char('S') | KeyCode::Char('y') | KeyCode::Enter
+                if detail.confirm_cronjob_suspend.is_some() =>
+            {
+                AppAction::SetCronJobSuspend(detail.confirm_cronjob_suspend.unwrap_or(false))
+            }
+            _ => AppAction::None,
+        };
+
+        Some(action)
+    }
+
+    fn workbench_local_editor_active(&self) -> bool {
+        if self.focus != Focus::Workbench || !self.workbench.open {
+            return false;
+        }
+
+        let Some(tab) = self.workbench.active_tab() else {
+            return false;
+        };
+
+        match &tab.state {
+            WorkbenchTabState::AccessReview(tab) => {
+                matches!(tab.focus, AccessReviewFocus::SubjectInput)
+            }
+            WorkbenchTabState::Connectivity(tab) => {
+                matches!(tab.focus, ConnectivityTabFocus::Filter)
+            }
+            WorkbenchTabState::DecodedSecret(tab) => tab.editing,
+            WorkbenchTabState::PodLogs(tab) => tab.viewer.searching || tab.viewer.jumping_to_time,
+            WorkbenchTabState::WorkloadLogs(tab) => tab.editing_text_filter || tab.jumping_to_time,
+            WorkbenchTabState::Exec(tab) => !tab.picking_container,
+            _ => false,
+        }
+    }
+
     fn handle_workbench_key_event(&mut self, key: KeyEvent) -> AppAction {
         use crate::ui::components::port_forward_dialog::PortForwardAction;
 
-        let access_review_input_active = self.workbench.active_tab().is_some_and(|tab| {
-            matches!(
-                &tab.state,
-                WorkbenchTabState::AccessReview(tab)
-                    if matches!(tab.focus, AccessReviewFocus::SubjectInput)
-            )
-        });
+        let local_editor_active = self.workbench_local_editor_active();
 
         // Common workbench keys (apply to all tab types)
-        if !access_review_input_active && key.code == KeyCode::Char('z') {
+        if !local_editor_active && key.code == KeyCode::Char('z') {
             return AppAction::WorkbenchToggleMaximize;
         }
-        if !access_review_input_active && key.code == KeyCode::Char('b') {
+        if !local_editor_active && key.code == KeyCode::Char('b') {
             return AppAction::ToggleWorkbench;
         }
 
@@ -1674,6 +1726,10 @@ impl AppState {
                     AppAction::None
                 }
             };
+        }
+
+        if let Some(action) = self.handle_detail_confirmation_key(key) {
+            return action;
         }
 
         match key.code {
