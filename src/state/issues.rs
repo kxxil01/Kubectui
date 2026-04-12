@@ -552,12 +552,14 @@ fn detect_issues(snapshot: &ClusterSnapshot) -> Vec<ClusterIssue> {
     detect_sanitizer_findings(snapshot, &mut issues);
     detect_vulnerability_findings(snapshot, &mut issues);
 
-    // Sort: severity rank (Error first), then source, then category, then name.
+    // Sort: severity rank (Error first), then source, then category, namespace, kind, and name.
     issues.sort_unstable_by(|a, b| {
         severity_rank(a.severity)
             .cmp(&severity_rank(b.severity))
             .then_with(|| a.source.cmp(&b.source))
             .then_with(|| a.category.cmp(&b.category))
+            .then_with(|| a.namespace.cmp(&b.namespace))
+            .then_with(|| a.resource_kind.cmp(b.resource_kind))
             .then_with(|| a.resource_name.cmp(&b.resource_name))
     });
 
@@ -1138,6 +1140,30 @@ mod tests {
         let runtime = runtime_issues(&issues);
         assert_eq!(runtime.len(), 1);
         assert_eq!(runtime[0].category, IssueCategory::CrashLoopBackOff);
+    }
+
+    #[test]
+    fn issues_tie_break_by_namespace_before_name() {
+        let mut snap = empty_snapshot();
+        for namespace in ["ns-b", "ns-a"] {
+            snap.jobs.push(JobInfo {
+                name: "daily".into(),
+                namespace: namespace.into(),
+                status: "Failed".into(),
+                failed_pods: 1,
+                ..Default::default()
+            });
+        }
+
+        let issues = detect_issues(&snap);
+        let failed_jobs = issues
+            .iter()
+            .filter(|issue| issue.category == IssueCategory::FailedJob)
+            .collect::<Vec<_>>();
+
+        assert_eq!(failed_jobs.len(), 2);
+        assert_eq!(failed_jobs[0].namespace, "ns-a");
+        assert_eq!(failed_jobs[1].namespace, "ns-b");
     }
 
     #[test]

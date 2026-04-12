@@ -71,6 +71,7 @@ impl DebugContainerDialogState {
             .min(self.target_containers.len().saturating_sub(1));
         self.loading_targets = false;
         self.pending_request_id = None;
+        self.error_message = None;
         if self.target_containers.is_empty() {
             self.use_target_container = false;
         }
@@ -800,6 +801,21 @@ mod tests {
         assert_eq!(state.body_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.body_scroll, 0);
+    }
+
+    #[test]
+    fn set_target_containers_clears_stale_fetch_error() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.set_target_fetch_error("failed to load containers");
+        assert!(state.error_message.is_some());
+
+        state.set_target_containers(vec!["main".to_string()]);
+
+        assert!(state.error_message.is_none());
+        assert_eq!(
+            state.selected_target_container().map(String::as_str),
+            Some("main")
+        );
     }
 
     #[test]

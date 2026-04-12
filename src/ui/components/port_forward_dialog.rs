@@ -142,7 +142,7 @@ impl PortForwardDialog {
                 PortForwardAction::None
             }
             KeyCode::F(2) => {
-                self.mode = PortForwardMode::List;
+                self.switch_mode(PortForwardMode::List);
                 PortForwardAction::None
             }
             KeyCode::Enter => match self.validate() {
@@ -205,7 +205,7 @@ impl PortForwardDialog {
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => PortForwardAction::Close,
             KeyCode::F(1) => {
-                self.mode = PortForwardMode::Create;
+                self.switch_mode(PortForwardMode::Create);
                 PortForwardAction::None
             }
             KeyCode::Up | KeyCode::Char('k') => {
@@ -255,6 +255,12 @@ impl PortForwardDialog {
             FormField::RemotePort => FormField::PodName,
             FormField::LocalPort => FormField::RemotePort,
         };
+    }
+
+    fn switch_mode(&mut self, mode: PortForwardMode) {
+        self.mode = mode;
+        self.error = None;
+        self.success = None;
     }
 
     /// Validate form and build configuration.
@@ -793,6 +799,29 @@ mod tests {
         assert_eq!(dialog.mode, PortForwardMode::Create);
         dialog.handle_key(KeyEvent::from(KeyCode::F(2)));
         assert_eq!(dialog.mode, PortForwardMode::List);
+        assert!(dialog.error.is_none());
+        assert!(dialog.success.is_none());
+    }
+
+    #[test]
+    fn mode_switching_clears_stale_status_messages() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.error = Some("create error".to_string());
+        dialog.success = Some("create ok".to_string());
+
+        dialog.handle_key(KeyEvent::from(KeyCode::F(2)));
+
+        assert_eq!(dialog.mode, PortForwardMode::List);
+        assert!(dialog.error.is_none());
+        assert!(dialog.success.is_none());
+
+        dialog.error = Some("list error".to_string());
+        dialog.success = Some("list ok".to_string());
+        dialog.handle_key(KeyEvent::from(KeyCode::F(1)));
+
+        assert_eq!(dialog.mode, PortForwardMode::Create);
+        assert!(dialog.error.is_none());
+        assert!(dialog.success.is_none());
     }
 
     #[test]
