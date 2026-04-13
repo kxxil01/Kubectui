@@ -2217,7 +2217,30 @@ fn reopen_access_review_tab_preserves_existing_subject_input_state() {
             strict: true,
             checks: Vec::new(),
         }],
-        None,
+        Some(crate::rbac_subjects::SubjectAccessReview {
+            subject: crate::rbac_subjects::AccessReviewSubject::ServiceAccount {
+                name: "builder".into(),
+                namespace: "payments".into(),
+            },
+            bindings: vec![crate::rbac_subjects::SubjectBindingResolution {
+                binding: ResourceRef::RoleBinding("payments-read".into(), "payments".into()),
+                role: crate::rbac_subjects::SubjectRoleResolution {
+                    resource: Some(ResourceRef::Role(
+                        "payments-reader".into(),
+                        "payments".into(),
+                    )),
+                    kind: "Role".into(),
+                    name: "payments-reader".into(),
+                    namespace: Some("payments".into()),
+                    rules: vec![crate::k8s::dtos::RbacRule {
+                        verbs: vec!["get".into()],
+                        resources: vec!["pods".into()],
+                        ..crate::k8s::dtos::RbacRule::default()
+                    }],
+                    missing: false,
+                },
+            }],
+        }),
         Some(crate::workbench::AttemptedActionReview {
             action: DetailAction::Delete,
             authorization: None,
@@ -2243,6 +2266,13 @@ fn reopen_access_review_tab_preserves_existing_subject_input_state() {
     assert_eq!(
         tab.attempted_review.as_ref().map(|review| review.action),
         Some(DetailAction::Delete)
+    );
+    assert_eq!(
+        tab.subject_review
+            .as_ref()
+            .map(|review| review.subject.spec())
+            .as_deref(),
+        Some("ServiceAccount/payments/builder")
     );
 }
 
@@ -2785,6 +2815,173 @@ fn reopen_rollout_tab_preserves_revision_selection_and_detail_scroll() {
     };
     assert_eq!(tab.selected_revision().map(|entry| entry.revision), Some(2));
     assert_eq!(tab.detail_scroll, 6);
+}
+
+#[test]
+fn reopen_rollout_tab_error_clears_stale_payload() {
+    use crate::workbench::{RolloutTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Deployment("api".into(), "prod".into());
+    let mut tab = RolloutTabState::new(resource.clone());
+    tab.kind = Some(RolloutWorkloadKind::Deployment);
+    tab.strategy = Some("RollingUpdate".into());
+    tab.summary_lines = vec!["healthy".into()];
+    tab.revisions = vec![RolloutRevisionInfo {
+        revision: 2,
+        name: "rev-2".into(),
+        created: None,
+        summary: "second".into(),
+        change_cause: None,
+        is_current: true,
+        is_update_target: true,
+    }];
+    tab.loading = false;
+    app.workbench.open_tab(WorkbenchTabState::Rollout(tab));
+
+    app.open_rollout_tab(resource, None, Some("boom".into()), None);
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing rollout tab");
+    };
+    let WorkbenchTabState::Rollout(tab) = &tab.state else {
+        panic!("expected rollout tab");
+    };
+    assert!(tab.kind.is_none());
+    assert!(tab.strategy.is_none());
+    assert!(tab.summary_lines.is_empty());
+    assert!(tab.revisions.is_empty());
+    assert_eq!(tab.error.as_deref(), Some("boom"));
+}
+
+#[test]
+fn reopen_resource_diff_tab_error_clears_stale_payload() {
+    use crate::resource_diff::{ResourceDiffBaselineKind, ResourceDiffLine, ResourceDiffLineKind};
+    use crate::workbench::{ResourceDiffTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = ResourceDiffTabState::new(resource.clone());
+    tab.baseline_kind = Some(ResourceDiffBaselineKind::LastAppliedAnnotation);
+    tab.summary = Some("drift".into());
+    tab.lines = vec![ResourceDiffLine {
+        kind: ResourceDiffLineKind::Context,
+        content: "a".into(),
+    }];
+    tab.loading = false;
+    app.workbench.open_tab(WorkbenchTabState::ResourceDiff(tab));
+
+    app.open_resource_diff_tab(resource, None, Some("boom".into()), None);
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing diff tab");
+    };
+    let WorkbenchTabState::ResourceDiff(tab) = &tab.state else {
+        panic!("expected diff tab");
+    };
+    assert!(tab.baseline_kind.is_none());
+    assert!(tab.summary.is_none());
+    assert!(tab.lines.is_empty());
+    assert_eq!(tab.error.as_deref(), Some("boom"));
+}
+
+#[test]
+fn reopen_helm_history_tab_error_clears_stale_payload() {
+    use crate::k8s::dtos::HelmReleaseRevisionInfo;
+    use crate::workbench::{HelmHistoryTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::HelmRelease("release".into(), "prod".into());
+    let mut tab = HelmHistoryTabState::new(resource.clone());
+    tab.revisions = vec![HelmReleaseRevisionInfo {
+        revision: 3,
+        ..HelmReleaseRevisionInfo::default()
+    }];
+    tab.current_revision = Some(3);
+    tab.loading = false;
+    app.workbench.open_tab(WorkbenchTabState::HelmHistory(tab));
+
+    app.open_helm_history_tab(resource, None, Some("boom".into()), None);
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing helm tab");
+    };
+    let WorkbenchTabState::HelmHistory(tab) = &tab.state else {
+        panic!("expected helm tab");
+    };
+    assert!(tab.revisions.is_empty());
+    assert!(tab.current_revision.is_none());
+    assert_eq!(tab.error.as_deref(), Some("boom"));
+}
+
+#[test]
+fn reopen_network_policy_tab_error_clears_stale_payload() {
+    use crate::workbench::{NetworkPolicyTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = NetworkPolicyTabState::new(resource.clone());
+    tab.summary_lines = vec!["reachable".into()];
+    tab.tree = vec![crate::k8s::relationships::RelationNode {
+        resource: None,
+        label: "Policy Summary".into(),
+        status: None,
+        namespace: None,
+        relation: crate::k8s::relationships::RelationKind::SectionHeader,
+        not_found: false,
+        children: Vec::new(),
+    }];
+    app.workbench
+        .open_tab(WorkbenchTabState::NetworkPolicy(tab));
+
+    app.open_network_policy_tab(resource, None, Some("boom".into()));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing network policy tab");
+    };
+    let WorkbenchTabState::NetworkPolicy(tab) = &tab.state else {
+        panic!("expected network policy tab");
+    };
+    assert!(tab.summary_lines.is_empty());
+    assert!(tab.tree.is_empty());
+    assert_eq!(tab.error.as_deref(), Some("boom"));
+}
+
+#[test]
+fn reopen_traffic_debug_tab_error_clears_stale_payload() {
+    use crate::workbench::{TrafficDebugTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = TrafficDebugTabState::new(resource.clone());
+    tab.summary_lines = vec!["reachable".into()];
+    tab.tree = vec![crate::k8s::relationships::RelationNode {
+        resource: None,
+        label: "Traffic".into(),
+        status: None,
+        namespace: None,
+        relation: crate::k8s::relationships::RelationKind::SectionHeader,
+        not_found: false,
+        children: Vec::new(),
+    }];
+    app.workbench.open_tab(WorkbenchTabState::TrafficDebug(tab));
+
+    app.open_traffic_debug_tab(resource, None, Some("boom".into()));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing traffic tab");
+    };
+    let WorkbenchTabState::TrafficDebug(tab) = &tab.state else {
+        panic!("expected traffic tab");
+    };
+    assert!(tab.summary_lines.is_empty());
+    assert!(tab.tree.is_empty());
+    assert_eq!(tab.error.as_deref(), Some("boom"));
 }
 
 #[test]

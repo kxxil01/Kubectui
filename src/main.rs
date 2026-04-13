@@ -56,9 +56,7 @@ use kubectui::{
         logs::{LogsClient, PodRef},
         portforward::PortForwarderService,
         probes::extract_probes_from_pod,
-        workload_logs::{
-            MAX_WORKLOAD_LOG_STREAMS, WorkloadLogTarget, resolve_workload_log_targets,
-        },
+        workload_logs::{WorkloadLogTarget, resolve_workload_log_targets},
     },
     policy::DetailAction,
     runbooks::{LoadedRunbookStepKind, RunbookRegistry, load_runbook_registry},
@@ -3075,36 +3073,14 @@ pub(crate) async fn run_app_inner(
                     {
                         match result.result {
                             Ok(targets) => {
-                                logs_tab.update_targets(&targets);
-                                let mut sources = Vec::new();
-                                for target in targets {
-                                    for container in target.containers {
-                                        if sources.len() >= MAX_WORKLOAD_LOG_STREAMS {
-                                            logs_tab.notice = Some(format!(
-                                                "Stream cap reached at {MAX_WORKLOAD_LOG_STREAMS} pod/container streams."
-                                            ));
-                                            break;
-                                        }
-                                        sources.push((
-                                            target.pod_name.clone(),
-                                            target.namespace.clone(),
-                                            container,
-                                        ));
-                                    }
-                                }
-                                if sources.is_empty() {
-                                    logs_tab.loading = false;
-                                    logs_tab.error = Some("No pod/container streams were resolved.".to_string());
-                                } else {
-                                    logs_tab.sources = sources.clone();
-                                    logs_tab.loading = false;
+                                let sources = logs_tab.apply_bootstrap_targets(targets);
+                                if !sources.is_empty() {
                                     workload_log_sessions.insert(result.session_id, sources.clone());
                                     sources_to_start = sources;
                                 }
                             }
                             Err(err) => {
-                                logs_tab.loading = false;
-                                logs_tab.error = Some(err);
+                                logs_tab.apply_bootstrap_error(err);
                             }
                         }
                     }
@@ -3307,7 +3283,7 @@ pub(crate) async fn run_app_inner(
                                 state.set_tree(tree);
                             }
                             Err(err) => {
-                                state.error = Some(err);
+                                state.set_error(err);
                             }
                         }
                         needs_redraw = true;
@@ -5918,8 +5894,9 @@ pub(crate) async fn run_app_inner(
                                 .find_tab_mut(&WorkbenchTabKey::PortForward)
                                 && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
                             {
-                                port_tab.dialog.success =
-                                    Some(format!("Tunnel created: {tunnel_id}"));
+                                port_tab
+                                    .dialog
+                                    .set_success_message(format!("Tunnel created: {tunnel_id}"));
                                 let mut registry =
                                     kubectui::state::port_forward::TunnelRegistry::new();
                                 registry.update_tunnels(tunnels);
@@ -5932,7 +5909,7 @@ pub(crate) async fn run_app_inner(
                                 .find_tab_mut(&WorkbenchTabKey::PortForward)
                                 && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
                             {
-                                port_tab.dialog.error = Some(format!("{err}"));
+                                port_tab.dialog.set_error_message(format!("{err}"));
                             }
                         }
                     }
@@ -5957,8 +5934,9 @@ pub(crate) async fn run_app_inner(
                                 let mut registry =
                                     kubectui::state::port_forward::TunnelRegistry::new();
                                 registry.update_tunnels(tunnels);
-                                port_tab.dialog.success =
-                                    Some(format!("Closed tunnel: {tunnel_id}"));
+                                port_tab
+                                    .dialog
+                                    .set_success_message(format!("Closed tunnel: {tunnel_id}"));
                                 port_tab.dialog.update_registry(registry);
                             }
                         }
@@ -5968,7 +5946,7 @@ pub(crate) async fn run_app_inner(
                                 .find_tab_mut(&WorkbenchTabKey::PortForward)
                                 && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
                             {
-                                port_tab.dialog.error = Some(format!("{err:#}"));
+                                port_tab.dialog.set_error_message(format!("{err:#}"));
                             }
                         }
                     }

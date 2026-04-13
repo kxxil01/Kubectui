@@ -142,7 +142,13 @@ impl AppState {
         if let Some(tab) = self.workbench.find_tab_mut(&key)
             && let WorkbenchTabState::AccessReview(tab) = &mut tab.state
         {
-            tab.refresh_payload(context_name, namespace_scope, entries, attempted_review);
+            tab.refresh_payload(
+                context_name,
+                namespace_scope,
+                entries,
+                subject_review,
+                attempted_review,
+            );
             self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
             return;
@@ -172,9 +178,11 @@ impl AppState {
         {
             if let Some(diff) = diff {
                 tab.apply_result(diff);
+            } else if let Some(error) = error {
+                tab.set_error(error);
             } else {
-                tab.loading = error.is_none();
-                tab.error = error;
+                tab.loading = true;
+                tab.error = None;
                 tab.pending_request_id = pending_request_id;
             }
             self.workbench.activate_tab(&key);
@@ -206,9 +214,11 @@ impl AppState {
         {
             if let Some(inspection) = inspection {
                 tab.apply_inspection(inspection);
+            } else if let Some(error) = error {
+                tab.set_error(error);
             } else {
-                tab.loading = error.is_none();
-                tab.error = error;
+                tab.loading = true;
+                tab.error = None;
                 tab.pending_request_id = pending_request_id;
             }
             self.workbench.activate_tab(&key);
@@ -239,9 +249,11 @@ impl AppState {
         {
             if let Some(history) = history {
                 tab.apply_history(history);
+            } else if let Some(error) = error {
+                tab.set_history_error(error);
             } else {
-                tab.loading = error.is_none();
-                tab.error = error;
+                tab.loading = true;
+                tab.error = None;
                 tab.pending_history_request_id = pending_request_id;
             }
             self.workbench.activate_tab(&key);
@@ -325,18 +337,20 @@ impl AppState {
         if let Some(tab) = self.workbench.find_tab_mut(&key)
             && let WorkbenchTabState::NetworkPolicy(tab) = &mut tab.state
         {
-            tab.error = error;
             if let Some(analysis) = analysis {
                 tab.apply_analysis(analysis);
+            } else if let Some(error) = error {
+                tab.set_error(error);
             }
             self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
             return;
         }
         let mut tab = NetworkPolicyTabState::new(resource);
-        tab.error = error;
         if let Some(analysis) = analysis {
             tab.apply_analysis(analysis);
+        } else if let Some(error) = error {
+            tab.set_error(error);
         }
         self.workbench
             .open_tab(WorkbenchTabState::NetworkPolicy(tab));
@@ -382,18 +396,20 @@ impl AppState {
         if let Some(tab) = self.workbench.find_tab_mut(&key)
             && let WorkbenchTabState::TrafficDebug(tab) = &mut tab.state
         {
-            tab.error = error;
             if let Some(analysis) = analysis {
                 tab.apply_analysis(analysis);
+            } else if let Some(error) = error {
+                tab.set_error(error);
             }
             self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
             return;
         }
         let mut tab = TrafficDebugTabState::new(resource);
-        tab.error = error;
         if let Some(analysis) = analysis {
             tab.apply_analysis(analysis);
+        } else if let Some(error) = error {
+            tab.set_error(error);
         }
         self.workbench
             .open_tab(WorkbenchTabState::TrafficDebug(tab));
