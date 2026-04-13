@@ -566,15 +566,16 @@ impl ResourceYamlTabState {
         error: Option<String>,
         pending_request_id: Option<u64>,
     ) {
-        if yaml.is_some() || error.is_some() || pending_request_id.is_none() {
+        let content_updated = yaml.is_some() || error.is_some() || pending_request_id.is_none();
+        if content_updated {
             self.yaml = yaml;
+            let total_lines = self
+                .yaml
+                .as_ref()
+                .map(|yaml| yaml.lines().count())
+                .unwrap_or(0);
+            self.scroll = self.scroll.min(total_lines.saturating_sub(1));
         }
-        let total_lines = self
-            .yaml
-            .as_ref()
-            .map(|yaml| yaml.lines().count())
-            .unwrap_or(0);
-        self.scroll = self.scroll.min(total_lines.saturating_sub(1));
         self.loading = pending_request_id.is_some() || (self.yaml.is_none() && error.is_none());
         self.error = error;
         self.pending_request_id = pending_request_id;

@@ -83,8 +83,8 @@ fn test_field_focus_cycling() {
 fn test_is_valid_check() {
     let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "worker", "prod", 10);
 
-    // Empty is invalid
-    assert!(!state.is_valid());
+    // Empty input means "keep current replicas", which is valid.
+    assert!(state.is_valid());
 
     // Valid value
     state.input_buffer = "42".to_string();
