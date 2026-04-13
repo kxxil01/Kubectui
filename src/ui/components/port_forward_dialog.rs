@@ -122,6 +122,16 @@ impl PortForwardDialog {
         }
     }
 
+    pub fn set_error_message(&mut self, message: impl Into<String>) {
+        self.error = Some(message.into());
+        self.success = None;
+    }
+
+    pub fn set_success_message(&mut self, message: impl Into<String>) {
+        self.success = Some(message.into());
+        self.error = None;
+    }
+
     /// Handle keyboard input.
     pub fn handle_key(&mut self, key: KeyEvent) -> PortForwardAction {
         match self.mode {
@@ -148,11 +158,11 @@ impl PortForwardDialog {
             KeyCode::Enter => match self.validate() {
                 Ok((target, config)) => {
                     self.clear_form();
-                    self.success = Some("Creating tunnel...".to_string());
+                    self.set_success_message("Creating tunnel...");
                     PortForwardAction::Create((target, config))
                 }
                 Err(msg) => {
-                    self.error = Some(msg);
+                    self.set_error_message(msg);
                     PortForwardAction::None
                 }
             },
@@ -845,6 +855,20 @@ mod tests {
     }
 
     #[test]
+    fn create_submit_clears_stale_error_message() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.error = Some("previous failure".to_string());
+        dialog.pod_name_field.value = "logs-test".to_string();
+        dialog.remote_port_field.value = "80".to_string();
+
+        let action = dialog.handle_key(KeyEvent::from(KeyCode::Enter));
+
+        assert!(matches!(action, PortForwardAction::Create(_)));
+        assert!(dialog.error.is_none());
+        assert_eq!(dialog.success.as_deref(), Some("Creating tunnel..."));
+    }
+
+    #[test]
     fn test_digit_filtering_in_port_fields() {
         let mut dialog = PortForwardDialog::new();
         dialog.focus = FormField::RemotePort;
@@ -958,6 +982,19 @@ mod tests {
             .get_selected_tunnel()
             .expect("selected tunnel should still exist");
         assert_eq!(selected.id, "c");
+    }
+
+    #[test]
+    fn status_helpers_keep_single_visible_status() {
+        let mut dialog = PortForwardDialog::new();
+
+        dialog.set_error_message("boom");
+        assert_eq!(dialog.error.as_deref(), Some("boom"));
+        assert!(dialog.success.is_none());
+
+        dialog.set_success_message("ok");
+        assert_eq!(dialog.success.as_deref(), Some("ok"));
+        assert!(dialog.error.is_none());
     }
 
     #[test]

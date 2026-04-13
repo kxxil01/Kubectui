@@ -25,6 +25,7 @@ pub enum NamespacePickerAction {
 pub struct NamespacePicker {
     namespaces: Vec<String>,
     selected_index: usize,
+    selection_anchor: Option<String>,
     search_query: String,
     search_cursor: usize,
     is_open: bool,
@@ -45,6 +46,7 @@ impl NamespacePicker {
         Self {
             namespaces,
             selected_index: 0,
+            selection_anchor: None,
             search_query: String::new(),
             search_cursor: 0,
             is_open: false,
@@ -58,6 +60,7 @@ impl NamespacePicker {
         self.selected_index = self
             .selected_index
             .min(self.namespaces.len().saturating_sub(1));
+        self.selection_anchor = self.namespaces.get(self.selected_index).cloned();
     }
 
     pub fn open_with_current(&mut self, current_namespace: &str) {
@@ -68,6 +71,7 @@ impl NamespacePicker {
             .position(|namespace| namespace == current_namespace)
         {
             self.selected_index = index;
+            self.selection_anchor = self.namespaces.get(index).cloned();
         }
     }
 
@@ -80,13 +84,13 @@ impl NamespacePicker {
     }
 
     pub fn set_namespaces(&mut self, namespaces: Vec<String>) {
-        let selected_namespace = self.filtered_namespaces().get(self.selected_index).cloned();
+        let selected_namespace = self
+            .filtered_namespaces()
+            .get(self.selected_index)
+            .cloned()
+            .or_else(|| self.selection_anchor.clone());
         self.namespaces = namespaces;
-        let filtered = self.filtered_namespaces();
-        self.selected_index = selected_namespace
-            .as_ref()
-            .and_then(|namespace| filtered.iter().position(|entry| entry == namespace))
-            .unwrap_or_else(|| self.selected_index.min(filtered.len().saturating_sub(1)));
+        self.restore_selected_namespace(selected_namespace);
     }
 
     pub fn selected_index(&self) -> usize {
@@ -106,7 +110,11 @@ impl NamespacePicker {
             return NamespacePickerAction::None;
         }
 
-        let selected_namespace = self.filtered_namespaces().get(self.selected_index).cloned();
+        let selected_namespace = self
+            .filtered_namespaces()
+            .get(self.selected_index)
+            .cloned()
+            .or_else(|| self.selection_anchor.clone());
 
         match key.code {
             KeyCode::Esc => NamespacePickerAction::Close,
@@ -120,6 +128,8 @@ impl NamespacePicker {
                 let len = self.filtered_namespaces().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
+                    self.selection_anchor =
+                        self.filtered_namespaces().get(self.selected_index).cloned();
                 }
                 NamespacePickerAction::None
             }
@@ -131,6 +141,8 @@ impl NamespacePicker {
                     } else {
                         self.selected_index - 1
                     };
+                    self.selection_anchor =
+                        self.filtered_namespaces().get(self.selected_index).cloned();
                 }
                 NamespacePickerAction::None
             }
@@ -193,13 +205,15 @@ impl NamespacePicker {
     }
 
     fn restore_selected_namespace(&mut self, selected_namespace: Option<String>) {
-        self.selected_index = selected_namespace
-            .and_then(|selected| {
-                self.filtered_namespaces()
-                    .iter()
-                    .position(|candidate| candidate == &selected)
-            })
-            .unwrap_or(0);
+        let filtered = self.filtered_namespaces();
+        let matched_index = selected_namespace
+            .as_ref()
+            .and_then(|selected| filtered.iter().position(|candidate| candidate == selected));
+        self.selected_index = matched_index.unwrap_or(0);
+        self.selection_anchor = matched_index
+            .and_then(|index| filtered.get(index).cloned())
+            .or(selected_namespace)
+            .or_else(|| filtered.get(self.selected_index).cloned());
     }
 
     pub fn filtered_namespaces(&self) -> Vec<String> {
@@ -505,6 +519,28 @@ mod tests {
         picker.handle_key(KeyEvent::from(KeyCode::Char('p')));
 
         assert_eq!(picker.search_query(), "p");
+        assert_eq!(
+            picker.filtered_namespaces().get(picker.selected_index()),
+            Some(&"prod-east".to_string())
+        );
+    }
+
+    #[test]
+    fn namespace_picker_roundtrip_preserves_selection_across_zero_matches() {
+        let mut picker = NamespacePicker::new(vec![
+            "all".to_string(),
+            "prod-east".to_string(),
+            "prod-west".to_string(),
+        ]);
+        picker.open();
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
+        for ch in ['z', 'z', 'z'] {
+            picker.handle_key(KeyEvent::from(KeyCode::Char(ch)));
+        }
+        assert!(picker.filtered_namespaces().is_empty());
+
+        picker.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
         assert_eq!(
             picker.filtered_namespaces().get(picker.selected_index()),
             Some(&"prod-east".to_string())

@@ -27,6 +27,7 @@ pub struct ContextPicker {
     contexts: Vec<String>,
     current_context: Option<String>,
     selected_index: usize,
+    selection_anchor: Option<String>,
     search_query: String,
     search_cursor: usize,
     is_open: bool,
@@ -48,6 +49,7 @@ impl ContextPicker {
             contexts,
             current_context,
             selected_index: 0,
+            selection_anchor: None,
             search_query: String::new(),
             search_cursor: 0,
             is_open: false,
@@ -64,6 +66,7 @@ impl ContextPicker {
             .as_ref()
             .and_then(|context| filtered.iter().position(|entry| entry == context))
             .unwrap_or(0);
+        self.selection_anchor = filtered.get(self.selected_index).cloned();
     }
 
     pub fn close(&mut self) {
@@ -82,11 +85,7 @@ impl ContextPicker {
         let selected_context = self.filtered_contexts().get(self.selected_index).cloned();
         self.contexts = contexts;
         self.current_context = current_context;
-        let filtered = self.filtered_contexts();
-        self.selected_index = selected_context
-            .as_ref()
-            .and_then(|context| filtered.iter().position(|entry| entry == context))
-            .unwrap_or_else(|| self.selected_index.min(filtered.len().saturating_sub(1)));
+        self.restore_selected_context(selected_context.or_else(|| self.selection_anchor.clone()));
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> ContextPickerAction {
@@ -94,7 +93,11 @@ impl ContextPicker {
             return ContextPickerAction::None;
         }
 
-        let selected_context = self.filtered_contexts().get(self.selected_index).cloned();
+        let selected_context = self
+            .filtered_contexts()
+            .get(self.selected_index)
+            .cloned()
+            .or_else(|| self.selection_anchor.clone());
 
         match key.code {
             KeyCode::Esc => ContextPickerAction::Close,
@@ -108,6 +111,8 @@ impl ContextPicker {
                 let len = self.filtered_contexts().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
+                    self.selection_anchor =
+                        self.filtered_contexts().get(self.selected_index).cloned();
                 }
                 ContextPickerAction::None
             }
@@ -119,6 +124,8 @@ impl ContextPicker {
                     } else {
                         self.selected_index - 1
                     };
+                    self.selection_anchor =
+                        self.filtered_contexts().get(self.selected_index).cloned();
                 }
                 ContextPickerAction::None
             }
@@ -181,13 +188,15 @@ impl ContextPicker {
     }
 
     fn restore_selected_context(&mut self, selected_context: Option<String>) {
-        self.selected_index = selected_context
-            .and_then(|selected| {
-                self.filtered_contexts()
-                    .iter()
-                    .position(|candidate| candidate == &selected)
-            })
-            .unwrap_or(0);
+        let filtered = self.filtered_contexts();
+        let matched_index = selected_context
+            .as_ref()
+            .and_then(|selected| filtered.iter().position(|candidate| candidate == selected));
+        self.selected_index = matched_index.unwrap_or(0);
+        self.selection_anchor = matched_index
+            .and_then(|index| filtered.get(index).cloned())
+            .or(selected_context)
+            .or_else(|| filtered.get(self.selected_index).cloned());
     }
 
     pub fn filtered_contexts(&self) -> Vec<String> {
@@ -554,6 +563,30 @@ mod tests {
         picker.handle_key(KeyEvent::from(KeyCode::Char('p')));
 
         assert_eq!(picker.search_query, "p");
+        assert_eq!(
+            picker.filtered_contexts().get(picker.selected_index),
+            Some(&"prod-east".to_string())
+        );
+    }
+
+    #[test]
+    fn context_picker_roundtrip_preserves_selection_across_zero_matches() {
+        let mut picker = ContextPicker::new(
+            vec![
+                "dev-east".to_string(),
+                "prod-east".to_string(),
+                "prod-west".to_string(),
+            ],
+            Some("prod-east".to_string()),
+        );
+        picker.open();
+        for ch in ['z', 'z', 'z'] {
+            picker.handle_key(KeyEvent::from(KeyCode::Char(ch)));
+        }
+        assert!(picker.filtered_contexts().is_empty());
+
+        picker.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
         assert_eq!(
             picker.filtered_contexts().get(picker.selected_index),
             Some(&"prod-east".to_string())
