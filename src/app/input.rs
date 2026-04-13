@@ -110,6 +110,18 @@ impl AppState {
             match key.code {
                 KeyCode::Char('z') => return AppAction::WorkbenchToggleMaximize,
                 KeyCode::Char('b') => return AppAction::ToggleWorkbench,
+                KeyCode::Tab
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && key.modifiers.contains(KeyModifiers::SHIFT) =>
+                {
+                    return AppAction::WorkbenchPreviousTab;
+                }
+                KeyCode::BackTab if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return AppAction::WorkbenchPreviousTab;
+                }
+                KeyCode::Tab if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return AppAction::WorkbenchNextTab;
+                }
                 KeyCode::Char('[') if !reserve_bracket_shortcuts => {
                     return AppAction::WorkbenchPreviousTab;
                 }
@@ -985,10 +997,14 @@ impl AppState {
                         KeyCode::Char('y') if !tab.viewer.picking_container => {
                             AppAction::CopyLogContent
                         }
-                        KeyCode::Char('S') if !tab.viewer.picking_container => {
+                        KeyCode::Char('S') | KeyCode::Char('s')
+                            if !tab.viewer.picking_container =>
+                        {
                             AppAction::ExportLogs
                         }
-                        KeyCode::Char('M') if !tab.viewer.picking_container => {
+                        KeyCode::Char('M') | KeyCode::Char('m')
+                            if !tab.viewer.picking_container =>
+                        {
                             AppAction::SaveLogPreset
                         }
                         KeyCode::Char('[') if !tab.viewer.picking_container => {
@@ -1118,12 +1134,28 @@ impl AppState {
                     match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
                         KeyCode::Char('j') | KeyCode::Down => {
-                            tab.scroll = (tab.scroll + 1).min(filtered_len.saturating_sub(1));
+                            if filtered_len <= 1 {
+                                if filtered_len == 0 {
+                                    tab.scroll = 0;
+                                } else {
+                                    tab.scroll = tab.scroll.saturating_add(1);
+                                }
+                            } else {
+                                tab.scroll = (tab.scroll + 1).min(filtered_len.saturating_sub(1));
+                            }
                             tab.follow_mode = false;
                             AppAction::None
                         }
                         KeyCode::Char('k') | KeyCode::Up => {
-                            tab.scroll = tab.scroll.saturating_sub(1);
+                            if filtered_len <= 1 {
+                                if filtered_len == 0 {
+                                    tab.scroll = 0;
+                                } else {
+                                    tab.scroll = tab.scroll.saturating_sub(1);
+                                }
+                            } else {
+                                tab.scroll = tab.scroll.saturating_sub(1);
+                            }
                             tab.follow_mode = false;
                             AppAction::None
                         }
@@ -1133,12 +1165,24 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char('G') => {
-                            tab.scroll = filtered_len.saturating_sub(1);
+                            tab.scroll = if filtered_len <= 1 && filtered_len > 0 {
+                                usize::MAX
+                            } else {
+                                filtered_len.saturating_sub(1)
+                            };
                             tab.follow_mode = true;
                             AppAction::None
                         }
                         KeyCode::PageDown => {
-                            tab.scroll = (tab.scroll + 10).min(filtered_len.saturating_sub(1));
+                            if filtered_len <= 1 {
+                                if filtered_len == 0 {
+                                    tab.scroll = 0;
+                                } else {
+                                    tab.scroll = tab.scroll.saturating_add(10);
+                                }
+                            } else {
+                                tab.scroll = (tab.scroll + 10).min(filtered_len.saturating_sub(1));
+                            }
                             tab.follow_mode = false;
                             AppAction::None
                         }
@@ -1175,8 +1219,12 @@ impl AppState {
                         KeyCode::Char('C') => AppAction::ToggleLogCorrelation,
                         KeyCode::Char('J') => AppAction::ToggleStructuredLogView,
                         KeyCode::Char('y') if !tab.editing_text_filter => AppAction::CopyLogContent,
-                        KeyCode::Char('S') if !tab.editing_text_filter => AppAction::ExportLogs,
-                        KeyCode::Char('M') if !tab.editing_text_filter => AppAction::SaveLogPreset,
+                        KeyCode::Char('S') | KeyCode::Char('s') if !tab.editing_text_filter => {
+                            AppAction::ExportLogs
+                        }
+                        KeyCode::Char('M') | KeyCode::Char('m') if !tab.editing_text_filter => {
+                            AppAction::SaveLogPreset
+                        }
                         KeyCode::Char('[') if !tab.editing_text_filter => {
                             AppAction::ApplyPreviousLogPreset
                         }
@@ -2512,11 +2560,15 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Tab if self.detail_view.is_none() => {
+            KeyCode::Tab
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 self.next_view();
                 AppAction::None
             }
-            KeyCode::BackTab if self.detail_view.is_none() => {
+            KeyCode::BackTab
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 self.previous_view();
                 AppAction::None
             }
@@ -2634,6 +2686,28 @@ impl AppState {
             KeyCode::Char('{') if self.detail_view.is_none() => AppAction::ApplyPreviousWorkspace,
             KeyCode::Char('}') if self.detail_view.is_none() => AppAction::ApplyNextWorkspace,
             KeyCode::Char('b') if self.detail_view.is_none() => AppAction::ToggleWorkbench,
+            KeyCode::Tab
+                if self.detail_view.is_none()
+                    && self.workbench.open
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && key.modifiers.contains(KeyModifiers::SHIFT) =>
+            {
+                AppAction::WorkbenchPreviousTab
+            }
+            KeyCode::BackTab
+                if self.detail_view.is_none()
+                    && self.workbench.open
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::WorkbenchPreviousTab
+            }
+            KeyCode::Tab
+                if self.detail_view.is_none()
+                    && self.workbench.open
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::WorkbenchNextTab
+            }
             KeyCode::Char('[') if self.detail_view.is_none() && self.workbench.open => {
                 AppAction::WorkbenchPreviousTab
             }

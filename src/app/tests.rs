@@ -427,7 +427,22 @@ fn workbench_keybindings_emit_expected_actions() {
         AppAction::WorkbenchNextTab
     );
     assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL)),
+        AppAction::WorkbenchNextTab
+    );
+    assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+        AppAction::WorkbenchPreviousTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )),
+        AppAction::WorkbenchPreviousTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::CONTROL)),
         AppAction::WorkbenchPreviousTab
     );
     assert_eq!(
@@ -476,7 +491,22 @@ fn workbench_focus_supports_tab_resize_and_close_shortcuts() {
         AppAction::WorkbenchNextTab
     );
     assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL)),
+        AppAction::WorkbenchNextTab
+    );
+    assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+        AppAction::WorkbenchPreviousTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )),
+        AppAction::WorkbenchPreviousTab
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::BackTab, KeyModifiers::CONTROL)),
         AppAction::WorkbenchPreviousTab
     );
     assert_eq!(
@@ -516,6 +546,17 @@ fn workbench_local_editor_blocks_global_tab_shortcuts() {
 
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Tab,
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )),
         AppAction::None
     );
     assert_eq!(
@@ -1299,6 +1340,18 @@ fn pod_logs_shortcuts_route_saved_preset_actions() {
         AppAction::SaveLogPreset
     );
     assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('m'))),
+        AppAction::SaveLogPreset
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('S'))),
+        AppAction::ExportLogs
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('s'))),
+        AppAction::ExportLogs
+    );
+    assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
         AppAction::ApplyPreviousLogPreset
     );
@@ -1321,6 +1374,18 @@ fn workload_logs_shortcuts_route_saved_preset_actions() {
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('M'))),
         AppAction::SaveLogPreset
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('m'))),
+        AppAction::SaveLogPreset
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('S'))),
+        AppAction::ExportLogs
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('s'))),
+        AppAction::ExportLogs
     );
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('['))),
@@ -3105,6 +3170,45 @@ fn reopen_workload_logs_tab_preserves_filters_while_resetting_session() {
 }
 
 #[test]
+fn workload_logs_single_filtered_line_allows_row_scroll_offsets() {
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let mut tab = crate::workbench::WorkloadLogsTabState::new(
+        ResourceRef::Deployment("api".into(), "prod".into()),
+        7,
+    );
+    tab.loading = false;
+    tab.follow_mode = false;
+    tab.lines.push(crate::workbench::WorkloadLogLine {
+        pod_name: "api-0".into(),
+        container_name: "main".into(),
+        entry: crate::log_investigation::LogEntry::from_raw("single visible line"),
+        is_stderr: false,
+    });
+    app.workbench.open_tab(WorkbenchTabState::WorkloadLogs(tab));
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing workload logs tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(tab) = &tab.state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(tab.scroll, 1);
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing workload logs tab");
+    };
+    let WorkbenchTabState::WorkloadLogs(tab) = &tab.state else {
+        panic!("expected workload logs tab");
+    };
+    assert_eq!(tab.scroll, 0);
+}
+
+#[test]
 fn reopen_exec_tab_preserves_selected_container_while_resetting_session() {
     use crate::workbench::{ExecTabState, WorkbenchTabState};
 
@@ -3661,6 +3765,10 @@ fn save_and_cycle_pod_log_presets_round_trip() {
         .open_tab(WorkbenchTabState::PodLogs(tab));
 
     assert!(apply_action(AppAction::SaveLogPreset, &mut app));
+    assert!(
+        app.status_message()
+            .is_some_and(|msg| msg.starts_with("Saved log preset: "))
+    );
     let saved = &app
         .preferences
         .as_ref()
@@ -3683,6 +3791,10 @@ fn save_and_cycle_pod_log_presets_round_trip() {
     tab.viewer.structured_view = true;
 
     assert!(apply_action(AppAction::ApplyNextLogPreset, &mut app));
+    assert!(
+        app.status_message()
+            .is_some_and(|msg| msg.starts_with("Applied pod log preset: "))
+    );
 
     let WorkbenchTabState::PodLogs(tab) = &app.workbench().active_tab().unwrap().state else {
         panic!("expected pod logs tab");
@@ -3713,6 +3825,10 @@ fn save_and_cycle_workload_log_presets_preserve_filters() {
         .open_tab(WorkbenchTabState::WorkloadLogs(tab));
 
     assert!(apply_action(AppAction::SaveLogPreset, &mut app));
+    assert!(
+        app.status_message()
+            .is_some_and(|msg| msg.starts_with("Saved log preset: "))
+    );
     let saved = &app
         .preferences
         .as_ref()
@@ -3736,6 +3852,10 @@ fn save_and_cycle_workload_log_presets_preserve_filters() {
     tab.container_filter = None;
 
     assert!(apply_action(AppAction::ApplyPreviousLogPreset, &mut app));
+    assert!(
+        app.status_message()
+            .is_some_and(|msg| msg.starts_with("Applied workload log preset: "))
+    );
 
     let WorkbenchTabState::WorkloadLogs(tab) = &app.workbench().active_tab().unwrap().state else {
         panic!("expected workload logs tab");
