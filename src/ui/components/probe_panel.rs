@@ -18,6 +18,7 @@ pub struct ProbePanelState {
     pub container_probes: Vec<(String, ContainerProbes)>,
     pub expanded_containers: HashSet<String>,
     pub selected_index: usize,
+    pub pending_request_id: Option<u64>,
     pub error: Option<String>,
 }
 
@@ -43,8 +44,14 @@ impl ProbePanelState {
             container_probes,
             expanded_containers: HashSet::new(),
             selected_index: 0,
+            pending_request_id: None,
             error: None,
         }
+    }
+
+    pub fn begin_refresh(&mut self, request_id: u64) {
+        self.pending_request_id = Some(request_id);
+        self.error = None;
     }
 
     /// Update probe data from coordinator background polling.
@@ -64,12 +71,29 @@ impl ProbePanelState {
             .unwrap_or_else(|| {
                 clamp_probe_selection(self.container_probes.len(), self.selected_index)
             });
+        self.pending_request_id = None;
     }
 
     pub fn set_error(&mut self, error: impl Into<String>) {
         self.error = Some(error.into());
+        self.pending_request_id = None;
         self.selected_index =
             clamp_probe_selection(self.container_probes.len(), self.selected_index);
+    }
+
+    pub fn apply_refresh_result(
+        &mut self,
+        request_id: u64,
+        result: Result<Vec<(String, ContainerProbes)>, String>,
+    ) -> bool {
+        if self.pending_request_id != Some(request_id) {
+            return false;
+        }
+        match result {
+            Ok(probes) => self.update_probes(probes),
+            Err(error) => self.set_error(error),
+        }
+        true
     }
 
     /// Handle navigation: move to next container.
@@ -391,6 +415,38 @@ mod tests {
         ]);
 
         assert_eq!(state.selected_index, 0);
+        assert_eq!(state.container_probes[state.selected_index].0, "container2");
+    }
+
+    #[test]
+    fn stale_probe_refresh_result_is_ignored() {
+        let probes = vec![("container1".to_string(), ContainerProbes::default())];
+        let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
+        state.begin_refresh(7);
+
+        let applied = state.apply_refresh_result(
+            6,
+            Ok(vec![("container2".to_string(), ContainerProbes::default())]),
+        );
+
+        assert!(!applied);
+        assert_eq!(state.pending_request_id, Some(7));
+        assert_eq!(state.container_probes[state.selected_index].0, "container1");
+    }
+
+    #[test]
+    fn probe_refresh_result_clears_pending_request_id() {
+        let probes = vec![("container1".to_string(), ContainerProbes::default())];
+        let mut state = ProbePanelState::new("test-pod".to_string(), "default".to_string(), probes);
+        state.begin_refresh(7);
+
+        let applied = state.apply_refresh_result(
+            7,
+            Ok(vec![("container2".to_string(), ContainerProbes::default())]),
+        );
+
+        assert!(applied);
+        assert!(state.pending_request_id.is_none());
         assert_eq!(state.container_probes[state.selected_index].0, "container2");
     }
 

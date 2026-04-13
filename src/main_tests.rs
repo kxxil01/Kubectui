@@ -5,9 +5,10 @@ use super::flux_reconcile::{
 };
 use super::{
     ExtensionFetchResult, MAX_RECENT_EVENTS_CACHE_ITEMS, PendingFluxReconcileVerification,
-    apply_extension_fetch_result, fail_context_switch, map_palette_detail_action,
-    mutation_refresh_options, normalize_recent_events, palette_action_requires_loaded_detail,
-    parse_editor_command, prepare_bookmark_target, prepare_resource_target,
+    apply_extension_fetch_result, detail_debug_launch_owned, detail_node_debug_launch_owned,
+    fail_context_switch, map_palette_detail_action, mutation_refresh_options,
+    normalize_recent_events, palette_action_requires_loaded_detail, parse_editor_command,
+    prepare_bookmark_target, prepare_resource_target, preserve_detail_selection_identity,
     queued_refresh_requires_two_phase, refresh_options_for_view, selected_extension_crd,
     selected_flux_reconcile_resource, selected_resource, should_request_periodic_redraw,
     ui_staleness_visible, workbench_follow_streams_to_stop,
@@ -16,6 +17,7 @@ use kubectui::{
     action_history::ActionKind,
     app::{AppAction, AppState, AppView, DetailViewState, ResourceRef, SidebarItem},
     bookmarks::BookmarkEntry,
+    cronjob::CronJobHistoryEntry,
     extensions::AiWorkflowKind,
     k8s::dtos::{
         ConfigMapInfo, CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo,
@@ -24,6 +26,9 @@ use kubectui::{
     policy::DetailAction,
     state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
     time::{AppTimestamp, now},
+    ui::components::{
+        debug_container_dialog::DebugContainerDialogState, node_debug_dialog::NodeDebugDialogState,
+    },
     workbench::{PodLogsTabState, RolloutTabState, WorkbenchTabState},
 };
 use std::time::{Duration, Instant};
@@ -262,6 +267,94 @@ fn closing_active_logs_tab_collects_follow_stream_to_stop() {
         streams,
         vec![("pod-0".to_string(), "ns".to_string(), "main".to_string())]
     );
+}
+
+fn cronjob_history_entry(job_name: &str, namespace: &str) -> CronJobHistoryEntry {
+    CronJobHistoryEntry {
+        job_name: job_name.to_string(),
+        namespace: namespace.to_string(),
+        status: "Complete".to_string(),
+        completions: "1/1".to_string(),
+        duration: Some("10s".to_string()),
+        pod_count: 1,
+        live_pod_count: 0,
+        completion_pct: Some(100),
+        active_pods: 0,
+        failed_pods: 0,
+        age: None,
+        created_at: None,
+        logs_authorized: Some(true),
+    }
+}
+
+#[test]
+fn preserve_detail_selection_identity_keeps_selected_cronjob_job() {
+    let current = DetailViewState {
+        resource: Some(ResourceRef::CronJob("batch".to_string(), "ops".to_string())),
+        cronjob_history: vec![
+            cronjob_history_entry("batch-100", "ops"),
+            cronjob_history_entry("batch-101", "ops"),
+        ],
+        cronjob_history_selected: 1,
+        ..DetailViewState::default()
+    };
+    let mut next = DetailViewState {
+        resource: Some(ResourceRef::CronJob("batch".to_string(), "ops".to_string())),
+        cronjob_history: vec![
+            cronjob_history_entry("batch-101", "ops"),
+            cronjob_history_entry("batch-102", "ops"),
+        ],
+        cronjob_history_selected: 1,
+        ..DetailViewState::default()
+    };
+
+    preserve_detail_selection_identity(Some(&current), &mut next);
+
+    assert_eq!(next.cronjob_history_selected, 0);
+    assert_eq!(next.cronjob_history[0].job_name, "batch-101");
+}
+
+#[test]
+fn detail_debug_launch_owned_requires_matching_resource_and_action_id() {
+    let mut app = AppState::default();
+    let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+    let mut dialog = DebugContainerDialogState::new("api-0", "default");
+    dialog.begin_launch(42);
+    app.detail_view = Some(DetailViewState {
+        resource: Some(resource.clone()),
+        debug_dialog: Some(dialog),
+        ..DetailViewState::default()
+    });
+
+    assert!(detail_debug_launch_owned(&app, &resource, 42));
+    assert!(!detail_debug_launch_owned(&app, &resource, 77));
+    assert!(!detail_debug_launch_owned(
+        &app,
+        &ResourceRef::Pod("other".to_string(), "default".to_string()),
+        42
+    ));
+}
+
+#[test]
+fn detail_node_debug_launch_owned_requires_matching_resource_and_action_id() {
+    let mut app = AppState::default();
+    let resource = ResourceRef::Node("node-a".to_string());
+    let mut dialog =
+        NodeDebugDialogState::new("node-a", "default".to_string(), vec!["default".to_string()]);
+    dialog.begin_launch(77);
+    app.detail_view = Some(DetailViewState {
+        resource: Some(resource.clone()),
+        node_debug_dialog: Some(dialog),
+        ..DetailViewState::default()
+    });
+
+    assert!(detail_node_debug_launch_owned(&app, &resource, 77));
+    assert!(!detail_node_debug_launch_owned(&app, &resource, 42));
+    assert!(!detail_node_debug_launch_owned(
+        &app,
+        &ResourceRef::Node("node-b".to_string()),
+        77
+    ));
 }
 
 #[test]

@@ -11,6 +11,7 @@ use crate::{
         client::EventInfo,
         dtos::HelmReleaseRevisionInfo,
         rollout::{RolloutInspection, RolloutRevisionInfo, RolloutWorkloadKind},
+        workload_logs::MAX_WORKLOAD_LOG_STREAMS,
     },
     log_investigation::{
         LogEntry, LogFilterSpec, LogQueryMode, LogTimeWindow, WorkloadLogPreset, compile_query,
@@ -215,11 +216,16 @@ impl HelmHistoryTabState {
     }
 
     pub fn set_history_error(&mut self, error: String) {
+        self.revisions.clear();
         self.scroll = 0;
+        self.selected = 0;
+        self.current_revision = None;
         self.loading = false;
         self.error = Some(error);
         self.pending_history_request_id = None;
         self.pending_rollback_action_history_id = None;
+        self.diff = None;
+        self.confirm_rollback_revision = None;
         self.rollback_pending = false;
     }
 
@@ -433,11 +439,13 @@ impl AccessReviewTabState {
         context_name: Option<String>,
         namespace_scope: String,
         entries: Vec<ActionAccessReview>,
+        subject_review: Option<SubjectAccessReview>,
         attempted_review: Option<AttemptedActionReview>,
     ) {
         self.context_name = context_name;
         self.namespace_scope = namespace_scope;
         self.entries = entries;
+        self.subject_review = subject_review;
         self.attempted_review = attempted_review;
         self.scroll = self.scroll.min(self.line_count().saturating_sub(1));
     }
@@ -561,6 +569,12 @@ impl ResourceYamlTabState {
         if yaml.is_some() || error.is_some() || pending_request_id.is_none() {
             self.yaml = yaml;
         }
+        let total_lines = self
+            .yaml
+            .as_ref()
+            .map(|yaml| yaml.lines().count())
+            .unwrap_or(0);
+        self.scroll = self.scroll.min(total_lines.saturating_sub(1));
         self.loading = pending_request_id.is_some() || (self.yaml.is_none() && error.is_none());
         self.error = error;
         self.pending_request_id = pending_request_id;
@@ -660,6 +674,15 @@ impl RolloutTabState {
     }
 
     pub fn set_error(&mut self, error: String) {
+        self.kind = None;
+        self.strategy = None;
+        self.paused = false;
+        self.current_revision = None;
+        self.update_target_revision = None;
+        self.summary_lines.clear();
+        self.conditions.clear();
+        self.revisions.clear();
+        self.selected = 0;
         self.detail_scroll = 0;
         self.loading = false;
         self.error = Some(error);
@@ -905,9 +928,7 @@ impl ResourceEventsTabState {
             self.events.drain(..drain);
         }
         self.timeline = build_timeline(&self.events, history.entries(), &self.resource);
-        if self.timeline.is_empty() {
-            self.scroll = 0;
-        }
+        self.scroll = self.scroll.min(self.timeline.len().saturating_sub(1));
     }
 }
 
@@ -977,6 +998,7 @@ pub struct WorkloadLogsTabState {
     pub matching_label_pods: Option<HashSet<String>>,
     pub available_pods: Vec<String>,
     pub available_containers: Vec<String>,
+    filtered_line_anchor: Option<WorkloadLogLine>,
 }
 
 impl WorkloadLogsTabState {
@@ -1013,6 +1035,7 @@ impl WorkloadLogsTabState {
             matching_label_pods: None,
             available_pods: Vec::new(),
             available_containers: Vec::new(),
+            filtered_line_anchor: None,
         }
     }
 
@@ -1037,6 +1060,7 @@ impl WorkloadLogsTabState {
         self.matching_label_pods = None;
         self.available_pods.clear();
         self.available_containers.clear();
+        self.filtered_line_anchor = None;
     }
 
     pub fn update_targets(&mut self, targets: &[crate::k8s::workload_logs::WorkloadLogTarget]) {
@@ -1095,6 +1119,45 @@ impl WorkloadLogsTabState {
         self.refresh_matching_label_pods();
     }
 
+    pub fn apply_bootstrap_targets(
+        &mut self,
+        targets: Vec<crate::k8s::workload_logs::WorkloadLogTarget>,
+    ) -> Vec<(String, String, String)> {
+        self.update_targets(&targets);
+        self.error = None;
+        self.notice = None;
+
+        let mut sources = Vec::new();
+        for target in targets {
+            for container in target.containers {
+                if sources.len() >= MAX_WORKLOAD_LOG_STREAMS {
+                    self.notice = Some(format!(
+                        "Stream cap reached at {MAX_WORKLOAD_LOG_STREAMS} pod/container streams."
+                    ));
+                    break;
+                }
+                sources.push((target.pod_name.clone(), target.namespace.clone(), container));
+            }
+        }
+
+        self.loading = false;
+        if sources.is_empty() {
+            self.sources.clear();
+            self.error = Some("No pod/container streams were resolved.".to_string());
+            return Vec::new();
+        }
+
+        self.sources = sources.clone();
+        sources
+    }
+
+    pub fn apply_bootstrap_error(&mut self, error: String) {
+        self.sources.clear();
+        self.loading = false;
+        self.notice = None;
+        self.error = Some(error);
+    }
+
     pub fn push_line(&mut self, line: WorkloadLogLine) {
         if !self.available_pods.iter().any(|pod| pod == &line.pod_name) {
             self.available_pods.push(line.pod_name.clone());
@@ -1124,6 +1187,7 @@ impl WorkloadLogsTabState {
     }
 
     pub fn commit_text_filter(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.text_filter = self.filter_input.clone();
         self.text_filter_error = None;
         self.time_jump_error = None;
@@ -1135,7 +1199,7 @@ impl WorkloadLogsTabState {
             }
         }
         self.editing_text_filter = false;
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn open_time_jump(&mut self) {
@@ -1187,6 +1251,7 @@ impl WorkloadLogsTabState {
     }
 
     pub fn toggle_text_filter_mode(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.text_filter_mode = self.text_filter_mode.toggle();
         self.text_filter_error = None;
         match compile_query(&self.text_filter, self.text_filter_mode) {
@@ -1196,30 +1261,34 @@ impl WorkloadLogsTabState {
                 self.text_filter_error = Some(err);
             }
         }
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_time_window(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.time_window = self.time_window.next();
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_pod_filter(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.pod_filter = cycle_filter_value(&self.available_pods, self.pod_filter.as_deref());
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_container_filter(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.container_filter =
             cycle_filter_value(&self.available_containers, self.container_filter.as_deref());
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_label_filter(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.label_filter =
             cycle_filter_value(&self.available_labels, self.label_filter.as_deref());
         self.refresh_matching_label_pods();
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn matches_filter(&self, line: &WorkloadLogLine) -> bool {
@@ -1270,6 +1339,7 @@ impl WorkloadLogsTabState {
     }
 
     pub fn apply_preset(&mut self, preset: &WorkloadLogPreset) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.editing_text_filter = false;
         self.jumping_to_time = false;
         self.text_filter = preset.query.clone();
@@ -1319,7 +1389,7 @@ impl WorkloadLogsTabState {
         }
         self.refresh_matching_label_pods();
         self.follow_mode = false;
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn filtered_indices(&self) -> Vec<usize> {
@@ -1337,6 +1407,31 @@ impl WorkloadLogsTabState {
             .get(self.scroll.min(filtered.len().saturating_sub(1)))
             .copied()?;
         self.lines.get(index)
+    }
+
+    fn selected_filtered_line_anchor(&self) -> Option<WorkloadLogLine> {
+        self.current_filtered_line()
+            .cloned()
+            .or_else(|| self.filtered_line_anchor.clone())
+    }
+
+    fn restore_filtered_scroll(&mut self, preserved_line: Option<WorkloadLogLine>) {
+        let filtered = self.filtered_indices();
+        if filtered.is_empty() {
+            self.scroll = 0;
+            self.filtered_line_anchor = preserved_line;
+            return;
+        }
+
+        self.scroll = preserved_line
+            .as_ref()
+            .and_then(|line| {
+                filtered
+                    .iter()
+                    .position(|index| self.lines.get(*index) == Some(line))
+            })
+            .unwrap_or_else(|| self.scroll.min(filtered.len().saturating_sub(1)));
+        self.filtered_line_anchor = self.current_filtered_line().cloned();
     }
 
     pub fn toggle_correlation_on_current_line(&mut self) -> Result<Option<String>, String> {
@@ -1942,6 +2037,15 @@ impl NetworkPolicyTabState {
         self.loading = false;
         self.error = None;
     }
+
+    pub fn set_error(&mut self, error: String) {
+        self.summary_lines.clear();
+        self.tree.clear();
+        self.cursor = 0;
+        self.expanded.clear();
+        self.loading = false;
+        self.error = Some(error);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2184,6 +2288,14 @@ impl TrafficDebugTabState {
         self.cursor = cursor;
         self.error = None;
     }
+
+    pub fn set_error(&mut self, error: String) {
+        self.summary_lines.clear();
+        self.tree.clear();
+        self.cursor = 0;
+        self.expanded.clear();
+        self.error = Some(error);
+    }
 }
 
 impl RelationsTabState {
@@ -2208,6 +2320,15 @@ impl RelationsTabState {
         self.expanded = expanded;
         self.tree = tree;
         self.cursor = cursor;
+    }
+
+    pub fn set_error(&mut self, error: String) {
+        self.pending_request_id = None;
+        self.tree.clear();
+        self.cursor = 0;
+        self.expanded.clear();
+        self.loading = false;
+        self.error = Some(error);
     }
 }
 
@@ -2618,6 +2739,7 @@ fn cycle_filter_value(values: &[String], current: Option<&str>) -> Option<String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::resource_diff::ResourceDiffLineKind;
 
     fn pod(name: &str) -> ResourceRef {
         ResourceRef::Pod(name.to_string(), "ns".to_string())
@@ -2882,6 +3004,35 @@ mod tests {
     }
 
     #[test]
+    fn helm_history_error_clears_stale_payload() {
+        let mut tab = HelmHistoryTabState::new(ResourceRef::HelmRelease(
+            "release".to_string(),
+            "default".to_string(),
+        ));
+        tab.revisions = vec![HelmReleaseRevisionInfo {
+            revision: 5,
+            ..HelmReleaseRevisionInfo::default()
+        }];
+        tab.selected = 3;
+        tab.scroll = 8;
+        tab.current_revision = Some(5);
+        tab.diff = Some(HelmValuesDiffState::new(5, 4, 42));
+        tab.confirm_rollback_revision = Some(4);
+        tab.rollback_pending = true;
+
+        tab.set_history_error("boom".to_string());
+
+        assert!(tab.revisions.is_empty());
+        assert_eq!(tab.selected, 0);
+        assert_eq!(tab.scroll, 0);
+        assert!(tab.current_revision.is_none());
+        assert!(tab.diff.is_none());
+        assert!(tab.confirm_rollback_revision.is_none());
+        assert!(!tab.rollback_pending);
+        assert_eq!(tab.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
     fn rollout_detail_scroll_resets_when_mode_changes() {
         let mut tab = RolloutTabState::new(ResourceRef::Deployment(
             "api".to_string(),
@@ -3006,6 +3157,158 @@ mod tests {
         assert!(!tab.loading);
         assert!(tab.confirm_undo_revision.is_none());
         assert!(tab.mutation_pending.is_none());
+    }
+
+    #[test]
+    fn rollout_error_clears_stale_payload() {
+        let mut tab = RolloutTabState::new(ResourceRef::Deployment(
+            "api".to_string(),
+            "default".to_string(),
+        ));
+        tab.kind = Some(RolloutWorkloadKind::Deployment);
+        tab.strategy = Some("RollingUpdate".to_string());
+        tab.paused = true;
+        tab.current_revision = Some(7);
+        tab.update_target_revision = Some(8);
+        tab.summary_lines = vec!["healthy".to_string()];
+        tab.conditions = vec![crate::k8s::rollout::RolloutConditionInfo {
+            type_: "Available".to_string(),
+            status: "True".to_string(),
+            reason: Some("Ok".to_string()),
+            message: None,
+        }];
+        tab.revisions = vec![RolloutRevisionInfo {
+            revision: 7,
+            name: "api-7".to_string(),
+            created: None,
+            summary: "ready".to_string(),
+            change_cause: None,
+            is_current: true,
+            is_update_target: true,
+        }];
+        tab.selected = 4;
+        tab.confirm_undo_revision = Some(6);
+        tab.mutation_pending = Some(RolloutMutationState::Restart);
+        tab.pending_mutation_action_history_id = Some(21);
+
+        tab.set_error("boom".to_string());
+
+        assert!(tab.kind.is_none());
+        assert!(tab.strategy.is_none());
+        assert!(!tab.paused);
+        assert!(tab.current_revision.is_none());
+        assert!(tab.update_target_revision.is_none());
+        assert!(tab.summary_lines.is_empty());
+        assert!(tab.conditions.is_empty());
+        assert!(tab.revisions.is_empty());
+        assert_eq!(tab.selected, 0);
+        assert!(tab.confirm_undo_revision.is_none());
+        assert!(tab.mutation_pending.is_none());
+        assert!(tab.pending_mutation_action_history_id.is_none());
+        assert_eq!(tab.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn resource_diff_error_clears_stale_payload() {
+        let mut tab =
+            ResourceDiffTabState::new(ResourceRef::Pod("api".to_string(), "default".to_string()));
+        tab.baseline_kind = Some(ResourceDiffBaselineKind::LastAppliedAnnotation);
+        tab.summary = Some("changed".to_string());
+        tab.lines = vec![ResourceDiffLine {
+            kind: ResourceDiffLineKind::Context,
+            content: "a".to_string(),
+        }];
+        tab.scroll = 9;
+
+        tab.set_error("boom".to_string());
+
+        assert!(tab.baseline_kind.is_none());
+        assert!(tab.summary.is_none());
+        assert!(tab.lines.is_empty());
+        assert_eq!(tab.scroll, 0);
+        assert_eq!(tab.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn network_policy_error_clears_stale_payload() {
+        let mut tab =
+            NetworkPolicyTabState::new(ResourceRef::Pod("api".to_string(), "default".to_string()));
+        tab.summary_lines = vec!["reachable".to_string()];
+        tab.tree = vec![crate::k8s::relationships::RelationNode {
+            resource: None,
+            label: "Policy Summary".to_string(),
+            status: None,
+            namespace: None,
+            relation: crate::k8s::relationships::RelationKind::SectionHeader,
+            not_found: false,
+            children: Vec::new(),
+        }];
+        tab.cursor = 5;
+        tab.expanded.insert(0);
+        tab.loading = true;
+
+        tab.set_error("boom".to_string());
+
+        assert!(tab.summary_lines.is_empty());
+        assert!(tab.tree.is_empty());
+        assert_eq!(tab.cursor, 0);
+        assert!(tab.expanded.is_empty());
+        assert!(!tab.loading);
+        assert_eq!(tab.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn traffic_debug_error_clears_stale_payload() {
+        let mut tab =
+            TrafficDebugTabState::new(ResourceRef::Pod("api".to_string(), "default".to_string()));
+        tab.summary_lines = vec!["reachable".to_string()];
+        tab.tree = vec![crate::k8s::relationships::RelationNode {
+            resource: None,
+            label: "Traffic".to_string(),
+            status: None,
+            namespace: None,
+            relation: crate::k8s::relationships::RelationKind::SectionHeader,
+            not_found: false,
+            children: Vec::new(),
+        }];
+        tab.cursor = 5;
+        tab.expanded.insert(0);
+
+        tab.set_error("boom".to_string());
+
+        assert!(tab.summary_lines.is_empty());
+        assert!(tab.tree.is_empty());
+        assert_eq!(tab.cursor, 0);
+        assert!(tab.expanded.is_empty());
+        assert_eq!(tab.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn relations_error_clears_stale_payload() {
+        let mut tab =
+            RelationsTabState::new(ResourceRef::Pod("api".to_string(), "default".to_string()));
+        tab.pending_request_id = Some(42);
+        tab.tree = vec![crate::k8s::relationships::RelationNode {
+            resource: None,
+            label: "Owner Chain".to_string(),
+            status: None,
+            namespace: None,
+            relation: crate::k8s::relationships::RelationKind::SectionHeader,
+            not_found: false,
+            children: Vec::new(),
+        }];
+        tab.cursor = 5;
+        tab.expanded.insert(0);
+        tab.loading = true;
+
+        tab.set_error("boom".to_string());
+
+        assert!(tab.pending_request_id.is_none());
+        assert!(tab.tree.is_empty());
+        assert_eq!(tab.cursor, 0);
+        assert!(tab.expanded.is_empty());
+        assert!(!tab.loading);
+        assert_eq!(tab.error.as_deref(), Some("boom"));
     }
 
     #[test]
@@ -3249,6 +3552,19 @@ mod tests {
         );
         assert!(state.open);
         assert_eq!(state.tabs.len(), 2);
+    }
+
+    #[test]
+    fn resource_yaml_update_content_clamps_scroll_after_shrink() {
+        let mut tab = ResourceYamlTabState::new(pod("pod-0"));
+        tab.yaml = Some("a\nb\nc\nd".into());
+        tab.loading = false;
+        tab.scroll = 99;
+
+        tab.update_content(Some("a\nb".into()), None, None);
+
+        assert_eq!(tab.scroll, 1);
+        assert_eq!(tab.yaml.as_deref(), Some("a\nb"));
     }
 
     #[test]
@@ -3520,6 +3836,42 @@ mod tests {
     }
 
     #[test]
+    fn workload_logs_bootstrap_success_clears_stale_error() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.error = Some("old failure".into());
+
+        let sources =
+            tab.apply_bootstrap_targets(vec![crate::k8s::workload_logs::WorkloadLogTarget {
+                pod_name: "pod-0".into(),
+                namespace: "default".into(),
+                containers: vec!["main".into()],
+                labels: Vec::new(),
+            }]);
+
+        assert_eq!(
+            sources,
+            vec![("pod-0".into(), "default".into(), "main".into())]
+        );
+        assert!(tab.error.is_none());
+        assert!(!tab.loading);
+        assert_eq!(tab.sources, sources);
+    }
+
+    #[test]
+    fn workload_logs_bootstrap_error_clears_stale_sources() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.sources = vec![("pod-0".into(), "default".into(), "main".into())];
+        tab.notice = Some("old notice".into());
+
+        tab.apply_bootstrap_error("boom".into());
+
+        assert!(tab.sources.is_empty());
+        assert_eq!(tab.error.as_deref(), Some("boom"));
+        assert!(tab.notice.is_none());
+        assert!(!tab.loading);
+    }
+
+    #[test]
     fn events_timeline_rebuild_clamps_scroll() {
         let mut tab = ResourceEventsTabState::new(pod("pod-0"));
         tab.scroll = 100;
@@ -3529,7 +3881,7 @@ mod tests {
     }
 
     #[test]
-    fn events_timeline_rebuild_preserves_large_scroll_when_timeline_remains_nonempty() {
+    fn events_timeline_rebuild_clamps_scroll_when_timeline_shrinks() {
         let mut tab = ResourceEventsTabState::new(pod("pod-0"));
         tab.scroll = 99;
         tab.events.push(crate::k8s::events::EventInfo {
@@ -3544,7 +3896,7 @@ mod tests {
         tab.rebuild_timeline(&crate::action_history::ActionHistoryState::default());
 
         assert!(!tab.timeline.is_empty());
-        assert_eq!(tab.scroll, 99);
+        assert_eq!(tab.scroll, tab.timeline.len().saturating_sub(1));
     }
 
     #[test]
@@ -3683,6 +4035,40 @@ mod tests {
             entry: LogEntry::from_raw("2099-01-01T00:00:00Z future line"),
             is_stderr: false,
         }));
+    }
+
+    #[test]
+    fn workload_log_filter_roundtrip_preserves_selected_line_across_zero_matches() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.lines = vec![
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("alpha line"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("beta line"),
+                is_stderr: false,
+            },
+        ];
+        tab.scroll = 1;
+
+        tab.filter_input = "zzz".into();
+        tab.commit_text_filter();
+        assert!(tab.filtered_indices().is_empty());
+        assert_eq!(tab.scroll, 0);
+
+        tab.filter_input.clear();
+        tab.commit_text_filter();
+
+        assert_eq!(
+            tab.current_filtered_line().map(|line| line.entry.raw()),
+            Some("beta line")
+        );
+        assert_eq!(tab.scroll, 1);
     }
 
     #[test]

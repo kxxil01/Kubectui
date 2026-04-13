@@ -204,6 +204,9 @@ impl LogsViewerState {
     }
 
     pub fn commit_search(&mut self) {
+        let preserved_line = self.current_visible_line().cloned();
+        let previous_query = self.search_query.clone();
+        let previous_compiled = self.compiled_search.clone();
         self.search_query = self.search_input.clone();
         self.search_error = None;
         match compile_query(&self.search_query, self.search_mode) {
@@ -211,12 +214,15 @@ impl LogsViewerState {
                 self.compiled_search = compiled;
             }
             Err(err) => {
-                self.compiled_search = None;
+                self.search_query = previous_query;
+                self.compiled_search = previous_compiled;
                 self.search_error = Some(err);
             }
         }
         self.searching = false;
-        self.jump_to_first_match();
+        if !self.jump_to_first_match() {
+            self.restore_filtered_scroll(preserved_line);
+        }
     }
 
     pub fn cancel_search(&mut self) {
@@ -271,6 +277,7 @@ impl LogsViewerState {
     }
 
     pub fn toggle_search_mode(&mut self) {
+        let preserved_line = self.current_visible_line().cloned();
         self.search_mode = self.search_mode.toggle();
         self.search_error = None;
         match compile_query(&self.search_query, self.search_mode) {
@@ -282,12 +289,17 @@ impl LogsViewerState {
                 self.search_error = Some(err);
             }
         }
-        self.jump_to_first_match();
+        if !self.jump_to_first_match() {
+            self.restore_filtered_scroll(preserved_line);
+        }
     }
 
     pub fn cycle_time_window(&mut self) {
+        let preserved_line = self.current_visible_line().cloned();
         self.time_window = self.time_window.next();
-        self.jump_to_first_match();
+        if !self.jump_to_first_match() {
+            self.restore_filtered_scroll(preserved_line);
+        }
     }
 
     pub fn jump_to_first_match(&mut self) -> bool {
@@ -394,6 +406,30 @@ impl LogsViewerState {
         self.lines.get(index)
     }
 
+    fn restore_filtered_scroll(&mut self, preserved_line: Option<LogEntry>) {
+        let filtered = self.filtered_indices();
+        if filtered.is_empty() {
+            self.scroll_offset = 0;
+            return;
+        }
+
+        self.scroll_offset = preserved_line
+            .and_then(|line| {
+                filtered
+                    .iter()
+                    .copied()
+                    .find(|index| self.lines.get(*index).is_some_and(|entry| entry == &line))
+            })
+            .or_else(|| {
+                filtered
+                    .iter()
+                    .copied()
+                    .find(|index| *index >= self.scroll_offset)
+            })
+            .or_else(|| filtered.last().copied())
+            .unwrap_or(0);
+    }
+
     pub fn scroll_filtered_up(&mut self) {
         let filtered = self.filtered_indices();
         let cursor = self.filtered_cursor(&filtered);
@@ -431,6 +467,7 @@ impl LogsViewerState {
     }
 
     pub fn apply_preset(&mut self, preset: &PodLogPreset) {
+        let preserved_line = self.current_visible_line().cloned();
         self.searching = false;
         self.jumping_to_time = false;
         self.search_query = preset.query.clone();
@@ -459,7 +496,7 @@ impl LogsViewerState {
             self.scroll_offset = self.lines.len().saturating_sub(1);
         } else if !found {
             self.follow_mode = false;
-            self.scroll_offset = 0;
+            self.restore_filtered_scroll(preserved_line);
         }
     }
 
@@ -624,6 +661,7 @@ impl DetailViewState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::log_investigation::LogEntry;
 
     #[test]
     fn logs_viewer_apply_containers_preserves_selected_identity() {
@@ -646,5 +684,52 @@ mod tests {
 
         assert_eq!(viewer.container_cursor, 0);
         assert_eq!(viewer.containers[viewer.container_cursor], "sidecar");
+    }
+
+    #[test]
+    fn logs_viewer_invalid_regex_commit_keeps_previous_query_and_scroll() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("first line"),
+            LogEntry::from_raw("ready line"),
+            LogEntry::from_raw("third line"),
+        ];
+        viewer.search_query = "ready".to_string();
+        viewer.search_input = "ready".to_string();
+        viewer.compiled_search =
+            compile_query("ready", LogQueryMode::Regex).expect("regex should compile");
+        viewer.search_mode = LogQueryMode::Regex;
+        viewer.scroll_offset = 1;
+        viewer.searching = true;
+
+        viewer.search_input = "[".to_string();
+        viewer.commit_search();
+
+        assert_eq!(viewer.search_query, "ready");
+        assert_eq!(viewer.scroll_offset, 1);
+        assert!(viewer.search_error.is_some());
+        assert!(!viewer.searching);
+    }
+
+    #[test]
+    fn logs_viewer_no_match_preset_restores_visible_anchor() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("first line"),
+            LogEntry::from_raw("ready line"),
+            LogEntry::from_raw("third line"),
+        ];
+        viewer.scroll_offset = 1;
+
+        viewer.apply_preset(&PodLogPreset {
+            name: "no-match".to_string(),
+            query: "does-not-exist".to_string(),
+            mode: LogQueryMode::Substring,
+            time_window: LogTimeWindow::All,
+            structured_view: true,
+        });
+
+        assert_eq!(viewer.scroll_offset, 1);
+        assert_eq!(viewer.search_query, "does-not-exist");
     }
 }

@@ -824,6 +824,7 @@ pub struct CommandPalette {
     query: String,
     query_cursor: usize,
     selected_index: usize,
+    selection_anchor: Option<PaletteEntry>,
     is_open: bool,
     cached_filtered: RefCell<Option<Vec<PaletteEntry>>>,
     activity_entries: Vec<PaletteActivityEntry>,
@@ -846,6 +847,7 @@ impl CommandPalette {
         self.query.clear();
         self.query_cursor = 0;
         self.selected_index = 0;
+        self.selection_anchor = None;
         self.is_open = true;
         self.resource_context = resource;
         self.cached_filtered.borrow_mut().take();
@@ -859,6 +861,7 @@ impl CommandPalette {
         self.resource_entries = Arc::default();
         self.extension_actions.clear();
         self.runbooks.clear();
+        self.selection_anchor = None;
     }
 
     fn selected_entry_snapshot(&self) -> Option<PaletteEntry> {
@@ -866,35 +869,51 @@ impl CommandPalette {
         filtered.get(self.selected_index).cloned()
     }
 
+    fn selected_entry_anchor(&self) -> Option<PaletteEntry> {
+        self.selection_anchor
+            .clone()
+            .or_else(|| self.selected_entry_snapshot())
+    }
+
     fn restore_selected_entry(&mut self, selected_entry: Option<PaletteEntry>) {
         self.cached_filtered.borrow_mut().take();
         let filtered = self.filtered();
-        self.selected_index = selected_entry
+        let matched_index = selected_entry
             .as_ref()
-            .and_then(|entry| filtered.iter().position(|candidate| candidate == entry))
-            .unwrap_or_else(|| self.selected_index.min(filtered.len().saturating_sub(1)));
+            .and_then(|entry| filtered.iter().position(|candidate| candidate == entry));
+        self.selected_index = matched_index.unwrap_or_else(|| {
+            if selected_entry.is_some() {
+                0
+            } else {
+                self.selected_index.min(filtered.len().saturating_sub(1))
+            }
+        });
+        self.selection_anchor = matched_index
+            .and_then(|index| filtered.get(index).cloned())
+            .or(selected_entry)
+            .or_else(|| filtered.get(self.selected_index).cloned());
     }
 
     pub fn set_activity_entries(&mut self, entries: Vec<PaletteActivityEntry>) {
-        let selected_entry = self.selected_entry_snapshot();
+        let selected_entry = self.selected_entry_anchor();
         self.activity_entries = entries;
         self.restore_selected_entry(selected_entry);
     }
 
     pub fn set_resource_entries(&mut self, entries: impl Into<Arc<Vec<PaletteResourceEntry>>>) {
-        let selected_entry = self.selected_entry_snapshot();
+        let selected_entry = self.selected_entry_anchor();
         self.resource_entries = entries.into();
         self.restore_selected_entry(selected_entry);
     }
 
     pub fn set_columns_info(&mut self, info: Option<Vec<(String, String, bool)>>) {
-        let selected_entry = self.selected_entry_snapshot();
+        let selected_entry = self.selected_entry_anchor();
         self.columns_info = info;
         self.restore_selected_entry(selected_entry);
     }
 
     pub fn set_extension_actions(&mut self, actions: Vec<LoadedExtensionAction>) {
-        let selected_entry = self.selected_entry_snapshot();
+        let selected_entry = self.selected_entry_anchor();
         self.extension_actions = actions
             .into_iter()
             .map(|action| {
@@ -912,7 +931,7 @@ impl CommandPalette {
     }
 
     pub fn set_runbooks(&mut self, runbooks: Vec<LoadedRunbook>, resource: Option<ResourceRef>) {
-        let selected_entry = self.selected_entry_snapshot();
+        let selected_entry = self.selected_entry_anchor();
         self.runbooks = runbooks
             .into_iter()
             .map(|runbook| {
@@ -939,7 +958,7 @@ impl CommandPalette {
         saved_workspaces: Vec<String>,
         workspace_banks: Vec<(String, Option<String>)>,
     ) {
-        let selected_entry = self.selected_entry_snapshot();
+        let selected_entry = self.selected_entry_anchor();
         self.saved_workspaces = saved_workspaces;
         self.workspace_banks = workspace_banks;
         self.restore_selected_entry(selected_entry);
@@ -1022,6 +1041,7 @@ impl CommandPalette {
                 let len = self.filtered().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
+                    self.selection_anchor = self.selected_entry_snapshot();
                 }
                 CommandPaletteAction::None
             }
@@ -1033,10 +1053,12 @@ impl CommandPalette {
                     } else {
                         self.selected_index - 1
                     };
+                    self.selection_anchor = self.selected_entry_snapshot();
                 }
                 CommandPaletteAction::None
             }
             KeyCode::Backspace => {
+                let selected_entry = self.selected_entry_anchor();
                 if self.query_cursor > 0
                     && let Some((byte_idx, _)) =
                         self.query.char_indices().nth(self.query_cursor - 1)
@@ -1044,16 +1066,15 @@ impl CommandPalette {
                     self.query.remove(byte_idx);
                     self.query_cursor = self.query_cursor.saturating_sub(1);
                 }
-                self.selected_index = 0;
-                self.cached_filtered.borrow_mut().take();
+                self.restore_selected_entry(selected_entry);
                 CommandPaletteAction::None
             }
             KeyCode::Delete => {
+                let selected_entry = self.selected_entry_anchor();
                 if let Some((byte_idx, _)) = self.query.char_indices().nth(self.query_cursor) {
                     self.query.remove(byte_idx);
                 }
-                self.selected_index = 0;
-                self.cached_filtered.borrow_mut().take();
+                self.restore_selected_entry(selected_entry);
                 CommandPaletteAction::None
             }
             KeyCode::Left => {
@@ -1077,10 +1098,10 @@ impl CommandPalette {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
+                let selected_entry = self.selected_entry_anchor();
                 self.query.clear();
                 self.query_cursor = 0;
-                self.selected_index = 0;
-                self.cached_filtered.borrow_mut().take();
+                self.restore_selected_entry(selected_entry);
                 CommandPaletteAction::None
             }
             KeyCode::Char(c)
@@ -1088,6 +1109,7 @@ impl CommandPalette {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
+                let selected_entry = self.selected_entry_anchor();
                 let byte_idx = self
                     .query
                     .char_indices()
@@ -1095,8 +1117,7 @@ impl CommandPalette {
                     .map_or(self.query.len(), |(idx, _)| idx);
                 self.query.insert(byte_idx, c);
                 self.query_cursor += 1;
-                self.selected_index = 0;
-                self.cached_filtered.borrow_mut().take();
+                self.restore_selected_entry(selected_entry);
                 CommandPaletteAction::None
             }
             _ => CommandPaletteAction::None,
@@ -1476,6 +1497,7 @@ mod tests {
     use crate::app::AppState;
     use crate::policy::ResourceActionContext;
     use crate::workbench::{PodLogsTabState, WorkbenchTabState};
+    use crossterm::event::KeyModifiers;
 
     fn ctx(resource: ResourceRef, node_unschedulable: Option<bool>) -> ResourceActionContext {
         ResourceActionContext {
@@ -1704,6 +1726,52 @@ mod tests {
                 target: PaletteActivityTarget::Navigate(AppView::Services),
             },
         ]);
+
+        let filtered = palette.filtered();
+        assert!(matches!(
+            filtered.get(palette.selected_index),
+            Some(PaletteEntry::Activity(PaletteActivityEntry { title, .. })) if title == "Services"
+        ));
+    }
+
+    #[test]
+    fn query_roundtrip_preserves_selected_entry_across_zero_matches() {
+        let mut palette = CommandPalette::default();
+        palette.set_activity_entries(vec![
+            PaletteActivityEntry {
+                title: "Pods".into(),
+                subtitle: "recent".into(),
+                aliases: vec!["pods".into()],
+                badge_label: "Recent".into(),
+                target: PaletteActivityTarget::Navigate(AppView::Pods),
+            },
+            PaletteActivityEntry {
+                title: "Services".into(),
+                subtitle: "recent".into(),
+                aliases: vec!["services".into()],
+                badge_label: "Recent".into(),
+                target: PaletteActivityTarget::Navigate(AppView::Services),
+            },
+        ]);
+        palette.open();
+        palette.selected_index = palette
+            .filtered()
+            .iter()
+            .position(|entry| {
+                matches!(
+                    entry,
+                    PaletteEntry::Activity(PaletteActivityEntry { title, .. }) if title == "Services"
+                )
+            })
+            .expect("services entry");
+        palette.selection_anchor = palette.selected_entry_snapshot();
+
+        for ch in ['z', 'z', 'z', 'z'] {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(ch)));
+        }
+        assert!(palette.filtered().is_empty());
+
+        palette.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
 
         let filtered = palette.filtered();
         assert!(matches!(

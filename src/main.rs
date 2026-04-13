@@ -42,7 +42,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
-    app::{AppAction, AppView, DetailViewState, ResourceRef, load_config, save_config},
+    app::{AppAction, AppState, AppView, DetailViewState, ResourceRef, load_config, save_config},
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
     extensions::{
@@ -56,9 +56,7 @@ use kubectui::{
         logs::{LogsClient, PodRef},
         portforward::PortForwarderService,
         probes::extract_probes_from_pod,
-        workload_logs::{
-            MAX_WORKLOAD_LOG_STREAMS, WorkloadLogTarget, resolve_workload_log_targets,
-        },
+        workload_logs::{WorkloadLogTarget, resolve_workload_log_targets},
     },
     policy::DetailAction,
     runbooks::{LoadedRunbookStepKind, RunbookRegistry, load_runbook_registry},
@@ -192,6 +190,56 @@ fn reopen_pending_runbook(
             tab.banner = Some("Workspace applied from runbook step.".to_string());
         }
     }
+}
+
+fn detail_debug_launch_owned(
+    app: &AppState,
+    resource: &ResourceRef,
+    action_history_id: u64,
+) -> bool {
+    app.detail_view.as_ref().is_some_and(|detail| {
+        detail.resource.as_ref() == Some(resource)
+            && detail
+                .debug_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.owns_launch_action(action_history_id))
+    })
+}
+
+fn detail_node_debug_launch_owned(
+    app: &AppState,
+    resource: &ResourceRef,
+    action_history_id: u64,
+) -> bool {
+    app.detail_view.as_ref().is_some_and(|detail| {
+        detail.resource.as_ref() == Some(resource)
+            && detail
+                .node_debug_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.owns_launch_action(action_history_id))
+    })
+}
+
+fn preserve_detail_selection_identity(
+    current: Option<&DetailViewState>,
+    next: &mut DetailViewState,
+) {
+    let previous = current.and_then(|detail| {
+        detail
+            .selected_cronjob_history()
+            .map(|entry| (entry.job_name.as_str(), entry.namespace.as_str()))
+    });
+    let Some((job_name, namespace)) = previous else {
+        return;
+    };
+    let Some(index) = next
+        .cronjob_history
+        .iter()
+        .position(|entry| entry.job_name == job_name && entry.namespace == namespace)
+    else {
+        return;
+    };
+    next.cronjob_history_selected = index;
 }
 
 struct WorkspaceRestoreRuntime<'a> {
@@ -1187,6 +1235,7 @@ pub(crate) async fn run_app_inner(
     let (node_ops_tx, mut node_ops_rx) = tokio::sync::mpsc::channel::<NodeOpsAsyncResult>(16);
     let mut node_op_in_flight: bool = false;
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
+    let mut probe_request_seq: u64 = 0;
     let (relations_tx, mut relations_rx) = tokio::sync::mpsc::channel::<RelationsAsyncResult>(16);
     let mut relations_request_seq: u64 = 0;
     let (exec_bootstrap_tx, mut exec_bootstrap_rx) =
@@ -1486,9 +1535,10 @@ pub(crate) async fn run_app_inner(
                     }
                     needs_redraw = true;
                     match result {
-                        Ok(state) => {
+                        Ok(mut state) => {
                             apply_detail_state_to_workbench(&mut app, request_id, &state);
                             if detail_still_waiting_for_this {
+                                preserve_detail_selection_identity(app.detail_view.as_ref(), &mut state);
                                 app.detail_view = Some(state);
                             }
                         }
@@ -2698,6 +2748,8 @@ pub(crate) async fn run_app_inner(
             result = debug_launch_rx.recv() => {
                 if let Some(result) = result {
                     needs_redraw = true;
+                    let launch_owned =
+                        detail_debug_launch_owned(&app, &result.resource, result.action_history_id);
                     if result.context_generation != refresh_state.context_generation {
                         if let Some(detail) = app.detail_view.as_mut()
                             && detail.resource.as_ref() == Some(&result.resource)
@@ -2720,6 +2772,35 @@ pub(crate) async fn run_app_inner(
 
                     match result.result {
                         Ok(launch) => {
+                            if !launch_owned {
+                                app.complete_action_history(
+                                    result.action_history_id,
+                                    ActionStatus::Failed,
+                                    "Debug container launch finished, but dialog ownership changed before shell attach.",
+                                    true,
+                                );
+                                apply_mutation_success(
+                                    &mut app,
+                                    &mut MutationRuntime {
+                                        global_state: &mut global_state,
+                                        client: &client,
+                                        refresh_tx: &refresh_tx,
+                                        deferred_refresh_tx: &deferred_refresh_tx,
+                                        refresh_state: &mut refresh_state,
+                                        snapshot_dirty: &mut snapshot_dirty,
+                                        auto_refresh: &mut auto_refresh,
+                                        status_message_clear_at: &mut status_message_clear_at,
+                                    },
+                                    result.origin_view,
+                                    format!(
+                                        "Debug container '{}' launched, but shell attach was skipped because dialog context changed. Refreshing view...",
+                                        launch.container_name
+                                    ),
+                                    false,
+                                    MUTATION_REFRESH_DELAYS_SECS,
+                                );
+                                continue;
+                            }
                             if let Some(existing_session_id) =
                                 app.workbench().exec_session_id(&result.resource)
                                 && let Some(handle) = exec_sessions.remove(&existing_session_id)
@@ -2851,6 +2932,11 @@ pub(crate) async fn run_app_inner(
                     needs_redraw = true;
                     match result.result {
                         Ok(launch) => {
+                            let launch_owned = detail_node_debug_launch_owned(
+                                &app,
+                                &result.resource,
+                                result.action_history_id,
+                            );
                             if result.context_generation != refresh_state.context_generation {
                                 if let Some(detail) = app.detail_view.as_mut()
                                     && detail.resource.as_ref() == Some(&result.resource)
@@ -2878,6 +2964,25 @@ pub(crate) async fn run_app_inner(
                                     node_debug_cleanup_tx.clone(),
                                 )
                                 .await;
+                                continue;
+                            }
+                            if !launch_owned {
+                                spawn_node_debug_cleanup(
+                                    NodeDebugSessionRuntime {
+                                        client: result.cleanup_client,
+                                        node_name: launch.node_name,
+                                        pod_name: launch.pod_name,
+                                        namespace: launch.namespace,
+                                    },
+                                    node_debug_cleanup_tx.clone(),
+                                )
+                                .await;
+                                app.complete_action_history(
+                                    result.action_history_id,
+                                    ActionStatus::Failed,
+                                    "Node debug shell launch finished, but dialog ownership changed before shell attach. Cleanup requested.",
+                                    true,
+                                );
                                 continue;
                             }
                             if let Some(existing_session_id) =
@@ -3075,36 +3180,14 @@ pub(crate) async fn run_app_inner(
                     {
                         match result.result {
                             Ok(targets) => {
-                                logs_tab.update_targets(&targets);
-                                let mut sources = Vec::new();
-                                for target in targets {
-                                    for container in target.containers {
-                                        if sources.len() >= MAX_WORKLOAD_LOG_STREAMS {
-                                            logs_tab.notice = Some(format!(
-                                                "Stream cap reached at {MAX_WORKLOAD_LOG_STREAMS} pod/container streams."
-                                            ));
-                                            break;
-                                        }
-                                        sources.push((
-                                            target.pod_name.clone(),
-                                            target.namespace.clone(),
-                                            container,
-                                        ));
-                                    }
-                                }
-                                if sources.is_empty() {
-                                    logs_tab.loading = false;
-                                    logs_tab.error = Some("No pod/container streams were resolved.".to_string());
-                                } else {
-                                    logs_tab.sources = sources.clone();
-                                    logs_tab.loading = false;
+                                let sources = logs_tab.apply_bootstrap_targets(targets);
+                                if !sources.is_empty() {
                                     workload_log_sessions.insert(result.session_id, sources.clone());
                                     sources_to_start = sources;
                                 }
                             }
                             Err(err) => {
-                                logs_tab.loading = false;
-                                logs_tab.error = Some(err);
+                                logs_tab.apply_bootstrap_error(err);
                             }
                         }
                     }
@@ -3129,25 +3212,9 @@ pub(crate) async fn run_app_inner(
                                 if state.pod_name == pod_name
                                     && state.namespace == namespace =>
                             {
-                                match result.result {
-                                    Ok(probes) => state.update_probes(probes),
-                                    Err(error) => state.set_error(error),
-                                }
+                                let _ = state.apply_refresh_result(result.request_id, result.result);
                             }
-                            _ => {
-                                use kubectui::ui::components::probe_panel::ProbePanelState;
-                                detail.probe_panel = Some(match result.result {
-                                    Ok(probes) => {
-                                        ProbePanelState::new(pod_name, namespace, probes)
-                                    }
-                                    Err(error) => {
-                                        let mut state =
-                                            ProbePanelState::new(pod_name, namespace, Vec::new());
-                                        state.set_error(error);
-                                        state
-                                    }
-                                });
-                            }
+                            _ => {}
                         }
                     }
                 }
@@ -3307,7 +3374,7 @@ pub(crate) async fn run_app_inner(
                                 state.set_tree(tree);
                             }
                             Err(err) => {
-                                state.error = Some(err);
+                                state.set_error(err);
                             }
                         }
                         needs_redraw = true;
@@ -5918,8 +5985,9 @@ pub(crate) async fn run_app_inner(
                                 .find_tab_mut(&WorkbenchTabKey::PortForward)
                                 && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
                             {
-                                port_tab.dialog.success =
-                                    Some(format!("Tunnel created: {tunnel_id}"));
+                                port_tab
+                                    .dialog
+                                    .set_success_message(format!("Tunnel created: {tunnel_id}"));
                                 let mut registry =
                                     kubectui::state::port_forward::TunnelRegistry::new();
                                 registry.update_tunnels(tunnels);
@@ -5932,7 +6000,7 @@ pub(crate) async fn run_app_inner(
                                 .find_tab_mut(&WorkbenchTabKey::PortForward)
                                 && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
                             {
-                                port_tab.dialog.error = Some(format!("{err}"));
+                                port_tab.dialog.set_error_message(format!("{err}"));
                             }
                         }
                     }
@@ -5957,8 +6025,9 @@ pub(crate) async fn run_app_inner(
                                 let mut registry =
                                     kubectui::state::port_forward::TunnelRegistry::new();
                                 registry.update_tunnels(tunnels);
-                                port_tab.dialog.success =
-                                    Some(format!("Closed tunnel: {tunnel_id}"));
+                                port_tab
+                                    .dialog
+                                    .set_success_message(format!("Closed tunnel: {tunnel_id}"));
                                 port_tab.dialog.update_registry(registry);
                             }
                         }
@@ -5968,7 +6037,7 @@ pub(crate) async fn run_app_inner(
                                 .find_tab_mut(&WorkbenchTabKey::PortForward)
                                 && let WorkbenchTabState::PortForward(port_tab) = &mut tab.state
                             {
-                                port_tab.dialog.error = Some(format!("{err:#}"));
+                                port_tab.dialog.set_error_message(format!("{err:#}"));
                             }
                         }
                     }
@@ -5996,6 +6065,8 @@ pub(crate) async fn run_app_inner(
                         })
                     });
                     if let Some((pod_name, pod_ns)) = pod_info {
+                        probe_request_seq = probe_request_seq.wrapping_add(1);
+                        let request_id = probe_request_seq;
                         let tx = probe_tx.clone();
                         let k = client.get_client();
                         let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
@@ -6011,13 +6082,20 @@ pub(crate) async fn run_app_inner(
                         {
                             continue;
                         }
+                        app.begin_probe_panel_refresh(request_id);
                         tokio::spawn(async move {
                             let pods_api: Api<Pod> = Api::namespaced(k, &pod_ns);
                             let result = match pods_api.get(&pod_name).await {
                                 Ok(pod) => Ok(extract_probes_from_pod(&pod).unwrap_or_default()),
                                 Err(err) => Err(format!("Failed to load probes: {err}")),
                             };
-                            let _ = tx.send(ProbeAsyncResult { resource, result }).await;
+                            let _ = tx
+                                .send(ProbeAsyncResult {
+                                    request_id,
+                                    resource,
+                                    result,
+                                })
+                                .await;
                         });
                     } else {
                         apply_action(AppAction::ProbePanelOpen, &mut app);
