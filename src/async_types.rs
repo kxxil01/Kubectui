@@ -154,6 +154,7 @@ pub struct SetCronJobSuspendAsyncResult {
 
 #[derive(Debug)]
 pub struct ProbeAsyncResult {
+    pub request_id: u64,
     pub resource: ResourceRef,
     pub result: Result<Vec<(String, ContainerProbes)>, String>,
 }

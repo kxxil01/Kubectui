@@ -1185,6 +1185,7 @@ pub(crate) async fn run_app_inner(
     let (node_ops_tx, mut node_ops_rx) = tokio::sync::mpsc::channel::<NodeOpsAsyncResult>(16);
     let mut node_op_in_flight: bool = false;
     let (probe_tx, mut probe_rx) = tokio::sync::mpsc::channel::<ProbeAsyncResult>(16);
+    let mut probe_request_seq: u64 = 0;
     let (relations_tx, mut relations_rx) = tokio::sync::mpsc::channel::<RelationsAsyncResult>(16);
     let mut relations_request_seq: u64 = 0;
     let (exec_bootstrap_tx, mut exec_bootstrap_rx) =
@@ -3105,25 +3106,9 @@ pub(crate) async fn run_app_inner(
                                 if state.pod_name == pod_name
                                     && state.namespace == namespace =>
                             {
-                                match result.result {
-                                    Ok(probes) => state.update_probes(probes),
-                                    Err(error) => state.set_error(error),
-                                }
+                                let _ = state.apply_refresh_result(result.request_id, result.result);
                             }
-                            _ => {
-                                use kubectui::ui::components::probe_panel::ProbePanelState;
-                                detail.probe_panel = Some(match result.result {
-                                    Ok(probes) => {
-                                        ProbePanelState::new(pod_name, namespace, probes)
-                                    }
-                                    Err(error) => {
-                                        let mut state =
-                                            ProbePanelState::new(pod_name, namespace, Vec::new());
-                                        state.set_error(error);
-                                        state
-                                    }
-                                });
-                            }
+                            _ => {}
                         }
                     }
                 }
@@ -5974,6 +5959,8 @@ pub(crate) async fn run_app_inner(
                         })
                     });
                     if let Some((pod_name, pod_ns)) = pod_info {
+                        probe_request_seq = probe_request_seq.wrapping_add(1);
+                        let request_id = probe_request_seq;
                         let tx = probe_tx.clone();
                         let k = client.get_client();
                         let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
@@ -5989,13 +5976,20 @@ pub(crate) async fn run_app_inner(
                         {
                             continue;
                         }
+                        app.begin_probe_panel_refresh(request_id);
                         tokio::spawn(async move {
                             let pods_api: Api<Pod> = Api::namespaced(k, &pod_ns);
                             let result = match pods_api.get(&pod_name).await {
                                 Ok(pod) => Ok(extract_probes_from_pod(&pod).unwrap_or_default()),
                                 Err(err) => Err(format!("Failed to load probes: {err}")),
                             };
-                            let _ = tx.send(ProbeAsyncResult { resource, result }).await;
+                            let _ = tx
+                                .send(ProbeAsyncResult {
+                                    request_id,
+                                    resource,
+                                    result,
+                                })
+                                .await;
                         });
                     } else {
                         apply_action(AppAction::ProbePanelOpen, &mut app);

@@ -998,6 +998,7 @@ pub struct WorkloadLogsTabState {
     pub matching_label_pods: Option<HashSet<String>>,
     pub available_pods: Vec<String>,
     pub available_containers: Vec<String>,
+    filtered_line_anchor: Option<WorkloadLogLine>,
 }
 
 impl WorkloadLogsTabState {
@@ -1034,6 +1035,7 @@ impl WorkloadLogsTabState {
             matching_label_pods: None,
             available_pods: Vec::new(),
             available_containers: Vec::new(),
+            filtered_line_anchor: None,
         }
     }
 
@@ -1058,6 +1060,7 @@ impl WorkloadLogsTabState {
         self.matching_label_pods = None;
         self.available_pods.clear();
         self.available_containers.clear();
+        self.filtered_line_anchor = None;
     }
 
     pub fn update_targets(&mut self, targets: &[crate::k8s::workload_logs::WorkloadLogTarget]) {
@@ -1184,6 +1187,7 @@ impl WorkloadLogsTabState {
     }
 
     pub fn commit_text_filter(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.text_filter = self.filter_input.clone();
         self.text_filter_error = None;
         self.time_jump_error = None;
@@ -1195,7 +1199,7 @@ impl WorkloadLogsTabState {
             }
         }
         self.editing_text_filter = false;
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn open_time_jump(&mut self) {
@@ -1247,6 +1251,7 @@ impl WorkloadLogsTabState {
     }
 
     pub fn toggle_text_filter_mode(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.text_filter_mode = self.text_filter_mode.toggle();
         self.text_filter_error = None;
         match compile_query(&self.text_filter, self.text_filter_mode) {
@@ -1256,30 +1261,34 @@ impl WorkloadLogsTabState {
                 self.text_filter_error = Some(err);
             }
         }
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_time_window(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.time_window = self.time_window.next();
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_pod_filter(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.pod_filter = cycle_filter_value(&self.available_pods, self.pod_filter.as_deref());
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_container_filter(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.container_filter =
             cycle_filter_value(&self.available_containers, self.container_filter.as_deref());
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn cycle_label_filter(&mut self) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.label_filter =
             cycle_filter_value(&self.available_labels, self.label_filter.as_deref());
         self.refresh_matching_label_pods();
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn matches_filter(&self, line: &WorkloadLogLine) -> bool {
@@ -1330,6 +1339,7 @@ impl WorkloadLogsTabState {
     }
 
     pub fn apply_preset(&mut self, preset: &WorkloadLogPreset) {
+        let preserved_line = self.selected_filtered_line_anchor();
         self.editing_text_filter = false;
         self.jumping_to_time = false;
         self.text_filter = preset.query.clone();
@@ -1379,7 +1389,7 @@ impl WorkloadLogsTabState {
         }
         self.refresh_matching_label_pods();
         self.follow_mode = false;
-        self.scroll = 0;
+        self.restore_filtered_scroll(preserved_line);
     }
 
     pub fn filtered_indices(&self) -> Vec<usize> {
@@ -1397,6 +1407,31 @@ impl WorkloadLogsTabState {
             .get(self.scroll.min(filtered.len().saturating_sub(1)))
             .copied()?;
         self.lines.get(index)
+    }
+
+    fn selected_filtered_line_anchor(&self) -> Option<WorkloadLogLine> {
+        self.current_filtered_line()
+            .cloned()
+            .or_else(|| self.filtered_line_anchor.clone())
+    }
+
+    fn restore_filtered_scroll(&mut self, preserved_line: Option<WorkloadLogLine>) {
+        let filtered = self.filtered_indices();
+        if filtered.is_empty() {
+            self.scroll = 0;
+            self.filtered_line_anchor = preserved_line;
+            return;
+        }
+
+        self.scroll = preserved_line
+            .as_ref()
+            .and_then(|line| {
+                filtered
+                    .iter()
+                    .position(|index| self.lines.get(*index) == Some(line))
+            })
+            .unwrap_or_else(|| self.scroll.min(filtered.len().saturating_sub(1)));
+        self.filtered_line_anchor = self.current_filtered_line().cloned();
     }
 
     pub fn toggle_correlation_on_current_line(&mut self) -> Result<Option<String>, String> {
@@ -4000,6 +4035,40 @@ mod tests {
             entry: LogEntry::from_raw("2099-01-01T00:00:00Z future line"),
             is_stderr: false,
         }));
+    }
+
+    #[test]
+    fn workload_log_filter_roundtrip_preserves_selected_line_across_zero_matches() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.lines = vec![
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("alpha line"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("beta line"),
+                is_stderr: false,
+            },
+        ];
+        tab.scroll = 1;
+
+        tab.filter_input = "zzz".into();
+        tab.commit_text_filter();
+        assert!(tab.filtered_indices().is_empty());
+        assert_eq!(tab.scroll, 0);
+
+        tab.filter_input.clear();
+        tab.commit_text_filter();
+
+        assert_eq!(
+            tab.current_filtered_line().map(|line| line.entry.raw()),
+            Some("beta line")
+        );
+        assert_eq!(tab.scroll, 1);
     }
 
     #[test]

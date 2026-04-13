@@ -164,7 +164,12 @@ async fn list_pods_for_selector(
         .into_iter()
         .map(map_pod_to_target)
         .collect::<Result<Vec<_>>>()?;
-    targets.sort_unstable_by(|left, right| left.pod_name.cmp(&right.pod_name));
+    targets.sort_unstable_by(|left, right| {
+        left.pod_name
+            .cmp(&right.pod_name)
+            .then_with(|| left.namespace.cmp(&right.namespace))
+            .then_with(|| left.containers.cmp(&right.containers))
+    });
 
     if targets.is_empty() {
         return Err(anyhow!("no pods matched selector '{selector}'"));
@@ -276,5 +281,48 @@ mod tests {
     fn selector_to_string_rejects_empty_selector() {
         let err = selector_to_string(Some(LabelSelector::default())).expect_err("empty selector");
         assert!(err.to_string().contains("selector is empty"));
+    }
+
+    #[test]
+    fn workload_log_targets_sort_deterministically_for_same_pod_name() {
+        let mut targets = vec![
+            WorkloadLogTarget {
+                pod_name: "api-0".into(),
+                namespace: "zeta".into(),
+                containers: vec!["sidecar".into()],
+                labels: Vec::new(),
+            },
+            WorkloadLogTarget {
+                pod_name: "api-0".into(),
+                namespace: "alpha".into(),
+                containers: vec!["main".into()],
+                labels: Vec::new(),
+            },
+            WorkloadLogTarget {
+                pod_name: "api-0".into(),
+                namespace: "alpha".into(),
+                containers: vec!["debug".into()],
+                labels: Vec::new(),
+            },
+        ];
+
+        targets.sort_unstable_by(|left, right| {
+            left.pod_name
+                .cmp(&right.pod_name)
+                .then_with(|| left.namespace.cmp(&right.namespace))
+                .then_with(|| left.containers.cmp(&right.containers))
+        });
+
+        assert_eq!(
+            targets
+                .into_iter()
+                .map(|target| (target.namespace, target.containers))
+                .collect::<Vec<_>>(),
+            vec![
+                ("alpha".to_string(), vec!["debug".to_string()]),
+                ("alpha".to_string(), vec!["main".to_string()]),
+                ("zeta".to_string(), vec!["sidecar".to_string()]),
+            ]
+        );
     }
 }

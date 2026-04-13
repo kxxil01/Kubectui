@@ -635,6 +635,31 @@ impl AppState {
         }
     }
 
+    pub fn begin_probe_panel_refresh(&mut self, request_id: u64) {
+        if let Some(detail) = &mut self.detail_view
+            && detail.supports_action(DetailAction::Probes)
+        {
+            let (pod_name, namespace) = detail
+                .resource
+                .as_ref()
+                .and_then(|r| match r {
+                    ResourceRef::Pod(name, ns) => Some((name.clone(), ns.clone())),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            match detail.probe_panel.as_mut() {
+                Some(panel) if panel.pod_name == pod_name && panel.namespace == namespace => {
+                    panel.begin_refresh(request_id);
+                }
+                _ => {
+                    let mut panel = ProbePanelComponentState::new(pod_name, namespace, Vec::new());
+                    panel.begin_refresh(request_id);
+                    detail.probe_panel = Some(panel);
+                }
+            }
+        }
+    }
+
     pub fn close_probe_panel(&mut self) {
         if let Some(detail) = &mut self.detail_view {
             detail.probe_panel = None;

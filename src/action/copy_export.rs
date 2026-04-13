@@ -1,6 +1,11 @@
 //! Copy-to-clipboard and log-export action handlers.
 
-use kubectui::{app::AppState, state::ClusterSnapshot, workbench::WorkbenchTabState};
+use kubectui::{
+    app::AppState,
+    log_investigation::entry_matches_query,
+    state::ClusterSnapshot,
+    workbench::WorkbenchTabState,
+};
 
 use crate::selection_helpers::selected_resource;
 
@@ -80,7 +85,7 @@ pub fn export_logs(app: &mut AppState) {
 fn active_log_copy_content(tab: &kubectui::workbench::WorkbenchTab) -> Option<String> {
     match &tab.state {
         WorkbenchTabState::PodLogs(logs_tab) => {
-            let filtered = logs_tab.viewer.filtered_indices();
+            let filtered = visible_pod_log_indices(logs_tab);
             (!filtered.is_empty()).then(|| {
                 filtered
                     .iter()
@@ -120,7 +125,7 @@ fn active_log_export(tab: &kubectui::workbench::WorkbenchTab) -> Option<(String,
                 "{}-{}",
                 logs_tab.viewer.pod_name, logs_tab.viewer.container_name,
             );
-            let filtered = logs_tab.viewer.filtered_indices();
+            let filtered = visible_pod_log_indices(logs_tab);
             (!filtered.is_empty()).then(|| {
                 let content = filtered
                     .iter()
@@ -138,6 +143,25 @@ fn active_log_export(tab: &kubectui::workbench::WorkbenchTab) -> Option<(String,
             .map(|content| (tab.state.title().replace(' ', "-"), content)),
         _ => None,
     }
+}
+
+fn visible_pod_log_indices(logs_tab: &kubectui::workbench::PodLogsTabState) -> Vec<usize> {
+    let viewer = &logs_tab.viewer;
+    viewer
+        .filtered_indices()
+        .into_iter()
+        .filter(|index| {
+            viewer.lines.get(*index).is_some_and(|line| {
+                entry_matches_query(
+                    line,
+                    &viewer.search_query,
+                    viewer.search_mode,
+                    viewer.compiled_search.as_ref(),
+                    viewer.structured_view,
+                )
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -223,5 +247,53 @@ mod tests {
         });
 
         assert!(content.is_none());
+    }
+
+    #[test]
+    fn pod_copy_respects_active_search_query() {
+        let mut viewer = LogsViewerState {
+            pod_name: "pod-0".into(),
+            container_name: "main".into(),
+            search_query: "request".into(),
+            search_mode: LogQueryMode::Substring,
+            ..LogsViewerState::default()
+        };
+        viewer.lines.push(LogEntry::from_raw("startup complete"));
+        viewer.lines.push(LogEntry::from_raw("request failed"));
+
+        let content = active_log_copy_content(&kubectui::workbench::WorkbenchTab {
+            id: 1,
+            state: WorkbenchTabState::PodLogs(PodLogsTabState {
+                resource: ResourceRef::Pod("pod-0".into(), "ns".into()),
+                viewer,
+            }),
+        })
+        .expect("copy content");
+
+        assert_eq!(content, "request failed");
+    }
+
+    #[test]
+    fn pod_export_respects_active_search_query() {
+        let mut viewer = LogsViewerState {
+            pod_name: "pod-0".into(),
+            container_name: "main".into(),
+            search_query: "warn".into(),
+            search_mode: LogQueryMode::Substring,
+            ..LogsViewerState::default()
+        };
+        viewer.lines.push(LogEntry::from_raw("info boot"));
+        viewer.lines.push(LogEntry::from_raw("warn retry"));
+
+        let export = active_log_export(&kubectui::workbench::WorkbenchTab {
+            id: 1,
+            state: WorkbenchTabState::PodLogs(PodLogsTabState {
+                resource: ResourceRef::Pod("pod-0".into(), "ns".into()),
+                viewer,
+            }),
+        })
+        .expect("export data");
+
+        assert_eq!(export.1, "warn retry");
     }
 }
