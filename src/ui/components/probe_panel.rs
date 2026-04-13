@@ -61,7 +61,6 @@ impl ProbePanelState {
             .get(self.selected_index)
             .map(|(name, _)| name.clone());
         self.container_probes = probes;
-        self.error = None;
         self.selected_index = selected_container
             .and_then(|name| {
                 self.container_probes
@@ -90,7 +89,10 @@ impl ProbePanelState {
             return false;
         }
         match result {
-            Ok(probes) => self.update_probes(probes),
+            Ok(probes) => {
+                self.update_probes(probes);
+                self.error = None;
+            }
             Err(error) => self.set_error(error),
         }
         true
