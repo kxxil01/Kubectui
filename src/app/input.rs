@@ -95,14 +95,27 @@ impl AppState {
         use crate::ui::components::port_forward_dialog::PortForwardAction;
 
         let local_editor_active = self.workbench_local_editor_active();
+        let reserve_bracket_shortcuts = self.workbench.active_tab().is_some_and(|tab| {
+            matches!(
+                &tab.state,
+                WorkbenchTabState::PodLogs(logs_tab) if !logs_tab.viewer.picking_container
+            ) || matches!(
+                &tab.state,
+                WorkbenchTabState::WorkloadLogs(logs_tab) if !logs_tab.editing_text_filter
+            )
+        });
 
         // Common workbench keys (apply to all tab types)
         if !local_editor_active {
             match key.code {
                 KeyCode::Char('z') => return AppAction::WorkbenchToggleMaximize,
                 KeyCode::Char('b') => return AppAction::ToggleWorkbench,
-                KeyCode::Char('[') => return AppAction::WorkbenchPreviousTab,
-                KeyCode::Char(']') => return AppAction::WorkbenchNextTab,
+                KeyCode::Char('[') if !reserve_bracket_shortcuts => {
+                    return AppAction::WorkbenchPreviousTab;
+                }
+                KeyCode::Char(']') if !reserve_bracket_shortcuts => {
+                    return AppAction::WorkbenchNextTab;
+                }
                 KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     return AppAction::WorkbenchCloseActiveTab;
                 }
