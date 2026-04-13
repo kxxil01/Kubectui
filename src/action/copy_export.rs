@@ -1,9 +1,7 @@
 //! Copy-to-clipboard and log-export action handlers.
 
 use kubectui::{
-    app::AppState,
-    log_investigation::entry_matches_query,
-    state::ClusterSnapshot,
+    app::AppState, log_investigation::entry_matches_query, state::ClusterSnapshot,
     workbench::WorkbenchTabState,
 };
 

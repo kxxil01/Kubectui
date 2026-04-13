@@ -42,7 +42,7 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
-    app::{AppAction, AppView, DetailViewState, ResourceRef, load_config, save_config},
+    app::{AppAction, AppState, AppView, DetailViewState, ResourceRef, load_config, save_config},
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
     extensions::{
@@ -190,6 +190,56 @@ fn reopen_pending_runbook(
             tab.banner = Some("Workspace applied from runbook step.".to_string());
         }
     }
+}
+
+fn detail_debug_launch_owned(
+    app: &AppState,
+    resource: &ResourceRef,
+    action_history_id: u64,
+) -> bool {
+    app.detail_view.as_ref().is_some_and(|detail| {
+        detail.resource.as_ref() == Some(resource)
+            && detail
+                .debug_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.owns_launch_action(action_history_id))
+    })
+}
+
+fn detail_node_debug_launch_owned(
+    app: &AppState,
+    resource: &ResourceRef,
+    action_history_id: u64,
+) -> bool {
+    app.detail_view.as_ref().is_some_and(|detail| {
+        detail.resource.as_ref() == Some(resource)
+            && detail
+                .node_debug_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.owns_launch_action(action_history_id))
+    })
+}
+
+fn preserve_detail_selection_identity(
+    current: Option<&DetailViewState>,
+    next: &mut DetailViewState,
+) {
+    let previous = current.and_then(|detail| {
+        detail
+            .selected_cronjob_history()
+            .map(|entry| (entry.job_name.as_str(), entry.namespace.as_str()))
+    });
+    let Some((job_name, namespace)) = previous else {
+        return;
+    };
+    let Some(index) = next
+        .cronjob_history
+        .iter()
+        .position(|entry| entry.job_name == job_name && entry.namespace == namespace)
+    else {
+        return;
+    };
+    next.cronjob_history_selected = index;
 }
 
 struct WorkspaceRestoreRuntime<'a> {
@@ -1485,9 +1535,10 @@ pub(crate) async fn run_app_inner(
                     }
                     needs_redraw = true;
                     match result {
-                        Ok(state) => {
+                        Ok(mut state) => {
                             apply_detail_state_to_workbench(&mut app, request_id, &state);
                             if detail_still_waiting_for_this {
+                                preserve_detail_selection_identity(app.detail_view.as_ref(), &mut state);
                                 app.detail_view = Some(state);
                             }
                         }
@@ -2697,6 +2748,8 @@ pub(crate) async fn run_app_inner(
             result = debug_launch_rx.recv() => {
                 if let Some(result) = result {
                     needs_redraw = true;
+                    let launch_owned =
+                        detail_debug_launch_owned(&app, &result.resource, result.action_history_id);
                     if result.context_generation != refresh_state.context_generation {
                         if let Some(detail) = app.detail_view.as_mut()
                             && detail.resource.as_ref() == Some(&result.resource)
@@ -2719,6 +2772,35 @@ pub(crate) async fn run_app_inner(
 
                     match result.result {
                         Ok(launch) => {
+                            if !launch_owned {
+                                app.complete_action_history(
+                                    result.action_history_id,
+                                    ActionStatus::Failed,
+                                    "Debug container launch finished, but dialog ownership changed before shell attach.",
+                                    true,
+                                );
+                                apply_mutation_success(
+                                    &mut app,
+                                    &mut MutationRuntime {
+                                        global_state: &mut global_state,
+                                        client: &client,
+                                        refresh_tx: &refresh_tx,
+                                        deferred_refresh_tx: &deferred_refresh_tx,
+                                        refresh_state: &mut refresh_state,
+                                        snapshot_dirty: &mut snapshot_dirty,
+                                        auto_refresh: &mut auto_refresh,
+                                        status_message_clear_at: &mut status_message_clear_at,
+                                    },
+                                    result.origin_view,
+                                    format!(
+                                        "Debug container '{}' launched, but shell attach was skipped because dialog context changed. Refreshing view...",
+                                        launch.container_name
+                                    ),
+                                    false,
+                                    MUTATION_REFRESH_DELAYS_SECS,
+                                );
+                                continue;
+                            }
                             if let Some(existing_session_id) =
                                 app.workbench().exec_session_id(&result.resource)
                                 && let Some(handle) = exec_sessions.remove(&existing_session_id)
@@ -2850,6 +2932,11 @@ pub(crate) async fn run_app_inner(
                     needs_redraw = true;
                     match result.result {
                         Ok(launch) => {
+                            let launch_owned = detail_node_debug_launch_owned(
+                                &app,
+                                &result.resource,
+                                result.action_history_id,
+                            );
                             if result.context_generation != refresh_state.context_generation {
                                 if let Some(detail) = app.detail_view.as_mut()
                                     && detail.resource.as_ref() == Some(&result.resource)
@@ -2877,6 +2964,25 @@ pub(crate) async fn run_app_inner(
                                     node_debug_cleanup_tx.clone(),
                                 )
                                 .await;
+                                continue;
+                            }
+                            if !launch_owned {
+                                spawn_node_debug_cleanup(
+                                    NodeDebugSessionRuntime {
+                                        client: result.cleanup_client,
+                                        node_name: launch.node_name,
+                                        pod_name: launch.pod_name,
+                                        namespace: launch.namespace,
+                                    },
+                                    node_debug_cleanup_tx.clone(),
+                                )
+                                .await;
+                                app.complete_action_history(
+                                    result.action_history_id,
+                                    ActionStatus::Failed,
+                                    "Node debug shell launch finished, but dialog ownership changed before shell attach. Cleanup requested.",
+                                    true,
+                                );
                                 continue;
                             }
                             if let Some(existing_session_id) =

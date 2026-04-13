@@ -110,6 +110,10 @@ impl NodeDebugDialogState {
         }
     }
 
+    pub fn owns_launch_action(&self, action_history_id: u64) -> bool {
+        self.pending_launch_action_history_id == Some(action_history_id)
+    }
+
     pub fn build_launch_request(&self) -> Result<NodeDebugLaunchRequest, String> {
         let image = default_debug_image(self.selected_preset, &self.custom_image)
             .ok_or_else(|| "Select a preset image or enter a custom debug image.".to_string())?;
@@ -923,6 +927,15 @@ mod tests {
         state.clear_launch_if_matches(41);
         assert!(!state.pending_launch);
         assert!(state.pending_launch_action_history_id.is_none());
+    }
+
+    #[test]
+    fn owns_launch_action_matches_only_current_action_id() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.begin_launch(77);
+
+        assert!(state.owns_launch_action(77));
+        assert!(!state.owns_launch_action(78));
     }
 
     #[test]
