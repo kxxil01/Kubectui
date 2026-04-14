@@ -95,12 +95,47 @@ ensure_tag_absent() {
   fi
 }
 
+remote_branch_exists() {
+  local branch="$1"
+  git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1
+}
+
+cleanup_stale_release_branch() {
+  local branch="$1"
+  local current_branch
+  current_branch="$(git branch --show-current)"
+
+  if git show-ref --verify --quiet "refs/heads/$branch"; then
+    if git merge-base --is-ancestor "$branch" origin/main; then
+      if [[ "$current_branch" == "$branch" ]]; then
+        git checkout main >/dev/null
+      fi
+      git branch -D "$branch" >/dev/null
+      echo "Deleted stale local branch $branch"
+    else
+      die "local branch $branch already exists and is not merged into main"
+    fi
+  fi
+
+  if remote_branch_exists "$branch"; then
+    git fetch origin "$branch" --depth=1 >/dev/null
+    if git merge-base --is-ancestor FETCH_HEAD origin/main; then
+      git push origin --delete "$branch" >/dev/null
+      echo "Deleted stale remote branch $branch"
+    else
+      die "remote branch $branch already exists and is not merged into main"
+    fi
+  fi
+}
+
 ensure_release_branch_absent() {
   local branch="$1"
+  cleanup_stale_release_branch "$branch"
+
   if git show-ref --verify --quiet "refs/heads/$branch"; then
     die "local branch $branch already exists"
   fi
-  if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+  if remote_branch_exists "$branch"; then
     die "remote branch $branch already exists"
   fi
 }
@@ -224,6 +259,9 @@ release_and_publish() {
 
   git checkout main
   git pull --ff-only origin main
+  local merged_version
+  merged_version="$(current_version)"
+  [[ "$merged_version" == "$new_version" ]] || die "post-merge version mismatch: expected $new_version on main, found $merged_version"
   publish_tag "$tag"
 }
 
