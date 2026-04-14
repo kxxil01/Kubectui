@@ -224,6 +224,9 @@ release_and_publish() {
 
   git checkout main
   git pull --ff-only origin main
+  local merged_version
+  merged_version="$(current_version)"
+  [[ "$merged_version" == "$new_version" ]] || die "post-merge version mismatch: expected $new_version on main, found $merged_version"
   publish_tag "$tag"
 }
 
