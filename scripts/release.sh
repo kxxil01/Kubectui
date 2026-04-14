@@ -7,16 +7,20 @@ usage() {
   cat <<'EOF'
 Usage:
   ./scripts/release.sh <version|patch|minor|major>
-  ./scripts/release.sh publish
-  ./scripts/release.sh ship <version|patch|minor|major>
 
 Examples:
   ./scripts/release.sh patch
   ./scripts/release.sh minor
   ./scripts/release.sh 1.2.3
   ./scripts/release.sh 2.0.0-beta.1
-  ./scripts/release.sh publish
-  ./scripts/release.sh ship patch
+
+Single command flow:
+  1) run quality gate
+  2) bump version on release branch
+  3) open release PR
+  4) merge release PR immediately
+  5) fast-forward local main
+  6) create + push release tag
 EOF
 }
 
@@ -33,6 +37,10 @@ current_version() {
   grep '^version' "$CARGO_TOML" | head -1 | sed 's/.*"\(.*\)".*/\1/'
 }
 
+is_semver() {
+  [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+([\-+][0-9A-Za-z][0-9A-Za-z.\-+]*)?$ ]]
+}
+
 bump_version() {
   local current="$1"
   local part="$2"
@@ -44,7 +52,10 @@ bump_version() {
     major) echo "$((major + 1)).0.0" ;;
     minor) echo "${major}.$((minor + 1)).0" ;;
     patch) echo "${major}.${minor}.$((patch + 1))" ;;
-    *) echo "$part" ;;
+    *)
+      is_semver "$part" || die "invalid version '$part' (expected semver, patch, minor, or major)"
+      echo "$part"
+      ;;
   esac
 }
 
@@ -68,8 +79,11 @@ ensure_main_synced() {
 
 ensure_tag_absent() {
   local tag="$1"
-  if git rev-parse "$tag" >/dev/null 2>&1; then
+  if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
     die "tag $tag already exists"
+  fi
+  if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+    die "remote tag $tag already exists"
   fi
 }
 
@@ -144,72 +158,15 @@ create_release_pr() {
   printf '%s\n' "$pr_url"
 }
 
-prepare_release() {
-  local requested="$1"
-  local current new_version tag release_branch pr_url
-
-  ensure_release_tooling
-  ensure_clean_worktree
-  ensure_on_main
-  ensure_main_synced
-
-  read -r current new_version tag release_branch < <(prepare_release_metadata "$requested")
-
-  echo "Current version: $current"
-  echo "New version:     $new_version"
-  echo "Tag:             $tag"
-  echo "Release branch:  $release_branch"
-  echo
-
-  run_quality_gate
-  echo
-
-  pr_url="$(create_release_pr "$new_version" "$tag" "$release_branch")"
-
-  echo
-  echo "Release PR created."
-  echo "$pr_url"
-  echo "After it merges, run ./scripts/release.sh publish from clean updated main."
-}
-
-publish_release() {
-  local version tag
-
-  require_cmd git
-  ensure_clean_worktree
-  ensure_on_main
-  ensure_main_synced
-
-  version="$(current_version)"
-  tag="v${version}"
-
+publish_tag() {
+  local tag="$1"
   ensure_tag_absent "$tag"
-
   git tag -a "$tag" -m "Release ${tag}"
   git push origin "$tag"
-
   echo "Published tag $tag"
 }
 
-wait_for_pr_merge() {
-  local pr_ref="$1"
-  local state=""
-
-  while true; do
-    state="$(gh pr view "$pr_ref" --json state --jq .state)"
-    case "$state" in
-      MERGED)
-        return 0
-        ;;
-      CLOSED)
-        die "release PR was closed before merge"
-        ;;
-    esac
-    sleep 5
-  done
-}
-
-ship_release() {
+release_and_publish() {
   local requested="$1"
   local current new_version tag release_branch pr_url
 
@@ -232,62 +189,31 @@ ship_release() {
   pr_url="$(create_release_pr "$new_version" "$tag" "$release_branch")"
 
   echo
-  echo "Enabling merge for $pr_url ..."
-  gh pr merge "$pr_url" --squash --delete-branch --auto
-  echo "Waiting for release PR to merge..."
-  wait_for_pr_merge "$pr_url"
+  echo "Merging $pr_url ..."
+  gh pr merge "$pr_url" --squash --delete-branch
 
   git checkout main
   git pull --ff-only origin main
-  publish_release
+  publish_tag "$tag"
 }
 
 main() {
-  if [[ $# -eq 0 ]]; then
+  if [[ $# -ne 1 ]]; then
     usage
-    exit 0
+    exit 1
   fi
 
   case "${1:-}" in
-    publish)
-      [[ $# -eq 1 ]] || {
-        usage
-        exit 1
-      }
-      publish_release
-      ;;
-    ship)
-      [[ $# -eq 2 ]] || {
-        usage
-        exit 1
-      }
-      case "$2" in
-        patch|minor|major|[0-9]*)
-          ship_release "$2"
-          ;;
-        *)
-          usage
-          exit 1
-          ;;
-      esac
+    -h|--help|help)
+      usage
+      exit 0
       ;;
     patch|minor|major|[0-9]*)
-      [[ $# -eq 1 ]] || {
-        usage
-        exit 1
-      }
-      prepare_release "$1"
-      ;;
-    -h|--help|help)
-      [[ $# -eq 1 ]] || {
-        usage
-        exit 1
-      }
-      usage
+      release_and_publish "$1"
       ;;
     *)
       usage
-      exit 1
+      die "invalid release target '$1'"
       ;;
   esac
 }
