@@ -234,7 +234,9 @@ impl ResourceRef {
             {
                 Some(AppView::ReferenceGrants)
             }
-            ResourceRef::CustomResource { group, kind, .. } => flux_primary_view(group, kind),
+            ResourceRef::CustomResource { group, kind, .. } => {
+                flux_primary_view(group, kind).or(Some(AppView::Extensions))
+            }
         }
     }
 }

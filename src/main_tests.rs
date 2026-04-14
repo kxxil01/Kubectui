@@ -1,3 +1,4 @@
+use crossterm::event::{KeyCode, KeyEvent};
 use jiff::ToSpan;
 
 use super::flux_reconcile::{
@@ -9,19 +10,20 @@ use super::{
     fail_context_switch, map_palette_detail_action, mutation_refresh_options,
     normalize_recent_events, palette_action_requires_loaded_detail, parse_editor_command,
     prepare_bookmark_target, prepare_resource_target, preserve_detail_selection_identity,
-    queued_refresh_requires_two_phase, refresh_options_for_view, selected_extension_crd,
-    selected_flux_reconcile_resource, selected_resource, should_request_periodic_redraw,
-    ui_staleness_visible, workbench_follow_streams_to_stop,
+    queued_refresh_requires_two_phase, refresh_options_for_view, refresh_palette_resources,
+    selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
+    should_request_periodic_redraw, ui_staleness_visible, workbench_follow_streams_to_stop,
 };
+use kubectui::ui::components::command_palette::PaletteEntry;
 use kubectui::{
     action_history::ActionKind,
     app::{AppAction, AppState, AppView, DetailViewState, ResourceRef, SidebarItem},
-    bookmarks::BookmarkEntry,
+    bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
     extensions::AiWorkflowKind,
     k8s::dtos::{
-        ConfigMapInfo, CustomResourceDefinitionInfo, FluxResourceInfo, K8sEventInfo, NodeInfo,
-        PodInfo, VulnerabilityReportInfo, VulnerabilitySummaryCounts,
+        ConfigMapInfo, CustomResourceDefinitionInfo, CustomResourceInfo, FluxResourceInfo,
+        K8sEventInfo, NodeInfo, PodInfo, VulnerabilityReportInfo, VulnerabilitySummaryCounts,
     },
     policy::DetailAction,
     state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
@@ -574,6 +576,142 @@ fn prepare_resource_target_routes_flux_resources_to_specific_view() {
 }
 
 #[test]
+fn prepare_resource_target_routes_generic_custom_resources_to_extensions() {
+    let mut app = AppState::default();
+    let resource = ResourceRef::CustomResource {
+        name: "redis".to_string(),
+        namespace: Some("prod".to_string()),
+        group: "demo.io".to_string(),
+        version: "v1".to_string(),
+        kind: "Widget".to_string(),
+        plural: "widgets".to_string(),
+    };
+    let mut snapshot = ClusterSnapshot::default();
+    snapshot
+        .custom_resource_definitions
+        .push(CustomResourceDefinitionInfo {
+            name: "widgets.demo.io".to_string(),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+            scope: "Namespaced".to_string(),
+            instances: 1,
+        });
+
+    prepare_resource_target(&mut app, &snapshot, &resource).expect("extension resource target");
+
+    assert_eq!(app.view, AppView::Extensions);
+    assert_eq!(app.selected_idx, 0);
+    assert_eq!(
+        app.extension_selected_crd.as_deref(),
+        Some("widgets.demo.io")
+    );
+    assert!(!app.extension_in_instances);
+}
+
+#[test]
+fn prepare_resource_target_selects_loaded_extension_instance_when_available() {
+    let mut app = AppState::default();
+    app.extension_selected_crd = Some("widgets.demo.io".to_string());
+    app.extension_instances = vec![
+        CustomResourceInfo {
+            name: "api".to_string(),
+            namespace: Some("prod".to_string()),
+            ..CustomResourceInfo::default()
+        },
+        CustomResourceInfo {
+            name: "redis".to_string(),
+            namespace: Some("prod".to_string()),
+            ..CustomResourceInfo::default()
+        },
+    ];
+    let resource = ResourceRef::CustomResource {
+        name: "redis".to_string(),
+        namespace: Some("prod".to_string()),
+        group: "demo.io".to_string(),
+        version: "v1".to_string(),
+        kind: "Widget".to_string(),
+        plural: "widgets".to_string(),
+    };
+    let mut snapshot = ClusterSnapshot::default();
+    snapshot
+        .custom_resource_definitions
+        .push(CustomResourceDefinitionInfo {
+            name: "widgets.demo.io".to_string(),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+            scope: "Namespaced".to_string(),
+            instances: 2,
+        });
+
+    prepare_resource_target(&mut app, &snapshot, &resource).expect("extension resource target");
+
+    assert_eq!(app.view, AppView::Extensions);
+    assert!(app.extension_in_instances);
+    assert_eq!(app.extension_instance_cursor, 1);
+}
+
+#[test]
+fn prepare_resource_target_resets_extension_instances_mode_when_switching_crd() {
+    let mut app = AppState::default();
+    app.extension_selected_crd = Some("gadgets.demo.io".to_string());
+    app.extension_instances = vec![CustomResourceInfo {
+        name: "legacy".to_string(),
+        namespace: Some("prod".to_string()),
+        ..CustomResourceInfo::default()
+    }];
+    app.extension_in_instances = true;
+    app.extension_instance_cursor = 0;
+
+    let resource = ResourceRef::CustomResource {
+        name: "redis".to_string(),
+        namespace: Some("prod".to_string()),
+        group: "demo.io".to_string(),
+        version: "v1".to_string(),
+        kind: "Widget".to_string(),
+        plural: "widgets".to_string(),
+    };
+    let mut snapshot = ClusterSnapshot::default();
+    snapshot
+        .custom_resource_definitions
+        .push(CustomResourceDefinitionInfo {
+            name: "gadgets.demo.io".to_string(),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Gadget".to_string(),
+            plural: "gadgets".to_string(),
+            scope: "Namespaced".to_string(),
+            instances: 1,
+        });
+    snapshot
+        .custom_resource_definitions
+        .push(CustomResourceDefinitionInfo {
+            name: "widgets.demo.io".to_string(),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+            scope: "Namespaced".to_string(),
+            instances: 1,
+        });
+
+    prepare_resource_target(&mut app, &snapshot, &resource).expect("extension resource target");
+
+    assert_eq!(app.view, AppView::Extensions);
+    assert_eq!(app.selected_idx, 1);
+    assert_eq!(
+        app.extension_selected_crd.as_deref(),
+        Some("widgets.demo.io")
+    );
+    assert!(app.extension_instances.is_empty());
+    assert!(!app.extension_in_instances);
+    assert_eq!(app.extension_instance_cursor, 0);
+}
+
+#[test]
 fn selected_extension_crd_uses_filtered_query_selection() {
     let mut app = AppState::default();
     app.view = AppView::Extensions;
@@ -624,6 +762,170 @@ fn stale_extension_fetch_results_are_ignored() {
     );
     assert!(app.extension_instances.is_empty());
     assert!(app.extension_error.is_none());
+}
+
+#[test]
+fn refresh_palette_resources_merges_extension_instances_without_duplicates() {
+    let mut app = AppState::default();
+    app.extension_selected_crd = Some("helmreleases.helm.toolkit.fluxcd.io".to_string());
+    app.extension_instances = vec![CustomResourceInfo {
+        name: "redis".to_string(),
+        namespace: Some("prod".to_string()),
+        ..CustomResourceInfo::default()
+    }];
+
+    let mut snapshot = ClusterSnapshot::default();
+    snapshot.snapshot_version = 1;
+    snapshot
+        .custom_resource_definitions
+        .push(CustomResourceDefinitionInfo {
+            name: "helmreleases.helm.toolkit.fluxcd.io".to_string(),
+            group: "helm.toolkit.fluxcd.io".to_string(),
+            version: "v2".to_string(),
+            kind: "HelmRelease".to_string(),
+            plural: "helmreleases".to_string(),
+            scope: "Namespaced".to_string(),
+            instances: 1,
+        });
+    snapshot.flux_resources.push(FluxResourceInfo {
+        name: "redis".to_string(),
+        namespace: Some("prod".to_string()),
+        group: "helm.toolkit.fluxcd.io".to_string(),
+        version: "v2".to_string(),
+        kind: "HelmRelease".to_string(),
+        plural: "helmreleases".to_string(),
+        ..FluxResourceInfo::default()
+    });
+
+    refresh_palette_resources(&mut app, &snapshot);
+    app.command_palette.open();
+    for c in "redis".chars() {
+        let _ = app
+            .command_palette
+            .handle_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+
+    let redis_entries = app
+        .command_palette
+        .filtered()
+        .into_iter()
+        .filter_map(|entry| match entry {
+            PaletteEntry::Resource(resource) => Some(resource),
+            _ => None,
+        })
+        .filter(|entry| {
+            entry.resource
+                == ResourceRef::CustomResource {
+                    name: "redis".to_string(),
+                    namespace: Some("prod".to_string()),
+                    group: "helm.toolkit.fluxcd.io".to_string(),
+                    version: "v2".to_string(),
+                    kind: "HelmRelease".to_string(),
+                    plural: "helmreleases".to_string(),
+                }
+        })
+        .count();
+
+    assert_eq!(redis_entries, 1);
+}
+
+#[test]
+fn palette_redis_resource_results_are_routable_and_existing() {
+    let mut app = AppState::default();
+    app.extension_selected_crd = Some("widgets.demo.io".to_string());
+    app.extension_instances = vec![CustomResourceInfo {
+        name: "redis".to_string(),
+        namespace: Some("prod".to_string()),
+        ..CustomResourceInfo::default()
+    }];
+
+    let mut snapshot = ClusterSnapshot::default();
+    snapshot.snapshot_version = 2;
+    snapshot.pods.push(PodInfo {
+        name: "redis-1".to_string(),
+        namespace: "prod".to_string(),
+        ..PodInfo::default()
+    });
+    snapshot.services.push(kubectui::k8s::dtos::ServiceInfo {
+        name: "redis".to_string(),
+        namespace: "prod".to_string(),
+        ..kubectui::k8s::dtos::ServiceInfo::default()
+    });
+    snapshot
+        .deployments
+        .push(kubectui::k8s::dtos::DeploymentInfo {
+            name: "redis".to_string(),
+            namespace: "prod".to_string(),
+            ..kubectui::k8s::dtos::DeploymentInfo::default()
+        });
+    snapshot
+        .pod_disruption_budgets
+        .push(kubectui::k8s::dtos::PodDisruptionBudgetInfo {
+            name: "redis".to_string(),
+            namespace: "prod".to_string(),
+            ..kubectui::k8s::dtos::PodDisruptionBudgetInfo::default()
+        });
+    snapshot.gateways.push(kubectui::k8s::dtos::GatewayInfo {
+        name: "redis".to_string(),
+        namespace: "prod".to_string(),
+        version: "v1".to_string(),
+        ..kubectui::k8s::dtos::GatewayInfo::default()
+    });
+    snapshot.flux_resources.push(FluxResourceInfo {
+        name: "redis".to_string(),
+        namespace: Some("prod".to_string()),
+        group: "helm.toolkit.fluxcd.io".to_string(),
+        version: "v2".to_string(),
+        kind: "HelmRelease".to_string(),
+        plural: "helmreleases".to_string(),
+        ..FluxResourceInfo::default()
+    });
+    snapshot
+        .custom_resource_definitions
+        .push(CustomResourceDefinitionInfo {
+            name: "widgets.demo.io".to_string(),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+            scope: "Namespaced".to_string(),
+            instances: 1,
+        });
+
+    refresh_palette_resources(&mut app, &snapshot);
+    app.command_palette.open();
+    for c in "redis".chars() {
+        let _ = app
+            .command_palette
+            .handle_key(KeyEvent::from(KeyCode::Char(c)));
+    }
+
+    let resources = app
+        .command_palette
+        .filtered()
+        .into_iter()
+        .filter_map(|entry| match entry {
+            PaletteEntry::Resource(resource) => Some(resource.resource),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+
+    assert!(
+        resources.len() >= 6,
+        "expected mixed redis matches across built-in, gateway, flux, and extension resources"
+    );
+
+    for resource in resources {
+        assert!(
+            resource_exists(&snapshot, &resource),
+            "palette produced stale resource: {resource:?}"
+        );
+        let mut routed_app = app.clone();
+        assert!(
+            prepare_resource_target(&mut routed_app, &snapshot, &resource).is_ok(),
+            "palette resource was not routable: {resource:?}"
+        );
+    }
 }
 
 #[test]
