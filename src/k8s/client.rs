@@ -23,7 +23,9 @@ use k8s_openapi::api::{
     scheduling::v1::PriorityClass,
     storage::v1::StorageClass,
 };
-use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::CustomResourceDefinition;
+use k8s_openapi::apiextensions_apiserver::pkg::apis::apiextensions::v1::{
+    CustomResourceDefinition, CustomResourceDefinitionVersion,
+};
 use kube::{
     Api, Client, Config,
     api::{
@@ -647,15 +649,7 @@ impl K8sClient {
         let mut crds = Vec::new();
         for crd in list {
             let spec = crd.spec;
-
-            let version = spec
-                .versions
-                .iter()
-                .find(|v| v.storage)
-                .or_else(|| spec.versions.iter().find(|v| v.served))
-                .or_else(|| spec.versions.first())
-                .map(|v| v.name.clone())
-                .unwrap_or_else(|| "v1".to_string());
+            let version = choose_crd_request_version(&spec.versions);
 
             crds.push(CustomResourceDefinitionInfo {
                 name: crd.metadata.name.unwrap_or_else(|| "<unknown>".to_string()),
@@ -1695,9 +1689,18 @@ fn sort_namespaces(names: Vec<String>) -> Vec<String> {
 
 fn custom_resource_api_resource(crd: &CustomResourceDefinitionInfo) -> ApiResource {
     let gvk = GroupVersionKind::gvk(&crd.group, &crd.version, &crd.kind);
-    let mut ar = ApiResource::from_gvk(&gvk);
-    ar.plural = crd.plural.clone();
-    ar
+    ApiResource::from_gvk_with_plural(&gvk, &crd.plural)
+}
+
+fn choose_crd_request_version(versions: &[CustomResourceDefinitionVersion]) -> String {
+    versions
+        .iter()
+        .find(|version| version.served && version.storage)
+        .or_else(|| versions.iter().find(|version| version.served))
+        .or_else(|| versions.iter().find(|version| version.storage))
+        .or_else(|| versions.first())
+        .map(|version| version.name.clone())
+        .unwrap_or_else(|| "v1".to_string())
 }
 
 async fn list_items_or_empty<K, C>(api: &Api<K>, params: &ListParams, context: C) -> Result<Vec<K>>
@@ -2430,6 +2433,15 @@ mod tests {
         kube::Error::Api(Status::failure(message, reason).with_code(code).boxed())
     }
 
+    fn crd_version(name: &str, served: bool, storage: bool) -> CustomResourceDefinitionVersion {
+        CustomResourceDefinitionVersion {
+            name: name.to_string(),
+            served,
+            storage,
+            ..CustomResourceDefinitionVersion::default()
+        }
+    }
+
     /// Verifies node readiness helper returns true only for matching True condition.
     #[test]
     fn node_condition_true_matches_expected_condition() {
@@ -2739,5 +2751,56 @@ mod tests {
 
         assert!(is_forbidden_error(&forbidden));
         assert!(!is_forbidden_error(&timeout));
+    }
+
+    #[test]
+    fn choose_crd_request_version_prefers_served_storage() {
+        let versions = vec![
+            crd_version("v1beta1", true, false),
+            crd_version("v1", true, true),
+        ];
+        assert_eq!(choose_crd_request_version(&versions), "v1");
+    }
+
+    #[test]
+    fn choose_crd_request_version_avoids_unserved_storage_versions() {
+        let versions = vec![
+            crd_version("v1beta1", false, true),
+            crd_version("v1", true, false),
+        ];
+        assert_eq!(choose_crd_request_version(&versions), "v1");
+    }
+
+    #[test]
+    fn choose_crd_request_version_falls_back_to_storage_when_needed() {
+        let versions = vec![
+            crd_version("v1beta1", false, false),
+            crd_version("v1", false, true),
+        ];
+        assert_eq!(choose_crd_request_version(&versions), "v1");
+    }
+
+    #[test]
+    fn choose_crd_request_version_defaults_when_empty() {
+        assert_eq!(choose_crd_request_version(&[]), "v1");
+    }
+
+    #[test]
+    fn custom_resource_api_resource_uses_explicit_plural() {
+        let crd = CustomResourceDefinitionInfo {
+            name: "policies.demo.io".to_string(),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Policy".to_string(),
+            plural: "policies".to_string(),
+            scope: "Namespaced".to_string(),
+            instances: 0,
+        };
+        let api_resource = custom_resource_api_resource(&crd);
+
+        assert_eq!(api_resource.group, "demo.io");
+        assert_eq!(api_resource.version, "v1");
+        assert_eq!(api_resource.kind, "Policy");
+        assert_eq!(api_resource.plural, "policies");
     }
 }

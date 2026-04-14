@@ -256,14 +256,25 @@ pub fn resource_exists(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> bo
             version,
             kind,
             plural,
-        } => snapshot.flux_resources.iter().any(|item| {
-            item.name == *name
-                && item.namespace == *namespace
-                && item.group == *group
-                && item.version == *version
-                && item.kind == *kind
-                && item.plural == *plural
-        }),
+        } => {
+            if snapshot.flux_resources.iter().any(|item| {
+                item.name == *name
+                    && item.namespace == *namespace
+                    && item.group == *group
+                    && item.version == *version
+                    && item.kind == *kind
+                    && item.plural == *plural
+            }) {
+                return true;
+            }
+
+            snapshot.custom_resource_definitions.iter().any(|crd| {
+                crd.group == *group
+                    && crd.version == *version
+                    && crd.kind == *kind
+                    && crd.plural == *plural
+            })
+        }
     }
 }
 
@@ -572,5 +583,47 @@ mod tests {
         assert_eq!(filtered_bookmark_indices(&bookmarks, "secret"), vec![0]);
         assert_eq!(filtered_bookmark_indices(&bookmarks, "app"), vec![0]);
         assert_eq!(filtered_bookmark_indices(&bookmarks, "prod"), vec![0]);
+    }
+
+    #[test]
+    fn resource_exists_accepts_generic_custom_resource_when_crd_loaded() {
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot
+            .custom_resource_definitions
+            .push(crate::k8s::dtos::CustomResourceDefinitionInfo {
+                name: "widgets.demo.io".to_string(),
+                group: "demo.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Widget".to_string(),
+                plural: "widgets".to_string(),
+                scope: "Namespaced".to_string(),
+                instances: 0,
+            });
+
+        let resource = ResourceRef::CustomResource {
+            name: "redis".to_string(),
+            namespace: Some("prod".to_string()),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+        };
+
+        assert!(resource_exists(&snapshot, &resource));
+    }
+
+    #[test]
+    fn resource_exists_rejects_generic_custom_resource_without_crd() {
+        let snapshot = ClusterSnapshot::default();
+        let resource = ResourceRef::CustomResource {
+            name: "redis".to_string(),
+            namespace: Some("prod".to_string()),
+            group: "demo.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Widget".to_string(),
+            plural: "widgets".to_string(),
+        };
+
+        assert!(!resource_exists(&snapshot, &resource));
     }
 }

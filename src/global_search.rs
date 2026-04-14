@@ -5,6 +5,7 @@ use std::{
 
 use crate::{
     app::{AppView, ResourceRef},
+    k8s::dtos::{CustomResourceDefinitionInfo, CustomResourceInfo},
     state::ClusterSnapshot,
 };
 
@@ -50,6 +51,56 @@ pub fn collect_global_resource_search_entries(
             .unwrap_or_else(|error| error.into_inner());
         *guard = Some((key, Arc::clone(&entries)));
     }
+    entries
+}
+
+pub fn collect_extension_resource_search_entries(
+    crd: &CustomResourceDefinitionInfo,
+    instances: &[CustomResourceInfo],
+) -> Vec<GlobalResourceSearchEntry> {
+    let mut entries = Vec::with_capacity(instances.len());
+
+    for item in instances {
+        let resource = ResourceRef::CustomResource {
+            name: item.name.clone(),
+            namespace: item.namespace.clone(),
+            group: crd.group.clone(),
+            version: crd.version.clone(),
+            kind: crd.kind.clone(),
+            plural: crd.plural.clone(),
+        };
+        let mut aliases = base_aliases(&resource, AppView::Extensions);
+        aliases.extend([
+            crd.name.to_ascii_lowercase(),
+            crd.group.to_ascii_lowercase(),
+            crd.version.to_ascii_lowercase(),
+            crd.kind.to_ascii_lowercase(),
+            crd.plural.to_ascii_lowercase(),
+            format!("{}/{}", crd.group, crd.version).to_ascii_lowercase(),
+            format!("{} {}", crd.kind, crd.group).to_ascii_lowercase(),
+            format!("{}/{}", crd.plural, item.name).to_ascii_lowercase(),
+        ]);
+        if let Some(namespace) = item.namespace.as_deref() {
+            aliases.push(format!("{namespace}/{}", crd.plural).to_ascii_lowercase());
+            aliases.push(format!("{namespace}/{}/{}", crd.plural, item.name).to_ascii_lowercase());
+            aliases.push(format!("{} {namespace}/{}", crd.kind, item.name).to_ascii_lowercase());
+        }
+        aliases.sort_unstable();
+        aliases.dedup();
+
+        let subtitle = match item.namespace.as_deref() {
+            Some(namespace) => format!("{} · {} · {}", crd.kind, namespace, crd.group),
+            None => format!("{} · {}", crd.kind, crd.group),
+        };
+        entries.push(GlobalResourceSearchEntry {
+            resource,
+            title: item.name.clone(),
+            subtitle,
+            aliases,
+            badge_label: AppView::Extensions.label().to_string(),
+        });
+    }
+
     entries
 }
 
@@ -609,10 +660,15 @@ fn labels_from_pairs<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) ->
 
 #[cfg(test)]
 mod tests {
-    use super::collect_global_resource_search_entries;
+    use super::{
+        collect_extension_resource_search_entries, collect_global_resource_search_entries,
+    };
     use crate::{
         app::ResourceRef,
-        k8s::dtos::{DeploymentInfo, FluxResourceInfo, NamespaceInfo, PodInfo},
+        k8s::dtos::{
+            CustomResourceDefinitionInfo, CustomResourceInfo, DeploymentInfo, FluxResourceInfo,
+            NamespaceInfo, PodInfo,
+        },
         state::ClusterSnapshot,
     };
     use std::{collections::BTreeMap, sync::Arc};
@@ -732,5 +788,93 @@ mod tests {
         snapshot.snapshot_version = 10;
         let third = collect_global_resource_search_entries(&snapshot);
         assert!(!Arc::ptr_eq(&first, &third));
+    }
+
+    #[test]
+    fn extension_search_entries_include_crd_aliases_for_namespaced_instances() {
+        let crd = CustomResourceDefinitionInfo {
+            name: "widgets.demo.io".into(),
+            group: "demo.io".into(),
+            version: "v1".into(),
+            kind: "Widget".into(),
+            plural: "widgets".into(),
+            scope: "Namespaced".into(),
+            instances: 1,
+        };
+        let entries = collect_extension_resource_search_entries(
+            &crd,
+            &[CustomResourceInfo {
+                name: "redis".into(),
+                namespace: Some("prod".into()),
+                ..CustomResourceInfo::default()
+            }],
+        );
+        let entry = entries.first().expect("custom resource entry");
+
+        assert_eq!(
+            entry.resource,
+            ResourceRef::CustomResource {
+                name: "redis".into(),
+                namespace: Some("prod".into()),
+                group: "demo.io".into(),
+                version: "v1".into(),
+                kind: "Widget".into(),
+                plural: "widgets".into(),
+            }
+        );
+        assert_eq!(entry.title, "redis");
+        assert_eq!(entry.subtitle, "Widget · prod · demo.io");
+        assert!(entry.aliases.iter().any(|alias| alias == "widgets.demo.io"));
+        assert!(
+            entry
+                .aliases
+                .iter()
+                .any(|alias| alias == "prod/widgets/redis")
+        );
+        assert!(
+            entry
+                .aliases
+                .iter()
+                .any(|alias| alias == "widget prod/redis")
+        );
+    }
+
+    #[test]
+    fn extension_search_entries_support_cluster_scoped_instances() {
+        let crd = CustomResourceDefinitionInfo {
+            name: "clusters.demo.io".into(),
+            group: "demo.io".into(),
+            version: "v1".into(),
+            kind: "ClusterWidget".into(),
+            plural: "clusterwidgets".into(),
+            scope: "Cluster".into(),
+            instances: 1,
+        };
+        let entries = collect_extension_resource_search_entries(
+            &crd,
+            &[CustomResourceInfo {
+                name: "redis-global".into(),
+                namespace: None,
+                ..CustomResourceInfo::default()
+            }],
+        );
+        let entry = entries.first().expect("cluster resource entry");
+
+        assert_eq!(
+            entry.subtitle, "ClusterWidget · demo.io",
+            "cluster-scoped subtitle must omit namespace"
+        );
+        assert!(
+            entry
+                .aliases
+                .iter()
+                .any(|alias| alias == "clusterwidgets/redis-global")
+        );
+        assert!(
+            entry
+                .aliases
+                .iter()
+                .any(|alias| alias == "clusterwidget demo.io")
+        );
     }
 }
