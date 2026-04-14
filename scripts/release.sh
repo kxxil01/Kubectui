@@ -77,6 +77,15 @@ ensure_main_synced() {
   [[ "$local_head" == "$remote_head" ]] || die "local main is not up to date with origin/main"
 }
 
+version_is_greater() {
+  local candidate="$1"
+  local current="$2"
+  [[ "$candidate" != "$current" ]] || return 1
+  local highest
+  highest="$(printf '%s\n%s\n' "$candidate" "$current" | sort -V | tail -n1)"
+  [[ "$highest" == "$candidate" ]]
+}
+
 tag_exists() {
   local tag="$1"
   if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
@@ -102,29 +111,23 @@ remote_branch_exists() {
 
 cleanup_stale_release_branch() {
   local branch="$1"
+  if gh pr list --state open --head "$branch" --json number --jq 'length' | grep -qv '^0$'; then
+    die "release branch $branch already has an open PR"
+  fi
+
   local current_branch
   current_branch="$(git branch --show-current)"
-
   if git show-ref --verify --quiet "refs/heads/$branch"; then
-    if git merge-base --is-ancestor "$branch" origin/main; then
-      if [[ "$current_branch" == "$branch" ]]; then
-        git checkout main >/dev/null
-      fi
-      git branch -D "$branch" >/dev/null
-      echo "Deleted stale local branch $branch"
-    else
-      die "local branch $branch already exists and is not merged into main"
+    if [[ "$current_branch" == "$branch" ]]; then
+      git checkout main >/dev/null
     fi
+    git branch -D "$branch" >/dev/null
+    echo "Deleted existing local branch $branch"
   fi
 
   if remote_branch_exists "$branch"; then
-    git fetch origin "$branch" --depth=1 >/dev/null
-    if git merge-base --is-ancestor FETCH_HEAD origin/main; then
-      git push origin --delete "$branch" >/dev/null
-      echo "Deleted stale remote branch $branch"
-    else
-      die "remote branch $branch already exists and is not merged into main"
-    fi
+    git push origin --delete "$branch" >/dev/null
+    echo "Deleted existing remote branch $branch"
   fi
 }
 
@@ -187,6 +190,9 @@ prepare_release_metadata() {
       ;;
     *)
       new_version="$(bump_version "$current" "$requested")"
+      version_is_greater "$new_version" "$current" || {
+        die "exact version $new_version must be greater than current version $current"
+      }
       ensure_tag_absent "v${new_version}"
       ;;
   esac
