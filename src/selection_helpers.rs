@@ -574,8 +574,64 @@ pub fn prepare_resource_target(
     ) {
         app.selected_idx = selected_idx;
     }
+    configure_extension_target_selection(app, snapshot, resource);
 
     Ok(())
+}
+
+fn configure_extension_target_selection(
+    app: &mut AppState,
+    snapshot: &ClusterSnapshot,
+    resource: &ResourceRef,
+) {
+    let ResourceRef::CustomResource {
+        name,
+        namespace,
+        group,
+        version,
+        kind,
+        plural,
+    } = resource
+    else {
+        return;
+    };
+    if app.view() != AppView::Extensions {
+        return;
+    }
+
+    let Some((crd_idx, crd)) = snapshot
+        .custom_resource_definitions
+        .iter()
+        .enumerate()
+        .find(|(_, crd)| {
+            crd.group == *group
+                && crd.version == *version
+                && crd.kind == *kind
+                && crd.plural == *plural
+        })
+    else {
+        return;
+    };
+
+    app.selected_idx = crd_idx;
+    let same_crd = app.extension_selected_crd.as_deref() == Some(crd.name.as_str());
+    app.extension_selected_crd = Some(crd.name.clone());
+    app.extension_in_instances = false;
+    app.extension_instance_cursor = 0;
+    if !same_crd {
+        app.extension_instances.clear();
+        app.extension_error = None;
+        return;
+    }
+
+    if let Some(instance_idx) = app
+        .extension_instances
+        .iter()
+        .position(|instance| instance.name == *name && instance.namespace == *namespace)
+    {
+        app.extension_instance_cursor = instance_idx;
+        app.extension_in_instances = true;
+    }
 }
 
 /// Navigates to the bookmarked resource's primary view and returns the ref.

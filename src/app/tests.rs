@@ -1756,6 +1756,7 @@ fn resource_ref_helpers_work_for_each_variant() {
     assert_eq!(cr.kind(), "Widget");
     assert_eq!(cr.name(), "my-widget");
     assert_eq!(cr.namespace(), Some("prod"));
+    assert_eq!(cr.primary_view(), Some(AppView::Extensions));
 
     let cr_cluster = ResourceRef::CustomResource {
         name: "global".to_string(),
@@ -1768,6 +1769,7 @@ fn resource_ref_helpers_work_for_each_variant() {
     assert_eq!(cr_cluster.kind(), "ClusterWidget");
     assert_eq!(cr_cluster.name(), "global");
     assert_eq!(cr_cluster.namespace(), None);
+    assert_eq!(cr_cluster.primary_view(), Some(AppView::Extensions));
 
     let flux_helm_release = ResourceRef::CustomResource {
         name: "backend".to_string(),

@@ -25,7 +25,7 @@ use mutation_helpers::*;
 use runtime_helpers::{next_request_id, run_app, start_watch_manager};
 use selection_helpers::*;
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io,
     path::Path,
     time::{Duration, Instant},
@@ -651,9 +651,47 @@ fn refresh_palette_resources(
     app: &mut kubectui::app::AppState,
     snapshot: &kubectui::state::ClusterSnapshot,
 ) {
-    app.command_palette.set_resource_entries(
-        kubectui::global_search::collect_global_resource_search_entries(snapshot),
+    let base_entries = kubectui::global_search::collect_global_resource_search_entries(snapshot);
+    let Some(selected_crd_name) = app.extension_selected_crd.as_deref() else {
+        app.command_palette.set_resource_entries(base_entries);
+        return;
+    };
+    let Some(selected_crd) = snapshot
+        .custom_resource_definitions
+        .iter()
+        .find(|crd| crd.name == selected_crd_name)
+    else {
+        app.command_palette.set_resource_entries(base_entries);
+        return;
+    };
+    if app.extension_instances.is_empty() {
+        app.command_palette.set_resource_entries(base_entries);
+        return;
+    }
+
+    let extension_entries = kubectui::global_search::collect_extension_resource_search_entries(
+        selected_crd,
+        &app.extension_instances,
     );
+    if extension_entries.is_empty() {
+        app.command_palette.set_resource_entries(base_entries);
+        return;
+    }
+
+    let mut merged_entries = Vec::with_capacity(base_entries.len() + extension_entries.len());
+    merged_entries.extend(base_entries.iter().cloned());
+    let mut seen_resources = merged_entries
+        .iter()
+        .map(|entry| entry.resource.clone())
+        .collect::<HashSet<_>>();
+    for entry in extension_entries {
+        if seen_resources.insert(entry.resource.clone()) {
+            merged_entries.push(entry);
+        }
+    }
+
+    app.command_palette
+        .set_resource_entries(std::sync::Arc::new(merged_entries));
 }
 
 fn refresh_palette_activity(app: &mut kubectui::app::AppState) {
@@ -3224,6 +3262,9 @@ pub(crate) async fn run_app_inner(
                 if let Some(result) = result {
                     needs_redraw = true;
                     apply_extension_fetch_result(&mut app, result);
+                    if app.command_palette.is_open() {
+                        refresh_palette_resources(&mut app, &cached_snapshot);
+                    }
                 }
             }
 
@@ -4536,6 +4577,14 @@ pub(crate) async fn run_app_inner(
                     app.command_palette.close();
                     match prepare_resource_target(&mut app, &cached_snapshot, &resource) {
                         Ok(()) => {
+                            if app.view() == kubectui::app::AppView::Extensions {
+                                spawn_extensions_fetch(
+                                    &client,
+                                    &mut app,
+                                    &cached_snapshot,
+                                    &extension_fetch_tx,
+                                );
+                            }
                             open_detail_for_resource(
                                 &mut app,
                                 &cached_snapshot,
