@@ -77,13 +77,21 @@ ensure_main_synced() {
   [[ "$local_head" == "$remote_head" ]] || die "local main is not up to date with origin/main"
 }
 
-ensure_tag_absent() {
+tag_exists() {
   local tag="$1"
   if git rev-parse "refs/tags/$tag" >/dev/null 2>&1; then
-    die "tag $tag already exists"
+    return 0
   fi
   if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
-    die "remote tag $tag already exists"
+    return 0
+  fi
+  return 1
+}
+
+ensure_tag_absent() {
+  local tag="$1"
+  if tag_exists "$tag"; then
+    die "tag $tag already exists (local or remote)"
   fi
 }
 
@@ -119,16 +127,38 @@ release_pr_body() {
   printf '## Why\n- prepare the version bump for %s\n- keep release preparation on the normal branch and PR path\n\n## How\n- update Cargo.toml and Cargo.lock to %s\n- run the standard quality gate before creating the release PR\n\n## Tests\n- `cargo fmt --all -- --check`\n- `cargo clippy --all-targets --all-features -- -D warnings`\n- `cargo test --all-targets --all-features`\n' "$tag" "$new_version"
 }
 
+resolve_next_available_version() {
+  local current="$1"
+  local part="$2"
+  local candidate attempts=0
+
+  candidate="$(bump_version "$current" "$part")"
+  while tag_exists "v${candidate}"; do
+    attempts=$((attempts + 1))
+    [[ $attempts -le 100 ]] || die "too many occupied tags while resolving next ${part} version"
+    candidate="$(bump_version "$candidate" "$part")"
+  done
+  printf '%s\n' "$candidate"
+}
+
 prepare_release_metadata() {
   local requested="$1"
   local current new_version tag release_branch
 
   current="$(current_version)"
-  new_version="$(bump_version "$current" "$requested")"
+  case "$requested" in
+    patch|minor|major)
+      new_version="$(resolve_next_available_version "$current" "$requested")"
+      ;;
+    *)
+      new_version="$(bump_version "$current" "$requested")"
+      ensure_tag_absent "v${new_version}"
+      ;;
+  esac
+
   tag="v${new_version}"
   release_branch="chore/release-${tag}"
 
-  ensure_tag_absent "$tag"
   ensure_release_branch_absent "$release_branch"
 
   echo "$current" "$new_version" "$tag" "$release_branch"

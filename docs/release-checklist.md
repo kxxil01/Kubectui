@@ -38,3 +38,4 @@ Optional follow-up checks when credentials are present:
    - `scripts/release.sh <exact-version>`
 
 The script handles everything automatically: quality gate, release PR, direct merge, and tag publish.
+For `patch|minor|major`, if the computed tag already exists, the script auto-advances to the next available version.
