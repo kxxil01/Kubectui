@@ -37,5 +37,6 @@ Optional follow-up checks when credentials are present:
    - `scripts/release.sh major`
    - `scripts/release.sh <exact-version>`
 
-The script handles everything automatically: quality gate, release PR, direct merge, and tag publish.
+The script handles everything automatically: quality gate, direct commit on `main`, push `main`, and tag publish.
 For `patch|minor|major`, if the computed tag already exists, the script auto-advances to the next available version.
+Before tagging, the script verifies `origin/main` version matches intended release version.
