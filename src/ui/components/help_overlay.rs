@@ -22,24 +22,33 @@ pub struct HelpOverlay {
     last_visible_height: Cell<usize>,
 }
 
-const DETAIL_BASE_BINDINGS: &[(&str, &str)] = &[
+const DETAIL_FALLBACK_BINDINGS: &[(&str, &str)] = &[
+    ("D", "View config drift / drain node"),
+    ("h", "View Helm revision history / rollback"),
+    ("O", "View rollout control center"),
+    ("A", "Open RBAC access review for this resource"),
     ("y", "View YAML"),
     ("o", "View decoded Secret data"),
     ("B", "Toggle bookmark"),
     ("v", "View timeline"),
     ("l", "View logs"),
+    ("g", "Launch debug container / node debug shell"),
     ("x", "Exec into pod"),
     ("f", "Port forward"),
     ("s", "Scale replicas"),
     ("p", "Probe panel"),
-    ("R", "Restart rollout"),
+    ("R", "Restart rollout / reconcile Flux resource"),
     ("e", "Edit YAML"),
     ("d", "Delete resource"),
-    ("F", "Force delete (in confirm dialog)"),
+    ("F", "Force delete/drain (in confirm dialog)"),
     ("T", "Trigger CronJob"),
     ("S", "Pause/resume CronJob"),
     ("N", "View network policy analysis"),
+    ("C", "Check pod reachability (policy intent)"),
+    ("t", "Open traffic debug (service / ingress / DNS path)"),
     ("w", "View relations"),
+    ("c", "Cordon node"),
+    ("u", "Uncordon node"),
 ];
 
 const SECTIONS: &[(&str, &[(&str, &str)])] = &[
@@ -70,7 +79,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("b", "Toggle workbench"),
             (
                 "[ / ] or Ctrl+Shift+Tab / Ctrl+Tab",
-                "Previous / next workbench tab",
+                "Previous / next workbench tab (except pod/workload logs tabs)",
             ),
             ("Ctrl+W", "Close workbench tab"),
             ("Ctrl+Up / Ctrl+Down", "Resize workbench"),
@@ -104,6 +113,16 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     (
+        "Flux",
+        &[
+            (
+                "R",
+                "Reconcile selected Flux resource (Flux views/detail only)",
+            ),
+            ("Ctrl+R", "Refresh data"),
+        ],
+    ),
+    (
         "Workbench (focused)",
         &[
             ("z", "Maximize / restore"),
@@ -113,6 +132,18 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("g / G", "Jump to top / bottom"),
             ("PageDown / PageUp", "Scroll by page"),
             ("Esc", "Un-maximize or blur"),
+        ],
+    ),
+    (
+        "Helm History (workbench)",
+        &[
+            ("Enter", "Open values diff for selected revision"),
+            ("R", "Open rollback confirmation for selected revision"),
+            (
+                "y / Enter / R",
+                "Confirm rollback when confirmation is open",
+            ),
+            ("Esc", "Cancel rollback confirmation / close values diff"),
         ],
     ),
     (
@@ -403,36 +434,101 @@ fn help_overlay_window(
 }
 
 fn detail_bindings(detail: Option<&DetailViewState>) -> Vec<(&'static str, &'static str)> {
-    let mut bindings = Vec::with_capacity(DETAIL_BASE_BINDINGS.len() + 4);
-    if detail.is_some_and(|detail| {
-        detail.supports_action(DetailAction::ViewConfigDrift)
-            && !detail.supports_action(DetailAction::Drain)
-    }) {
-        bindings.push(("D", "View config drift (live vs last-applied)"));
-    } else if detail.is_some_and(|detail| detail.supports_action(DetailAction::Drain)) {
+    let Some(detail) = detail else {
+        return DETAIL_FALLBACK_BINDINGS.to_vec();
+    };
+
+    let mut bindings = Vec::with_capacity(DETAIL_FALLBACK_BINDINGS.len());
+
+    if detail.supports_action(DetailAction::Drain) {
         bindings.push(("D", "Drain node (with confirmation)"));
+    } else if detail.supports_action(DetailAction::ViewConfigDrift) {
+        bindings.push(("D", "View config drift (live vs last-applied)"));
     }
-    if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewHelmHistory)) {
+    if detail.supports_action(DetailAction::ViewHelmHistory) {
         bindings.push(("h", "View Helm revision history / rollback"));
     }
-    if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewRollout)) {
+    if detail.supports_action(DetailAction::ViewRollout) {
         bindings.push(("O", "View rollout control center"));
     }
-    if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewAccessReview)) {
+    if detail.supports_action(DetailAction::ViewAccessReview) {
         bindings.push(("A", "Open RBAC access review for this resource"));
     }
-    if detail.is_some_and(|detail| detail.supports_action(DetailAction::NodeDebugShell)) {
+    if detail.supports_action(DetailAction::ViewYaml) {
+        bindings.push(("y", "View YAML"));
+    }
+    if detail.supports_action(DetailAction::ViewDecodedSecret) {
+        bindings.push(("o", "View decoded Secret data"));
+    }
+    if detail.supports_action(DetailAction::ToggleBookmark) {
+        bindings.push(("B", "Toggle bookmark"));
+    }
+    if detail.supports_action(DetailAction::ViewEvents) {
+        bindings.push(("v", "View timeline"));
+    }
+    if detail.supports_action(DetailAction::Logs) {
+        bindings.push(("l", "View logs"));
+    }
+    if detail.supports_action(DetailAction::NodeDebugShell) {
         bindings.push(("g", "Launch node debug shell"));
-    } else if detail.is_some_and(|detail| detail.supports_action(DetailAction::DebugContainer)) {
+    } else if detail.supports_action(DetailAction::DebugContainer) {
         bindings.push(("g", "Launch debug container"));
     }
-    if detail.is_some_and(|detail| detail.supports_action(DetailAction::CheckNetworkConnectivity)) {
+    if detail.supports_action(DetailAction::Exec) {
+        bindings.push(("x", "Exec into pod"));
+    }
+    if detail.supports_action(DetailAction::PortForward) {
+        bindings.push(("f", "Port forward"));
+    }
+    if detail.supports_action(DetailAction::Scale) {
+        bindings.push(("s", "Scale replicas"));
+    }
+    if detail.supports_action(DetailAction::Probes) {
+        bindings.push(("p", "Probe panel"));
+    }
+    if detail.supports_action(DetailAction::Restart) {
+        bindings.push(("R", "Restart rollout"));
+    } else if detail.supports_action(DetailAction::FluxReconcile) {
+        bindings.push(("R", "Reconcile Flux resource"));
+    }
+    if detail.supports_action(DetailAction::EditYaml) {
+        bindings.push(("e", "Edit YAML"));
+    }
+    if detail.supports_action(DetailAction::Delete) {
+        bindings.push(("d", "Delete resource"));
+    }
+    if detail.confirm_drain {
+        bindings.push(("F", "Force drain (in confirm dialog)"));
+    } else if detail.confirm_delete {
+        bindings.push(("F", "Force delete (in confirm dialog)"));
+    }
+    if detail.supports_action(DetailAction::Trigger) {
+        bindings.push(("T", "Trigger CronJob"));
+    }
+    if detail.supports_action(DetailAction::SuspendCronJob) {
+        bindings.push(("S", "Pause CronJob"));
+    } else if detail.supports_action(DetailAction::ResumeCronJob) {
+        bindings.push(("S", "Resume CronJob"));
+    }
+    if detail.supports_action(DetailAction::ViewNetworkPolicies) {
+        bindings.push(("N", "View network policy analysis"));
+    }
+    if detail.supports_action(DetailAction::CheckNetworkConnectivity) {
         bindings.push(("C", "Check pod reachability (policy intent)"));
     }
-    if detail.is_some_and(|detail| detail.supports_action(DetailAction::ViewTrafficDebug)) {
+    if detail.supports_action(DetailAction::ViewTrafficDebug) {
         bindings.push(("t", "Open traffic debug (service / ingress / DNS path)"));
     }
-    bindings.extend_from_slice(DETAIL_BASE_BINDINGS);
+    if detail.supports_action(DetailAction::ViewRelationships) {
+        bindings.push(("w", "View relations"));
+    }
+    if detail.supports_action(DetailAction::Cordon) {
+        bindings.push(("c", "Cordon node"));
+    }
+    if detail.supports_action(DetailAction::Uncordon) {
+        bindings.push(("u", "Uncordon node"));
+    }
+
     bindings
 }
 
@@ -568,5 +664,114 @@ mod tests {
         let bindings = detail_bindings(Some(&detail));
         assert!(bindings.contains(&("t", "Open traffic debug (service / ingress / DNS path)")));
         assert!(!bindings.contains(&("C", "Check pod reachability (policy intent)")));
+    }
+
+    #[test]
+    fn detail_bindings_hide_unsupported_shortcuts_for_current_resource() {
+        let detail = DetailViewState {
+            resource: Some(ResourceRef::Deployment(
+                "api".to_string(),
+                "default".to_string(),
+            )),
+            ..DetailViewState::default()
+        };
+
+        let bindings = detail_bindings(Some(&detail));
+        assert!(!bindings.contains(&("o", "View decoded Secret data")));
+        assert!(!bindings.contains(&("x", "Exec into pod")));
+        assert!(!bindings.contains(&("p", "Probe panel")));
+        assert!(bindings.contains(&("R", "Restart rollout")));
+    }
+
+    #[test]
+    fn detail_bindings_use_flux_specific_r_label_for_flux_resource() {
+        let detail = DetailViewState {
+            resource: Some(ResourceRef::CustomResource {
+                name: "apps".to_string(),
+                namespace: Some("flux-system".to_string()),
+                group: "kustomize.toolkit.fluxcd.io".to_string(),
+                version: "v1".to_string(),
+                kind: "Kustomization".to_string(),
+                plural: "kustomizations".to_string(),
+            }),
+            ..DetailViewState::default()
+        };
+
+        let bindings = detail_bindings(Some(&detail));
+        assert!(bindings.contains(&("R", "Reconcile Flux resource")));
+        assert!(!bindings.contains(&("R", "Restart rollout")));
+    }
+
+    #[test]
+    fn detail_bindings_force_shortcut_matches_active_confirmation_mode() {
+        let node_detail = DetailViewState {
+            resource: Some(ResourceRef::Node("node-0".to_string())),
+            confirm_drain: true,
+            ..DetailViewState::default()
+        };
+
+        let node_bindings = detail_bindings(Some(&node_detail));
+        assert!(node_bindings.contains(&("F", "Force drain (in confirm dialog)")));
+        assert!(!node_bindings.contains(&("F", "Force delete (in confirm dialog)")));
+    }
+
+    #[test]
+    fn global_bracket_shortcut_help_mentions_logs_tab_exception() {
+        let global = SECTIONS
+            .iter()
+            .find(|(title, _)| *title == "Global")
+            .expect("global section exists")
+            .1;
+
+        assert!(
+            global.iter().any(|(key, desc)| {
+                *key == "[ / ] or Ctrl+Shift+Tab / Ctrl+Tab"
+                    && desc.contains("except pod/workload logs tabs")
+            }),
+            "global bracket shortcut note must mention logs-tab exception"
+        );
+    }
+
+    #[test]
+    fn helm_history_help_lists_diff_and_rollback_shortcuts() {
+        let section = SECTIONS
+            .iter()
+            .find(|(title, _)| *title == "Helm History (workbench)")
+            .expect("helm history section exists")
+            .1;
+
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "Enter" && desc.contains("values diff"))
+        );
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "R" && desc.contains("rollback confirmation"))
+        );
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "y / Enter / R" && desc.contains("Confirm rollback"))
+        );
+    }
+
+    #[test]
+    fn flux_help_lists_reconcile_and_refresh_shortcuts() {
+        let section = SECTIONS
+            .iter()
+            .find(|(title, _)| *title == "Flux")
+            .expect("flux section exists")
+            .1;
+
+        assert!(section.iter().any(|(key, desc)| {
+            *key == "R" && desc.contains("Reconcile selected Flux resource")
+        }));
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "Ctrl+R" && desc.contains("Refresh data"))
+        );
     }
 }

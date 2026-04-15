@@ -63,7 +63,7 @@ use kubectui::{
     secret::{decode_secret_yaml, encode_secret_yaml},
     state::{
         ClusterSnapshot, DataPhase, GlobalState, RefreshScope,
-        watch::{WatchUpdate, WatchedResource},
+        watch::{WatchPayload, WatchUpdate, WatchedResource},
     },
     ui,
     workbench::{RunbookTabState, WorkbenchTabKey, WorkbenchTabState},
@@ -80,6 +80,10 @@ type AllContainerLogsInfo = (
     Vec<(String, String)>,
     ResourceRef,
 );
+
+fn watch_update_needs_flux_refresh(update: &WatchUpdate) -> bool {
+    update.resource == WatchedResource::Flux && matches!(&update.data, WatchPayload::FluxChanged)
+}
 
 #[derive(Clone)]
 struct NodeDebugSessionRuntime {
@@ -2066,8 +2070,21 @@ pub(crate) async fn run_app_inner(
             Some(update) = watch_rx.recv() => {
                 if update.context_generation == refresh_state.context_generation {
                     let watched_resource = update.resource;
+                    let flux_changed = watch_update_needs_flux_refresh(&update);
                     global_state.apply_watch_update(update);
-                    snapshot_dirty = true;
+                    if flux_changed {
+                        request_refresh(
+                            &refresh_tx,
+                            &mut global_state,
+                            &client,
+                            namespace_scope(app.get_namespace()).map(str::to_string),
+                            RefreshDispatch::new(RefreshScope::FLUX, RefreshScope::FLUX),
+                            &mut refresh_state,
+                            &mut snapshot_dirty,
+                        );
+                    } else {
+                        snapshot_dirty = true;
+                    }
                     if watched_resource == WatchedResource::Namespaces {
                         needs_redraw = true;
                         app.set_available_namespaces(global_state.namespaces().to_vec());

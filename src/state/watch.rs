@@ -1,4 +1,4 @@
-//! Watch-backed resource caches for core Kubernetes resources.
+//! Watch-backed resource caches for Kubernetes resources.
 //!
 //! Replaces steady-state polling with Kubernetes watch streams for lower
 //! API cost and near-instant propagation of cluster changes. Watch state
@@ -10,6 +10,7 @@ use futures::TryStreamExt;
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
 use k8s_openapi::api::batch::v1::{CronJob, Job};
 use k8s_openapi::api::core::v1::{Namespace, Node, Pod, ReplicationController, Service};
+use kube::api::{ApiResource, DynamicObject, GroupVersionKind};
 use kube::core::PartialObjectMeta;
 use kube::runtime::WatchStreamExt;
 use kube::runtime::watcher::{self, Event};
@@ -17,6 +18,7 @@ use kube::{Api, Client, ResourceExt};
 use tokio::sync::mpsc;
 use tracing::warn;
 
+use crate::k8s::client::{FluxWatchTarget, K8sClient, is_forbidden_error, is_missing_api_error};
 use crate::k8s::conversions::{
     cronjob_to_info, daemonset_to_info, deployment_to_info, job_to_info,
     namespace_metadata_to_info, node_to_info, pod_to_info, replicaset_to_info,
@@ -76,6 +78,7 @@ pub enum WatchedResource {
     Jobs,
     CronJobs,
     Namespaces,
+    Flux,
 }
 
 /// A snapshot update published by a watcher task.
@@ -100,6 +103,7 @@ pub enum WatchPayload {
     Jobs(Vec<JobInfo>),
     CronJobs(Vec<CronJobInfo>),
     Namespaces(Vec<NamespaceInfo>),
+    FluxChanged,
     /// A watcher encountered an error or terminated.
     Error {
         message: String,
@@ -406,6 +410,164 @@ macro_rules! define_watcher {
     }};
 }
 
+fn flux_watch_token(obj: &DynamicObject) -> String {
+    let resource_version = obj.metadata.resource_version.as_deref().unwrap_or_default();
+    let generation = obj.metadata.generation.unwrap_or_default();
+    format!("{resource_version}:{generation}")
+}
+
+fn flux_watch_error_is_terminal(err: &watcher::Error) -> bool {
+    match err {
+        watcher::Error::InitialListFailed(source)
+        | watcher::Error::WatchStartFailed(source)
+        | watcher::Error::WatchFailed(source) => {
+            is_forbidden_error(source) || is_missing_api_error(source)
+        }
+        watcher::Error::WatchError(status) => status.code == 403 || status.code == 404,
+        watcher::Error::NoResourceVersion => false,
+    }
+}
+
+fn process_flux_event(store: &mut ResourceStore<String>, event: Event<DynamicObject>) -> bool {
+    match event {
+        Event::Init => {
+            store.begin_init();
+            false
+        }
+        Event::InitApply(obj) => {
+            let uid = obj.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping Flux resource with empty UID during init",
+                );
+                return false;
+            }
+            store.apply_init_page(uid, flux_watch_token(&obj));
+            false
+        }
+        Event::InitDone => store.commit_init(),
+        Event::Apply(obj) => {
+            let uid = obj.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping Flux resource with empty UID on apply",
+                );
+                return false;
+            }
+            store.apply_event(uid, flux_watch_token(&obj))
+        }
+        Event::Delete(obj) => {
+            let uid = obj.uid().unwrap_or_default();
+            if uid.is_empty() {
+                warn!(
+                    name = obj.metadata.name.as_deref().unwrap_or("<unknown>"),
+                    "skipping Flux resource with empty UID on delete",
+                );
+                return false;
+            }
+            store.remove(&uid)
+        }
+    }
+}
+
+fn start_flux_watch(
+    client: Client,
+    session: WatchSessionKey,
+    watch_tx: mpsc::Sender<WatchUpdate>,
+    watcher_config: watcher::Config,
+    mut cancel_rx: tokio::sync::watch::Receiver<()>,
+    target: FluxWatchTarget,
+) {
+    tokio::spawn(async move {
+        let gvk = GroupVersionKind::gvk(target.group, target.version, target.kind);
+        let mut ar = ApiResource::from_gvk(&gvk);
+        ar.plural = target.plural.to_string();
+        let api: Api<DynamicObject> = if target.namespaced {
+            match &session.namespace {
+                Some(namespace) => Api::namespaced_with(client, namespace, &ar),
+                None => Api::all_with(client, &ar),
+            }
+        } else {
+            Api::all_with(client, &ar)
+        };
+        let stream = watcher::watcher(api, watcher_config).default_backoff();
+        let mut store = ResourceStore::<String>::new();
+        tokio::pin!(stream);
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel_rx.changed() => break,
+                item = stream.try_next() => {
+                    match item {
+                        Ok(Some(event)) => {
+                            if process_flux_event(&mut store, event)
+                                && watch_tx
+                                    .send(WatchUpdate {
+                                        resource: WatchedResource::Flux,
+                                        context_generation: session.context_generation,
+                                        data: WatchPayload::FluxChanged,
+                                    })
+                                    .await
+                                    .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        Ok(None) => {
+                            warn!(
+                                group = target.group,
+                                kind = target.kind,
+                                version = target.version,
+                                "flux watch stream ended unexpectedly",
+                            );
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Flux,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    message: format!(
+                                        "flux watch stream terminated for {}/{}/{}",
+                                        target.group, target.version, target.kind
+                                    ),
+                                },
+                            }).await;
+                            break;
+                        }
+                        Err(err) if flux_watch_error_is_terminal(&err) => {
+                            warn!(
+                                error = %err,
+                                group = target.group,
+                                kind = target.kind,
+                                version = target.version,
+                                "flux watch unavailable; watcher stopped",
+                            );
+                            break;
+                        }
+                        Err(err) => {
+                            warn!(
+                                error = %err,
+                                group = target.group,
+                                kind = target.kind,
+                                version = target.version,
+                                "flux watch stream error",
+                            );
+                            let _ = watch_tx.send(WatchUpdate {
+                                resource: WatchedResource::Flux,
+                                context_generation: session.context_generation,
+                                data: WatchPayload::Error {
+                                    message: err.to_string(),
+                                },
+                            }).await;
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
 define_watcher! {
     name: pod,
     k8s_type: Pod,
@@ -530,93 +692,128 @@ impl WatchManager {
         &self.session
     }
 
-    /// Starts all watch tasks for core resources.
+    /// Starts all watch tasks for core resources and Flux CRDs.
     pub fn start_watches(
         &mut self,
-        client: Client,
+        client: &K8sClient,
         watch_tx: mpsc::Sender<WatchUpdate>,
         watcher_config: watcher::Config,
     ) {
+        let kube_client = client.get_client();
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(());
         self.cancel_tx = Some(cancel_tx);
 
         start_pod_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_deployment_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_replicaset_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_statefulset_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_daemonset_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_service_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_node_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_replication_controller_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_job_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_cronjob_watch(
-            client.clone(),
+            kube_client.clone(),
             self.session.clone(),
             watch_tx.clone(),
             watcher_config.clone(),
             cancel_rx.clone(),
         );
         start_namespace_watch(
-            client,
+            kube_client.clone(),
             self.session.clone(),
-            watch_tx,
-            watcher_config,
-            cancel_rx,
+            watch_tx.clone(),
+            watcher_config.clone(),
+            cancel_rx.clone(),
         );
+
+        // Discover Flux targets in background so watch-manager startup never
+        // blocks the UI event loop on CRD probing.
+        let flux_client = client.clone();
+        let flux_session = self.session.clone();
+        let flux_watch_tx = watch_tx.clone();
+        let flux_watcher_config = watcher_config.clone();
+        let mut flux_cancel_rx = cancel_rx.clone();
+        let flux_kube_client = kube_client.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = flux_cancel_rx.changed() => {}
+                targets = flux_client.discover_flux_watch_targets() => match targets {
+                    Ok(targets) => {
+                        if flux_cancel_rx.has_changed().unwrap_or(true) {
+                            return;
+                        }
+                        for target in targets {
+                            start_flux_watch(
+                                flux_kube_client.clone(),
+                                flux_session.clone(),
+                                flux_watch_tx.clone(),
+                                flux_watcher_config.clone(),
+                                flux_cancel_rx.clone(),
+                                target,
+                            );
+                        }
+                    }
+                    Err(err) => {
+                        warn!(error = %err, "failed discovering Flux watch targets; Flux watcher disabled");
+                    }
+                }
+            }
+        });
     }
 
     /// Stops all running watch tasks.
@@ -679,6 +876,20 @@ mod tests {
                 ..Default::default()
             },
             ..Default::default()
+        }
+    }
+
+    fn make_flux_object(name: &str, uid: &str, resource_version: &str) -> DynamicObject {
+        DynamicObject {
+            types: None,
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                namespace: Some("flux-system".to_string()),
+                uid: Some(uid.to_string()),
+                resource_version: Some(resource_version.to_string()),
+                ..Default::default()
+            },
+            data: serde_json::json!({}),
         }
     }
 
@@ -867,6 +1078,33 @@ mod tests {
         );
         assert_eq!(parse_kubernetes_minor_version("v1.35+"), Some((1, 35)));
         assert_eq!(parse_kubernetes_minor_version("invalid"), None);
+    }
+
+    #[test]
+    fn process_flux_event_filters_identical_apply() {
+        let mut store = ResourceStore::<String>::new();
+        assert!(!process_flux_event(&mut store, Event::Init));
+        assert!(!process_flux_event(
+            &mut store,
+            Event::InitApply(make_flux_object("apps", "uid-a", "10"))
+        ));
+        assert!(process_flux_event(&mut store, Event::InitDone));
+        assert!(!process_flux_event(
+            &mut store,
+            Event::Apply(make_flux_object("apps", "uid-a", "10"))
+        ));
+        assert!(process_flux_event(
+            &mut store,
+            Event::Apply(make_flux_object("apps", "uid-a", "11"))
+        ));
+        assert!(process_flux_event(
+            &mut store,
+            Event::Delete(make_flux_object("apps", "uid-a", "11"))
+        ));
+        assert!(!process_flux_event(
+            &mut store,
+            Event::Delete(make_flux_object("apps", "uid-a", "11"))
+        ));
     }
 
     // ── process_pod_event tests ──

@@ -1097,6 +1097,10 @@ impl GlobalState {
                 watch::WatchPayload::Namespaces(items) => {
                     apply_watched!(snap, changed, namespace_list, items);
                 }
+                watch::WatchPayload::FluxChanged => {
+                    // Flux watch updates are edge-triggered refresh signals.
+                    // Snapshot data stays canonical in refresh pipeline.
+                }
                 watch::WatchPayload::Error { .. } => {
                     // Watcher errors are informational — do not clear existing
                     // snapshot data. The watch stream's built-in backoff will
@@ -3418,5 +3422,31 @@ mod tests {
             state.namespaces,
             vec!["default".to_string(), "prod".to_string()]
         );
+    }
+
+    #[test]
+    fn apply_watch_update_flux_changed_keeps_snapshot_canonical() {
+        let mut state = GlobalState::default();
+        Arc::make_mut(&mut state.snapshot).flux_resources = vec![FluxResourceInfo {
+            name: "apps".to_string(),
+            namespace: Some("flux-system".to_string()),
+            kind: "Kustomization".to_string(),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            plural: "kustomizations".to_string(),
+            ..FluxResourceInfo::default()
+        }];
+        let initial_version = state.snapshot.snapshot_version;
+
+        let update = watch::WatchUpdate {
+            resource: watch::WatchedResource::Flux,
+            context_generation: 0,
+            data: watch::WatchPayload::FluxChanged,
+        };
+        state.apply_watch_update(update);
+
+        assert_eq!(state.snapshot.flux_resources.len(), 1);
+        assert_eq!(state.snapshot.flux_resources[0].name, "apps");
+        assert_eq!(state.snapshot.snapshot_version, initial_version);
     }
 }
