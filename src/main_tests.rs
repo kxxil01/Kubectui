@@ -240,6 +240,67 @@ fn watch_update_needs_flux_refresh_ignores_non_flux_payloads() {
 }
 
 #[test]
+fn should_refresh_from_flux_watch_for_flux_views() {
+    assert!(super::should_refresh_from_flux_watch(
+        AppView::FluxCDAll,
+        &[]
+    ));
+}
+
+#[test]
+fn should_refresh_from_flux_watch_for_issues_views() {
+    assert!(super::should_refresh_from_flux_watch(AppView::Issues, &[]));
+    assert!(super::should_refresh_from_flux_watch(
+        AppView::HealthReport,
+        &[]
+    ));
+}
+
+#[test]
+fn should_refresh_from_flux_watch_when_reconcile_verification_pending() {
+    let pending = vec![PendingFluxReconcileVerification {
+        action_history_id: 1,
+        resource: ResourceRef::CustomResource {
+            name: "apps".to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+        },
+        resource_label: "Kustomization/apps".to_string(),
+        baseline: None,
+        deadline: Instant::now() + Duration::from_secs(30),
+    }];
+
+    assert!(super::should_refresh_from_flux_watch(
+        AppView::Pods,
+        &pending
+    ));
+}
+
+#[test]
+fn should_refresh_from_flux_watch_ignores_non_flux_views_without_pending_verification() {
+    assert!(!super::should_refresh_from_flux_watch(AppView::Pods, &[]));
+}
+
+#[test]
+fn should_mark_snapshot_dirty_after_watch_when_non_flux_update() {
+    assert!(super::should_mark_snapshot_dirty_after_watch(false, false));
+    assert!(super::should_mark_snapshot_dirty_after_watch(false, true));
+}
+
+#[test]
+fn should_mark_snapshot_dirty_after_watch_when_flux_refresh_requested() {
+    assert!(super::should_mark_snapshot_dirty_after_watch(true, true));
+}
+
+#[test]
+fn should_mark_snapshot_dirty_after_watch_skips_flux_no_refresh_case() {
+    assert!(!super::should_mark_snapshot_dirty_after_watch(true, false));
+}
+
+#[test]
 fn periodic_redraw_triggers_on_minute_bucket_change() {
     let app = AppState::default();
     let snapshot = ClusterSnapshot::default();
@@ -1003,13 +1064,13 @@ fn pods_and_nodes_refresh_profiles_backfill_metrics() {
 }
 
 #[test]
-fn services_and_issues_refresh_profiles_split_background_scopes() {
+fn services_and_issues_refresh_profiles_keep_services_scope_lightweight() {
     let services = refresh_options_for_view(AppView::Services, false, false);
     let issues = refresh_options_for_view(AppView::Issues, false, false);
     let health_report = refresh_options_for_view(AppView::HealthReport, false, false);
 
     assert_eq!(services.primary_scope, RefreshScope::SERVICES);
-    assert!(services.options.scope.contains(RefreshScope::NETWORK));
+    assert_eq!(services.options.scope, RefreshScope::SERVICES);
     assert_eq!(issues.primary_scope, RefreshScope::CORE_OVERVIEW);
     assert!(
         issues

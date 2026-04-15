@@ -22,7 +22,7 @@ pub(crate) async fn start_watch_manager(
     app: &AppState,
     watch_tx: &tokio::sync::mpsc::Sender<WatchUpdate>,
 ) -> WatchManager {
-    let version = client.fetch_cluster_version().await.ok();
+    let version = client.cached_cluster_version().await;
     let watcher_config = kubectui::state::watch::recommended_watch_config(version.as_ref());
     let mut watch_manager = WatchManager::new(WatchSessionKey {
         context_generation,
