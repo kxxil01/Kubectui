@@ -26,7 +26,10 @@ use kubectui::{
         K8sEventInfo, NodeInfo, PodInfo, VulnerabilityReportInfo, VulnerabilitySummaryCounts,
     },
     policy::DetailAction,
-    state::{ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope},
+    state::{
+        ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope,
+        watch::{WatchPayload, WatchUpdate, WatchedResource},
+    },
     time::{AppTimestamp, now},
     ui::components::{
         debug_container_dialog::DebugContainerDialogState, node_debug_dialog::NodeDebugDialogState,
@@ -214,6 +217,26 @@ fn selected_flux_reconcile_resource_uses_detail_resource_when_present() {
     assert_eq!(resource.kind(), "HelmRelease");
     assert_eq!(resource.name(), "backend");
     assert_eq!(resource.namespace(), Some("flux-system"));
+}
+
+#[test]
+fn watch_update_needs_flux_refresh_for_flux_change_payload() {
+    let update = WatchUpdate {
+        resource: WatchedResource::Flux,
+        context_generation: 1,
+        data: WatchPayload::FluxChanged,
+    };
+    assert!(super::watch_update_needs_flux_refresh(&update));
+}
+
+#[test]
+fn watch_update_needs_flux_refresh_ignores_non_flux_payloads() {
+    let update = WatchUpdate {
+        resource: WatchedResource::Pods,
+        context_generation: 1,
+        data: WatchPayload::Pods(vec![]),
+    };
+    assert!(!super::watch_update_needs_flux_refresh(&update));
 }
 
 #[test]

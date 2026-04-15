@@ -1762,6 +1762,15 @@ struct FluxApiTarget {
     version: &'static str,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct FluxWatchTarget {
+    pub group: &'static str,
+    pub version: &'static str,
+    pub kind: &'static str,
+    pub plural: &'static str,
+    pub namespaced: bool,
+}
+
 const FLUX_RESOURCE_KIND_SPECS: &[FluxResourceKindSpec] = &[
     FluxResourceKindSpec {
         kind: "Kustomization",
@@ -2215,6 +2224,21 @@ impl K8sClient {
                 .then_with(|| left.name.cmp(&right.name))
         });
         Ok(out)
+    }
+
+    pub(crate) async fn discover_flux_watch_targets(&self) -> Result<Vec<FluxWatchTarget>> {
+        Ok(self
+            .discover_flux_targets()
+            .await?
+            .into_iter()
+            .map(|target| FluxWatchTarget {
+                group: target.spec.group,
+                version: target.version,
+                kind: target.spec.kind,
+                plural: target.spec.plural,
+                namespaced: target.spec.namespaced,
+            })
+            .collect())
     }
 
     async fn invalidate_flux_targets_cache(&self) {

@@ -29,7 +29,7 @@ pub(crate) async fn start_watch_manager(
         cluster_context: app.current_context_name.clone(),
         namespace: namespace_scope(app.get_namespace()).map(str::to_string),
     });
-    watch_manager.start_watches(client.get_client(), watch_tx.clone(), watcher_config);
+    watch_manager.start_watches(client, watch_tx.clone(), watcher_config);
     watch_manager
 }
 
