@@ -168,6 +168,21 @@ fn flux_view_uppercase_r_triggers_reconcile_without_overriding_ctrl_r() {
 }
 
 #[test]
+fn flux_alerts_view_uppercase_r_is_noop_but_ctrl_r_still_refreshes() {
+    let mut app = AppState::default();
+    app.view = AppView::FluxCDAlerts;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('R'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::CONTROL)),
+        AppAction::RefreshData
+    );
+}
+
+#[test]
 fn flux_detail_uppercase_r_triggers_reconcile_for_supported_resource() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -200,6 +215,28 @@ fn unsupported_flux_detail_uppercase_r_is_noop() {
             kind: "Alert".to_string(),
             plural: "alerts".to_string(),
         }),
+        ..DetailViewState::default()
+    });
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('R'))),
+        AppAction::None
+    );
+}
+
+#[test]
+fn flux_detail_uppercase_r_is_blocked_when_confirmation_dialog_open() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::CustomResource {
+            name: "apps".to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+        }),
+        confirm_delete: true,
         ..DetailViewState::default()
     });
 
@@ -2403,6 +2440,90 @@ fn h_key_is_noop_for_pod_detail() {
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
     assert_eq!(action, AppAction::None);
+}
+
+fn app_with_helm_history_workbench_tab() -> AppState {
+    use crate::k8s::dtos::HelmReleaseRevisionInfo;
+    use crate::workbench::{HelmHistoryTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+
+    let resource = ResourceRef::HelmRelease("web".to_string(), "default".to_string());
+    let mut tab = HelmHistoryTabState::new(resource);
+    tab.loading = false;
+    tab.revisions = vec![
+        HelmReleaseRevisionInfo {
+            revision: 5,
+            ..HelmReleaseRevisionInfo::default()
+        },
+        HelmReleaseRevisionInfo {
+            revision: 4,
+            ..HelmReleaseRevisionInfo::default()
+        },
+    ];
+    tab.current_revision = Some(5);
+    tab.selected = 1;
+
+    app.workbench.open_tab(WorkbenchTabState::HelmHistory(tab));
+    app
+}
+
+#[test]
+fn helm_history_enter_opens_values_diff_for_selected_target_revision() {
+    let mut app = app_with_helm_history_workbench_tab();
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::OpenHelmValuesDiff);
+}
+
+#[test]
+fn helm_history_uppercase_r_opens_rollback_confirmation() {
+    let mut app = app_with_helm_history_workbench_tab();
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT));
+    assert_eq!(action, AppAction::ConfirmHelmRollback);
+}
+
+#[test]
+fn helm_history_confirm_mode_executes_rollback_on_enter_y_or_r() {
+    let mut app = app_with_helm_history_workbench_tab();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &mut tab.state
+    {
+        helm_tab.confirm_rollback_revision = Some(4);
+    }
+
+    for key in [
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('y'), KeyModifiers::NONE),
+        KeyEvent::new(KeyCode::Char('R'), KeyModifiers::SHIFT),
+    ] {
+        let mut app = app.clone();
+        let action = app.handle_key_event(key);
+        assert_eq!(action, AppAction::ExecuteHelmRollback);
+    }
+}
+
+#[test]
+fn helm_history_escape_cancels_rollback_confirmation() {
+    let mut app = app_with_helm_history_workbench_tab();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &mut tab.state
+    {
+        helm_tab.confirm_rollback_revision = Some(4);
+    }
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench.active_tab()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &tab.state
+    {
+        assert!(helm_tab.confirm_rollback_revision.is_none());
+    } else {
+        panic!("expected helm history tab");
+    }
 }
 
 #[test]
