@@ -3,6 +3,7 @@
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use crate::time::{now, parse_timestamp};
@@ -77,6 +78,7 @@ const MAX_EVENTS_LIST_LIMIT: u32 = 1000;
 const MAX_RECENT_EVENTS_ITEMS: usize = 250;
 const CLIENT_RETRY_BUFFER_SIZE: usize = 1024;
 const EPHEMERAL_CONTAINERS_MIN_MINOR: u32 = 25;
+const FLUX_EMPTY_DISCOVERY_CACHE_TTL: Duration = Duration::from_secs(20);
 const TRIVY_OPERATOR_GROUP: &str = "aquasecurity.github.io";
 const TRIVY_OPERATOR_VERSION: &str = "v1alpha1";
 
@@ -87,7 +89,7 @@ pub struct K8sClient {
     cluster_url: String,
     cluster_context: Option<String>,
     cluster_version_cache: Arc<tokio::sync::RwLock<Option<ClusterVersionInfo>>>,
-    flux_targets_cache: Arc<tokio::sync::RwLock<Option<Vec<FluxApiTarget>>>>,
+    flux_targets_cache: Arc<tokio::sync::RwLock<Option<FluxTargetsCacheEntry>>>,
     access_review_cache: Arc<tokio::sync::RwLock<HashMap<ResourceAccessCheck, bool>>>,
 }
 
@@ -234,6 +236,13 @@ impl K8sClient {
 
     pub fn cluster_context(&self) -> Option<&str> {
         self.cluster_context.as_deref()
+    }
+
+    /// Returns cached API server version metadata when already available.
+    ///
+    /// This never performs network I/O.
+    pub async fn cached_cluster_version(&self) -> Option<ClusterVersionInfo> {
+        self.cluster_version_cache.read().await.clone()
     }
 
     /// Returns reference to the underlying Kubernetes client.
@@ -1747,7 +1756,7 @@ fn is_metrics_api_unavailable(err: &kube::Error) -> bool {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FluxResourceKindSpec {
     kind: &'static str,
     group: &'static str,
@@ -1756,10 +1765,16 @@ struct FluxResourceKindSpec {
     namespaced: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct FluxApiTarget {
     spec: FluxResourceKindSpec,
     version: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct FluxTargetsCacheEntry {
+    discovered_at: Instant,
+    targets: Vec<FluxApiTarget>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2226,19 +2241,25 @@ impl K8sClient {
         Ok(out)
     }
 
-    pub(crate) async fn discover_flux_watch_targets(&self) -> Result<Vec<FluxWatchTarget>> {
-        Ok(self
-            .discover_flux_targets()
-            .await?
-            .into_iter()
-            .map(|target| FluxWatchTarget {
-                group: target.spec.group,
-                version: target.version,
-                kind: target.spec.kind,
-                plural: target.spec.plural,
-                namespaced: target.spec.namespaced,
-            })
-            .collect())
+    pub(crate) async fn discover_flux_watch_targets_cancellable(
+        &self,
+        cancel_rx: &mut tokio::sync::watch::Receiver<()>,
+    ) -> Result<Option<Vec<FluxWatchTarget>>> {
+        let Some(targets) = self.discover_flux_targets_cancellable(cancel_rx).await? else {
+            return Ok(None);
+        };
+        Ok(Some(
+            targets
+                .into_iter()
+                .map(|target| FluxWatchTarget {
+                    group: target.spec.group,
+                    version: target.version,
+                    kind: target.spec.kind,
+                    plural: target.spec.plural,
+                    namespaced: target.spec.namespaced,
+                })
+                .collect(),
+        ))
     }
 
     async fn invalidate_flux_targets_cache(&self) {
@@ -2247,9 +2268,74 @@ impl K8sClient {
 
     async fn discover_flux_targets(&self) -> Result<Vec<FluxApiTarget>> {
         if let Some(cached) = self.flux_targets_cache.read().await.as_ref() {
-            return Ok(cached.clone());
+            if !cached.targets.is_empty() {
+                return Ok(cached.targets.clone());
+            }
+            if cached.discovered_at.elapsed() < FLUX_EMPTY_DISCOVERY_CACHE_TTL {
+                return Ok(Vec::new());
+            }
         }
 
+        let discovered = self.discover_flux_targets_uncached().await?;
+        let mut guard = self.flux_targets_cache.write().await;
+        if let Some(cached) = guard.as_ref() {
+            if !cached.targets.is_empty() {
+                return Ok(cached.targets.clone());
+            }
+            if cached.discovered_at.elapsed() < FLUX_EMPTY_DISCOVERY_CACHE_TTL {
+                return Ok(Vec::new());
+            }
+        }
+        *guard = Some(FluxTargetsCacheEntry {
+            discovered_at: Instant::now(),
+            targets: discovered.clone(),
+        });
+        Ok(discovered)
+    }
+
+    async fn discover_flux_targets_cancellable(
+        &self,
+        cancel_rx: &mut tokio::sync::watch::Receiver<()>,
+    ) -> Result<Option<Vec<FluxApiTarget>>> {
+        if cancel_rx.has_changed().unwrap_or(true) {
+            return Ok(None);
+        }
+        if let Some(cached) = self.flux_targets_cache.read().await.as_ref() {
+            if !cached.targets.is_empty() {
+                return Ok(Some(cached.targets.clone()));
+            }
+            if cached.discovered_at.elapsed() < FLUX_EMPTY_DISCOVERY_CACHE_TTL {
+                return Ok(Some(Vec::new()));
+            }
+        }
+
+        let Some(discovered) = self
+            .discover_flux_targets_uncached_cancellable(cancel_rx)
+            .await?
+        else {
+            return Ok(None);
+        };
+        if cancel_rx.has_changed().unwrap_or(true) {
+            return Ok(None);
+        }
+
+        let mut guard = self.flux_targets_cache.write().await;
+        if let Some(cached) = guard.as_ref() {
+            if !cached.targets.is_empty() {
+                return Ok(Some(cached.targets.clone()));
+            }
+            if cached.discovered_at.elapsed() < FLUX_EMPTY_DISCOVERY_CACHE_TTL {
+                return Ok(Some(Vec::new()));
+            }
+        }
+        *guard = Some(FluxTargetsCacheEntry {
+            discovered_at: Instant::now(),
+            targets: discovered.clone(),
+        });
+        Ok(Some(discovered))
+    }
+
+    async fn discover_flux_targets_uncached(&self) -> Result<Vec<FluxApiTarget>> {
         let mut discovered = Vec::new();
         for spec in FLUX_RESOURCE_KIND_SPECS {
             for &version in spec.versions {
@@ -2273,13 +2359,45 @@ impl K8sClient {
                 }
             }
         }
-
-        let mut guard = self.flux_targets_cache.write().await;
-        if let Some(cached) = guard.as_ref() {
-            return Ok(cached.clone());
-        }
-        *guard = Some(discovered.clone());
         Ok(discovered)
+    }
+
+    async fn discover_flux_targets_uncached_cancellable(
+        &self,
+        cancel_rx: &mut tokio::sync::watch::Receiver<()>,
+    ) -> Result<Option<Vec<FluxApiTarget>>> {
+        let mut discovered = Vec::new();
+        for spec in FLUX_RESOURCE_KIND_SPECS {
+            for &version in spec.versions {
+                if cancel_rx.has_changed().unwrap_or(true) {
+                    return Ok(None);
+                }
+                let probe = self.probe_flux_target(*spec, version);
+                let probe_result = tokio::select! {
+                    _ = cancel_rx.changed() => return Ok(None),
+                    result = probe => result,
+                };
+                match probe_result {
+                    Ok(()) => {
+                        discovered.push(FluxApiTarget {
+                            spec: *spec,
+                            version,
+                        });
+                        break;
+                    }
+                    Err(err) if is_missing_api_error(&err) => continue,
+                    Err(err) => {
+                        return Err(err).with_context(|| {
+                            format!(
+                                "failed discovering Flux {} resources ({}/{})",
+                                spec.kind, spec.group, version
+                            )
+                        });
+                    }
+                }
+            }
+        }
+        Ok(Some(discovered))
     }
 
     async fn probe_flux_target(
@@ -2501,6 +2619,71 @@ mod tests {
     async fn build_kube_client_supports_retry_layer_stack() {
         let config = Config::new("http://127.0.0.1:6443".parse().expect("valid uri"));
         build_kube_client(config).expect("client should build with retry layer");
+    }
+
+    #[tokio::test]
+    async fn discover_flux_targets_uses_non_empty_cache() {
+        let client = K8sClient::dummy();
+        let expected = FluxApiTarget {
+            spec: FLUX_RESOURCE_KIND_SPECS[0],
+            version: FLUX_RESOURCE_KIND_SPECS[0].versions[0],
+        };
+        *client.flux_targets_cache.write().await = Some(FluxTargetsCacheEntry {
+            discovered_at: Instant::now(),
+            targets: vec![expected],
+        });
+
+        let discovered = client
+            .discover_flux_targets()
+            .await
+            .expect("cached discovery should succeed");
+
+        assert_eq!(discovered, vec![expected]);
+    }
+
+    #[tokio::test]
+    async fn discover_flux_targets_uses_fresh_empty_cache() {
+        let client = K8sClient::dummy();
+        *client.flux_targets_cache.write().await = Some(FluxTargetsCacheEntry {
+            discovered_at: Instant::now(),
+            targets: Vec::new(),
+        });
+
+        let discovered = client
+            .discover_flux_targets()
+            .await
+            .expect("fresh empty cache should short-circuit");
+
+        assert!(discovered.is_empty());
+    }
+
+    #[tokio::test]
+    async fn discover_flux_targets_retries_after_empty_cache_ttl() {
+        let client = K8sClient::dummy();
+        *client.flux_targets_cache.write().await = Some(FluxTargetsCacheEntry {
+            discovered_at: Instant::now() - FLUX_EMPTY_DISCOVERY_CACHE_TTL - Duration::from_secs(1),
+            targets: Vec::new(),
+        });
+
+        let result = client.discover_flux_targets().await;
+        assert!(
+            result.is_err(),
+            "expired empty cache should force rediscovery attempt"
+        );
+    }
+
+    #[tokio::test]
+    async fn discover_flux_watch_targets_cancellable_returns_none_when_cancelled() {
+        let client = K8sClient::dummy();
+        let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(());
+        drop(cancel_tx);
+
+        let discovered = client
+            .discover_flux_watch_targets_cancellable(&mut cancel_rx)
+            .await
+            .expect("cancellable discovery should not fail");
+
+        assert!(discovered.is_none());
     }
 
     /// Verifies control-plane labels map to master role.

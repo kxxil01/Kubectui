@@ -790,28 +790,30 @@ impl WatchManager {
         let mut flux_cancel_rx = cancel_rx.clone();
         let flux_kube_client = kube_client.clone();
         tokio::spawn(async move {
-            tokio::select! {
-                _ = flux_cancel_rx.changed() => {}
-                targets = flux_client.discover_flux_watch_targets() => match targets {
-                    Ok(targets) => {
-                        if flux_cancel_rx.has_changed().unwrap_or(true) {
-                            return;
-                        }
-                        for target in targets {
-                            start_flux_watch(
-                                flux_kube_client.clone(),
-                                flux_session.clone(),
-                                flux_watch_tx.clone(),
-                                flux_watcher_config.clone(),
-                                flux_cancel_rx.clone(),
-                                target,
-                            );
-                        }
-                    }
-                    Err(err) => {
-                        warn!(error = %err, "failed discovering Flux watch targets; Flux watcher disabled");
-                    }
+            let targets = match flux_client
+                .discover_flux_watch_targets_cancellable(&mut flux_cancel_rx)
+                .await
+            {
+                Ok(Some(targets)) => targets,
+                Ok(None) => return,
+                Err(err) => {
+                    warn!(error = %err, "failed discovering Flux watch targets; Flux watcher disabled");
+                    return;
                 }
+            };
+
+            if flux_cancel_rx.has_changed().unwrap_or(true) {
+                return;
+            }
+            for target in targets {
+                start_flux_watch(
+                    flux_kube_client.clone(),
+                    flux_session.clone(),
+                    flux_watch_tx.clone(),
+                    flux_watcher_config.clone(),
+                    flux_cancel_rx.clone(),
+                    target,
+                );
             }
         });
     }

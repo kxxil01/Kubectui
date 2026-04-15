@@ -85,6 +85,24 @@ fn watch_update_needs_flux_refresh(update: &WatchUpdate) -> bool {
     update.resource == WatchedResource::Flux && matches!(&update.data, WatchPayload::FluxChanged)
 }
 
+const FLUX_WATCH_REFRESH_MIN_INTERVAL_SECS: u64 = 2;
+
+fn should_refresh_from_flux_watch(
+    view: AppView,
+    pending_flux_reconcile_verifications: &[PendingFluxReconcileVerification],
+) -> bool {
+    view.is_fluxcd()
+        || matches!(view, AppView::Issues | AppView::HealthReport)
+        || !pending_flux_reconcile_verifications.is_empty()
+}
+
+fn should_mark_snapshot_dirty_after_watch(
+    flux_changed: bool,
+    flux_refresh_requested: bool,
+) -> bool {
+    !flux_changed || flux_refresh_requested
+}
+
 #[derive(Clone)]
 struct NodeDebugSessionRuntime {
     client: K8sClient,
@@ -1401,6 +1419,7 @@ pub(crate) async fn run_app_inner(
     let mut pending_palette_action: Option<AppAction> = None;
     let mut pending_flux_reconcile_verifications: Vec<PendingFluxReconcileVerification> =
         Vec::new();
+    let mut last_flux_watch_refresh_at: Option<Instant> = None;
     let mut pending_context_switch: Option<(String, tokio::task::JoinHandle<Result<K8sClient>>)> =
         None;
     let startup_now_unix = kubectui::time::now_unix_seconds();
@@ -2072,7 +2091,16 @@ pub(crate) async fn run_app_inner(
                     let watched_resource = update.resource;
                     let flux_changed = watch_update_needs_flux_refresh(&update);
                     global_state.apply_watch_update(update);
-                    if flux_changed {
+                    let flux_refresh_requested = flux_changed
+                        && should_refresh_from_flux_watch(
+                            app.view(),
+                            &pending_flux_reconcile_verifications,
+                        )
+                        && last_flux_watch_refresh_at.is_none_or(|last| {
+                            last.elapsed()
+                                >= Duration::from_secs(FLUX_WATCH_REFRESH_MIN_INTERVAL_SECS)
+                        });
+                    if flux_refresh_requested {
                         request_refresh(
                             &refresh_tx,
                             &mut global_state,
@@ -2082,7 +2110,9 @@ pub(crate) async fn run_app_inner(
                             &mut refresh_state,
                             &mut snapshot_dirty,
                         );
-                    } else {
+                        last_flux_watch_refresh_at = Some(Instant::now());
+                    }
+                    if should_mark_snapshot_dirty_after_watch(flux_changed, flux_refresh_requested) {
                         snapshot_dirty = true;
                     }
                     if watched_resource == WatchedResource::Namespaces {
