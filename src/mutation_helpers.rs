@@ -251,10 +251,7 @@ pub fn refresh_options_for_view(
             RefreshScope::PODS,
             RefreshScope::PODS.union(RefreshScope::METRICS),
         ),
-        AppView::Services => RefreshDispatch::new(
-            RefreshScope::SERVICES,
-            RefreshScope::SERVICES.union(RefreshScope::NETWORK),
-        ),
+        AppView::Services => RefreshDispatch::new(RefreshScope::SERVICES, RefreshScope::SERVICES),
         AppView::Nodes => RefreshDispatch::new(
             RefreshScope::NODES,
             RefreshScope::NODES.union(RefreshScope::METRICS),

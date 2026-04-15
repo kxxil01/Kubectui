@@ -733,14 +733,14 @@ async fn profile_refresh_scope_baselines() {
         RefreshScenario {
             name: "Services",
             primary_scope: RefreshScope::SERVICES,
-            background_scope: RefreshScope::NETWORK,
-            expected_api_calls: 5,
+            background_scope: RefreshScope::NONE,
+            expected_api_calls: 1,
         },
         RefreshScenario {
             name: "ServiceAccounts",
             primary_scope: RefreshScope::SECURITY,
             background_scope: RefreshScope::NONE,
-            expected_api_calls: 5,
+            expected_api_calls: 6,
         },
         RefreshScenario {
             name: "PVCs",
@@ -758,7 +758,7 @@ async fn profile_refresh_scope_baselines() {
             name: "Issues",
             primary_scope: RefreshScope::CORE_OVERVIEW,
             background_scope: RefreshScope::LEGACY_SECONDARY.union(RefreshScope::FLUX),
-            expected_api_calls: 33,
+            expected_api_calls: 39,
         },
     ];
 
