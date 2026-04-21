@@ -5,6 +5,7 @@
 //! feeds the same [`super::ClusterSnapshot`] model used by polling.
 
 use std::collections::HashMap;
+use std::time::Duration;
 
 use futures::TryStreamExt;
 use k8s_openapi::api::apps::v1::{DaemonSet, Deployment, ReplicaSet, StatefulSet};
@@ -18,18 +19,44 @@ use kube::{Api, Client, ResourceExt};
 use tokio::sync::mpsc;
 use tracing::warn;
 
-use crate::k8s::client::{FluxWatchTarget, K8sClient, is_forbidden_error, is_missing_api_error};
+use super::RefreshScope;
+use crate::k8s::client::{
+    FluxWatchTarget, K8sClient, flux_dynamic_object_to_info, is_forbidden_error,
+    is_missing_api_error,
+};
 use crate::k8s::conversions::{
     cronjob_to_info, daemonset_to_info, deployment_to_info, job_to_info,
     namespace_metadata_to_info, node_to_info, pod_to_info, replicaset_to_info,
     replication_controller_to_info, service_to_info, statefulset_to_info,
 };
 use crate::k8s::dtos::{
-    ClusterVersionInfo, CronJobInfo, DaemonSetInfo, DeploymentInfo, JobInfo, NamespaceInfo,
-    NodeInfo, PodInfo, ReplicaSetInfo, ReplicationControllerInfo, ServiceInfo, StatefulSetInfo,
+    ClusterVersionInfo, CronJobInfo, DaemonSetInfo, DeploymentInfo, FluxResourceInfo, JobInfo,
+    NamespaceInfo, NodeInfo, PodInfo, ReplicaSetInfo, ReplicationControllerInfo, ServiceInfo,
+    StatefulSetInfo,
 };
 
 const STREAMING_LISTS_MIN_MINOR: u32 = 34;
+const WATCH_PUBLISH_DEBOUNCE_MS: u64 = 75;
+
+fn normalize_watch_scope(scope: RefreshScope) -> RefreshScope {
+    scope.union(RefreshScope::NAMESPACES)
+}
+
+fn should_restart_watches_for_scope(
+    requested_scope: RefreshScope,
+    desired_scope: RefreshScope,
+) -> bool {
+    !requested_scope
+        .without(normalize_watch_scope(desired_scope))
+        .is_empty()
+}
+
+fn active_scope_after_starting_missing(
+    active_scope: RefreshScope,
+    missing_scope: RefreshScope,
+) -> RefreshScope {
+    active_scope.union(missing_scope.without(RefreshScope::FLUX))
+}
 
 /// Returns the recommended kube-runtime watcher config for a cluster version.
 ///
@@ -103,7 +130,10 @@ pub enum WatchPayload {
     Jobs(Vec<JobInfo>),
     CronJobs(Vec<CronJobInfo>),
     Namespaces(Vec<NamespaceInfo>),
-    FluxChanged,
+    Flux {
+        target: FluxWatchTarget,
+        items: Vec<FluxResourceInfo>,
+    },
     /// A watcher encountered an error or terminated.
     Error {
         message: String,
@@ -295,16 +325,38 @@ macro_rules! define_watcher {
                     let api: Api<$ApiType> = define_watcher!(@api $scope, client, session);
                     let stream = $watch_fn(api, watcher_config).default_backoff();
                     let mut store = ResourceStore::<$DtoType>::new();
+                    let mut publish_pending = false;
+                    let mut publish_tick =
+                        tokio::time::interval(Duration::from_millis(WATCH_PUBLISH_DEBOUNCE_MS));
+                    publish_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                    publish_tick.tick().await;
                     tokio::pin!(stream);
 
                     loop {
                         tokio::select! {
                             biased;
                             _ = cancel_rx.changed() => break,
+                            _ = publish_tick.tick(), if publish_pending => {
+                                publish_pending = false;
+                                let mut snapshot = store.publish();
+                                [<sort_ $name s>](&mut snapshot);
+                                if watch_tx.send(WatchUpdate {
+                                    resource: WatchedResource::$variant,
+                                    context_generation: session.context_generation,
+                                    data: WatchPayload::$variant(snapshot),
+                                }).await.is_err() {
+                                    break;
+                                }
+                            }
                             item = stream.try_next() => {
                                 match item {
                                     Ok(Some(event)) => {
                                         if [<process_ $name _event>](&mut store, event) {
+                                            publish_pending = true;
+                                        }
+                                    }
+                                    Ok(None) => {
+                                        if publish_pending {
                                             let mut snapshot = store.publish();
                                             [<sort_ $name s>](&mut snapshot);
                                             if watch_tx.send(WatchUpdate {
@@ -315,8 +367,6 @@ macro_rules! define_watcher {
                                                 break;
                                             }
                                         }
-                                    }
-                                    Ok(None) => {
                                         warn!(
                                             concat!(stringify!($name), " watch stream ended unexpectedly")
                                         );
@@ -410,12 +460,6 @@ macro_rules! define_watcher {
     }};
 }
 
-fn flux_watch_token(obj: &DynamicObject) -> String {
-    let resource_version = obj.metadata.resource_version.as_deref().unwrap_or_default();
-    let generation = obj.metadata.generation.unwrap_or_default();
-    format!("{resource_version}:{generation}")
-}
-
 fn flux_watch_error_is_terminal(err: &watcher::Error) -> bool {
     match err {
         watcher::Error::InitialListFailed(source)
@@ -428,7 +472,42 @@ fn flux_watch_error_is_terminal(err: &watcher::Error) -> bool {
     }
 }
 
-fn process_flux_event(store: &mut ResourceStore<String>, event: Event<DynamicObject>) -> bool {
+#[derive(Debug, Clone)]
+struct FluxWatchInfo(FluxResourceInfo);
+
+impl PartialEq for FluxWatchInfo {
+    fn eq(&self, other: &Self) -> bool {
+        let left = &self.0;
+        let right = &other.0;
+        left.name == right.name
+            && left.namespace == right.namespace
+            && left.kind == right.kind
+            && left.group == right.group
+            && left.version == right.version
+            && left.plural == right.plural
+            && left.source_url == right.source_url
+            && left.status == right.status
+            && left.message == right.message
+            && left.artifact == right.artifact
+            && left.suspended == right.suspended
+            && left.created_at == right.created_at
+            && left.conditions == right.conditions
+            && left.last_reconcile_time == right.last_reconcile_time
+            && left.last_applied_revision == right.last_applied_revision
+            && left.last_attempted_revision == right.last_attempted_revision
+            && left.observed_generation == right.observed_generation
+            && left.generation == right.generation
+            && left.source_ref == right.source_ref
+            && left.interval == right.interval
+            && left.timeout == right.timeout
+    }
+}
+
+fn process_flux_event(
+    store: &mut ResourceStore<FluxWatchInfo>,
+    target: FluxWatchTarget,
+    event: Event<DynamicObject>,
+) -> bool {
     match event {
         Event::Init => {
             store.begin_init();
@@ -443,7 +522,7 @@ fn process_flux_event(store: &mut ResourceStore<String>, event: Event<DynamicObj
                 );
                 return false;
             }
-            store.apply_init_page(uid, flux_watch_token(&obj));
+            store.apply_init_page(uid, FluxWatchInfo(flux_dynamic_object_to_info(obj, target)));
             false
         }
         Event::InitDone => store.commit_init(),
@@ -456,7 +535,7 @@ fn process_flux_event(store: &mut ResourceStore<String>, event: Event<DynamicObj
                 );
                 return false;
             }
-            store.apply_event(uid, flux_watch_token(&obj))
+            store.apply_event(uid, FluxWatchInfo(flux_dynamic_object_to_info(obj, target)))
         }
         Event::Delete(obj) => {
             let uid = obj.uid().unwrap_or_default();
@@ -470,6 +549,37 @@ fn process_flux_event(store: &mut ResourceStore<String>, event: Event<DynamicObj
             store.remove(&uid)
         }
     }
+}
+
+fn sorted_flux_resources(store: &ResourceStore<FluxWatchInfo>) -> Vec<FluxResourceInfo> {
+    let mut resources: Vec<FluxResourceInfo> =
+        store.publish().into_iter().map(|item| item.0).collect();
+    resources.sort_unstable_by(|left, right| {
+        left.namespace
+            .cmp(&right.namespace)
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+    resources
+}
+
+async fn send_flux_watch_payload(
+    watch_tx: &mpsc::Sender<WatchUpdate>,
+    context_generation: u64,
+    target: FluxWatchTarget,
+    store: &ResourceStore<FluxWatchInfo>,
+) -> bool {
+    watch_tx
+        .send(WatchUpdate {
+            resource: WatchedResource::Flux,
+            context_generation,
+            data: WatchPayload::Flux {
+                target,
+                items: sorted_flux_resources(store),
+            },
+        })
+        .await
+        .is_ok()
 }
 
 fn start_flux_watch(
@@ -493,30 +603,54 @@ fn start_flux_watch(
             Api::all_with(client, &ar)
         };
         let stream = watcher::watcher(api, watcher_config).default_backoff();
-        let mut store = ResourceStore::<String>::new();
+        let mut store = ResourceStore::<FluxWatchInfo>::new();
+        let mut publish_pending = false;
+        let mut publish_tick =
+            tokio::time::interval(Duration::from_millis(WATCH_PUBLISH_DEBOUNCE_MS));
+        publish_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        publish_tick.tick().await;
         tokio::pin!(stream);
 
         loop {
             tokio::select! {
                 biased;
                 _ = cancel_rx.changed() => break,
+                _ = publish_tick.tick(), if publish_pending => {
+                    publish_pending = false;
+                    if watch_tx
+                        .send(WatchUpdate {
+                            resource: WatchedResource::Flux,
+                            context_generation: session.context_generation,
+                            data: WatchPayload::Flux {
+                                target,
+                                items: sorted_flux_resources(&store),
+                            },
+                        })
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
                 item = stream.try_next() => {
                     match item {
                         Ok(Some(event)) => {
-                            if process_flux_event(&mut store, event)
-                                && watch_tx
-                                    .send(WatchUpdate {
-                                        resource: WatchedResource::Flux,
-                                        context_generation: session.context_generation,
-                                        data: WatchPayload::FluxChanged,
-                                    })
-                                    .await
-                                    .is_err()
-                            {
-                                break;
+                            if process_flux_event(&mut store, target, event) {
+                                publish_pending = true;
                             }
                         }
                         Ok(None) => {
+                            if publish_pending
+                                && !send_flux_watch_payload(
+                                    &watch_tx,
+                                    session.context_generation,
+                                    target,
+                                    &store,
+                                )
+                                .await
+                            {
+                                break;
+                            }
                             warn!(
                                 group = target.group,
                                 kind = target.kind,
@@ -536,6 +670,17 @@ fn start_flux_watch(
                             break;
                         }
                         Err(err) if flux_watch_error_is_terminal(&err) => {
+                            if publish_pending
+                                && !send_flux_watch_payload(
+                                    &watch_tx,
+                                    session.context_generation,
+                                    target,
+                                    &store,
+                                )
+                                .await
+                            {
+                                break;
+                            }
                             warn!(
                                 error = %err,
                                 group = target.group,
@@ -676,6 +821,9 @@ define_watcher! {
 pub struct WatchManager {
     session: WatchSessionKey,
     cancel_tx: Option<tokio::sync::watch::Sender<()>>,
+    active_scope: RefreshScope,
+    requested_scope: RefreshScope,
+    watcher_config: Option<watcher::Config>,
 }
 
 impl WatchManager {
@@ -684,6 +832,9 @@ impl WatchManager {
         Self {
             session,
             cancel_tx: None,
+            active_scope: RefreshScope::NONE,
+            requested_scope: RefreshScope::NONE,
+            watcher_config: None,
         }
     }
 
@@ -692,130 +843,198 @@ impl WatchManager {
         &self.session
     }
 
-    /// Starts all watch tasks for core resources and Flux CRDs.
+    /// Returns the scope that auto-refresh can safely treat as watch-covered.
+    ///
+    /// Flux stays out of this scope so polling remains the fallback when
+    /// asynchronous Flux target discovery fails or target watches terminate.
+    pub fn active_scope(&self) -> RefreshScope {
+        self.active_scope
+    }
+
+    /// Starts watch tasks needed by the initial visible scope.
     pub fn start_watches(
         &mut self,
         client: &K8sClient,
         watch_tx: mpsc::Sender<WatchUpdate>,
         watcher_config: watcher::Config,
+        initial_scope: RefreshScope,
     ) {
-        let kube_client = client.get_client();
-        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(());
+        let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(());
         self.cancel_tx = Some(cancel_tx);
+        self.watcher_config = Some(watcher_config);
+        self.ensure_watches(client, watch_tx, initial_scope);
+    }
 
-        start_pod_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_deployment_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_replicaset_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_statefulset_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_daemonset_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_service_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_node_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_replication_controller_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_job_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_cronjob_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
-        start_namespace_watch(
-            kube_client.clone(),
-            self.session.clone(),
-            watch_tx.clone(),
-            watcher_config.clone(),
-            cancel_rx.clone(),
-        );
+    /// Starts any watch tasks not yet active for `scope`.
+    pub fn ensure_watches(
+        &mut self,
+        client: &K8sClient,
+        watch_tx: mpsc::Sender<WatchUpdate>,
+        scope: RefreshScope,
+    ) {
+        let scope = normalize_watch_scope(scope);
+        if should_restart_watches_for_scope(self.requested_scope, scope) {
+            self.cancel_tx.take();
+            let (cancel_tx, _cancel_rx) = tokio::sync::watch::channel(());
+            self.cancel_tx = Some(cancel_tx);
+            self.active_scope = RefreshScope::NONE;
+            self.requested_scope = RefreshScope::NONE;
+        }
 
-        // Discover Flux targets in background so watch-manager startup never
-        // blocks the UI event loop on CRD probing.
-        let flux_client = client.clone();
-        let flux_session = self.session.clone();
-        let flux_watch_tx = watch_tx.clone();
-        let flux_watcher_config = watcher_config.clone();
-        let mut flux_cancel_rx = cancel_rx.clone();
-        let flux_kube_client = kube_client.clone();
-        tokio::spawn(async move {
-            let targets = match flux_client
-                .discover_flux_watch_targets_cancellable(&mut flux_cancel_rx)
-                .await
-            {
-                Ok(Some(targets)) => targets,
-                Ok(None) => return,
-                Err(err) => {
-                    warn!(error = %err, "failed discovering Flux watch targets; Flux watcher disabled");
+        let missing_scope = scope.without(self.requested_scope);
+        if missing_scope.is_empty() {
+            return;
+        }
+
+        let Some(cancel_tx) = &self.cancel_tx else {
+            return;
+        };
+        let Some(watcher_config) = self.watcher_config.clone() else {
+            return;
+        };
+        let kube_client = client.get_client();
+        let cancel_rx = cancel_tx.subscribe();
+
+        if missing_scope.contains(RefreshScope::PODS) {
+            start_pod_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::DEPLOYMENTS) {
+            start_deployment_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::REPLICASETS) {
+            start_replicaset_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::STATEFULSETS) {
+            start_statefulset_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::DAEMONSETS) {
+            start_daemonset_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::SERVICES) {
+            start_service_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::NODES) {
+            start_node_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::REPLICATION_CONTROLLERS) {
+            start_replication_controller_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::JOBS) {
+            start_job_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::CRONJOBS) {
+            start_cronjob_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+        if missing_scope.contains(RefreshScope::NAMESPACES) {
+            start_namespace_watch(
+                kube_client.clone(),
+                self.session.clone(),
+                watch_tx.clone(),
+                watcher_config.clone(),
+                cancel_rx.clone(),
+            );
+        }
+
+        if missing_scope.contains(RefreshScope::FLUX) {
+            // Discover Flux targets in background so watch-manager startup never
+            // blocks the UI event loop on CRD probing.
+            let flux_client = client.clone();
+            let flux_session = self.session.clone();
+            let flux_watch_tx = watch_tx.clone();
+            let flux_watcher_config = watcher_config.clone();
+            let mut flux_cancel_rx = cancel_rx.clone();
+            let flux_kube_client = kube_client.clone();
+            tokio::spawn(async move {
+                let targets = match flux_client
+                    .discover_flux_watch_targets_cancellable(&mut flux_cancel_rx)
+                    .await
+                {
+                    Ok(Some(targets)) => targets,
+                    Ok(None) => return,
+                    Err(err) => {
+                        warn!(error = %err, "failed discovering Flux watch targets; Flux watcher disabled");
+                        return;
+                    }
+                };
+
+                if flux_cancel_rx.has_changed().unwrap_or(true) {
                     return;
                 }
-            };
+                for target in targets {
+                    start_flux_watch(
+                        flux_kube_client.clone(),
+                        flux_session.clone(),
+                        flux_watch_tx.clone(),
+                        flux_watcher_config.clone(),
+                        flux_cancel_rx.clone(),
+                        target,
+                    );
+                }
+            });
+        }
 
-            if flux_cancel_rx.has_changed().unwrap_or(true) {
-                return;
-            }
-            for target in targets {
-                start_flux_watch(
-                    flux_kube_client.clone(),
-                    flux_session.clone(),
-                    flux_watch_tx.clone(),
-                    flux_watcher_config.clone(),
-                    flux_cancel_rx.clone(),
-                    target,
-                );
-            }
-        });
+        self.requested_scope = self.requested_scope.union(scope);
+        self.active_scope = active_scope_after_starting_missing(self.active_scope, missing_scope);
     }
 
     /// Stops all running watch tasks.
@@ -823,6 +1042,8 @@ impl WatchManager {
         // Dropping the sender causes all receivers to see a changed() error,
         // which terminates the select! in each watcher task.
         self.cancel_tx.take();
+        self.active_scope = RefreshScope::NONE;
+        self.requested_scope = RefreshScope::NONE;
     }
 }
 
@@ -889,10 +1110,50 @@ mod tests {
                 namespace: Some("flux-system".to_string()),
                 uid: Some(uid.to_string()),
                 resource_version: Some(resource_version.to_string()),
+                generation: resource_version.parse().ok(),
                 ..Default::default()
             },
             data: serde_json::json!({}),
         }
+    }
+
+    fn flux_watch_target() -> FluxWatchTarget {
+        FluxWatchTarget {
+            group: "kustomize.toolkit.fluxcd.io",
+            version: "v1",
+            kind: "Kustomization",
+            plural: "kustomizations",
+            namespaced: true,
+        }
+    }
+
+    #[test]
+    fn should_restart_watches_when_desired_scope_shrinks() {
+        let active = RefreshScope::CORE_OVERVIEW.union(RefreshScope::FLUX);
+
+        assert!(should_restart_watches_for_scope(
+            active,
+            RefreshScope::DASHBOARD_WATCHED
+        ));
+        assert!(!should_restart_watches_for_scope(
+            RefreshScope::DASHBOARD_WATCHED.union(RefreshScope::NAMESPACES),
+            RefreshScope::CORE_OVERVIEW
+        ));
+        assert!(!should_restart_watches_for_scope(
+            RefreshScope::NAMESPACES,
+            RefreshScope::NONE
+        ));
+    }
+
+    #[test]
+    fn active_scope_excludes_flux_until_payload_fallback_safe() {
+        let active = active_scope_after_starting_missing(
+            RefreshScope::NONE,
+            RefreshScope::FLUX.union(RefreshScope::PODS),
+        );
+
+        assert!(active.contains(RefreshScope::PODS));
+        assert!(!active.contains(RefreshScope::FLUX));
     }
 
     // ── ResourceStore tests ──
@@ -1084,29 +1345,57 @@ mod tests {
 
     #[test]
     fn process_flux_event_filters_identical_apply() {
-        let mut store = ResourceStore::<String>::new();
-        assert!(!process_flux_event(&mut store, Event::Init));
+        let target = flux_watch_target();
+        let mut store = ResourceStore::<FluxWatchInfo>::new();
+        assert!(!process_flux_event(&mut store, target, Event::Init));
         assert!(!process_flux_event(
             &mut store,
+            target,
             Event::InitApply(make_flux_object("apps", "uid-a", "10"))
         ));
-        assert!(process_flux_event(&mut store, Event::InitDone));
+        assert!(process_flux_event(&mut store, target, Event::InitDone));
         assert!(!process_flux_event(
             &mut store,
+            target,
             Event::Apply(make_flux_object("apps", "uid-a", "10"))
         ));
         assert!(process_flux_event(
             &mut store,
+            target,
             Event::Apply(make_flux_object("apps", "uid-a", "11"))
         ));
         assert!(process_flux_event(
             &mut store,
+            target,
             Event::Delete(make_flux_object("apps", "uid-a", "11"))
         ));
         assert!(!process_flux_event(
             &mut store,
+            target,
             Event::Delete(make_flux_object("apps", "uid-a", "11"))
         ));
+    }
+
+    #[test]
+    fn flux_watch_info_equality_ignores_age() {
+        let mut left = FluxResourceInfo {
+            name: "apps".to_string(),
+            namespace: Some("flux-system".to_string()),
+            kind: "Kustomization".to_string(),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            plural: "kustomizations".to_string(),
+            age: Some(Duration::from_secs(10)),
+            ..FluxResourceInfo::default()
+        };
+        let mut right = left.clone();
+        right.age = Some(Duration::from_secs(20));
+
+        assert_eq!(FluxWatchInfo(left.clone()), FluxWatchInfo(right.clone()));
+
+        right.status = "NotReady".to_string();
+        left.status = "Ready".to_string();
+        assert_ne!(FluxWatchInfo(left), FluxWatchInfo(right));
     }
 
     // ── process_pod_event tests ──

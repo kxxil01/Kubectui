@@ -963,7 +963,7 @@ pub struct HelmReleaseRevisionInfo {
 }
 
 /// A single Flux status condition entry.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct FluxCondition {
     pub type_: String,
     pub status: String,
@@ -973,7 +973,7 @@ pub struct FluxCondition {
 }
 
 /// Flux custom resource info for dedicated GitOps views.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
 pub struct FluxResourceInfo {
     pub name: String,
     pub namespace: Option<String>,

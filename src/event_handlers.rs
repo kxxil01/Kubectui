@@ -580,6 +580,7 @@ pub(crate) fn spawn_refresh_task(
     context_generation: u64,
 ) -> tokio::task::JoinHandle<()> {
     let requested_namespace = namespace.clone();
+    let start_flux_target_fingerprints = global_state.flux_target_fingerprints();
     tokio::spawn(async move {
         let result = global_state
             .refresh_with_options(&client, namespace.as_deref(), options)
@@ -591,6 +592,7 @@ pub(crate) fn spawn_refresh_task(
                 request_id,
                 context_generation,
                 requested_namespace,
+                start_flux_target_fingerprints,
                 result,
             })
             .await;
@@ -602,6 +604,20 @@ pub(crate) fn abort_in_flight_refresh(refresh_state: &mut RefreshRuntimeState) {
         task.abort();
     }
     refresh_state.in_flight_id = None;
+    refresh_state.in_flight_options = None;
+}
+
+pub(crate) fn refresh_scope_pending(
+    refresh_state: &RefreshRuntimeState,
+    scope: RefreshScope,
+) -> bool {
+    refresh_state
+        .in_flight_options
+        .is_some_and(|options| options.scope.intersects(scope))
+        || refresh_state
+            .queued_refresh
+            .as_ref()
+            .is_some_and(|queued| queued.options.scope.intersects(scope))
 }
 
 pub(crate) fn request_refresh(
@@ -642,6 +658,7 @@ pub(crate) fn request_refresh(
     if refresh_state.in_flight_id.is_none() {
         let queued_namespace = namespace.clone();
         refresh_state.in_flight_id = Some(request_id);
+        refresh_state.in_flight_options = Some(core_options);
         refresh_state.in_flight_task = Some(spawn_refresh_task(
             refresh_tx.clone(),
             global_state.clone(),
