@@ -11,9 +11,13 @@ use super::{
     normalize_recent_events, palette_action_requires_loaded_detail, parse_editor_command,
     prepare_bookmark_target, prepare_resource_target, preserve_detail_selection_identity,
     queued_refresh_requires_two_phase, refresh_options_for_view, refresh_palette_resources,
-    selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
-    should_request_periodic_redraw, ui_staleness_visible, workbench_follow_streams_to_stop,
+    refresh_scope_pending, selected_extension_crd, selected_flux_reconcile_resource,
+    selected_resource, should_include_flux_in_auto_refresh,
+    should_preserve_current_flux_after_refresh, should_request_periodic_redraw,
+    strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
+    workbench_follow_streams_to_stop,
 };
+use crate::async_types::{QueuedRefresh, RefreshRuntimeState};
 use kubectui::ui::components::command_palette::PaletteEntry;
 use kubectui::{
     action_history::ActionKind,
@@ -21,13 +25,17 @@ use kubectui::{
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
     extensions::AiWorkflowKind,
-    k8s::dtos::{
-        ConfigMapInfo, CustomResourceDefinitionInfo, CustomResourceInfo, FluxResourceInfo,
-        K8sEventInfo, NodeInfo, PodInfo, VulnerabilityReportInfo, VulnerabilitySummaryCounts,
+    k8s::{
+        client::FluxWatchTarget,
+        dtos::{
+            ConfigMapInfo, CustomResourceDefinitionInfo, CustomResourceInfo, FluxResourceInfo,
+            K8sEventInfo, NodeInfo, PodInfo, VulnerabilityReportInfo, VulnerabilitySummaryCounts,
+        },
     },
     policy::DetailAction,
     state::{
-        ClusterSnapshot, DataPhase, GlobalState, RefreshOptions, RefreshScope,
+        ClusterSnapshot, DataPhase, FluxResourceTargetKey, FluxTargetFingerprints, GlobalState,
+        RefreshOptions, RefreshScope,
         watch::{WatchPayload, WatchUpdate, WatchedResource},
     },
     time::{AppTimestamp, now},
@@ -224,7 +232,16 @@ fn watch_update_needs_flux_refresh_for_flux_change_payload() {
     let update = WatchUpdate {
         resource: WatchedResource::Flux,
         context_generation: 1,
-        data: WatchPayload::FluxChanged,
+        data: WatchPayload::Flux {
+            target: FluxWatchTarget {
+                group: "kustomize.toolkit.fluxcd.io",
+                version: "v1",
+                kind: "Kustomization",
+                plural: "kustomizations",
+                namespaced: true,
+            },
+            items: vec![FluxResourceInfo::default()],
+        },
     };
     assert!(super::watch_update_needs_flux_refresh(&update));
 }
@@ -241,7 +258,7 @@ fn watch_update_needs_flux_refresh_ignores_non_flux_payloads() {
 
 #[test]
 fn should_refresh_from_flux_watch_for_flux_views() {
-    assert!(super::should_refresh_from_flux_watch(
+    assert!(!super::should_refresh_from_flux_watch(
         AppView::FluxCDAll,
         &[]
     ));
@@ -249,8 +266,8 @@ fn should_refresh_from_flux_watch_for_flux_views() {
 
 #[test]
 fn should_refresh_from_flux_watch_for_issues_views() {
-    assert!(super::should_refresh_from_flux_watch(AppView::Issues, &[]));
-    assert!(super::should_refresh_from_flux_watch(
+    assert!(!super::should_refresh_from_flux_watch(AppView::Issues, &[]));
+    assert!(!super::should_refresh_from_flux_watch(
         AppView::HealthReport,
         &[]
     ));
@@ -273,7 +290,7 @@ fn should_refresh_from_flux_watch_when_reconcile_verification_pending() {
         deadline: Instant::now() + Duration::from_secs(30),
     }];
 
-    assert!(super::should_refresh_from_flux_watch(
+    assert!(!super::should_refresh_from_flux_watch(
         AppView::Pods,
         &pending
     ));
@@ -297,7 +314,120 @@ fn should_mark_snapshot_dirty_after_watch_when_flux_refresh_requested() {
 
 #[test]
 fn should_mark_snapshot_dirty_after_watch_skips_flux_no_refresh_case() {
-    assert!(!super::should_mark_snapshot_dirty_after_watch(true, false));
+    assert!(super::should_mark_snapshot_dirty_after_watch(true, false));
+}
+
+#[test]
+fn auto_refresh_includes_flux_only_on_periodic_fallback_ticks() {
+    assert!(!should_include_flux_in_auto_refresh(1));
+    assert!(!should_include_flux_in_auto_refresh(2));
+    assert!(should_include_flux_in_auto_refresh(3));
+    assert!(should_include_flux_in_auto_refresh(6));
+}
+
+#[test]
+fn auto_refresh_strips_only_active_watch_scope() {
+    let issues = strip_active_watch_scope_from_refresh(
+        refresh_options_for_view(AppView::Issues, false, false),
+        RefreshScope::DASHBOARD_WATCHED.union(RefreshScope::NAMESPACES),
+    );
+    assert!(issues.primary_scope.is_empty());
+    assert!(issues.options.scope.contains(RefreshScope::JOBS));
+    assert!(issues.options.scope.contains(RefreshScope::CRONJOBS));
+    assert!(issues.options.scope.contains(RefreshScope::REPLICASETS));
+    assert!(
+        issues
+            .options
+            .scope
+            .contains(RefreshScope::REPLICATION_CONTROLLERS)
+    );
+
+    let bookmarks = strip_active_watch_scope_from_refresh(
+        refresh_options_for_view(AppView::Bookmarks, false, false),
+        RefreshScope::NAMESPACES,
+    );
+    assert!(bookmarks.primary_scope.contains(RefreshScope::PODS));
+    assert!(bookmarks.options.scope.contains(RefreshScope::PODS));
+}
+
+#[test]
+fn preserve_current_flux_after_refresh_when_scope_skipped_or_changed_during_flight() {
+    let key = FluxResourceTargetKey::new(
+        "kustomize.toolkit.fluxcd.io",
+        "v1",
+        "Kustomization",
+        "kustomizations",
+    );
+    let mut start = FluxTargetFingerprints::new();
+    start.insert(key.clone(), 10);
+    let unchanged = start.clone();
+    let mut changed = FluxTargetFingerprints::new();
+    changed.insert(key, 11);
+    let non_flux = Some(RefreshOptions {
+        scope: RefreshScope::PODS,
+        include_cluster_info: false,
+        skip_core: false,
+    });
+    let flux = Some(RefreshOptions {
+        scope: RefreshScope::FLUX,
+        include_cluster_info: false,
+        skip_core: false,
+    });
+
+    assert!(should_preserve_current_flux_after_refresh(
+        non_flux, &start, &unchanged
+    ));
+    assert!(should_preserve_current_flux_after_refresh(
+        flux, &start, &changed
+    ));
+    assert!(!should_preserve_current_flux_after_refresh(
+        flux, &start, &unchanged
+    ));
+}
+
+#[test]
+fn refresh_scope_pending_detects_in_flight_flux_scope() {
+    let mut refresh_state = RefreshRuntimeState {
+        in_flight_options: Some(RefreshOptions {
+            scope: RefreshScope::FLUX,
+            include_cluster_info: false,
+            skip_core: false,
+        }),
+        ..RefreshRuntimeState::default()
+    };
+
+    assert!(refresh_scope_pending(&refresh_state, RefreshScope::FLUX));
+
+    refresh_state.in_flight_options = Some(RefreshOptions {
+        scope: RefreshScope::METRICS,
+        include_cluster_info: false,
+        skip_core: false,
+    });
+    assert!(!refresh_scope_pending(&refresh_state, RefreshScope::FLUX));
+}
+
+#[test]
+fn refresh_scope_pending_detects_queued_flux_scope() {
+    let refresh_state = RefreshRuntimeState {
+        queued_refresh: Some(QueuedRefresh {
+            request_id: 7,
+            namespace: Some("flux-system".to_string()),
+            primary_scope: RefreshScope::FLUX,
+            options: RefreshOptions {
+                scope: RefreshScope::FLUX,
+                include_cluster_info: false,
+                skip_core: false,
+            },
+            context_generation: 9,
+        }),
+        ..RefreshRuntimeState::default()
+    };
+
+    assert!(refresh_scope_pending(&refresh_state, RefreshScope::FLUX));
+    assert!(!refresh_scope_pending(
+        &refresh_state,
+        RefreshScope::METRICS
+    ));
 }
 
 #[test]
@@ -1045,7 +1175,7 @@ fn events_view_uses_fast_refresh_profile() {
 #[test]
 fn dashboard_refresh_profile_runs_metrics_in_background() {
     let dispatch = refresh_options_for_view(AppView::Dashboard, false, false);
-    assert_eq!(dispatch.primary_scope, RefreshScope::CORE_OVERVIEW);
+    assert_eq!(dispatch.primary_scope, RefreshScope::DASHBOARD_WATCHED);
     assert!(dispatch.options.scope.contains(RefreshScope::METRICS));
     assert!(dispatch.options.include_cluster_info);
 }
@@ -1071,7 +1201,8 @@ fn services_and_issues_refresh_profiles_keep_services_scope_lightweight() {
 
     assert_eq!(services.primary_scope, RefreshScope::SERVICES);
     assert_eq!(services.options.scope, RefreshScope::SERVICES);
-    assert_eq!(issues.primary_scope, RefreshScope::CORE_OVERVIEW);
+    assert_eq!(issues.primary_scope, RefreshScope::DASHBOARD_WATCHED);
+    assert!(issues.options.scope.contains(RefreshScope::CORE_OVERVIEW));
     assert!(
         issues
             .options
@@ -1079,8 +1210,33 @@ fn services_and_issues_refresh_profiles_keep_services_scope_lightweight() {
             .contains(RefreshScope::LEGACY_SECONDARY)
     );
     assert!(issues.options.scope.contains(RefreshScope::FLUX));
+    assert!(issues.options.scope.contains(RefreshScope::SECURITY));
     assert_eq!(health_report.primary_scope, issues.primary_scope);
     assert_eq!(health_report.options.scope, issues.options.scope);
+}
+
+#[test]
+fn project_and_governance_refresh_profiles_keep_full_workload_context() {
+    let projects = refresh_options_for_view(AppView::Projects, false, false);
+    let governance = refresh_options_for_view(AppView::Governance, false, false);
+
+    assert_eq!(projects.primary_scope, RefreshScope::CORE_OVERVIEW);
+    assert!(projects.options.scope.contains(RefreshScope::CORE_OVERVIEW));
+    assert_eq!(governance.primary_scope, RefreshScope::CORE_OVERVIEW);
+    assert!(
+        governance
+            .options
+            .scope
+            .contains(RefreshScope::CORE_OVERVIEW)
+    );
+    assert_eq!(
+        watch_scope_for_view(AppView::Projects),
+        RefreshScope::CORE_OVERVIEW
+    );
+    assert_eq!(
+        watch_scope_for_view(AppView::Governance),
+        RefreshScope::CORE_OVERVIEW
+    );
 }
 
 #[test]

@@ -637,7 +637,7 @@ impl K8sClient {
             .map(crate::k8s::conversions::event_to_info)
             .collect();
         // Sort by last_seen descending
-        events.sort_unstable_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        events.sort_unstable_by_key(|event| std::cmp::Reverse(event.last_seen));
         events.truncate(MAX_RECENT_EVENTS_ITEMS);
         Ok(events)
     }
@@ -1777,8 +1777,8 @@ struct FluxTargetsCacheEntry {
     targets: Vec<FluxApiTarget>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub(crate) struct FluxWatchTarget {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FluxWatchTarget {
     pub group: &'static str,
     pub version: &'static str,
     pub kind: &'static str,
@@ -2109,6 +2109,93 @@ fn flux_source_ref(data: &serde_json::Value) -> Option<String> {
     Some(format!("{kind}/{name}{ns}"))
 }
 
+pub(crate) fn flux_dynamic_object_to_info(
+    item: DynamicObject,
+    target: FluxWatchTarget,
+) -> crate::k8s::dtos::FluxResourceInfo {
+    let created_at = item
+        .metadata
+        .creation_timestamp
+        .as_ref()
+        .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
+    let suspended = item
+        .data
+        .pointer("/spec/suspend")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
+    let (ready, message) = flux_ready_details(&item.data);
+    let conditions = flux_parse_conditions(&item.data);
+    let artifact = flux_artifact_details(&item.data);
+    let source_url = flux_source_url(&item.data);
+    let source_ref = flux_source_ref(&item.data);
+    let is_stalled = conditions.iter().any(|condition| {
+        condition.type_.eq_ignore_ascii_case("Stalled")
+            && condition.status.eq_ignore_ascii_case("True")
+    });
+    let status = if suspended {
+        "Suspended".to_string()
+    } else if is_stalled {
+        "Stalled".to_string()
+    } else {
+        match ready {
+            Some(true) => "Ready".to_string(),
+            Some(false) => "NotReady".to_string(),
+            None => "Unknown".to_string(),
+        }
+    };
+
+    crate::k8s::dtos::FluxResourceInfo {
+        name: item
+            .metadata
+            .name
+            .unwrap_or_else(|| "<unknown>".to_string()),
+        namespace: item.metadata.namespace,
+        kind: target.kind.to_string(),
+        group: target.group.to_string(),
+        version: target.version.to_string(),
+        plural: target.plural.to_string(),
+        source_url,
+        status,
+        message,
+        artifact,
+        suspended,
+        created_at,
+        age: age_from_created_at(created_at, now()),
+        conditions,
+        last_reconcile_time: item
+            .data
+            .pointer("/status/lastHandledReconcileAt")
+            .and_then(|v| v.as_str())
+            .and_then(parse_timestamp),
+        last_applied_revision: item
+            .data
+            .pointer("/status/lastAppliedRevision")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        last_attempted_revision: item
+            .data
+            .pointer("/status/lastAttemptedRevision")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        observed_generation: item
+            .data
+            .pointer("/status/observedGeneration")
+            .and_then(|v| v.as_i64()),
+        generation: item.metadata.generation,
+        source_ref,
+        interval: item
+            .data
+            .pointer("/spec/interval")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+        timeout: item
+            .data
+            .pointer("/spec/timeout")
+            .and_then(|v| v.as_str())
+            .map(ToString::to_string),
+    }
+}
+
 impl K8sClient {
     /// Fetches Helm releases by reading Helm-managed Secrets (owner=helm, type=helm.sh/release.v1).
     /// Decodes the release metadata from the secret's labels without requiring the Helm CLI.
@@ -2420,7 +2507,7 @@ impl K8sClient {
     async fn fetch_flux_resources_for_version(
         &self,
         spec: FluxResourceKindSpec,
-        version: &str,
+        version: &'static str,
         namespace: Option<&str>,
     ) -> std::result::Result<Vec<crate::k8s::dtos::FluxResourceInfo>, kube::Error> {
         let gvk = GroupVersionKind::gvk(spec.group, version, spec.kind);
@@ -2441,95 +2528,18 @@ impl K8sClient {
             Err(err) if is_forbidden_error(&err) => Vec::new(),
             Err(err) => return Err(err),
         };
-        let now = now();
         let mut resources = Vec::with_capacity(list.len());
         for item in list {
-            let created_at = item
-                .metadata
-                .creation_timestamp
-                .as_ref()
-                .and_then(|ts| app_timestamp_from_k8s_timestamp(&ts.0));
-            let suspended = item
-                .data
-                .pointer("/spec/suspend")
-                .and_then(|value| value.as_bool())
-                .unwrap_or(false);
-            let (ready, message) = flux_ready_details(&item.data);
-            let conditions = flux_parse_conditions(&item.data);
-            let artifact = flux_artifact_details(&item.data);
-            let source_url = flux_source_url(&item.data);
-            let source_ref = flux_source_ref(&item.data);
-            let is_stalled = conditions.iter().any(|c| {
-                c.type_.eq_ignore_ascii_case("Stalled") && c.status.eq_ignore_ascii_case("True")
-            });
-            let status = if suspended {
-                "Suspended".to_string()
-            } else if is_stalled {
-                "Stalled".to_string()
-            } else {
-                match ready {
-                    Some(true) => "Ready".to_string(),
-                    Some(false) => "NotReady".to_string(),
-                    None => "Unknown".to_string(),
-                }
-            };
-            let last_reconcile_time = item
-                .data
-                .pointer("/status/lastHandledReconcileAt")
-                .and_then(|v| v.as_str())
-                .and_then(parse_timestamp);
-            let last_applied_revision = item
-                .data
-                .pointer("/status/lastAppliedRevision")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string);
-            let last_attempted_revision = item
-                .data
-                .pointer("/status/lastAttemptedRevision")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string);
-            let observed_generation = item
-                .data
-                .pointer("/status/observedGeneration")
-                .and_then(|v| v.as_i64());
-            let generation = item.metadata.generation;
-            let interval = item
-                .data
-                .pointer("/spec/interval")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string);
-            let timeout = item
-                .data
-                .pointer("/spec/timeout")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string);
-            resources.push(crate::k8s::dtos::FluxResourceInfo {
-                name: item
-                    .metadata
-                    .name
-                    .unwrap_or_else(|| "<unknown>".to_string()),
-                namespace: item.metadata.namespace,
-                kind: spec.kind.to_string(),
-                group: spec.group.to_string(),
-                version: version.to_string(),
-                plural: spec.plural.to_string(),
-                source_url,
-                status,
-                message,
-                artifact,
-                suspended,
-                created_at,
-                age: age_from_created_at(created_at, now),
-                conditions,
-                last_reconcile_time,
-                last_applied_revision,
-                last_attempted_revision,
-                observed_generation,
-                generation,
-                source_ref,
-                interval,
-                timeout,
-            });
+            resources.push(flux_dynamic_object_to_info(
+                item,
+                FluxWatchTarget {
+                    group: spec.group,
+                    version,
+                    kind: spec.kind,
+                    plural: spec.plural,
+                    namespaced: spec.namespaced,
+                },
+            ));
         }
 
         Ok(resources)

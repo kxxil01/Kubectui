@@ -12,12 +12,17 @@ pub mod watch;
 use crate::time::AppTimestamp;
 use anyhow::Result;
 use async_trait::async_trait;
-use std::{fmt, sync::Arc};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    fmt,
+    hash::{Hash, Hasher},
+    sync::Arc,
+};
 
 use crate::app::AppView;
 use crate::governance::compute_governance;
 use crate::k8s::{
-    client::K8sClient,
+    client::{FluxWatchTarget, K8sClient},
     dtos::{
         ClusterInfo, ClusterRoleBindingInfo, ClusterRoleInfo, ClusterVersionInfo, ConfigMapInfo,
         CronJobInfo, CustomResourceDefinitionInfo, DaemonSetInfo, DeploymentInfo, EndpointInfo,
@@ -31,6 +36,142 @@ use crate::k8s::{
     },
 };
 use crate::projects::compute_projects;
+
+fn flux_resource_matches_target(resource: &FluxResourceInfo, target: FluxWatchTarget) -> bool {
+    resource.group == target.group
+        && resource.version == target.version
+        && resource.kind == target.kind
+        && resource.plural == target.plural
+}
+
+fn sort_flux_resources(resources: &mut [FluxResourceInfo]) {
+    resources.sort_unstable_by(|left, right| {
+        left.namespace
+            .cmp(&right.namespace)
+            .then_with(|| left.kind.cmp(&right.kind))
+            .then_with(|| left.name.cmp(&right.name))
+    });
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct FluxResourceTargetKey {
+    group: String,
+    version: String,
+    kind: String,
+    plural: String,
+}
+
+impl FluxResourceTargetKey {
+    pub fn new(group: &str, version: &str, kind: &str, plural: &str) -> Self {
+        Self {
+            group: group.to_string(),
+            version: version.to_string(),
+            kind: kind.to_string(),
+            plural: plural.to_string(),
+        }
+    }
+}
+
+pub type FluxTargetFingerprints = BTreeMap<FluxResourceTargetKey, u64>;
+
+fn flux_resource_target_key(resource: &FluxResourceInfo) -> FluxResourceTargetKey {
+    FluxResourceTargetKey::new(
+        &resource.group,
+        &resource.version,
+        &resource.kind,
+        &resource.plural,
+    )
+}
+
+fn hash_flux_resource_stable(resource: &FluxResourceInfo, hasher: &mut impl Hasher) {
+    resource.name.hash(hasher);
+    resource.namespace.hash(hasher);
+    resource.kind.hash(hasher);
+    resource.group.hash(hasher);
+    resource.version.hash(hasher);
+    resource.plural.hash(hasher);
+    resource.source_url.hash(hasher);
+    resource.status.hash(hasher);
+    resource.message.hash(hasher);
+    resource.artifact.hash(hasher);
+    resource.suspended.hash(hasher);
+    resource
+        .created_at
+        .map(|timestamp| timestamp.to_string())
+        .hash(hasher);
+    for condition in &resource.conditions {
+        condition.type_.hash(hasher);
+        condition.status.hash(hasher);
+        condition.reason.hash(hasher);
+        condition.message.hash(hasher);
+        condition
+            .timestamp
+            .map(|timestamp| timestamp.to_string())
+            .hash(hasher);
+    }
+    resource
+        .last_reconcile_time
+        .map(|timestamp| timestamp.to_string())
+        .hash(hasher);
+    resource.last_applied_revision.hash(hasher);
+    resource.last_attempted_revision.hash(hasher);
+    resource.observed_generation.hash(hasher);
+    resource.generation.hash(hasher);
+    resource.source_ref.hash(hasher);
+    resource.interval.hash(hasher);
+    resource.timeout.hash(hasher);
+}
+
+fn flux_resources_fingerprint(resources: &[FluxResourceInfo]) -> u64 {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    resources.len().hash(&mut hasher);
+    for resource in resources {
+        hash_flux_resource_stable(resource, &mut hasher);
+    }
+    hasher.finish()
+}
+
+fn flux_target_fingerprints_from_resources(
+    resources: &[FluxResourceInfo],
+) -> FluxTargetFingerprints {
+    let mut grouped: BTreeMap<FluxResourceTargetKey, Vec<&FluxResourceInfo>> = BTreeMap::new();
+    for resource in resources {
+        grouped
+            .entry(flux_resource_target_key(resource))
+            .or_default()
+            .push(resource);
+    }
+
+    let mut fingerprints = FluxTargetFingerprints::new();
+    for (target, mut target_resources) in grouped {
+        target_resources.sort_unstable_by(|left, right| {
+            left.namespace
+                .cmp(&right.namespace)
+                .then_with(|| left.kind.cmp(&right.kind))
+                .then_with(|| left.name.cmp(&right.name))
+        });
+
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        target_resources.len().hash(&mut hasher);
+        for resource in target_resources {
+            hash_flux_resource_stable(resource, &mut hasher);
+        }
+        fingerprints.insert(target, hasher.finish());
+    }
+    fingerprints
+}
+
+fn changed_flux_targets(
+    start: &FluxTargetFingerprints,
+    current: &FluxTargetFingerprints,
+) -> BTreeSet<FluxResourceTargetKey> {
+    start
+        .keys()
+        .chain(current.keys())
+        .filter(|target| start.get(*target) != current.get(*target))
+        .cloned()
+        .collect()
+}
 
 /// High-level data loading phase for cluster resources.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -734,6 +875,15 @@ impl RefreshScope {
             | Self::CRONJOBS.0
             | Self::NAMESPACES.0,
     );
+    pub const DASHBOARD_WATCHED: Self = Self(
+        Self::NODES.0
+            | Self::PODS.0
+            | Self::SERVICES.0
+            | Self::DEPLOYMENTS.0
+            | Self::STATEFULSETS.0
+            | Self::DAEMONSETS.0
+            | Self::NAMESPACES.0,
+    );
     pub const CORE_OVERVIEW: Self = Self(Self::WATCHED_SCOPES.0 | Self::NAMESPACES.0);
     pub const LEGACY_SECONDARY: Self = Self(
         Self::NETWORK.0
@@ -812,6 +962,14 @@ impl GlobalState {
         self.snapshot.clone()
     }
 
+    pub fn flux_fingerprint(&self) -> u64 {
+        flux_resources_fingerprint(&self.snapshot.flux_resources)
+    }
+
+    pub fn flux_target_fingerprints(&self) -> FluxTargetFingerprints {
+        flux_target_fingerprints_from_resources(&self.snapshot.flux_resources)
+    }
+
     /// Recomputes derived fields (issue count) and clears the dirty flag.
     /// Called after every successful refresh or optimistic mutation.
     pub(super) fn publish_snapshot(&mut self) {
@@ -836,7 +994,7 @@ impl GlobalState {
 
     const fn view_ready_scope(view: AppView) -> RefreshScope {
         match view {
-            AppView::Dashboard => RefreshScope::CORE_OVERVIEW,
+            AppView::Dashboard => RefreshScope::DASHBOARD_WATCHED,
             AppView::Projects => RefreshScope::CORE_OVERVIEW
                 .union(RefreshScope::LEGACY_SECONDARY)
                 .union(RefreshScope::NETWORK)
@@ -1097,9 +1255,22 @@ impl GlobalState {
                 watch::WatchPayload::Namespaces(items) => {
                     apply_watched!(snap, changed, namespace_list, items);
                 }
-                watch::WatchPayload::FluxChanged => {
-                    // Flux watch updates are edge-triggered refresh signals.
-                    // Snapshot data stays canonical in refresh pipeline.
+                watch::WatchPayload::Flux { target, items } => {
+                    let mut merged = Vec::with_capacity(snap.flux_resources.len() + items.len());
+                    merged.extend(
+                        snap.flux_resources
+                            .iter()
+                            .filter(|resource| !flux_resource_matches_target(resource, target))
+                            .cloned(),
+                    );
+                    merged.extend(items);
+                    sort_flux_resources(&mut merged);
+                    if snap.flux_resources != merged {
+                        snap.flux_resources = merged;
+                        snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
+                        snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+                        changed = true;
+                    }
                 }
                 watch::WatchPayload::Error { .. } => {
                     // Watcher errors are informational — do not clear existing
@@ -1113,6 +1284,50 @@ impl GlobalState {
             self.snapshot_dirty = true;
             self.publish_snapshot();
         }
+    }
+
+    /// Preserves only Flux targets that changed on the main runtime while a
+    /// refresh was in flight.
+    pub fn preserve_changed_flux_targets_from_snapshot(
+        &mut self,
+        source: &ClusterSnapshot,
+        start_fingerprints: &FluxTargetFingerprints,
+    ) {
+        let current_fingerprints = flux_target_fingerprints_from_resources(&source.flux_resources);
+        let changed_targets = changed_flux_targets(start_fingerprints, &current_fingerprints);
+        if changed_targets.is_empty() {
+            return;
+        }
+
+        let mut merged =
+            Vec::with_capacity(self.snapshot.flux_resources.len() + source.flux_resources.len());
+        merged.extend(
+            self.snapshot
+                .flux_resources
+                .iter()
+                .filter(|resource| !changed_targets.contains(&flux_resource_target_key(resource)))
+                .cloned(),
+        );
+        merged.extend(
+            source
+                .flux_resources
+                .iter()
+                .filter(|resource| changed_targets.contains(&flux_resource_target_key(resource)))
+                .cloned(),
+        );
+        sort_flux_resources(&mut merged);
+        if self.snapshot.flux_resources == merged {
+            return;
+        }
+
+        {
+            let snap = Arc::make_mut(&mut self.snapshot);
+            snap.flux_resources = merged;
+            snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
+            snap.snapshot_version = snap.snapshot_version.saturating_add(1);
+        }
+        self.snapshot_dirty = true;
+        self.publish_snapshot();
     }
 
     pub fn apply_events_update(&mut self, events: Vec<K8sEventInfo>) {
@@ -3425,7 +3640,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_watch_update_flux_changed_keeps_snapshot_canonical() {
+    fn apply_watch_update_flux_merges_target_payload() {
         let mut state = GlobalState::default();
         Arc::make_mut(&mut state.snapshot).flux_resources = vec![FluxResourceInfo {
             name: "apps".to_string(),
@@ -3436,17 +3651,181 @@ mod tests {
             plural: "kustomizations".to_string(),
             ..FluxResourceInfo::default()
         }];
+        {
+            let snap = Arc::make_mut(&mut state.snapshot);
+            snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
+        }
         let initial_version = state.snapshot.snapshot_version;
 
         let update = watch::WatchUpdate {
             resource: watch::WatchedResource::Flux,
             context_generation: 0,
-            data: watch::WatchPayload::FluxChanged,
+            data: watch::WatchPayload::Flux {
+                target: FluxWatchTarget {
+                    group: "helm.toolkit.fluxcd.io",
+                    version: "v2",
+                    kind: "HelmRelease",
+                    plural: "helmreleases",
+                    namespaced: true,
+                },
+                items: vec![FluxResourceInfo {
+                    name: "backend".to_string(),
+                    namespace: Some("flux-system".to_string()),
+                    group: "helm.toolkit.fluxcd.io".to_string(),
+                    version: "v2".to_string(),
+                    kind: "HelmRelease".to_string(),
+                    plural: "helmreleases".to_string(),
+                    ..FluxResourceInfo::default()
+                }],
+            },
         };
         state.apply_watch_update(update);
 
-        assert_eq!(state.snapshot.flux_resources.len(), 1);
-        assert_eq!(state.snapshot.flux_resources[0].name, "apps");
-        assert_eq!(state.snapshot.snapshot_version, initial_version);
+        assert_eq!(state.snapshot.flux_resources.len(), 2);
+        assert!(
+            state
+                .snapshot
+                .flux_resources
+                .iter()
+                .any(|resource| resource.name == "apps")
+        );
+        assert!(
+            state
+                .snapshot
+                .flux_resources
+                .iter()
+                .any(|resource| resource.name == "backend")
+        );
+        assert_eq!(state.snapshot.flux_counts.kustomizations, 1);
+        assert_eq!(state.snapshot.flux_counts.helm_releases, 1);
+        assert!(state.snapshot.snapshot_version > initial_version);
+    }
+
+    fn flux_resource(
+        name: &str,
+        group: &str,
+        version: &str,
+        kind: &str,
+        plural: &str,
+    ) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: group.to_string(),
+            version: version.to_string(),
+            kind: kind.to_string(),
+            plural: plural.to_string(),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    #[test]
+    fn preserve_changed_flux_targets_keeps_refresh_rows_for_unchanged_targets() {
+        let kustomize_group = "kustomize.toolkit.fluxcd.io";
+        let helm_group = "helm.toolkit.fluxcd.io";
+        let mut start = GlobalState::default();
+        Arc::make_mut(&mut start.snapshot).flux_resources = vec![
+            flux_resource(
+                "apps-start",
+                kustomize_group,
+                "v1",
+                "Kustomization",
+                "kustomizations",
+            ),
+            flux_resource(
+                "backend-start",
+                helm_group,
+                "v2",
+                "HelmRelease",
+                "helmreleases",
+            ),
+        ];
+        let start_fingerprints = start.flux_target_fingerprints();
+
+        let mut current = GlobalState::default();
+        Arc::make_mut(&mut current.snapshot).flux_resources = vec![
+            flux_resource(
+                "apps-live",
+                kustomize_group,
+                "v1",
+                "Kustomization",
+                "kustomizations",
+            ),
+            flux_resource(
+                "backend-start",
+                helm_group,
+                "v2",
+                "HelmRelease",
+                "helmreleases",
+            ),
+        ];
+
+        let mut refresh_result = GlobalState::default();
+        {
+            let snap = Arc::make_mut(&mut refresh_result.snapshot);
+            snap.flux_resources = vec![
+                flux_resource(
+                    "apps-stale",
+                    kustomize_group,
+                    "v1",
+                    "Kustomization",
+                    "kustomizations",
+                ),
+                flux_resource(
+                    "backend-fetched",
+                    helm_group,
+                    "v2",
+                    "HelmRelease",
+                    "helmreleases",
+                ),
+            ];
+            snap.flux_counts = FluxCounts::compute(&snap.flux_resources);
+        }
+        let initial_version = refresh_result.snapshot.snapshot_version;
+
+        refresh_result
+            .preserve_changed_flux_targets_from_snapshot(&current.snapshot(), &start_fingerprints);
+
+        assert_eq!(refresh_result.snapshot.flux_resources.len(), 2);
+        assert!(
+            refresh_result
+                .snapshot
+                .flux_resources
+                .iter()
+                .any(|resource| resource.name == "apps-live")
+        );
+        assert!(
+            refresh_result
+                .snapshot
+                .flux_resources
+                .iter()
+                .any(|resource| resource.name == "backend-fetched")
+        );
+        assert_eq!(refresh_result.snapshot.flux_counts.kustomizations, 1);
+        assert_eq!(refresh_result.snapshot.flux_counts.helm_releases, 1);
+        assert!(refresh_result.snapshot.snapshot_version > initial_version);
+    }
+
+    #[test]
+    fn flux_fingerprint_ignores_age_and_tracks_status() {
+        let mut state = GlobalState::default();
+        Arc::make_mut(&mut state.snapshot).flux_resources = vec![FluxResourceInfo {
+            name: "apps".to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            status: "Ready".to_string(),
+            age: Some(Duration::from_secs(10)),
+            ..FluxResourceInfo::default()
+        }];
+        let first = state.flux_fingerprint();
+
+        Arc::make_mut(&mut state.snapshot).flux_resources[0].age = Some(Duration::from_secs(20));
+        assert_eq!(state.flux_fingerprint(), first);
+
+        Arc::make_mut(&mut state.snapshot).flux_resources[0].status = "NotReady".to_string();
+        assert_ne!(state.flux_fingerprint(), first);
     }
 }

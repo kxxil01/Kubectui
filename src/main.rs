@@ -22,7 +22,7 @@ use detail_fetch::*;
 use event_handlers::*;
 use flux_reconcile::*;
 use mutation_helpers::*;
-use runtime_helpers::{next_request_id, run_app, start_watch_manager};
+use runtime_helpers::{next_request_id, run_app, start_watch_manager, watch_scope_for_view};
 use selection_helpers::*;
 use std::{
     collections::{HashMap, HashSet},
@@ -62,7 +62,8 @@ use kubectui::{
     runbooks::{LoadedRunbookStepKind, RunbookRegistry, load_runbook_registry},
     secret::{decode_secret_yaml, encode_secret_yaml},
     state::{
-        ClusterSnapshot, DataPhase, GlobalState, RefreshScope,
+        ClusterSnapshot, DataPhase, FluxTargetFingerprints, GlobalState, RefreshOptions,
+        RefreshScope,
         watch::{WatchPayload, WatchUpdate, WatchedResource},
     },
     ui,
@@ -82,25 +83,45 @@ type AllContainerLogsInfo = (
 );
 
 fn watch_update_needs_flux_refresh(update: &WatchUpdate) -> bool {
-    update.resource == WatchedResource::Flux && matches!(&update.data, WatchPayload::FluxChanged)
+    update.resource == WatchedResource::Flux && matches!(&update.data, WatchPayload::Flux { .. })
 }
 
 const FLUX_WATCH_REFRESH_MIN_INTERVAL_SECS: u64 = 2;
 
 fn should_refresh_from_flux_watch(
-    view: AppView,
-    pending_flux_reconcile_verifications: &[PendingFluxReconcileVerification],
+    _view: AppView,
+    _pending_flux_reconcile_verifications: &[PendingFluxReconcileVerification],
 ) -> bool {
-    view.is_fluxcd()
-        || matches!(view, AppView::Issues | AppView::HealthReport)
-        || !pending_flux_reconcile_verifications.is_empty()
+    false
 }
 
 fn should_mark_snapshot_dirty_after_watch(
-    flux_changed: bool,
-    flux_refresh_requested: bool,
+    _flux_changed: bool,
+    _flux_refresh_requested: bool,
 ) -> bool {
-    !flux_changed || flux_refresh_requested
+    true
+}
+
+fn should_include_flux_in_auto_refresh(auto_refresh_count: u64) -> bool {
+    auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY)
+}
+
+fn strip_active_watch_scope_from_refresh(
+    mut dispatch: RefreshDispatch,
+    active_watch_scope: RefreshScope,
+) -> RefreshDispatch {
+    dispatch.primary_scope = dispatch.primary_scope.without(active_watch_scope);
+    dispatch.options.scope = dispatch.options.scope.without(active_watch_scope);
+    dispatch
+}
+
+fn should_preserve_current_flux_after_refresh(
+    completed_options: Option<RefreshOptions>,
+    start_flux_target_fingerprints: &FluxTargetFingerprints,
+    current_flux_target_fingerprints: &FluxTargetFingerprints,
+) -> bool {
+    completed_options.is_none_or(|options| !options.scope.contains(RefreshScope::FLUX))
+        || start_flux_target_fingerprints != current_flux_target_fingerprints
 }
 
 #[derive(Clone)]
@@ -1363,8 +1384,14 @@ pub(crate) async fn run_app_inner(
 
     // Watch-backed resource caches — pushes live updates for core resources.
     let (watch_tx, mut watch_rx) = tokio::sync::mpsc::channel::<WatchUpdate>(32);
-    let mut watch_manager =
-        start_watch_manager(&client, refresh_state.context_generation, &app, &watch_tx).await;
+    let mut watch_manager = start_watch_manager(
+        &client,
+        refresh_state.context_generation,
+        &app,
+        &watch_tx,
+        watch_scope_for_view(app.view()),
+    )
+    .await;
 
     // Start with view-scoped refresh (workload-first for core views, secondary deferred).
     let startup_include_flux = app.view().is_fluxcd();
@@ -1524,6 +1551,8 @@ pub(crate) async fn run_app_inner(
         if app.should_quit() {
             break;
         }
+
+        watch_manager.ensure_watches(&client, watch_tx.clone(), watch_scope_for_view(app.view()));
 
         // Check if a deferred palette action is ready to dispatch.
         let pending_action_ready = pending_palette_action.as_ref().is_some_and(|a| {
@@ -1928,6 +1957,7 @@ pub(crate) async fn run_app_inner(
                         continue;
                     }
 
+                    let completed_options = refresh_state.in_flight_options.take();
                     refresh_state.in_flight_id = None;
                     refresh_state.in_flight_task = None;
                     needs_redraw = true;
@@ -1936,7 +1966,19 @@ pub(crate) async fn run_app_inner(
 
                     if namespace_matches {
                         match result.result {
-                            Ok(new_state) => {
+                            Ok(mut new_state) => {
+                                let current_flux_target_fingerprints =
+                                    global_state.flux_target_fingerprints();
+                                if should_preserve_current_flux_after_refresh(
+                                    completed_options,
+                                    &result.start_flux_target_fingerprints,
+                                    &current_flux_target_fingerprints,
+                                ) {
+                                    new_state.preserve_changed_flux_targets_from_snapshot(
+                                        &global_state.snapshot(),
+                                        &result.start_flux_target_fingerprints,
+                                    );
+                                }
                                 global_state = new_state;
                                 consecutive_refresh_failures = 0;
                                 backoff_until = None;
@@ -2026,6 +2068,7 @@ pub(crate) async fn run_app_inner(
                             );
                         } else {
                             refresh_state.in_flight_id = Some(queued.request_id);
+                            refresh_state.in_flight_options = Some(queued.options);
                             refresh_state.in_flight_task = Some(spawn_refresh_task(
                                 refresh_tx.clone(),
                                 global_state.clone(),
@@ -2091,11 +2134,24 @@ pub(crate) async fn run_app_inner(
                     let watched_resource = update.resource;
                     let flux_changed = watch_update_needs_flux_refresh(&update);
                     global_state.apply_watch_update(update);
+                    if flux_changed
+                        && process_flux_reconcile_verifications(
+                            &mut app,
+                            &global_state.snapshot(),
+                            &mut pending_flux_reconcile_verifications,
+                            &mut |a, msg| {
+                                set_transient_status(a, &mut status_message_clear_at, msg)
+                            },
+                        )
+                    {
+                        needs_redraw = true;
+                    }
                     let flux_refresh_requested = flux_changed
                         && should_refresh_from_flux_watch(
                             app.view(),
                             &pending_flux_reconcile_verifications,
                         )
+                        && !refresh_scope_pending(&refresh_state, RefreshScope::FLUX)
                         && last_flux_watch_refresh_at.is_none_or(|last| {
                             last.elapsed()
                                 >= Duration::from_secs(FLUX_WATCH_REFRESH_MIN_INTERVAL_SECS)
@@ -3539,6 +3595,7 @@ pub(crate) async fn run_app_inner(
                                 refresh_state.context_generation,
                                 &app,
                                 &watch_tx,
+                                watch_scope_for_view(app.view()),
                             )
                             .await;
                             if app.view() == AppView::Events {
@@ -3653,12 +3710,11 @@ pub(crate) async fn run_app_inner(
                 let in_backoff = backoff_until.is_some_and(|t| Instant::now() < t);
                 if app.detail_view.is_none() && !in_backoff {
                     auto_refresh_count = auto_refresh_count.wrapping_add(1);
-                    let include_flux = app.view().is_fluxcd()
-                        || auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY);
-                    let mut dispatch = refresh_options_for_view(app.view(), include_flux, false);
-                    // Strip watched scopes — watches provide real-time updates
-                    dispatch.primary_scope = dispatch.primary_scope.without(RefreshScope::WATCHED_SCOPES);
-                    dispatch.options.scope = dispatch.options.scope.without(RefreshScope::WATCHED_SCOPES);
+                    let include_flux = should_include_flux_in_auto_refresh(auto_refresh_count);
+                    let dispatch = strip_active_watch_scope_from_refresh(
+                        refresh_options_for_view(app.view(), include_flux, false),
+                        watch_manager.active_scope(),
+                    );
                     if !dispatch.options.scope.is_empty() || dispatch.options.include_cluster_info {
                         request_refresh(
                             &refresh_tx,
@@ -4609,6 +4665,7 @@ pub(crate) async fn run_app_inner(
                         refresh_state.context_generation,
                         &app,
                         &watch_tx,
+                        watch_scope_for_view(app.view()),
                     )
                     .await;
                     if app.view() == kubectui::app::AppView::Extensions {

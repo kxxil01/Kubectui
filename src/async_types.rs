@@ -16,7 +16,7 @@ use kubectui::{
         rollout::RolloutInspection,
         workload_logs::WorkloadLogTarget,
     },
-    state::{GlobalState, RefreshOptions, RefreshScope},
+    state::{FluxTargetFingerprints, GlobalState, RefreshOptions, RefreshScope},
     time::AppTimestamp,
 };
 
@@ -42,6 +42,7 @@ pub struct RefreshAsyncResult {
     pub request_id: u64,
     pub context_generation: u64,
     pub requested_namespace: Option<String>,
+    pub start_flux_target_fingerprints: FluxTargetFingerprints,
     pub result: Result<GlobalState, String>,
 }
 
@@ -58,6 +59,7 @@ pub struct QueuedRefresh {
 pub struct RefreshRuntimeState {
     pub request_seq: u64,
     pub in_flight_id: Option<u64>,
+    pub in_flight_options: Option<RefreshOptions>,
     pub in_flight_task: Option<tokio::task::JoinHandle<()>>,
     pub queued_refresh: Option<QueuedRefresh>,
     pub context_generation: u64,

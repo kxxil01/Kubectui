@@ -517,15 +517,11 @@ pub(crate) fn responsive_table_widths_vec(area_width: u16, wide: &[Constraint]) 
 fn constraint_ideal_width(constraint: Constraint) -> u16 {
     match constraint {
         Constraint::Percentage(value) => value.max(1),
-        Constraint::Ratio(numerator, denominator) => {
-            if denominator == 0 {
-                1
-            } else {
-                ((numerator.saturating_mul(100)) / denominator)
-                    .try_into()
-                    .unwrap_or(100)
-            }
-        }
+        Constraint::Ratio(numerator, denominator) => numerator
+            .saturating_mul(100)
+            .checked_div(denominator)
+            .map(|value| value.try_into().unwrap_or(100))
+            .unwrap_or(1),
         Constraint::Length(value) | Constraint::Min(value) | Constraint::Max(value) => value.max(1),
         Constraint::Fill(value) => value.max(1),
     }
@@ -1971,7 +1967,9 @@ fn render_pods_widget(
                                     parse_mib(req)
                                 };
                                 if req_val > 0 {
-                                    utilization_style(usage * 100 / req_val, &theme)
+                                    let pct =
+                                        usage.saturating_mul(100).checked_div(req_val).unwrap_or(0);
+                                    utilization_style(pct, &theme)
                                 } else {
                                     dim_style
                                 }
@@ -2030,7 +2028,9 @@ fn render_pods_widget(
                                     parse_mib(d)
                                 };
                                 if denom > 0 {
-                                    Cell::from(utilization_bar(usage * 100 / denom, &theme))
+                                    let pct =
+                                        usage.saturating_mul(100).checked_div(denom).unwrap_or(0);
+                                    Cell::from(utilization_bar(pct, &theme))
                                 } else {
                                     Cell::from(Span::styled("-", dim_style))
                                 }

@@ -226,8 +226,8 @@ pub fn refresh_options_for_view(
     match view {
         AppView::Dashboard => {
             let mut dispatch = RefreshDispatch::new(
-                RefreshScope::CORE_OVERVIEW,
-                RefreshScope::CORE_OVERVIEW.union(RefreshScope::METRICS),
+                RefreshScope::DASHBOARD_WATCHED,
+                RefreshScope::DASHBOARD_WATCHED.union(RefreshScope::METRICS),
             );
             dispatch.options.include_cluster_info = include_cluster_info;
             dispatch
@@ -284,7 +284,7 @@ pub fn refresh_options_for_view(
         ),
         AppView::PortForwarding => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
         AppView::Issues | AppView::HealthReport => RefreshDispatch::new(
-            RefreshScope::CORE_OVERVIEW,
+            RefreshScope::DASHBOARD_WATCHED,
             RefreshScope::CORE_OVERVIEW
                 .union(RefreshScope::LEGACY_SECONDARY)
                 .union(RefreshScope::SECURITY)
