@@ -163,241 +163,246 @@ impl GlobalState {
             .intersects(RefreshScope::LOCAL_HELM_REPOSITORIES);
         let fetch_cluster_info = options.include_cluster_info;
         let skip_core = options.skip_core;
-        let wave1 = tokio::join!(
-            maybe_fetch(
-                fetch_nodes && !skip_core,
-                "nodes",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_nodes()
-            ),
-            maybe_fetch(
-                fetch_pods && !skip_core,
-                "pods",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_pods(namespace)
-            ),
-            maybe_fetch(
-                fetch_services && !skip_core,
-                "services",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_services(namespace)
-            ),
-            maybe_fetch(
-                fetch_deployments && !skip_core,
-                "deployments",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_deployments(namespace)
-            ),
-            maybe_fetch(
-                fetch_statefulsets && !skip_core,
-                "statefulsets",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_statefulsets(namespace)
-            ),
-            maybe_fetch(
-                fetch_daemonsets && !skip_core,
-                "daemonsets",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_daemonsets(namespace)
-            ),
-            maybe_fetch(
-                fetch_replicasets && !skip_core,
-                "replicasets",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_replicasets(namespace)
-            ),
-            maybe_fetch(
-                fetch_replication_controllers && !skip_core,
-                "replicationcontrollers",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_replication_controllers(namespace)
-            ),
-            maybe_fetch(
-                fetch_jobs && !skip_core,
-                "jobs",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_jobs(namespace)
-            ),
-            maybe_fetch(
-                fetch_cronjobs && !skip_core,
-                "cronjobs",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_cronjobs(namespace)
-            ),
-            maybe_fetch(
-                fetch_namespaces && !skip_core,
-                "namespacelist",
-                &CORE_FETCH_SEMAPHORE,
-                || { client.fetch_namespace_list() }
-            ),
-            maybe_fetch(fetch_flux, "fluxresources", &CORE_FETCH_SEMAPHORE, || {
-                client.fetch_flux_resources(namespace)
-            }),
-            maybe_fetch(fetch_metrics, "cluster info", &CORE_FETCH_SEMAPHORE, || {
-                client.fetch_cluster_version()
-            }),
-            maybe_fetch(
-                fetch_cluster_info && namespace.is_some(),
-                "cluster pod count",
-                &CORE_FETCH_SEMAPHORE,
-                || client.fetch_cluster_pod_count()
-            ),
-        );
-
-        let wave2 = tokio::join!(
-            maybe_fetch(
-                fetch_config,
-                "resourcequotas",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_resource_quotas(namespace)
-            ),
-            maybe_fetch(
-                fetch_config,
-                "limitranges",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_limit_ranges(namespace)
-            ),
-            maybe_fetch(fetch_config, "pdbs", &SECONDARY_FETCH_SEMAPHORE, || {
-                client.fetch_pod_disruption_budgets(namespace)
-            }),
-            maybe_fetch(
-                fetch_security,
-                "serviceaccounts",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_service_accounts(namespace)
-            ),
-            maybe_fetch(fetch_security, "roles", &SECONDARY_FETCH_SEMAPHORE, || {
-                client.fetch_roles(namespace)
-            }),
-            maybe_fetch(
-                fetch_security,
-                "rolebindings",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_role_bindings(namespace)
-            ),
-            maybe_fetch(
-                fetch_security,
-                "clusterroles",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_cluster_roles()
-            ),
-            maybe_fetch(
-                fetch_security,
-                "clusterrolebindings",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_cluster_role_bindings()
-            ),
-            maybe_fetch(
-                fetch_security,
-                "vulnerabilityreports",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_vulnerability_reports(namespace)
-            ),
-            maybe_fetch(fetch_extensions, "crds", &SECONDARY_FETCH_SEMAPHORE, || {
-                client.fetch_custom_resource_definitions()
-            }),
-            maybe_fetch(
-                fetch_network,
-                "endpoints",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || { client.fetch_endpoints(namespace) }
-            ),
-            maybe_fetch(
-                fetch_network,
-                "ingresses",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || { client.fetch_ingresses(namespace) }
-            ),
-            maybe_fetch(
-                fetch_network,
-                "ingressclasses",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_ingress_classes()
-            ),
-            maybe_fetch(
-                fetch_network,
-                "gatewayclasses",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_gateway_classes()
-            ),
-            maybe_fetch(
-                fetch_network,
-                "gateways",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_gateways(namespace)
-            ),
-            maybe_fetch(
-                fetch_network,
-                "httproutes",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_http_routes(namespace)
-            ),
-            maybe_fetch(
-                fetch_network,
-                "grpcroutes",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_grpc_routes(namespace)
-            ),
-            maybe_fetch(
-                fetch_network,
-                "referencegrants",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_reference_grants(namespace)
-            ),
-            maybe_fetch(
-                fetch_network,
-                "networkpolicies",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_network_policies(namespace)
-            ),
-            maybe_fetch(
-                fetch_config,
-                "configmaps",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || { client.fetch_config_maps(namespace) }
-            ),
-            maybe_fetch(fetch_config, "secrets", &SECONDARY_FETCH_SEMAPHORE, || {
-                client.fetch_secrets(namespace)
-            }),
-            maybe_fetch(fetch_config, "hpas", &SECONDARY_FETCH_SEMAPHORE, || {
-                client.fetch_hpas(namespace)
-            }),
-            maybe_fetch(fetch_storage, "pvcs", &SECONDARY_FETCH_SEMAPHORE, || {
-                client.fetch_pvcs(namespace)
-            }),
-            maybe_fetch(fetch_storage, "pvs", &SECONDARY_FETCH_SEMAPHORE, || {
-                client.fetch_pvs()
-            }),
-            maybe_fetch(
-                fetch_storage,
-                "storageclasses",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_storage_classes()
-            ),
-            maybe_fetch(
-                fetch_config,
-                "priorityclasses",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || client.fetch_priority_classes()
-            ),
-            maybe_fetch(
-                fetch_helm,
-                "helmreleases",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || { client.fetch_helm_releases(namespace) }
-            ),
-            maybe_fetch(
-                fetch_metrics,
-                "nodemetrics",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || { client.fetch_all_node_metrics() }
-            ),
-            maybe_fetch(
-                fetch_metrics,
-                "podmetrics",
-                &SECONDARY_FETCH_SEMAPHORE,
-                || { client.fetch_all_pod_metrics(namespace) }
-            ),
+        let (wave1, wave2) = tokio::join!(
+            async {
+                tokio::join!(
+                    maybe_fetch(
+                        fetch_nodes && !skip_core,
+                        "nodes",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_nodes()
+                    ),
+                    maybe_fetch(
+                        fetch_pods && !skip_core,
+                        "pods",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_pods(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_services && !skip_core,
+                        "services",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_services(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_deployments && !skip_core,
+                        "deployments",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_deployments(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_statefulsets && !skip_core,
+                        "statefulsets",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_statefulsets(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_daemonsets && !skip_core,
+                        "daemonsets",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_daemonsets(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_replicasets && !skip_core,
+                        "replicasets",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_replicasets(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_replication_controllers && !skip_core,
+                        "replicationcontrollers",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_replication_controllers(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_jobs && !skip_core,
+                        "jobs",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_jobs(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_cronjobs && !skip_core,
+                        "cronjobs",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_cronjobs(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_namespaces && !skip_core,
+                        "namespacelist",
+                        &CORE_FETCH_SEMAPHORE,
+                        || { client.fetch_namespace_list() }
+                    ),
+                    maybe_fetch(fetch_flux, "fluxresources", &CORE_FETCH_SEMAPHORE, || {
+                        client.fetch_flux_resources(namespace)
+                    }),
+                    maybe_fetch(fetch_metrics, "cluster info", &CORE_FETCH_SEMAPHORE, || {
+                        client.fetch_cluster_version()
+                    }),
+                    maybe_fetch(
+                        fetch_cluster_info && namespace.is_some(),
+                        "cluster pod count",
+                        &CORE_FETCH_SEMAPHORE,
+                        || client.fetch_cluster_pod_count()
+                    ),
+                )
+            },
+            async {
+                tokio::join!(
+                    maybe_fetch(
+                        fetch_config,
+                        "resourcequotas",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_resource_quotas(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_config,
+                        "limitranges",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_limit_ranges(namespace)
+                    ),
+                    maybe_fetch(fetch_config, "pdbs", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_pod_disruption_budgets(namespace)
+                    }),
+                    maybe_fetch(
+                        fetch_security,
+                        "serviceaccounts",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_service_accounts(namespace)
+                    ),
+                    maybe_fetch(fetch_security, "roles", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_roles(namespace)
+                    }),
+                    maybe_fetch(
+                        fetch_security,
+                        "rolebindings",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_role_bindings(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_security,
+                        "clusterroles",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_cluster_roles()
+                    ),
+                    maybe_fetch(
+                        fetch_security,
+                        "clusterrolebindings",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_cluster_role_bindings()
+                    ),
+                    maybe_fetch(
+                        fetch_security,
+                        "vulnerabilityreports",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_vulnerability_reports(namespace)
+                    ),
+                    maybe_fetch(fetch_extensions, "crds", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_custom_resource_definitions()
+                    }),
+                    maybe_fetch(
+                        fetch_network,
+                        "endpoints",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_endpoints(namespace) }
+                    ),
+                    maybe_fetch(
+                        fetch_network,
+                        "ingresses",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_ingresses(namespace) }
+                    ),
+                    maybe_fetch(
+                        fetch_network,
+                        "ingressclasses",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_ingress_classes()
+                    ),
+                    maybe_fetch(
+                        fetch_network,
+                        "gatewayclasses",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_gateway_classes()
+                    ),
+                    maybe_fetch(
+                        fetch_network,
+                        "gateways",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_gateways(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_network,
+                        "httproutes",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_http_routes(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_network,
+                        "grpcroutes",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_grpc_routes(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_network,
+                        "referencegrants",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_reference_grants(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_network,
+                        "networkpolicies",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_network_policies(namespace)
+                    ),
+                    maybe_fetch(
+                        fetch_config,
+                        "configmaps",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_config_maps(namespace) }
+                    ),
+                    maybe_fetch(fetch_config, "secrets", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_secrets(namespace)
+                    }),
+                    maybe_fetch(fetch_config, "hpas", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_hpas(namespace)
+                    }),
+                    maybe_fetch(fetch_storage, "pvcs", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_pvcs(namespace)
+                    }),
+                    maybe_fetch(fetch_storage, "pvs", &SECONDARY_FETCH_SEMAPHORE, || {
+                        client.fetch_pvs()
+                    }),
+                    maybe_fetch(
+                        fetch_storage,
+                        "storageclasses",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_storage_classes()
+                    ),
+                    maybe_fetch(
+                        fetch_config,
+                        "priorityclasses",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || client.fetch_priority_classes()
+                    ),
+                    maybe_fetch(
+                        fetch_helm,
+                        "helmreleases",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_helm_releases(namespace) }
+                    ),
+                    maybe_fetch(
+                        fetch_metrics,
+                        "nodemetrics",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_all_node_metrics() }
+                    ),
+                    maybe_fetch(
+                        fetch_metrics,
+                        "podmetrics",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_all_pod_metrics(namespace) }
+                    ),
+                )
+            },
         );
 
         let (
@@ -450,15 +455,30 @@ impl GlobalState {
             ),
         ) = (wave1, wave2);
 
-        let core_fetch_succeeded = matches!(nodes_res.as_ref(), Some(Ok(_)))
+        let primary_resource_fetch_succeeded = matches!(nodes_res.as_ref(), Some(Ok(_)))
             || matches!(pods_res.as_ref(), Some(Ok(_)))
             || matches!(services_res.as_ref(), Some(Ok(_)))
             || matches!(deployments_res.as_ref(), Some(Ok(_)))
             || matches!(statefulsets_res.as_ref(), Some(Ok(_)))
             || matches!(daemonsets_res.as_ref(), Some(Ok(_)))
+            || matches!(replicasets_res.as_ref(), Some(Ok(_)))
+            || matches!(replication_controllers_res.as_ref(), Some(Ok(_)))
             || matches!(jobs_res.as_ref(), Some(Ok(_)))
             || matches!(cronjobs_res.as_ref(), Some(Ok(_)))
-            || matches!(cluster_info_res.as_ref(), Some(Ok(_)));
+            || matches!(namespace_list_res.as_ref(), Some(Ok(_)))
+            || matches!(flux_resources_res.as_ref(), Some(Ok(_)));
+        let primary_resource_fetch_attempted = nodes_res.is_some()
+            || pods_res.is_some()
+            || services_res.is_some()
+            || deployments_res.is_some()
+            || statefulsets_res.is_some()
+            || daemonsets_res.is_some()
+            || replicasets_res.is_some()
+            || replication_controllers_res.is_some()
+            || jobs_res.is_some()
+            || cronjobs_res.is_some()
+            || namespace_list_res.is_some()
+            || flux_resources_res.is_some();
 
         let mut errors = Vec::new();
         let mut total_fetches: usize = 0;
@@ -789,8 +809,11 @@ impl GlobalState {
 
         let all_failed = !skip_core
             && total_fetches > 0
-            && errors.len() >= total_fetches
-            && !core_fetch_succeeded;
+            && if primary_resource_fetch_attempted {
+                !primary_resource_fetch_succeeded
+            } else {
+                errors.len() >= total_fetches
+            };
 
         if all_failed {
             let message = if errors.is_empty() {

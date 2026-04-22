@@ -1444,6 +1444,8 @@ mod tests {
         pod_metrics: AtomicUsize,
         service_accounts: AtomicUsize,
         pvcs: AtomicUsize,
+        active_core_fetches: AtomicUsize,
+        secondary_started_while_core_active: AtomicUsize,
     }
 
     #[derive(Clone)]
@@ -1483,8 +1485,11 @@ mod tests {
         deployments_err: Option<String>,
         statefulsets_err: Option<String>,
         daemonsets_err: Option<String>,
+        replicasets_err: Option<String>,
+        replication_controllers_err: Option<String>,
         jobs_err: Option<String>,
         cronjobs_err: Option<String>,
+        namespace_list_err: Option<String>,
         resource_quotas_err: Option<String>,
         limit_ranges_err: Option<String>,
         pod_disruption_budgets_err: Option<String>,
@@ -1502,6 +1507,27 @@ mod tests {
         hpas_err: Option<String>,
         priority_classes_err: Option<String>,
         delay_ms: u64,
+    }
+
+    struct ActiveCoreFetchGuard {
+        counters: Arc<MockFetchCounters>,
+    }
+
+    impl ActiveCoreFetchGuard {
+        fn new(counters: &Arc<MockFetchCounters>) -> Self {
+            counters.active_core_fetches.fetch_add(1, Ordering::Relaxed);
+            Self {
+                counters: Arc::clone(counters),
+            }
+        }
+    }
+
+    impl Drop for ActiveCoreFetchGuard {
+        fn drop(&mut self) {
+            self.counters
+                .active_core_fetches
+                .fetch_sub(1, Ordering::Relaxed);
+        }
     }
 
     impl MockDataSource {
@@ -1661,8 +1687,11 @@ mod tests {
                 deployments_err: None,
                 statefulsets_err: None,
                 daemonsets_err: None,
+                replicasets_err: None,
+                replication_controllers_err: None,
                 jobs_err: None,
                 cronjobs_err: None,
+                namespace_list_err: None,
                 resource_quotas_err: None,
                 limit_ranges_err: None,
                 pod_disruption_budgets_err: None,
@@ -1686,6 +1715,26 @@ mod tests {
         fn with_delay(mut self, delay_ms: u64) -> Self {
             self.delay_ms = delay_ms;
             self
+        }
+
+        async fn delay_core_fetch(&self) {
+            let _guard = ActiveCoreFetchGuard::new(&self.fetch_counters);
+            if self.delay_ms > 0 {
+                tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
+            }
+        }
+
+        fn observe_secondary_fetch_start(&self) {
+            if self
+                .fetch_counters
+                .active_core_fetches
+                .load(Ordering::Relaxed)
+                > 0
+            {
+                self.fetch_counters
+                    .secondary_started_while_core_active
+                    .fetch_add(1, Ordering::Relaxed);
+            }
         }
 
         fn bump(&self, counter: &AtomicUsize) {
@@ -1724,9 +1773,7 @@ mod tests {
 
         async fn fetch_nodes(&self) -> Result<Vec<NodeInfo>> {
             self.bump(&self.fetch_counters.nodes);
-            if self.delay_ms > 0 {
-                tokio::time::sleep(Duration::from_millis(self.delay_ms)).await;
-            }
+            self.delay_core_fetch().await;
             if let Some(err) = &self.nodes_err {
                 return Err(anyhow!(err.clone()));
             }
@@ -1813,6 +1860,9 @@ mod tests {
 
         async fn fetch_replicasets(&self, namespace: Option<&str>) -> Result<Vec<ReplicaSetInfo>> {
             self.bump(&self.fetch_counters.workload_calls);
+            if let Some(err) = &self.replicasets_err {
+                return Err(anyhow!(err.clone()));
+            }
             Ok(Self::filter_namespace(
                 &self.replicasets,
                 namespace,
@@ -1825,6 +1875,9 @@ mod tests {
             namespace: Option<&str>,
         ) -> Result<Vec<ReplicationControllerInfo>> {
             self.bump(&self.fetch_counters.workload_calls);
+            if let Some(err) = &self.replication_controllers_err {
+                return Err(anyhow!(err.clone()));
+            }
             Ok(Self::filter_namespace(
                 &self.replication_controllers,
                 namespace,
@@ -1856,6 +1909,7 @@ mod tests {
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<ResourceQuotaInfo>> {
+            self.observe_secondary_fetch_start();
             self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.resource_quotas_err {
                 return Err(anyhow!(err.clone()));
@@ -1868,6 +1922,7 @@ mod tests {
         }
 
         async fn fetch_limit_ranges(&self, namespace: Option<&str>) -> Result<Vec<LimitRangeInfo>> {
+            self.observe_secondary_fetch_start();
             self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.limit_ranges_err {
                 return Err(anyhow!(err.clone()));
@@ -1883,6 +1938,7 @@ mod tests {
             &self,
             namespace: Option<&str>,
         ) -> Result<Vec<PodDisruptionBudgetInfo>> {
+            self.observe_secondary_fetch_start();
             self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.pod_disruption_budgets_err {
                 return Err(anyhow!(err.clone()));
@@ -2051,6 +2107,7 @@ mod tests {
             Ok(vec![])
         }
         async fn fetch_config_maps(&self, _namespace: Option<&str>) -> Result<Vec<ConfigMapInfo>> {
+            self.observe_secondary_fetch_start();
             self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.config_maps_err {
                 return Err(anyhow!(err.clone()));
@@ -2058,6 +2115,7 @@ mod tests {
             Ok(vec![])
         }
         async fn fetch_secrets(&self, _namespace: Option<&str>) -> Result<Vec<SecretInfo>> {
+            self.observe_secondary_fetch_start();
             self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.secrets_err {
                 return Err(anyhow!(err.clone()));
@@ -2065,6 +2123,7 @@ mod tests {
             Ok(vec![])
         }
         async fn fetch_hpas(&self, _namespace: Option<&str>) -> Result<Vec<HpaInfo>> {
+            self.observe_secondary_fetch_start();
             self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.hpas_err {
                 return Err(anyhow!(err.clone()));
@@ -2086,6 +2145,9 @@ mod tests {
         }
         async fn fetch_namespace_list(&self) -> Result<Vec<NamespaceInfo>> {
             self.bump(&self.fetch_counters.namespaces);
+            if let Some(err) = &self.namespace_list_err {
+                return Err(anyhow!(err.clone()));
+            }
             Ok(self
                 .namespaces
                 .iter()
@@ -2100,6 +2162,7 @@ mod tests {
             Ok(vec![])
         }
         async fn fetch_priority_classes(&self) -> Result<Vec<PriorityClassInfo>> {
+            self.observe_secondary_fetch_start();
             self.bump(&self.fetch_counters.config_calls);
             if let Some(err) = &self.priority_classes_err {
                 return Err(anyhow!(err.clone()));
@@ -2182,6 +2245,30 @@ mod tests {
         assert_eq!(snapshot.cluster_summary(), "https://kind.local");
         assert_eq!(state.namespaces, vec!["default", "demo"]);
         assert!(snapshot.last_updated.is_some());
+    }
+
+    #[tokio::test]
+    async fn refresh_overlaps_core_and_secondary_fetch_waves() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success().with_delay(50);
+        let counters = Arc::clone(&source.fetch_counters);
+
+        state
+            .refresh_with_options(
+                &source,
+                Some("default"),
+                refresh_options(RefreshScope::NODES.union(RefreshScope::CONFIG), false),
+            )
+            .await
+            .expect("refresh should succeed");
+
+        assert!(
+            counters
+                .secondary_started_while_core_active
+                .load(Ordering::Relaxed)
+                > 0,
+            "secondary fetches should start while core fetches are still in flight"
+        );
     }
 
     #[tokio::test]
@@ -3203,6 +3290,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn refresh_core_failure_is_not_masked_by_secondary_success() {
+        let mut state = GlobalState::default();
+        let mut source = MockDataSource::success();
+        source.nodes_err = Some("nodes down".to_string());
+
+        let result = state
+            .refresh_with_options(
+                &source,
+                None,
+                refresh_options(RefreshScope::NODES.union(RefreshScope::CONFIG), false),
+            )
+            .await;
+
+        assert!(result.is_err());
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.phase, DataPhase::Error);
+        assert_eq!(snapshot.connection_health, ConnectionHealth::Disconnected);
+        assert!(
+            snapshot
+                .last_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("nodes")
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_metrics_cluster_info_failure_degrades_when_metrics_succeed() {
+        let mut state = GlobalState::default();
+        let mut source = MockDataSource::success();
+        source.cluster_info_err = Some("cluster down".to_string());
+
+        state
+            .refresh_with_options(&source, None, refresh_options(RefreshScope::METRICS, false))
+            .await
+            .expect("metrics refresh should degrade instead of hard-failing");
+
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.phase, DataPhase::Ready);
+        assert_eq!(snapshot.connection_health, ConnectionHealth::Degraded(1));
+        assert!(
+            snapshot
+                .last_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("cluster info")
+        );
+    }
+
+    #[tokio::test]
+    async fn refresh_primary_resource_failure_is_not_masked_by_secondary_success() {
+        let mut state = GlobalState::default();
+        let mut source = MockDataSource::success();
+        source.replicasets_err = Some("replicasets down".to_string());
+
+        let result = state
+            .refresh_with_options(
+                &source,
+                None,
+                refresh_options(RefreshScope::REPLICASETS.union(RefreshScope::CONFIG), false),
+            )
+            .await;
+
+        assert!(result.is_err());
+        let snapshot = state.snapshot();
+        assert_eq!(snapshot.phase, DataPhase::Error);
+        assert_eq!(snapshot.connection_health, ConnectionHealth::Disconnected);
+        assert!(
+            snapshot
+                .last_error
+                .as_deref()
+                .unwrap_or_default()
+                .contains("replicasets")
+        );
+    }
+
+    #[tokio::test]
     async fn refresh_with_only_replicasets_does_not_mark_all_failed() {
         let mut state = GlobalState::default();
         let source = MockDataSource {
@@ -3282,8 +3446,11 @@ mod tests {
             deployments_err: Some("deployments down".to_string()),
             statefulsets_err: Some("statefulsets down".to_string()),
             daemonsets_err: Some("daemonsets down".to_string()),
+            replicasets_err: Some("replicasets down".to_string()),
+            replication_controllers_err: Some("replicationcontrollers down".to_string()),
             jobs_err: Some("jobs down".to_string()),
             cronjobs_err: Some("cronjobs down".to_string()),
+            namespace_list_err: Some("namespaces down".to_string()),
             resource_quotas_err: Some("resourcequotas down".to_string()),
             limit_ranges_err: Some("limitranges down".to_string()),
             pod_disruption_budgets_err: Some("pdbs down".to_string()),
