@@ -617,24 +617,70 @@ fn fuzzy_match(haystack: &str, needle: &str) -> bool {
     true
 }
 
-fn ranked_alias_score(aliases: &[String], query: &str) -> Option<(u8, usize, String)> {
-    let query = query.trim().to_ascii_lowercase();
+fn starts_with_ascii_ci(haystack: &str, needle: &str) -> bool {
+    let needle = needle.as_bytes();
+    haystack
+        .as_bytes()
+        .get(..needle.len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(needle))
+}
+
+fn find_ascii_ci(haystack: &str, needle: &str) -> Option<usize> {
+    let needle = needle.as_bytes();
+    haystack.char_indices().find_map(|(idx, _)| {
+        let end = idx.checked_add(needle.len())?;
+        haystack
+            .as_bytes()
+            .get(idx..end)
+            .and_then(|window| window.eq_ignore_ascii_case(needle).then_some(idx))
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct AliasScore<'a> {
+    rank: u8,
+    metric: usize,
+    alias: &'a str,
+}
+
+fn ranked_alias_score<'a>(aliases: &'a [String], query: &str) -> Option<AliasScore<'a>> {
+    let query = query.trim();
     if query.is_empty() {
-        return Some((u8::MAX, 0, String::new()));
+        return Some(AliasScore {
+            rank: u8::MAX,
+            metric: 0,
+            alias: "",
+        });
     }
 
     aliases
         .iter()
         .filter_map(|alias| {
-            let alias_lower = alias.to_ascii_lowercase();
-            if alias_lower == query {
-                Some((0, alias_lower.len(), alias_lower))
-            } else if alias_lower.starts_with(&query) {
-                Some((1, alias_lower.len(), alias_lower))
-            } else if let Some(position) = alias_lower.find(&query) {
-                Some((2, position, alias_lower))
-            } else if fuzzy_match(&alias_lower, &query) {
-                Some((3, alias_lower.len(), alias_lower))
+            let alias = alias.as_str();
+            if alias.eq_ignore_ascii_case(query) {
+                Some(AliasScore {
+                    rank: 0,
+                    metric: alias.len(),
+                    alias,
+                })
+            } else if starts_with_ascii_ci(alias, query) {
+                Some(AliasScore {
+                    rank: 1,
+                    metric: alias.len(),
+                    alias,
+                })
+            } else if let Some(position) = find_ascii_ci(alias, query) {
+                Some(AliasScore {
+                    rank: 2,
+                    metric: position,
+                    alias,
+                })
+            } else if fuzzy_match(alias, query) {
+                Some(AliasScore {
+                    rank: 3,
+                    metric: alias.len(),
+                    alias,
+                })
             } else {
                 None
             }
@@ -2266,6 +2312,32 @@ mod tests {
                 "deployment".into(),
                 "prod/api".into(),
                 "team=platform".into(),
+            ],
+            badge_label: "Deployments".into(),
+        }]);
+        palette.open();
+        for c in "platform".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        assert!(palette.filtered().iter().any(|entry| matches!(
+            entry,
+            PaletteEntry::Resource(resource)
+                if resource.resource == ResourceRef::Deployment("api".into(), "prod".into())
+        )));
+    }
+
+    #[test]
+    fn resource_search_alias_matching_stays_case_insensitive() {
+        let mut palette = CommandPalette::default();
+        palette.set_resource_entries(vec![PaletteResourceEntry {
+            resource: ResourceRef::Deployment("api".into(), "prod".into()),
+            title: "api".into(),
+            subtitle: "Deployment · prod".into(),
+            aliases: vec![
+                "Deployment".into(),
+                "Prod/API".into(),
+                "Team=Platform".into(),
             ],
             badge_label: "Deployments".into(),
         }]);

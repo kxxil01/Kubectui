@@ -13,6 +13,7 @@ use std::{
 use anyhow::Result;
 use async_trait::async_trait;
 use common::{make_node, make_pod, make_service};
+use crossterm::event::{KeyCode, KeyEvent};
 use kubectui::{
     app::{AppState, AppView},
     global_search::collect_global_resource_search_entries,
@@ -214,6 +215,46 @@ fn benchmark_palette_resource_refresh_cache_hit_under_10ms() {
     assert!(!palette.filtered().is_empty());
     assert_eq!(warmed.len(), 6_000);
     assert!(elapsed.as_millis() < 10, "{}ms", elapsed.as_millis());
+}
+
+/// Verifies palette resource query typing stays cheap with thousands of indexed resources.
+#[test]
+#[ignore = "Optional performance run"]
+fn benchmark_palette_resource_query_6k_under_50ms() {
+    let mut snapshot = ClusterSnapshot {
+        snapshot_version: 1,
+        ..ClusterSnapshot::default()
+    };
+    for i in 0..2_000 {
+        snapshot.pods.push(make_pod(
+            &format!("pod-{i}"),
+            if i % 2 == 0 { "prod" } else { "dev" },
+            "Running",
+        ));
+        snapshot.services.push(make_service(
+            &format!("svc-{i}"),
+            if i % 2 == 0 { "prod" } else { "dev" },
+            "ClusterIP",
+        ));
+        snapshot.deployments.push(DeploymentInfo {
+            name: format!("deploy-{i}"),
+            namespace: if i % 2 == 0 { "prod" } else { "dev" }.to_string(),
+            ..DeploymentInfo::default()
+        });
+    }
+
+    let mut palette = CommandPalette::default();
+    palette.open();
+    palette.set_resource_entries(collect_global_resource_search_entries(&snapshot));
+
+    let start = Instant::now();
+    for ch in "prod/pod-199".chars() {
+        palette.handle_key(KeyEvent::from(KeyCode::Char(ch)));
+    }
+    let elapsed = start.elapsed();
+
+    assert!(!palette.filtered().is_empty());
+    assert!(elapsed.as_millis() < 50, "{}ms", elapsed.as_millis());
 }
 
 #[derive(Clone, Default)]
