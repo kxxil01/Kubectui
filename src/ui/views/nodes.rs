@@ -190,7 +190,7 @@ pub fn render_nodes(
                         Some(nm) => {
                             let used = parse_millicores(&nm.cpu);
                             let alloc_m = parse_millicores(alloc);
-                            let pct = if alloc_m > 0 { used * 100 / alloc_m } else { 0 };
+                            let pct = used.saturating_mul(100).checked_div(alloc_m).unwrap_or(0);
                             let label = format!(
                                 "{}/{}",
                                 format_millicores(used),
@@ -207,11 +207,7 @@ pub fn render_nodes(
                         Some(nm) => {
                             let used = parse_mib(&nm.memory);
                             let alloc_mib = parse_mib(alloc);
-                            let pct = if alloc_mib > 0 {
-                                used * 100 / alloc_mib
-                            } else {
-                                0
-                            };
+                            let pct = used.saturating_mul(100).checked_div(alloc_mib).unwrap_or(0);
                             let label = format!("{}/{}", format_mib(used), format_mib(alloc_mib));
                             Cell::from(utilization_bar_labeled(&label, pct, &theme))
                         }

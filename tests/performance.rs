@@ -714,9 +714,9 @@ async fn profile_refresh_scope_baselines() {
     let scenarios = [
         RefreshScenario {
             name: "Dashboard",
-            primary_scope: RefreshScope::CORE_OVERVIEW,
+            primary_scope: RefreshScope::DASHBOARD_WATCHED,
             background_scope: RefreshScope::METRICS,
-            expected_api_calls: 14,
+            expected_api_calls: 10,
         },
         RefreshScenario {
             name: "Pods",
@@ -756,9 +756,13 @@ async fn profile_refresh_scope_baselines() {
         },
         RefreshScenario {
             name: "Issues",
-            primary_scope: RefreshScope::CORE_OVERVIEW,
-            background_scope: RefreshScope::LEGACY_SECONDARY.union(RefreshScope::FLUX),
-            expected_api_calls: 39,
+            primary_scope: RefreshScope::DASHBOARD_WATCHED,
+            background_scope: RefreshScope::CORE_OVERVIEW
+                .without(RefreshScope::DASHBOARD_WATCHED)
+                .union(RefreshScope::LEGACY_SECONDARY)
+                .union(RefreshScope::SECURITY)
+                .union(RefreshScope::FLUX),
+            expected_api_calls: 35,
         },
     ];
 
