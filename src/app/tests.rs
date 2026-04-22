@@ -2290,6 +2290,22 @@ fn uppercase_c_opens_connectivity_for_pod_detail() {
 }
 
 #[test]
+fn ctrl_shift_c_does_not_open_connectivity_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('C'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
 fn uppercase_a_opens_access_review_for_pod_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {

@@ -2210,12 +2210,14 @@ impl AppState {
                 AppAction::OpenNetworkPolicyView
             }
             KeyCode::Char('C')
-                if self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::CheckNetworkConnectivity)
-                }) && !self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::CheckNetworkConnectivity)
+                    })
+                    && !self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::OpenNetworkConnectivity
             }
