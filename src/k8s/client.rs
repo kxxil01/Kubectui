@@ -637,7 +637,7 @@ impl K8sClient {
             .map(crate::k8s::conversions::event_to_info)
             .collect();
         // Sort by last_seen descending
-        events.sort_unstable_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        events.sort_unstable_by_key(|event| std::cmp::Reverse(event.last_seen));
         events.truncate(MAX_RECENT_EVENTS_ITEMS);
         Ok(events)
     }

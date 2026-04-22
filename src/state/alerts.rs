@@ -394,10 +394,19 @@ fn ratio_percent(numerator: usize, denominator: usize) -> u8 {
 }
 
 fn ratio_percent_u64(numerator: u64, denominator: u64) -> u8 {
-    if denominator == 0 {
-        return 0;
-    }
-    ((numerator.saturating_mul(100) / denominator).min(100)) as u8
+    numerator
+        .saturating_mul(100)
+        .checked_div(denominator)
+        .unwrap_or(0)
+        .min(100) as u8
+}
+
+fn capped_percent_u64(numerator: u64, denominator: u64) -> u16 {
+    numerator
+        .saturating_mul(100)
+        .checked_div(denominator)
+        .unwrap_or(0)
+        .min(999) as u16
 }
 
 pub(crate) fn parse_millicores(raw: &str) -> u64 {
@@ -556,18 +565,14 @@ pub fn compute_cluster_resource_summary(snapshot: &ClusterSnapshot) -> ClusterRe
     }
 
     // Commitment percentages (can exceed 100%)
-    if summary.total_cpu_allocatable_m > 0 {
-        summary.cpu_request_commitment_pct =
-            (total_cpu_req * 100 / summary.total_cpu_allocatable_m).min(999) as u16;
-        summary.cpu_limit_commitment_pct =
-            (total_cpu_lim * 100 / summary.total_cpu_allocatable_m).min(999) as u16;
-    }
-    if summary.total_mem_allocatable_mib > 0 {
-        summary.mem_request_commitment_pct =
-            (total_mem_req * 100 / summary.total_mem_allocatable_mib).min(999) as u16;
-        summary.mem_limit_commitment_pct =
-            (total_mem_lim * 100 / summary.total_mem_allocatable_mib).min(999) as u16;
-    }
+    summary.cpu_request_commitment_pct =
+        capped_percent_u64(total_cpu_req, summary.total_cpu_allocatable_m);
+    summary.cpu_limit_commitment_pct =
+        capped_percent_u64(total_cpu_lim, summary.total_cpu_allocatable_m);
+    summary.mem_request_commitment_pct =
+        capped_percent_u64(total_mem_req, summary.total_mem_allocatable_mib);
+    summary.mem_limit_commitment_pct =
+        capped_percent_u64(total_mem_lim, summary.total_mem_allocatable_mib);
 
     summary
 }
@@ -690,15 +695,15 @@ pub fn compute_namespace_utilization(
 
     // Compute request utilization percentages (uncapped — can exceed 100% on burst)
     for ns in &mut result {
-        ns.cpu_req_utilization_pct = if ns.cpu_request_m > 0 {
-            Some((ns.cpu_usage_m * 100 / ns.cpu_request_m).min(999) as u16)
-        } else {
+        ns.cpu_req_utilization_pct = if ns.cpu_request_m == 0 {
             None
+        } else {
+            Some(capped_percent_u64(ns.cpu_usage_m, ns.cpu_request_m))
         };
-        ns.mem_req_utilization_pct = if ns.mem_request_mib > 0 {
-            Some((ns.mem_usage_mib * 100 / ns.mem_request_mib).min(999) as u16)
-        } else {
+        ns.mem_req_utilization_pct = if ns.mem_request_mib == 0 {
             None
+        } else {
+            Some(capped_percent_u64(ns.mem_usage_mib, ns.mem_request_mib))
         };
     }
 

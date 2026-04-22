@@ -59,19 +59,17 @@ pub(crate) fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
                             }
                         }
                     }
-                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                    WorkbenchTabState::WorkloadLogs(logs_tab)
                         if logs_tab.sources.iter().any(|(pod, ns, container)| {
                             pod == &pod_name && ns == &namespace && container == &container_name
-                        }) {
-                            logs_tab.push_line(kubectui::workbench::WorkloadLogLine {
-                                pod_name: pod_name.clone(),
-                                container_name: container_name.clone(),
-                                entry: kubectui::log_investigation::LogEntry::from_raw(
-                                    line.clone(),
-                                ),
-                                is_stderr: false,
-                            });
-                        }
+                        }) =>
+                    {
+                        logs_tab.push_line(kubectui::workbench::WorkloadLogLine {
+                            pod_name: pod_name.clone(),
+                            container_name: container_name.clone(),
+                            entry: kubectui::log_investigation::LogEntry::from_raw(line.clone()),
+                            is_stderr: false,
+                        });
                     }
                     _ => {}
                 }
@@ -116,15 +114,14 @@ pub(crate) fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
                             }
                         }
                     }
-                    WorkbenchTabState::WorkloadLogs(logs_tab) => {
+                    WorkbenchTabState::WorkloadLogs(logs_tab)
                         if logs_tab.sources.iter().any(|(pod, ns, container)| {
                             pod == &pod_name && ns == &namespace && container == &container_name
-                        }) {
-                            logs_tab.loading = false;
-                            if let LogStreamStatus::Error(err) = &status {
-                                logs_tab.notice =
-                                    Some(format!("{pod_name}/{container_name}: {err}"));
-                            }
+                        }) =>
+                    {
+                        logs_tab.loading = false;
+                        if let LogStreamStatus::Error(err) = &status {
+                            logs_tab.notice = Some(format!("{pod_name}/{container_name}: {err}"));
                         }
                     }
                     _ => {}
@@ -730,7 +727,7 @@ pub(crate) fn queued_refresh_requires_two_phase(
 pub(crate) fn normalize_recent_events(
     mut events: Vec<kubectui::k8s::dtos::K8sEventInfo>,
 ) -> Vec<kubectui::k8s::dtos::K8sEventInfo> {
-    events.sort_unstable_by(|left, right| right.last_seen.cmp(&left.last_seen));
+    events.sort_unstable_by_key(|event| std::cmp::Reverse(event.last_seen));
     events.truncate(MAX_RECENT_EVENTS_CACHE_ITEMS);
     events
 }

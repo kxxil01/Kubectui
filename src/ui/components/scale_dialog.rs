@@ -108,14 +108,12 @@ impl ScaleDialogState {
                 self.input_buffer = next.to_string();
                 self.validate_and_update();
             }
-            ScaleAction::Submit => {
-                if self.is_valid() {
-                    self.desired_replicas = if self.input_buffer.is_empty() {
-                        self.current_replicas.to_string()
-                    } else {
-                        self.input_buffer.clone()
-                    };
-                }
+            ScaleAction::Submit if self.is_valid() => {
+                self.desired_replicas = if self.input_buffer.is_empty() {
+                    self.current_replicas.to_string()
+                } else {
+                    self.input_buffer.clone()
+                };
             }
             _ => {}
         }
