@@ -12,6 +12,19 @@ use crate::{
     workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
 
+fn view_supports_content_detail_scroll(view: AppView) -> bool {
+    matches!(
+        view,
+        AppView::Dashboard
+            | AppView::Projects
+            | AppView::Governance
+            | AppView::RoleBindings
+            | AppView::ClusterRoleBindings
+            | AppView::Roles
+            | AppView::ClusterRoles
+    )
+}
+
 impl AppState {
     fn handle_detail_confirmation_key(&mut self, key: KeyEvent) -> Option<AppAction> {
         let detail = self.detail_view.as_mut()?;
@@ -109,7 +122,9 @@ impl AppState {
         if !local_editor_active {
             match key.code {
                 KeyCode::Char('z') => return AppAction::WorkbenchToggleMaximize,
-                KeyCode::Char('b') => return AppAction::ToggleWorkbench,
+                KeyCode::Char('b') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return AppAction::ToggleWorkbench;
+                }
                 KeyCode::Tab
                     if key.modifiers.contains(KeyModifiers::CONTROL)
                         && key.modifiers.contains(KeyModifiers::SHIFT) =>
@@ -963,7 +978,9 @@ impl AppState {
                         }
                         KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
                         KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
-                        KeyCode::Char('f') => AppAction::LogsViewerToggleFollow,
+                        KeyCode::Char('f') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            AppAction::LogsViewerToggleFollow
+                        }
                         KeyCode::Char('P') if !tab.viewer.picking_container => {
                             AppAction::LogsViewerTogglePrevious
                         }
@@ -1191,7 +1208,7 @@ impl AppState {
                             tab.follow_mode = false;
                             AppAction::None
                         }
-                        KeyCode::Char('f') => {
+                        KeyCode::Char('f') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.follow_mode = !tab.follow_mode;
                             if tab.follow_mode {
                                 tab.scroll = filtered_len.saturating_sub(1);
@@ -1794,14 +1811,14 @@ impl AppState {
     ///    - `PortForward`: `Tab`/`BackTab` cycle fields, digits update port inputs.
     ///    - `Scale`: digits update replica count, `Backspace` deletes.
     ///    - `ProbePanel`: `j`/`k` select probe, `Space` toggles expand.
-    /// 6. **Quit confirmation** — after `q`/`Esc`, `q`/`y`/`Enter` confirms; any other key cancels.
+    /// 6. **Quit confirmation** — after root `Esc`, only `Enter` confirms; any other key cancels.
     /// 7. **Main navigation** (see table below).
     ///
     /// # Main navigation keys
     ///
     /// | Key | Condition | Effect |
     /// |-----|-----------|--------|
-    /// | `q` | — | Enter quit confirmation |
+    /// | `q` | — | No-op at root |
     /// | `Esc` | detail view open | Close detail view |
     /// | `Esc` | `focus == Content` | Return focus to sidebar |
     /// | `Esc` | — | Enter quit confirmation |
@@ -2057,7 +2074,7 @@ impl AppState {
 
         if self.confirm_quit {
             return match key.code {
-                KeyCode::Char('q') | KeyCode::Char('y') | KeyCode::Enter => {
+                KeyCode::Enter => {
                     self.should_quit = true;
                     AppAction::Quit
                 }
@@ -2073,10 +2090,7 @@ impl AppState {
         }
 
         match key.code {
-            KeyCode::Char('q') => {
-                self.confirm_quit = true;
-                AppAction::None
-            }
+            KeyCode::Char('q') => AppAction::None,
             KeyCode::Esc
                 if self
                     .detail_view
@@ -2127,11 +2141,12 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('l') | KeyCode::Char('L')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::Logs))
-                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Logs))
+                        || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::LogsViewerOpen
             }
@@ -2293,11 +2308,19 @@ impl AppState {
                 }
             }
             KeyCode::Char('f')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::PortForward))
-                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && view_supports_content_detail_scroll(self.view) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
+                AppAction::None
+            }
+            KeyCode::Char('f')
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::PortForward)
+                    }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::PortForwardOpen
             }
@@ -2343,7 +2366,8 @@ impl AppState {
                 if self
                     .detail_view
                     .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::Delete)) =>
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 // Toggle delete confirmation prompt
                 if let Some(detail) = &mut self.detail_view {
@@ -2432,16 +2456,7 @@ impl AppState {
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(
-                        self.view,
-                        AppView::Dashboard
-                            | AppView::Projects
-                            | AppView::Governance
-                            | AppView::RoleBindings
-                            | AppView::ClusterRoleBindings
-                            | AppView::Roles
-                            | AppView::ClusterRoles
-                    ) =>
+                    && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_add(1);
                 AppAction::None
@@ -2462,16 +2477,7 @@ impl AppState {
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(
-                        self.view,
-                        AppView::Dashboard
-                            | AppView::Projects
-                            | AppView::Governance
-                            | AppView::RoleBindings
-                            | AppView::ClusterRoleBindings
-                            | AppView::Roles
-                            | AppView::ClusterRoles
-                    ) =>
+                    && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_sub(1);
                 AppAction::None
@@ -2492,16 +2498,7 @@ impl AppState {
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(
-                        self.view,
-                        AppView::Dashboard
-                            | AppView::Projects
-                            | AppView::Governance
-                            | AppView::RoleBindings
-                            | AppView::ClusterRoleBindings
-                            | AppView::Roles
-                            | AppView::ClusterRoles
-                    ) =>
+                    && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
                 AppAction::None
@@ -2522,16 +2519,32 @@ impl AppState {
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && matches!(
-                        self.view,
-                        AppView::Dashboard
-                            | AppView::Projects
-                            | AppView::Governance
-                            | AppView::RoleBindings
-                            | AppView::ClusterRoleBindings
-                            | AppView::Roles
-                            | AppView::ClusterRoles
-                    ) =>
+                    && view_supports_content_detail_scroll(self.view) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
+                AppAction::None
+            }
+            KeyCode::Char('b')
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && view_supports_content_detail_scroll(self.view) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
+                AppAction::None
+            }
+            KeyCode::PageDown
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && view_supports_content_detail_scroll(self.view) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
+                AppAction::None
+            }
+            KeyCode::PageUp
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
                 AppAction::None
@@ -2685,7 +2698,11 @@ impl AppState {
             KeyCode::Char('W') if self.detail_view.is_none() => AppAction::SaveWorkspace,
             KeyCode::Char('{') if self.detail_view.is_none() => AppAction::ApplyPreviousWorkspace,
             KeyCode::Char('}') if self.detail_view.is_none() => AppAction::ApplyNextWorkspace,
-            KeyCode::Char('b') if self.detail_view.is_none() => AppAction::ToggleWorkbench,
+            KeyCode::Char('b')
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::ToggleWorkbench
+            }
             KeyCode::Tab
                 if self.detail_view.is_none()
                     && self.workbench.open
@@ -2735,7 +2752,11 @@ impl AppState {
             {
                 AppAction::WorkbenchDecreaseHeight
             }
-            KeyCode::Char('c') if self.detail_view.is_none() => AppAction::OpenContextPicker,
+            KeyCode::Char('c')
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::OpenContextPicker
+            }
             KeyCode::Char(':')
                 if !self
                     .detail_view
@@ -2773,7 +2794,7 @@ impl AppState {
             KeyCode::Char('w')
                 if self.detail_view.as_ref().is_some_and(|detail| {
                     detail.supports_action(DetailAction::ViewRelationships)
-                }) =>
+                }) && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 AppAction::OpenRelationships
             }
@@ -2798,10 +2819,11 @@ impl AppState {
                 )
             }
             KeyCode::Char('c')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::Cordon)) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Cordon)) =>
             {
                 AppAction::CordonNode
             }
@@ -2814,10 +2836,11 @@ impl AppState {
                 AppAction::UncordonNode
             }
             KeyCode::Char('D')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::Drain)) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Drain)) =>
             {
                 // Open drain confirmation prompt
                 if let Some(detail) = &mut self.detail_view {

@@ -728,6 +728,7 @@ mod tests {
 
     #[test]
     fn header_cache_respects_icon_mode() {
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
         crate::icons::set_icon_mode(IconMode::Nerd);
         let theme = default_theme();
         let nerd = cached_header_line(

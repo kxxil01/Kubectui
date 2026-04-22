@@ -56,7 +56,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "Global",
         &[
             ("?", "Toggle this help"),
-            ("q", "Quit (with confirmation)"),
+            ("Esc then Enter", "Quit"),
             ("Esc", "Back / close overlay"),
             ("Tab / Shift+Tab", "Next / previous view"),
             ("j / k / \u{2193} / \u{2191}", "Navigate list"),
@@ -168,7 +168,32 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         &[
             ("Enter", "Open representative resource for selected project"),
             ("/", "Filter by project, namespace, or related resource"),
+            ("PageDown / PageUp", "Scroll summary"),
+            ("Ctrl+f / Ctrl+b", "Scroll summary by page"),
+            ("Ctrl+d / Ctrl+u", "Scroll summary faster"),
             ("W", "Save workspace jump with current project filter"),
+        ],
+    ),
+    (
+        "Governance",
+        &[
+            (
+                "Enter",
+                "Open representative resource for selected namespace",
+            ),
+            ("/", "Filter by namespace, project, or risk"),
+            ("PageDown / PageUp", "Scroll summary"),
+            ("Ctrl+f / Ctrl+b", "Scroll summary by page"),
+            ("Ctrl+d / Ctrl+u", "Scroll summary faster"),
+        ],
+    ),
+    (
+        "RBAC Detail Panes",
+        &[
+            ("PageDown / PageUp", "Scroll selected row detail"),
+            ("Ctrl+f / Ctrl+b", "Scroll selected row detail by page"),
+            ("Ctrl+d / Ctrl+u", "Scroll selected row detail faster"),
+            ("Enter", "Open selected RBAC resource"),
         ],
     ),
     (
@@ -729,6 +754,27 @@ mod tests {
                     && desc.contains("except pod/workload logs tabs")
             }),
             "global bracket shortcut note must mention logs-tab exception"
+        );
+    }
+
+    #[test]
+    fn global_help_lists_exact_quit_sequence() {
+        let global = SECTIONS
+            .iter()
+            .find(|(title, _)| *title == "Global")
+            .expect("global section exists")
+            .1;
+
+        assert!(
+            global
+                .iter()
+                .any(|(key, desc)| *key == "Esc then Enter" && *desc == "Quit")
+        );
+        assert!(
+            !global
+                .iter()
+                .any(|(key, desc)| key.contains('q') && desc.contains("Quit")),
+            "help must not imply q exits"
         );
     }
 

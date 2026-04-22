@@ -7,7 +7,7 @@
 //! - Keyboard bindings for each component
 //! - Priority ordering (LogsViewer > PortForward > Scale > ProbePanel > DetailView > MainView)
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use kubectui::events::{apply_action, route_keyboard_input};
 use kubectui::secret::{DecodedSecretEntry, DecodedSecretValue};
 use kubectui::ui::components::port_forward_dialog::PortForwardMode;
@@ -67,6 +67,19 @@ fn test_logs_viewer_open_close() {
 }
 
 #[test]
+fn test_logs_viewer_ctrl_l_does_not_open() {
+    let mut app = AppState::default();
+    app.detail_view = Some(pod_detail());
+
+    let action = route_keyboard_input(
+        KeyEvent::new(KeyCode::Char('l'), KeyModifiers::CONTROL),
+        &mut app,
+    );
+    assert_eq!(action, AppAction::None);
+    assert_eq!(app.active_component(), ActiveComponent::None);
+}
+
+#[test]
 fn test_logs_viewer_scroll_controls() {
     let mut app = AppState::default();
     app.detail_view = Some(pod_detail());
@@ -108,6 +121,19 @@ fn test_logs_viewer_follow_mode_toggle() {
 }
 
 #[test]
+fn test_logs_viewer_ctrl_f_does_not_toggle_follow_mode() {
+    let mut app = AppState::default();
+    app.detail_view = Some(pod_detail());
+    app.open_logs_viewer();
+
+    let action = route_keyboard_input(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        &mut app,
+    );
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
 fn test_port_forward_open_close() {
     let mut app = AppState::default();
     app.detail_view = Some(pod_detail());
@@ -118,6 +144,19 @@ fn test_port_forward_open_close() {
 
     let action = route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app);
     apply_action(action, &mut app);
+    assert_eq!(app.active_component(), ActiveComponent::None);
+}
+
+#[test]
+fn test_port_forward_ctrl_f_does_not_open_from_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(pod_detail());
+
+    let action = route_keyboard_input(
+        KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL),
+        &mut app,
+    );
+    assert_eq!(action, AppAction::None);
     assert_eq!(app.active_component(), ActiveComponent::None);
 }
 
@@ -418,29 +457,31 @@ fn test_component_priority_escape_closes_logs_first() {
 }
 
 #[test]
-fn test_main_view_quit_on_escape() {
+fn test_main_view_escape_starts_quit_confirmation() {
     let mut app = AppState::default();
     let action = route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app);
     assert_eq!(action, AppAction::None);
     assert!(app.confirm_quit);
-
-    let action = route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app);
-    assert_eq!(action, AppAction::None);
-    assert!(!app.confirm_quit);
-
-    route_keyboard_input(KeyEvent::from(KeyCode::Char('q')), &mut app);
-    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('y')), &mut app);
-    assert_eq!(action, AppAction::Quit);
+    assert!(!app.should_quit());
 }
 
 #[test]
-fn test_main_view_quit_on_q() {
+fn test_main_view_quit_requires_escape_then_enter_only() {
     let mut app = AppState::default();
-    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('q')), &mut app);
-    assert_eq!(action, AppAction::None);
+    route_keyboard_input(KeyEvent::from(KeyCode::Char('q')), &mut app);
+    assert!(!app.confirm_quit);
+    assert!(!app.should_quit());
+
+    route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app);
     assert!(app.confirm_quit);
 
-    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('q')), &mut app);
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('y')), &mut app);
+    assert_eq!(action, AppAction::None);
+    assert!(!app.confirm_quit);
+    assert!(!app.should_quit());
+
+    route_keyboard_input(KeyEvent::from(KeyCode::Esc), &mut app);
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Enter), &mut app);
     assert_eq!(action, AppAction::Quit);
 }
 

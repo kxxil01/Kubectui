@@ -3763,6 +3763,7 @@ pub(crate) async fn run_app_inner(
                     && !app.is_namespace_picker_open()
                     && !app.is_context_picker_open()
                     && !app.command_palette.is_open()
+                    && !app.confirm_quit
                     && app.detail_view.is_none()
                     && app.focus != kubectui::app::Focus::Workbench
                 {

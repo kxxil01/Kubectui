@@ -1240,6 +1240,28 @@ fn project_and_governance_refresh_profiles_keep_full_workload_context() {
 }
 
 #[test]
+fn flux_views_use_polling_refresh_not_watch_scope() {
+    for view in [
+        AppView::FluxCDAlertProviders,
+        AppView::FluxCDAlerts,
+        AppView::FluxCDAll,
+        AppView::FluxCDArtifacts,
+        AppView::FluxCDHelmReleases,
+        AppView::FluxCDHelmRepositories,
+        AppView::FluxCDImages,
+        AppView::FluxCDKustomizations,
+        AppView::FluxCDReceivers,
+        AppView::FluxCDSources,
+    ] {
+        let dispatch = refresh_options_for_view(view, false, false);
+
+        assert_eq!(dispatch.primary_scope, RefreshScope::FLUX, "{view:?}");
+        assert_eq!(dispatch.options.scope, RefreshScope::FLUX, "{view:?}");
+        assert_eq!(watch_scope_for_view(view), RefreshScope::NONE, "{view:?}");
+    }
+}
+
+#[test]
 fn health_report_selected_resource_uses_sanitizer_only_rows() {
     let mut app = AppState::default();
     app.view = AppView::HealthReport;

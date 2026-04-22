@@ -35,16 +35,6 @@ pub(crate) const fn watch_scope_for_view(view: AppView) -> RefreshScope {
         AppView::Jobs => RefreshScope::JOBS,
         AppView::CronJobs => RefreshScope::CRONJOBS,
         AppView::Services => RefreshScope::SERVICES,
-        AppView::FluxCDAlertProviders
-        | AppView::FluxCDAlerts
-        | AppView::FluxCDAll
-        | AppView::FluxCDArtifacts
-        | AppView::FluxCDHelmReleases
-        | AppView::FluxCDHelmRepositories
-        | AppView::FluxCDImages
-        | AppView::FluxCDKustomizations
-        | AppView::FluxCDReceivers
-        | AppView::FluxCDSources => RefreshScope::FLUX,
         _ => RefreshScope::NONE,
     }
 }
