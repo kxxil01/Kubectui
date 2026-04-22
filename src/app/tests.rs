@@ -1330,6 +1330,50 @@ fn content_detail_page_keys_scroll_secondary_panes_without_moving_selection() {
         );
         assert_eq!(app.content_detail_scroll, 0, "{view:?}");
         assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char('F'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 10, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char('B'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 0, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char('D'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 10, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char('U'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 0, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
     }
 }
 
@@ -2099,6 +2143,24 @@ fn drain_confirm_d_returns_drain_node() {
 }
 
 #[test]
+fn ctrl_shift_d_does_not_confirm_drain_dialog() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        confirm_drain: true,
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('D'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+    assert!(app.detail_view.as_ref().unwrap().confirm_drain);
+}
+
+#[test]
 fn drain_confirm_f_returns_force_drain() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -2261,6 +2323,23 @@ fn uppercase_d_opens_resource_diff_for_pod_detail() {
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::OpenResourceDiff);
+}
+
+#[test]
+fn ctrl_shift_d_scrolls_detail_panels_instead_of_opening_diff_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('D'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+    assert_eq!(app.detail_view.as_ref().unwrap().top_panel_scroll, 10);
 }
 
 #[test]
@@ -3588,6 +3667,21 @@ fn y_key_in_drain_confirm_dispatches_drain_not_yaml() {
 }
 
 #[test]
+fn ctrl_y_does_not_confirm_drain_dialog() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        confirm_drain: true,
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::None);
+    assert!(app.detail_view.as_ref().unwrap().confirm_drain);
+}
+
+#[test]
 fn palette_blocked_during_drain_confirm() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -3676,6 +3770,19 @@ fn uppercase_b_toggles_bookmark_for_selected_resource() {
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::ToggleBookmark);
+}
+
+#[test]
+fn ctrl_shift_b_does_not_toggle_bookmark_for_selected_resource() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('B'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]

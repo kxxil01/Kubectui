@@ -209,6 +209,21 @@ fn test_secret_detail_uppercase_b_toggles_bookmark() {
 }
 
 #[test]
+fn test_secret_detail_ctrl_shift_b_does_not_toggle_bookmark() {
+    let mut app = AppState::default();
+    app.detail_view = Some(secret_detail());
+
+    let action = route_keyboard_input(
+        KeyEvent::new(
+            KeyCode::Char('B'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        &mut app,
+    );
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
 fn test_secrets_list_o_opens_decoded_secret() {
     let mut app = AppState::default();
     app.view = AppView::Secrets;

@@ -39,18 +39,29 @@ impl AppState {
                 detail.confirm_cronjob_suspend = None;
                 AppAction::None
             }
-            KeyCode::Char('F') if detail.confirm_drain => AppAction::ForceDrainNode,
-            KeyCode::Char('D') | KeyCode::Char('y') | KeyCode::Enter if detail.confirm_drain => {
+            KeyCode::Char('F')
+                if detail.confirm_drain && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::ForceDrainNode
+            }
+            KeyCode::Char('D') | KeyCode::Char('y') | KeyCode::Enter
+                if detail.confirm_drain && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 AppAction::DrainNode
             }
-            KeyCode::Char('F') if detail.confirm_delete => AppAction::ForceDeleteResource,
+            KeyCode::Char('F')
+                if detail.confirm_delete && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::ForceDeleteResource
+            }
             KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Char('y') | KeyCode::Enter
-                if detail.confirm_delete =>
+                if detail.confirm_delete && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 AppAction::DeleteResource
             }
             KeyCode::Char('S') | KeyCode::Char('y') | KeyCode::Enter
-                if detail.confirm_cronjob_suspend.is_some() =>
+                if detail.confirm_cronjob_suspend.is_some()
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 AppAction::SetCronJobSuspend(detail.confirm_cronjob_suspend.unwrap_or(false))
             }
@@ -2162,11 +2173,12 @@ impl AppState {
                 AppAction::OpenResourceYaml
             }
             KeyCode::Char('D')
-                if self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::ViewConfigDrift)
-                        && !detail.supports_action(DetailAction::Drain)
-                        && !detail.has_confirmation_dialog()
-                }) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::ViewConfigDrift)
+                            && !detail.supports_action(DetailAction::Drain)
+                            && !detail.has_confirmation_dialog()
+                    }) =>
             {
                 AppAction::OpenResourceDiff
             }
@@ -2247,20 +2259,21 @@ impl AppState {
                 AppAction::OpenDecodedSecret
             }
             KeyCode::Char('B')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .and_then(|detail| detail.resource.as_ref())
-                    .is_some()
-                    || (self.detail_view.is_none()
-                        && self.focus == Focus::Content
-                        && !matches!(
-                            self.view,
-                            AppView::Dashboard
-                                | AppView::HelmCharts
-                                | AppView::PortForwarding
-                                | AppView::Extensions
-                        )) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self
+                        .detail_view
+                        .as_ref()
+                        .and_then(|detail| detail.resource.as_ref())
+                        .is_some()
+                        || (self.detail_view.is_none()
+                            && self.focus == Focus::Content
+                            && !matches!(
+                                self.view,
+                                AppView::Dashboard
+                                    | AppView::HelmCharts
+                                    | AppView::PortForwarding
+                                    | AppView::Extensions
+                            ))) =>
             {
                 AppAction::ToggleBookmark
             }
@@ -2309,7 +2322,7 @@ impl AppState {
                     AppAction::DebugContainerDialogOpen
                 }
             }
-            KeyCode::Char('f')
+            KeyCode::Char('f') | KeyCode::Char('F')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2442,7 +2455,7 @@ impl AppState {
                     .map(AppAction::OpenDetail)
                     .unwrap_or(AppAction::None)
             }
-            KeyCode::Char('j') | KeyCode::Down
+            KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down
                 if self
                     .detail_view
                     .as_ref()
@@ -2454,7 +2467,7 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Char('j') | KeyCode::Down
+            KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2463,7 +2476,7 @@ impl AppState {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_add(1);
                 AppAction::None
             }
-            KeyCode::Char('k') | KeyCode::Up
+            KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up
                 if self
                     .detail_view
                     .as_ref()
@@ -2475,7 +2488,7 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Char('k') | KeyCode::Up
+            KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2484,7 +2497,7 @@ impl AppState {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_sub(1);
                 AppAction::None
             }
-            KeyCode::Char('d')
+            KeyCode::Char('d') | KeyCode::Char('D')
                 if self
                     .detail_view
                     .as_ref()
@@ -2496,7 +2509,7 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Char('d')
+            KeyCode::Char('d') | KeyCode::Char('D')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2505,7 +2518,7 @@ impl AppState {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
                 AppAction::None
             }
-            KeyCode::Char('u')
+            KeyCode::Char('u') | KeyCode::Char('U')
                 if self
                     .detail_view
                     .as_ref()
@@ -2517,7 +2530,7 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Char('u')
+            KeyCode::Char('u') | KeyCode::Char('U')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -2526,7 +2539,7 @@ impl AppState {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
                 AppAction::None
             }
-            KeyCode::Char('b')
+            KeyCode::Char('b') | KeyCode::Char('B')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
                     && key.modifiers.contains(KeyModifiers::CONTROL)
