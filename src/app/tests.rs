@@ -304,6 +304,38 @@ fn workspace_shortcuts_emit_actions() {
 }
 
 #[test]
+fn ctrl_shift_w_does_not_save_workspace() {
+    let mut app = AppState::default();
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('W'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
+fn ctrl_shift_t_and_i_do_not_cycle_theme_or_icons() {
+    let mut app = AppState::default();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('T'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('I'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::None
+    );
+}
+
+#[test]
 fn configured_workspace_hotkey_routes_before_main_navigation() {
     let mut app = AppState::default();
     let prefs = app.preferences.get_or_insert_with(Default::default);
@@ -2061,6 +2093,20 @@ fn shift_y_returns_copy_full_name() {
 }
 
 #[test]
+fn ctrl_shift_y_uses_copy_resource_name_not_full_name() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('Y'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+
+    assert_eq!(action, AppAction::CopyResourceName);
+}
+
+#[test]
 fn c_key_returns_cordon_in_node_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -2405,6 +2451,22 @@ fn uppercase_a_opens_access_review_from_content_focus() {
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::OpenAccessReview);
+}
+
+#[test]
+fn ctrl_shift_a_does_not_open_access_review() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('A'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]
@@ -2868,6 +2930,25 @@ fn uppercase_o_opens_rollout_for_deployment_detail() {
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('O'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::OpenRollout);
+}
+
+#[test]
+fn ctrl_shift_o_does_not_open_rollout_for_deployment_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Deployment(
+            "api".to_string(),
+            "default".to_string(),
+        )),
+        yaml: Some("kind: Deployment".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('O'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]

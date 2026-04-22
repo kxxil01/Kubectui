@@ -2172,14 +2172,17 @@ impl AppState {
             {
                 AppAction::LogsViewerOpen
             }
-            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('y') | KeyCode::Char('Y')
+                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 AppAction::CopyResourceName
             }
             KeyCode::Char('y')
-                if (self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::ViewYaml)
-                        && !detail.has_confirmation_dialog()
-                }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::ViewYaml)
+                            && !detail.has_confirmation_dialog()
+                    }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::OpenResourceYaml
             }
@@ -2194,27 +2197,30 @@ impl AppState {
                 AppAction::OpenResourceDiff
             }
             KeyCode::Char('O')
-                if self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::ViewRollout)
-                        && !detail.has_confirmation_dialog()
-                }) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::ViewRollout)
+                            && !detail.has_confirmation_dialog()
+                    }) =>
             {
                 AppAction::OpenRollout
             }
             KeyCode::Char('h')
-                if self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::ViewHelmHistory)
-                        && !detail.has_confirmation_dialog()
-                }) || (self.detail_view.is_none()
-                    && self.focus == Focus::Content
-                    && self.view == AppView::HelmReleases) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::ViewHelmHistory)
+                            && !detail.has_confirmation_dialog()
+                    }) || (self.detail_view.is_none()
+                        && self.focus == Focus::Content
+                        && self.view == AppView::HelmReleases)) =>
             {
                 AppAction::OpenHelmHistory
             }
             KeyCode::Char('A')
-                if (self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::ViewAccessReview)
-                }) || (self.detail_view.is_none() && self.focus == Focus::Content))
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::ViewAccessReview)
+                    }) || (self.detail_view.is_none() && self.focus == Focus::Content))
                     && !self
                         .detail_view
                         .as_ref()
@@ -2223,12 +2229,14 @@ impl AppState {
                 AppAction::OpenAccessReview
             }
             KeyCode::Char('N')
-                if self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::ViewNetworkPolicies)
-                }) && !self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::ViewNetworkPolicies)
+                    })
+                    && !self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::OpenNetworkPolicyView
             }
@@ -2245,14 +2253,18 @@ impl AppState {
                 AppAction::OpenNetworkConnectivity
             }
             KeyCode::Char('t')
-                if (self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::ViewTrafficDebug)
-                }) || (self.detail_view.is_none()
-                    && self.focus == Focus::Content
-                    && matches!(
-                        self.view,
-                        AppView::Services | AppView::Endpoints | AppView::Ingresses | AppView::Pods
-                    )))
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::ViewTrafficDebug)
+                    }) || (self.detail_view.is_none()
+                        && self.focus == Focus::Content
+                        && matches!(
+                            self.view,
+                            AppView::Services
+                                | AppView::Endpoints
+                                | AppView::Ingresses
+                                | AppView::Pods
+                        )))
                     && !self
                         .detail_view
                         .as_ref()
@@ -2261,11 +2273,12 @@ impl AppState {
                 AppAction::OpenTrafficDebug
             }
             KeyCode::Char('o')
-                if self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::ViewDecodedSecret)
-                }) || (self.detail_view.is_none()
-                    && self.focus == Focus::Content
-                    && self.view == AppView::Secrets) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::ViewDecodedSecret)
+                    }) || (self.detail_view.is_none()
+                        && self.focus == Focus::Content
+                        && self.view == AppView::Secrets)) =>
             {
                 AppAction::OpenDecodedSecret
             }
@@ -2288,40 +2301,46 @@ impl AppState {
             {
                 AppAction::ToggleBookmark
             }
-            KeyCode::Char('Y') if self.detail_view.is_none() && self.focus == Focus::Content => {
+            KeyCode::Char('Y')
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
                 AppAction::CopyResourceFullName
             }
             KeyCode::Char('v')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::ViewEvents))
-                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::ViewEvents)
+                    }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::OpenResourceEvents
             }
             KeyCode::Char('H')
-                if !self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && !self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::OpenActionHistory
             }
             KeyCode::Char('x')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::Exec))
-                    || (self.detail_view.is_none() && self.focus == Focus::Content) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && (self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Exec))
+                        || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
             {
                 AppAction::OpenExec
             }
             KeyCode::Char('g')
-                if self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::DebugContainer)
-                        || detail.supports_action(DetailAction::NodeDebugShell)
-                }) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::DebugContainer)
+                            || detail.supports_action(DetailAction::NodeDebugShell)
+                    }) =>
             {
                 if self
                     .detail_view
@@ -2354,7 +2373,8 @@ impl AppState {
                 if self
                     .detail_view
                     .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::Scale)) =>
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 AppAction::ScaleDialogOpen
             }
@@ -2362,7 +2382,8 @@ impl AppState {
                 if self
                     .detail_view
                     .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::Probes)) =>
+                    .is_some_and(|detail| detail.supports_action(DetailAction::Probes))
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 AppAction::ProbePanelOpen
             }
@@ -2383,11 +2404,16 @@ impl AppState {
                 if self
                     .detail_view
                     .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::EditYaml)) =>
+                    .is_some_and(|detail| detail.supports_action(DetailAction::EditYaml))
+                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
             {
                 AppAction::EditYaml
             }
-            KeyCode::Char('m') if self.detail_view.is_some() => AppAction::ToggleDetailMetadata,
+            KeyCode::Char('m')
+                if self.detail_view.is_some() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::ToggleDetailMetadata
+            }
             KeyCode::Char('d')
                 if self
                     .detail_view
@@ -2721,7 +2747,11 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('~') => AppAction::OpenNamespacePicker,
-            KeyCode::Char('W') if self.detail_view.is_none() => AppAction::SaveWorkspace,
+            KeyCode::Char('W')
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::SaveWorkspace
+            }
             KeyCode::Char('{') if self.detail_view.is_none() => AppAction::ApplyPreviousWorkspace,
             KeyCode::Char('}') if self.detail_view.is_none() => AppAction::ApplyNextWorkspace,
             KeyCode::Char('b')
@@ -2825,18 +2855,20 @@ impl AppState {
                 AppAction::OpenRelationships
             }
             KeyCode::Char('T')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::Trigger)) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Trigger)) =>
             {
                 AppAction::TriggerCronJob
             }
             KeyCode::Char('S')
-                if self.detail_view.as_ref().is_some_and(|detail| {
-                    detail.supports_action(DetailAction::SuspendCronJob)
-                        || detail.supports_action(DetailAction::ResumeCronJob)
-                }) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self.detail_view.as_ref().is_some_and(|detail| {
+                        detail.supports_action(DetailAction::SuspendCronJob)
+                            || detail.supports_action(DetailAction::ResumeCronJob)
+                    }) =>
             {
                 AppAction::ConfirmCronJobSuspend(
                     self.detail_view
@@ -2854,10 +2886,11 @@ impl AppState {
                 AppAction::CordonNode
             }
             KeyCode::Char('u')
-                if self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(|detail| detail.supports_action(DetailAction::Uncordon)) =>
+                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                    && self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(|detail| detail.supports_action(DetailAction::Uncordon)) =>
             {
                 AppAction::UncordonNode
             }
@@ -2874,8 +2907,16 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Char('T') if self.detail_view.is_none() => AppAction::CycleTheme,
-            KeyCode::Char('I') if self.detail_view.is_none() => AppAction::CycleIconMode,
+            KeyCode::Char('T')
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::CycleTheme
+            }
+            KeyCode::Char('I')
+                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                AppAction::CycleIconMode
+            }
             KeyCode::Char('?')
                 if !self
                     .detail_view
