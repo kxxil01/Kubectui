@@ -431,11 +431,15 @@ impl AppState {
                     tab.scroll_detail_up(1);
                     AppAction::None
                 }
-                KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('d') | KeyCode::Char('D')
+                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
                     tab.scroll_detail_down(10);
                     AppAction::None
                 }
-                KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('u') | KeyCode::Char('U')
+                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                {
                     tab.scroll_detail_up(10);
                     AppAction::None
                 }
@@ -483,13 +487,13 @@ impl AppState {
                             tab.scroll = tab.scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::PageDown | KeyCode::Char('d')
+                        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
                             if key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             tab.scroll = tab.scroll.saturating_add(10);
                             AppAction::None
                         }
-                        KeyCode::PageUp | KeyCode::Char('u')
+                        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
                             if key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             tab.scroll = tab.scroll.saturating_sub(10);
@@ -514,19 +518,21 @@ impl AppState {
                             tab.scroll = tab.scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::PageDown | KeyCode::Char('d')
+                        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
                             if key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             tab.scroll = tab.scroll.saturating_add(10);
                             AppAction::None
                         }
-                        KeyCode::PageUp | KeyCode::Char('u')
+                        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
                             if key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
                         }
-                        KeyCode::Char('R') | KeyCode::Char('y') | KeyCode::Enter => {
+                        KeyCode::Char('R') | KeyCode::Char('y') | KeyCode::Enter
+                            if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ExecuteHelmRollback
                         }
                         _ => AppAction::None,
@@ -564,7 +570,10 @@ impl AppState {
                             diff.scroll = diff.scroll.saturating_sub(10);
                             AppAction::None
                         }
-                        KeyCode::Char('R') if tab.selected_target_revision().is_some() => {
+                        KeyCode::Char('R')
+                            if tab.selected_target_revision().is_some()
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ConfirmHelmRollback
                         }
                         _ => AppAction::None,
@@ -621,13 +630,13 @@ impl AppState {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::PageDown | KeyCode::Char('d')
+                        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
                             if key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             tab.detail_scroll = tab.detail_scroll.saturating_add(10);
                             AppAction::None
                         }
-                        KeyCode::PageUp | KeyCode::Char('u')
+                        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
                             if key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
@@ -651,19 +660,21 @@ impl AppState {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::PageDown | KeyCode::Char('d')
+                        KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
                             if key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             tab.detail_scroll = tab.detail_scroll.saturating_add(10);
                             AppAction::None
                         }
-                        KeyCode::PageUp | KeyCode::Char('u')
+                        KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
                             if key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
                             AppAction::None
                         }
-                        KeyCode::Char('U') | KeyCode::Char('y') | KeyCode::Enter => {
+                        KeyCode::Char('U') | KeyCode::Char('y') | KeyCode::Enter
+                            if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ExecuteRolloutUndo
                         }
                         _ => AppAction::None,
