@@ -6,6 +6,7 @@ impl Default for AppState {
             view: AppView::Dashboard,
             selected_idx: 0,
             content_detail_scroll: 0,
+            content_pane_focus: ContentPaneFocus::List,
             search_query: String::new(),
             search_cursor: 0,
             is_search_mode: false,
@@ -61,6 +62,25 @@ impl AppState {
 
     pub fn selected_idx(&self) -> usize {
         self.selected_idx
+    }
+
+    pub fn content_pane_focus(&self) -> ContentPaneFocus {
+        if self.view.supports_secondary_pane_scroll() {
+            self.content_pane_focus
+        } else {
+            ContentPaneFocus::List
+        }
+    }
+
+    pub fn content_secondary_pane_active(&self) -> bool {
+        self.focus == Focus::Content
+            && self.detail_view.is_none()
+            && self.content_pane_focus() == ContentPaneFocus::Secondary
+    }
+
+    pub fn reset_content_secondary_pane_state(&mut self) {
+        self.content_detail_scroll = 0;
+        self.content_pane_focus = ContentPaneFocus::List;
     }
 
     pub fn workload_sort_for_view(&self, view: AppView) -> Option<WorkloadSortState> {

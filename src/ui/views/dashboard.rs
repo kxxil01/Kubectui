@@ -24,8 +24,8 @@ use crate::{
     },
     time::format_local,
     ui::{
-        components::default_theme, theme::Theme, truncate_line_content, utilization_style,
-        wrapped_line_count,
+        SplitPaneFocus, components::default_theme, theme::Theme, truncate_line_content,
+        utilization_style, wrapped_line_count,
     },
 };
 
@@ -168,18 +168,18 @@ fn compact_gauge_line<'a>(label: &'a str, pct: u64, theme: &Theme) -> Line<'a> {
 // ── top-level render ──────────────────────────────────────────────────────────
 
 /// Renders the dashboard view.
-pub fn render_dashboard(
+pub(crate) fn render_dashboard(
     frame: &mut Frame,
     area: Rect,
     snapshot: &ClusterSnapshot,
     alert_scroll: usize,
-    _focused: bool,
+    focus: SplitPaneFocus,
 ) {
     let theme = default_theme();
     let d = cached_dashboard(snapshot);
 
     if use_narrow_dashboard_layout(area) {
-        render_narrow_dashboard(frame, area, snapshot, &d, &theme, alert_scroll);
+        render_narrow_dashboard(frame, area, snapshot, &d, &theme, alert_scroll, focus);
         return;
     }
 
@@ -213,7 +213,13 @@ pub fn render_dashboard(
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
         .split(rows[0]);
 
-    render_cluster_info(frame, top_cols[0], snapshot, &theme);
+    render_cluster_info(
+        frame,
+        top_cols[0],
+        snapshot,
+        &theme,
+        matches!(focus, SplitPaneFocus::List),
+    );
     render_cluster_health_summary(
         frame,
         top_cols[1],
@@ -239,7 +245,14 @@ pub fn render_dashboard(
             .split(rows[2]);
         render_resource_counts(frame, summary_cols[0], &d.stats, &theme);
         render_overcommit_governance(frame, summary_cols[1], &d.cluster_resources, &theme);
-        render_alerts(frame, rows[3], &d.alerts, &theme, alert_scroll);
+        render_alerts(
+            frame,
+            rows[3],
+            &d.alerts,
+            &theme,
+            alert_scroll,
+            matches!(focus, SplitPaneFocus::Detail),
+        );
     } else {
         // Full layout: rows[2..6]
         let node_rows = Layout::default()
@@ -257,7 +270,14 @@ pub fn render_dashboard(
         render_overcommit_governance(frame, summary_cols[1], &d.cluster_resources, &theme);
         render_namespace_utilization(frame, rows[4], &d.ns_utilization, &theme);
         render_top_pod_consumers(frame, rows[5], &d.top_cpu_pods, &d.top_mem_pods, &theme);
-        render_alerts(frame, rows[6], &d.alerts, &theme, alert_scroll);
+        render_alerts(
+            frame,
+            rows[6],
+            &d.alerts,
+            &theme,
+            alert_scroll,
+            matches!(focus, SplitPaneFocus::Detail),
+        );
     }
 }
 
@@ -268,6 +288,7 @@ fn render_narrow_dashboard(
     d: &DashboardData,
     theme: &Theme,
     alert_scroll: usize,
+    focus: SplitPaneFocus,
 ) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
@@ -279,7 +300,13 @@ fn render_narrow_dashboard(
         ])
         .split(area);
 
-    render_cluster_info(frame, rows[0], snapshot, theme);
+    render_cluster_info(
+        frame,
+        rows[0],
+        snapshot,
+        theme,
+        matches!(focus, SplitPaneFocus::List),
+    );
     render_cluster_health_summary(
         frame,
         rows[1],
@@ -296,12 +323,25 @@ fn render_narrow_dashboard(
         &d.cluster_resources,
         theme,
     );
-    render_alerts(frame, rows[3], &d.alerts, theme, alert_scroll);
+    render_alerts(
+        frame,
+        rows[3],
+        &d.alerts,
+        theme,
+        alert_scroll,
+        matches!(focus, SplitPaneFocus::Detail),
+    );
 }
 
 // ── cluster info ──────────────────────────────────────────────────────────────
 
-fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot, theme: &Theme) {
+fn render_cluster_info(
+    frame: &mut Frame,
+    area: Rect,
+    snapshot: &ClusterSnapshot,
+    theme: &Theme,
+    focused: bool,
+) {
     let cluster_info = snapshot.cluster_info.as_ref();
     let context = cluster_info
         .and_then(|i| i.context.as_deref())
@@ -365,7 +405,11 @@ fn render_cluster_info(frame: &mut Frame, area: Rect, snapshot: &ClusterSnapshot
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(theme.border_active_style())
+        .border_style(if focused {
+            theme.border_active_style()
+        } else {
+            theme.border_style()
+        })
         .style(Style::default().bg(theme.bg));
 
     let width = usize::from(block.inner(area).width.max(1));
@@ -1148,6 +1192,7 @@ fn render_alerts(
     alerts: &[AlertItem],
     theme: &Theme,
     scroll: usize,
+    focused: bool,
 ) {
     let alert_lines: Vec<Line> = if alerts.is_empty() {
         vec![Line::from(vec![
@@ -1195,13 +1240,13 @@ fn render_alerts(
         ))
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(
-            if alerts.iter().any(|a| a.severity == AlertSeverity::Error) {
-                theme.badge_error_style()
-            } else {
-                theme.border_style()
-            },
-        )
+        .border_style(if focused {
+            theme.border_active_style()
+        } else if alerts.iter().any(|a| a.severity == AlertSeverity::Error) {
+            theme.badge_error_style()
+        } else {
+            theme.border_style()
+        })
         .style(Style::default().bg(theme.bg));
 
     let inner = block.inner(area);
@@ -1259,7 +1304,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let snapshot = ClusterSnapshot::default();
         terminal
-            .draw(|frame| render_dashboard(frame, frame.area(), &snapshot, 0, true))
+            .draw(|frame| render_dashboard(frame, frame.area(), &snapshot, 0, SplitPaneFocus::List))
             .unwrap();
     }
 
@@ -1277,7 +1322,40 @@ mod tests {
             ..ClusterInfo::default()
         });
         terminal
-            .draw(|frame| render_dashboard(frame, frame.area(), &snapshot, 0, true))
+            .draw(|frame| render_dashboard(frame, frame.area(), &snapshot, 0, SplitPaneFocus::List))
             .unwrap();
+    }
+
+    #[test]
+    fn dashboard_focus_highlights_alerts_only_when_detail_pane_focused() {
+        let theme = default_theme();
+        let snapshot = ClusterSnapshot::default();
+        let mut terminal = Terminal::new(TestBackend::new(120, 50)).unwrap();
+
+        terminal
+            .draw(|frame| {
+                render_dashboard(frame, frame.area(), &snapshot, 0, SplitPaneFocus::Detail)
+            })
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(0, 0)].style().fg,
+            theme.border_style().fg
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(0, 47)].style().fg,
+            theme.border_active_style().fg
+        );
+
+        terminal
+            .draw(|frame| render_dashboard(frame, frame.area(), &snapshot, 0, SplitPaneFocus::None))
+            .unwrap();
+        assert_eq!(
+            terminal.backend().buffer()[(0, 0)].style().fg,
+            theme.border_style().fg
+        );
+        assert_eq!(
+            terminal.backend().buffer()[(0, 47)].style().fg,
+            theme.border_style().fg
+        );
     }
 }

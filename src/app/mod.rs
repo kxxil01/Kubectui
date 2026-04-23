@@ -228,6 +228,13 @@ pub enum Focus {
     Workbench,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContentPaneFocus {
+    #[default]
+    List,
+    Secondary,
+}
+
 /// Runtime state for UI interaction and navigation.
 ///
 /// # Navigation model
@@ -281,6 +288,7 @@ pub struct AppState {
     pub selected_idx: usize,
     /// Shared vertical scroll offset for lower detail panes in split content views.
     pub content_detail_scroll: usize,
+    pub content_pane_focus: ContentPaneFocus,
     pub search_query: String,
     pub search_cursor: usize,
     pub is_search_mode: bool,

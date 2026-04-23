@@ -14,7 +14,7 @@ use crate::{
     projects::{ProjectSummary, compute_projects, filtered_project_indices},
     state::ClusterSnapshot,
     ui::{
-        TableFrame,
+        SplitPaneFocus, TableFrame,
         components::{default_theme, render_scrollable_text_block},
         render_centered_message, render_table_frame, responsive_table_widths, table_viewport_rows,
         table_window, vertical_primary_detail_chunks,
@@ -24,15 +24,17 @@ use crate::{
 const PROJECTS_COMPACT_HEIGHT: u16 = 24;
 const PROJECTS_NARROW_WIDTH: u16 = 96;
 
-pub fn render_projects(
+pub(crate) fn render_projects(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
     detail_scroll: usize,
-    focused: bool,
+    focus: SplitPaneFocus,
 ) {
+    let list_focused = matches!(focus, SplitPaneFocus::List);
+    let detail_focused = matches!(focus, SplitPaneFocus::Detail);
     let projects = compute_projects(cluster);
     let indices = filtered_project_indices(&projects, search.trim());
     let loaded = cluster.scope_loaded(
@@ -57,7 +59,7 @@ pub fn render_projects(
             },
             "No inferred projects found from current native labels",
             "No inferred projects match the search query",
-            focused,
+            list_focused,
         );
         return;
     }
@@ -73,14 +75,14 @@ pub fn render_projects(
         &indices,
         selected,
         search.trim(),
-        focused,
+        list_focused,
     );
     render_project_summary(
         frame,
         summary_area,
         selected_project,
         detail_scroll,
-        focused,
+        detail_focused,
     );
 }
 
@@ -339,7 +341,7 @@ mod tests {
                     0,
                     "",
                     0,
-                    true,
+                    SplitPaneFocus::List,
                 );
             })
             .expect("render");
@@ -361,7 +363,15 @@ mod tests {
         });
         terminal
             .draw(|frame| {
-                render_projects(frame, frame.area(), &snapshot, 0, "", 0, true);
+                render_projects(
+                    frame,
+                    frame.area(),
+                    &snapshot,
+                    0,
+                    "",
+                    0,
+                    SplitPaneFocus::List,
+                );
             })
             .expect("render");
     }
@@ -390,8 +400,48 @@ mod tests {
         });
         terminal
             .draw(|frame| {
-                render_projects(frame, frame.area(), &snapshot, 0, "", 0, true);
+                render_projects(
+                    frame,
+                    frame.area(),
+                    &snapshot,
+                    0,
+                    "",
+                    0,
+                    SplitPaneFocus::List,
+                );
             })
             .expect("render");
+    }
+
+    #[test]
+    fn render_projects_highlights_summary_when_secondary_pane_focused() {
+        let backend = ratatui::backend::TestBackend::new(120, 30);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 9,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.pods.push(PodInfo {
+            name: "api-123".into(),
+            namespace: "payments".into(),
+            labels: vec![("app.kubernetes.io/part-of".into(), "checkout".into())],
+            ..PodInfo::default()
+        });
+
+        let area = Rect::new(0, 0, 120, 30);
+        let (table_area, summary_area) =
+            crate::ui::vertical_primary_detail_chunks(area, 60, 8, PROJECTS_COMPACT_HEIGHT);
+
+        terminal
+            .draw(|frame| {
+                render_projects(frame, area, &snapshot, 0, "", 0, SplitPaneFocus::Detail);
+            })
+            .expect("render");
+
+        let buffer = terminal.backend().buffer();
+        let table_border = buffer[(table_area.x, table_area.y)].style().fg;
+        let summary_border = buffer[(summary_area.x, summary_area.y)].style().fg;
+        assert_ne!(table_border, summary_border);
+        assert_eq!(summary_border, default_theme().border_active_style().fg,);
     }
 }

@@ -61,6 +61,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Tab / Shift+Tab", "Next / previous view"),
             ("j / k / \u{2193} / \u{2191}", "Navigate list"),
             ("Enter", "Open detail / activate"),
+            (";", "Toggle list / secondary pane focus"),
             ("/", "Search / filter"),
             ("~", "Namespace picker"),
             ("c", "Context picker"),
@@ -169,6 +170,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("Enter", "Open representative resource for selected project"),
             ("/", "Filter by project, namespace, or related resource"),
             ("PageDown / PageUp", "Scroll summary"),
+            ("; then j/k", "Focus and scroll summary"),
             ("Ctrl+f / Ctrl+b", "Scroll summary by page"),
             ("Ctrl+d / Ctrl+u", "Scroll summary faster"),
             ("W", "Save workspace jump with current project filter"),
@@ -183,6 +185,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ),
             ("/", "Filter by namespace, project, or risk"),
             ("PageDown / PageUp", "Scroll summary"),
+            ("; then j/k", "Focus and scroll summary"),
             ("Ctrl+f / Ctrl+b", "Scroll summary by page"),
             ("Ctrl+d / Ctrl+u", "Scroll summary faster"),
         ],
@@ -191,6 +194,7 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
         "RBAC Detail Panes",
         &[
             ("PageDown / PageUp", "Scroll selected row detail"),
+            ("; then j/k", "Focus and scroll selected row detail"),
             ("Ctrl+f / Ctrl+b", "Scroll selected row detail by page"),
             ("Ctrl+d / Ctrl+u", "Scroll selected row detail faster"),
             ("Enter", "Open selected RBAC resource"),
@@ -203,6 +207,9 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("", "Overcommit & governance panel"),
             ("", "Top-5 CPU/memory pod consumers"),
             ("", "Namespace utilization with %CPU/R %MEM/R"),
+            ("PageDown / PageUp", "Scroll alerts"),
+            ("; then j/k", "Focus and scroll alerts"),
+            ("Ctrl+f / Ctrl+b", "Scroll alerts by page"),
             (":", "Toggle pod metric columns via palette"),
         ],
     ),
@@ -818,6 +825,31 @@ mod tests {
             section
                 .iter()
                 .any(|(key, desc)| *key == "Ctrl+R" && desc.contains("Refresh data"))
+        );
+    }
+
+    #[test]
+    fn dashboard_help_lists_alert_scroll_shortcuts() {
+        let section = SECTIONS
+            .iter()
+            .find(|(title, _)| *title == "Dashboard & Metrics")
+            .expect("dashboard section exists")
+            .1;
+
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "PageDown / PageUp" && desc.contains("alerts"))
+        );
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "; then j/k" && desc.contains("alerts"))
+        );
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "Ctrl+f / Ctrl+b" && desc.contains("alerts"))
         );
     }
 }
