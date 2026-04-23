@@ -2023,6 +2023,20 @@ fn quit_requires_esc_then_enter_only() {
 }
 
 #[test]
+fn modified_enter_does_not_confirm_quit() {
+    for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        assert!(app.confirm_quit);
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Enter, modifiers));
+        assert_eq!(action, AppAction::None);
+        assert!(!app.should_quit());
+        assert!(!app.confirm_quit);
+    }
+}
+
+#[test]
 fn q_does_not_start_quit_confirmation() {
     let mut app = AppState::default();
 

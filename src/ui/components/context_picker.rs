@@ -13,6 +13,11 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 
+fn plain_shortcut(key: KeyEvent) -> bool {
+    !key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
 /// Actions emitted by context picker keyboard handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ContextPickerAction {
@@ -101,13 +106,13 @@ impl ContextPicker {
 
         match key.code {
             KeyCode::Esc => ContextPickerAction::Close,
-            KeyCode::Enter => self
+            KeyCode::Enter if plain_shortcut(key) => self
                 .filtered_contexts()
                 .get(self.selected_index)
                 .cloned()
                 .map(ContextPickerAction::Select)
                 .unwrap_or(ContextPickerAction::None),
-            KeyCode::Down => {
+            KeyCode::Down if plain_shortcut(key) => {
                 let len = self.filtered_contexts().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
@@ -116,7 +121,7 @@ impl ContextPicker {
                 }
                 ContextPickerAction::None
             }
-            KeyCode::Up => {
+            KeyCode::Up if plain_shortcut(key) => {
                 let len = self.filtered_contexts().len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {
@@ -455,6 +460,35 @@ mod tests {
 
         picker.handle_key(KeyEvent::from(KeyCode::Up));
         assert_eq!(picker.selected_index, 0);
+    }
+
+    #[test]
+    fn context_picker_modified_enter_and_arrows_do_not_select_or_navigate() {
+        let mut picker = ContextPicker::new(
+            vec![
+                "ctx-a".to_string(),
+                "ctx-b".to_string(),
+                "ctx-c".to_string(),
+            ],
+            Some("ctx-a".to_string()),
+        );
+        picker.open();
+
+        for (code, modifiers) in [
+            (KeyCode::Enter, KeyModifiers::CONTROL),
+            (KeyCode::Down, KeyModifiers::CONTROL),
+            (KeyCode::Up, KeyModifiers::CONTROL),
+            (KeyCode::Enter, KeyModifiers::ALT),
+            (KeyCode::Down, KeyModifiers::ALT),
+            (KeyCode::Up, KeyModifiers::ALT),
+        ] {
+            assert_eq!(
+                picker.handle_key(KeyEvent::new(code, modifiers)),
+                ContextPickerAction::None,
+                "{code:?} {modifiers:?}"
+            );
+            assert_eq!(picker.selected_index, 0);
+        }
     }
 
     #[test]

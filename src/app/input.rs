@@ -209,7 +209,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Enter => AppAction::ActionHistoryOpenSelected,
+                KeyCode::Enter if plain_shortcut(key) => AppAction::ActionHistoryOpenSelected,
                 _ => AppAction::None,
             },
             WorkbenchTabState::AccessReview(tab) => {
@@ -284,7 +284,9 @@ impl AppState {
                             tab.subject_input.cursor_end();
                             AppAction::None
                         }
-                        KeyCode::Enter => AppAction::ApplyAccessReviewSubject,
+                        KeyCode::Enter if plain_shortcut(key) => {
+                            AppAction::ApplyAccessReviewSubject
+                        }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.subject_input.clear();
                             tab.subject_input_error = None;
@@ -477,7 +479,7 @@ impl AppState {
                 }
                 KeyCode::Char('d') if plain_shortcut(key) => AppAction::RunbookToggleStepDone,
                 KeyCode::Char('s') if plain_shortcut(key) => AppAction::RunbookToggleStepSkipped,
-                KeyCode::Enter => AppAction::RunbookExecuteSelectedStep,
+                KeyCode::Enter if plain_shortcut(key) => AppAction::RunbookExecuteSelectedStep,
                 _ => AppAction::None,
             },
             WorkbenchTabState::HelmHistory(tab) => {
@@ -613,7 +615,9 @@ impl AppState {
                         }
                         AppAction::None
                     }
-                    KeyCode::Enter if tab.selected_target_revision().is_some() => {
+                    KeyCode::Enter
+                        if tab.selected_target_revision().is_some() && plain_shortcut(key) =>
+                    {
                         AppAction::OpenHelmValuesDiff
                     }
                     KeyCode::Char('R')
@@ -740,7 +744,7 @@ impl AppState {
                             tab.edit_input.clear();
                             AppAction::None
                         }
-                        KeyCode::Enter => {
+                        KeyCode::Enter if plain_shortcut(key) => {
                             let edited = std::mem::take(&mut tab.edit_input);
                             if let Some(entry) = tab.selected_entry_mut() {
                                 entry.commit_edit(edited);
@@ -871,7 +875,7 @@ impl AppState {
                 if tab.viewer.searching {
                     match key.code {
                         KeyCode::Esc => AppAction::LogsViewerSearchCancel,
-                        KeyCode::Enter => AppAction::LogsViewerSearchClose,
+                        KeyCode::Enter if plain_shortcut(key) => AppAction::LogsViewerSearchClose,
                         KeyCode::Backspace => {
                             crate::ui::delete_char_left_at_cursor(
                                 &mut tab.viewer.search_input,
@@ -921,7 +925,7 @@ impl AppState {
                 } else if tab.viewer.jumping_to_time {
                     match key.code {
                         KeyCode::Esc => AppAction::CancelLogTimeJump,
-                        KeyCode::Enter => AppAction::ApplyLogTimeJump,
+                        KeyCode::Enter if plain_shortcut(key) => AppAction::ApplyLogTimeJump,
                         KeyCode::Backspace => {
                             crate::ui::delete_char_left_at_cursor(
                                 &mut tab.viewer.time_jump_input,
@@ -987,7 +991,7 @@ impl AppState {
                                 AppAction::LogsViewerScrollDown
                             }
                         }
-                        KeyCode::Enter if tab.viewer.picking_container => {
+                        KeyCode::Enter if tab.viewer.picking_container && plain_shortcut(key) => {
                             if tab.viewer.container_cursor == 0 && tab.viewer.containers.len() > 1 {
                                 // "All Containers" entry at index 0
                                 AppAction::LogsViewerSelectAllContainers
@@ -1105,7 +1109,7 @@ impl AppState {
                             tab.filter_input.clear();
                             AppAction::None
                         }
-                        KeyCode::Enter => {
+                        KeyCode::Enter if plain_shortcut(key) => {
                             tab.commit_text_filter();
                             AppAction::None
                         }
@@ -1158,7 +1162,7 @@ impl AppState {
                 } else if tab.jumping_to_time {
                     match key.code {
                         KeyCode::Esc => AppAction::CancelLogTimeJump,
-                        KeyCode::Enter => AppAction::ApplyLogTimeJump,
+                        KeyCode::Enter if plain_shortcut(key) => AppAction::ApplyLogTimeJump,
                         KeyCode::Backspace => {
                             crate::ui::delete_char_left_at_cursor(
                                 &mut tab.time_jump_input,
@@ -1340,7 +1344,7 @@ impl AppState {
                             tab.container_cursor = (tab.container_cursor + 1).min(max);
                             AppAction::None
                         }
-                        KeyCode::Enter => tab
+                        KeyCode::Enter if plain_shortcut(key) => tab
                             .containers
                             .get(tab.container_cursor)
                             .cloned()
@@ -1351,7 +1355,7 @@ impl AppState {
                 } else {
                     match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
-                        KeyCode::Enter => AppAction::ExecSendInput,
+                        KeyCode::Enter if plain_shortcut(key) => AppAction::ExecSendInput,
                         KeyCode::Backspace => {
                             crate::ui::delete_char_left_at_cursor(
                                 &mut tab.input,
@@ -1476,7 +1480,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Enter => {
+                KeyCode::Enter if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if let Some(node) = flat.get(tab.cursor)
                         && let Some(resource) = &node.resource
@@ -1544,7 +1548,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Enter => {
+                KeyCode::Enter if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if let Some(node) = flat.get(tab.cursor)
                         && let Some(resource) = &node.resource
@@ -1611,7 +1615,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Enter => {
+                KeyCode::Enter if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if let Some(node) = flat.get(tab.cursor)
                         && let Some(resource) = &node.resource
@@ -1662,7 +1666,7 @@ impl AppState {
                         tab.filter.cursor_end();
                         AppAction::None
                     }
-                    KeyCode::Enter => {
+                    KeyCode::Enter if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Targets;
                         AppAction::None
                     }
@@ -1708,7 +1712,7 @@ impl AppState {
                         tab.select_bottom_target();
                         AppAction::None
                     }
-                    KeyCode::Enter => AppAction::OpenNetworkConnectivity,
+                    KeyCode::Enter if plain_shortcut(key) => AppAction::OpenNetworkConnectivity,
                     _ => AppAction::None,
                 },
                 ConnectivityTabFocus::Result => match key.code {
@@ -1784,7 +1788,7 @@ impl AppState {
                         }
                         AppAction::None
                     }
-                    KeyCode::Enter => {
+                    KeyCode::Enter if plain_shortcut(key) => {
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                         if let Some(node) = flat.get(tab.tree_cursor)
@@ -2120,7 +2124,7 @@ impl AppState {
             ActiveComponent::Scale => {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Enter => AppAction::ScaleDialogSubmit,
+                    KeyCode::Enter if plain_shortcut(key) => AppAction::ScaleDialogSubmit,
                     KeyCode::Backspace => AppAction::ScaleDialogBackspace,
                     KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up
                         if plain_shortcut(key) =>
@@ -2158,7 +2162,7 @@ impl AppState {
 
         if self.confirm_quit {
             return match key.code {
-                KeyCode::Enter => {
+                KeyCode::Enter if plain_shortcut(key) => {
                     self.should_quit = true;
                     AppAction::Quit
                 }
@@ -3017,7 +3021,7 @@ impl AppState {
                 // Reset selection so the user doesn't land on a stale filtered index.
                 self.selected_idx = 0;
             }
-            KeyCode::Enter => {
+            KeyCode::Enter if plain_shortcut(key) => {
                 self.is_search_mode = false;
             }
             KeyCode::Backspace => {

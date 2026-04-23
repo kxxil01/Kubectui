@@ -32,7 +32,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use crossterm::event::{Event, EventStream, KeyCode};
+use crossterm::event::{Event, EventStream, KeyCode, KeyModifiers};
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
@@ -81,6 +81,23 @@ type AllContainerLogsInfo = (
     Vec<(String, String)>,
     ResourceRef,
 );
+
+fn plain_shortcut(key: crossterm::event::KeyEvent) -> bool {
+    !key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
+fn should_handle_root_enter(key: crossterm::event::KeyEvent, app: &AppState) -> bool {
+    key.code == KeyCode::Enter
+        && plain_shortcut(key)
+        && !app.is_search_mode()
+        && !app.is_namespace_picker_open()
+        && !app.is_context_picker_open()
+        && !app.command_palette.is_open()
+        && !app.confirm_quit
+        && app.detail_view.is_none()
+        && app.focus != kubectui::app::Focus::Workbench
+}
 
 fn watch_update_needs_flux_refresh(update: &WatchUpdate) -> bool {
     update.resource == WatchedResource::Flux && matches!(&update.data, WatchPayload::Flux { .. })
@@ -3758,15 +3775,7 @@ pub(crate) async fn run_app_inner(
                 };
                 needs_redraw = true;
 
-                let action = if key.code == KeyCode::Enter
-                    && !app.is_search_mode()
-                    && !app.is_namespace_picker_open()
-                    && !app.is_context_picker_open()
-                    && !app.command_palette.is_open()
-                    && !app.confirm_quit
-                    && app.detail_view.is_none()
-                    && app.focus != kubectui::app::Focus::Workbench
-                {
+                let action = if should_handle_root_enter(key, &app) {
                     if app.focus == kubectui::app::Focus::Content
                         && app.view() == AppView::Extensions
                         && !app.extension_in_instances

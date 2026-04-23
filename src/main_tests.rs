@@ -1,4 +1,4 @@
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use jiff::ToSpan;
 
 use super::flux_reconcile::{
@@ -21,7 +21,7 @@ use crate::async_types::{QueuedRefresh, RefreshRuntimeState};
 use kubectui::ui::components::command_palette::PaletteEntry;
 use kubectui::{
     action_history::ActionKind,
-    app::{AppAction, AppState, AppView, DetailViewState, ResourceRef, SidebarItem},
+    app::{AppAction, AppState, AppView, DetailViewState, Focus, ResourceRef, SidebarItem},
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
     extensions::AiWorkflowKind,
@@ -45,6 +45,34 @@ use kubectui::{
     workbench::{PodLogsTabState, RolloutTabState, WorkbenchTabState},
 };
 use std::time::{Duration, Instant};
+
+#[test]
+fn root_enter_shortcut_rejects_control_alt_modifiers() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        ..AppState::default()
+    };
+
+    assert!(super::should_handle_root_enter(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &app
+    ));
+    assert!(!super::should_handle_root_enter(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+        &app
+    ));
+    assert!(!super::should_handle_root_enter(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT),
+        &app
+    ));
+
+    app.confirm_quit = true;
+    assert!(!super::should_handle_root_enter(
+        KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
+        &app
+    ));
+}
 
 #[test]
 fn truncate_ai_block_respects_character_limit() {

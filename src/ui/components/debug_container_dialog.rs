@@ -14,6 +14,11 @@ use crate::ui::{
     wrapped_line_count,
 };
 
+fn plain_shortcut(key: KeyEvent) -> bool {
+    !key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugContainerField {
     Preset,
@@ -130,17 +135,17 @@ impl DebugContainerDialogState {
         if self.is_editing_custom_image() {
             match key.code {
                 KeyCode::Esc => return DebugContainerDialogEvent::Close,
-                KeyCode::Tab | KeyCode::Down => {
+                KeyCode::Tab | KeyCode::Down if plain_shortcut(key) => {
                     self.error_message = None;
                     self.focus_field = self.focus_field.next();
                     return DebugContainerDialogEvent::None;
                 }
-                KeyCode::BackTab | KeyCode::Up => {
+                KeyCode::BackTab | KeyCode::Up if plain_shortcut(key) => {
                     self.error_message = None;
                     self.focus_field = self.focus_field.previous();
                     return DebugContainerDialogEvent::None;
                 }
-                KeyCode::Enter => return self.activate_focused(),
+                KeyCode::Enter if plain_shortcut(key) => return self.activate_focused(),
                 KeyCode::Backspace => {
                     self.delete_custom_image_left();
                     self.error_message = None;
@@ -216,24 +221,24 @@ impl DebugContainerDialogState {
 
         match key.code {
             KeyCode::Esc => DebugContainerDialogEvent::Close,
-            KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                 self.error_message = None;
                 self.focus_field = self.focus_field.next();
                 DebugContainerDialogEvent::None
             }
-            KeyCode::BackTab | KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::BackTab | KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                 self.error_message = None;
                 self.focus_field = self.focus_field.previous();
                 DebugContainerDialogEvent::None
             }
-            KeyCode::Enter => self.activate_focused(),
-            KeyCode::Char(' ') => self.handle_space(),
-            KeyCode::Char('h') | KeyCode::Left => {
+            KeyCode::Enter if plain_shortcut(key) => self.activate_focused(),
+            KeyCode::Char(' ') if plain_shortcut(key) => self.handle_space(),
+            KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                 self.error_message = None;
                 self.adjust_focused(false);
                 DebugContainerDialogEvent::None
             }
-            KeyCode::Char('l') | KeyCode::Right => {
+            KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                 self.error_message = None;
                 self.adjust_focused(true);
                 DebugContainerDialogEvent::None
@@ -907,6 +912,30 @@ mod tests {
         assert_eq!(state.body_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.body_scroll, 0);
+    }
+
+    #[test]
+    fn modified_plain_shortcuts_do_not_activate_or_adjust_debug_dialog() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+        state.focus_field = DebugContainerField::Launch;
+
+        for (code, modifiers) in [
+            (KeyCode::Enter, KeyModifiers::CONTROL),
+            (KeyCode::Char(' '), KeyModifiers::CONTROL),
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+            (KeyCode::Char('l'), KeyModifiers::CONTROL),
+            (KeyCode::Enter, KeyModifiers::ALT),
+            (KeyCode::Char(' '), KeyModifiers::ALT),
+            (KeyCode::Char('h'), KeyModifiers::ALT),
+            (KeyCode::Char('l'), KeyModifiers::ALT),
+        ] {
+            assert_eq!(
+                state.handle_key(KeyEvent::new(code, modifiers)),
+                DebugContainerDialogEvent::None,
+                "{code:?} {modifiers:?}"
+            );
+            assert_eq!(state.focus_field, DebugContainerField::Launch);
+        }
     }
 
     #[test]
