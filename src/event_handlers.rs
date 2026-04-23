@@ -571,23 +571,25 @@ pub(crate) fn spawn_refresh_task(
     refresh_tx: tokio::sync::mpsc::Sender<RefreshAsyncResult>,
     mut global_state: GlobalState,
     client: K8sClient,
-    namespace: Option<String>,
-    options: RefreshOptions,
-    request_id: u64,
-    context_generation: u64,
+    request: RefreshTaskRequest,
 ) -> tokio::task::JoinHandle<()> {
-    let requested_namespace = namespace.clone();
+    let requested_namespace = request.namespace.clone();
     let start_flux_target_fingerprints = global_state.flux_target_fingerprints();
     tokio::spawn(async move {
         let result = global_state
-            .refresh_with_options(&client, namespace.as_deref(), options)
+            .refresh_view_with_options(
+                &client,
+                request.namespace.as_deref(),
+                request.options,
+                request.target_view,
+            )
             .await
             .map(|_| global_state)
             .map_err(|err| err.to_string());
         let _ = refresh_tx
             .send(RefreshAsyncResult {
-                request_id,
-                context_generation,
+                request_id: request.request_id,
+                context_generation: request.context_generation,
                 requested_namespace,
                 start_flux_target_fingerprints,
                 result,
@@ -596,12 +598,23 @@ pub(crate) fn spawn_refresh_task(
     })
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct RefreshTaskRequest {
+    pub namespace: Option<String>,
+    pub options: RefreshOptions,
+    pub target_view: Option<AppView>,
+    pub request_id: u64,
+    pub context_generation: u64,
+}
+
 pub(crate) fn abort_in_flight_refresh(refresh_state: &mut RefreshRuntimeState) {
     if let Some(task) = refresh_state.in_flight_task.take() {
         task.abort();
     }
     refresh_state.in_flight_id = None;
     refresh_state.in_flight_options = None;
+    refresh_state.in_flight_namespace = None;
+    refresh_state.in_flight_target_view = None;
 }
 
 pub(crate) fn refresh_scope_pending(
@@ -633,6 +646,7 @@ pub(crate) fn request_refresh(
     let options = dispatch.options;
     let immediate_scope = dispatch.primary_scope.intersection(options.scope);
     let background_scope = options.scope.without(immediate_scope);
+    let target_view = dispatch.target_view;
 
     let core_options = RefreshOptions {
         scope: immediate_scope,
@@ -646,24 +660,74 @@ pub(crate) fn request_refresh(
         include_cluster_info: false,
         skip_core: false,
     };
-    global_state.mark_refresh_requested(visible_options);
+    let immediate_target_view = scoped_target_view(core_options.scope, target_view);
+    let background_target_view = scoped_target_view(background_scope, target_view);
+    if let Some(view) = dispatch.target_view {
+        global_state.mark_view_refresh_requested(view);
+    } else {
+        global_state.mark_refresh_requested(visible_options);
+    }
     *snapshot_dirty = true;
 
     refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
     let request_id = refresh_state.request_seq;
 
+    let can_preempt_in_flight_secondary = immediate_target_view.is_some()
+        && refresh_state
+            .in_flight_options
+            .is_some_and(|in_flight| in_flight.skip_core)
+        && refresh_state.in_flight_target_view.is_none();
+
+    if can_preempt_in_flight_secondary {
+        let background_refresh = QueuedRefresh {
+            request_id: refresh_state.request_seq.wrapping_add(1),
+            namespace: refresh_state.in_flight_namespace.clone(),
+            primary_scope: RefreshScope::NONE,
+            options: refresh_state.in_flight_options.unwrap_or_default(),
+            target_view: None,
+            context_generation: refresh_state.context_generation,
+        };
+        abort_in_flight_refresh(refresh_state);
+        refresh_state.queued_refresh = Some(match refresh_state.queued_refresh.take() {
+            Some(existing) => QueuedRefresh {
+                request_id: existing.request_id,
+                namespace: existing.namespace.or(background_refresh.namespace),
+                primary_scope: existing
+                    .primary_scope
+                    .union(background_refresh.primary_scope),
+                options: RefreshOptions {
+                    scope: existing
+                        .options
+                        .scope
+                        .union(background_refresh.options.scope),
+                    include_cluster_info: existing.options.include_cluster_info
+                        || background_refresh.options.include_cluster_info,
+                    skip_core: existing.options.skip_core && background_refresh.options.skip_core,
+                },
+                target_view: None,
+                context_generation: existing.context_generation,
+            },
+            None => background_refresh,
+        });
+    }
+
     if refresh_state.in_flight_id.is_none() {
         let queued_namespace = namespace.clone();
         refresh_state.in_flight_id = Some(request_id);
         refresh_state.in_flight_options = Some(core_options);
+        refresh_state.in_flight_namespace = namespace.clone();
+        refresh_state.in_flight_target_view = immediate_target_view;
         refresh_state.in_flight_task = Some(spawn_refresh_task(
             refresh_tx.clone(),
             global_state.clone(),
             client.clone(),
-            namespace,
-            core_options,
-            request_id,
-            refresh_state.context_generation,
+            RefreshTaskRequest {
+                namespace,
+                options: core_options,
+                target_view: immediate_target_view,
+                request_id,
+                context_generation: refresh_state.context_generation,
+            },
         ));
         if !background_scope.is_empty() {
             refresh_state.request_seq = refresh_state.request_seq.wrapping_add(1);
@@ -676,6 +740,7 @@ pub(crate) fn request_refresh(
                     include_cluster_info: options.include_cluster_info,
                     skip_core: true,
                 },
+                target_view: background_target_view,
                 context_generation: refresh_state.context_generation,
             });
         }
@@ -697,6 +762,17 @@ pub(crate) fn request_refresh(
             .as_ref()
             .is_some_and(|queued| queued.options.skip_core)
             && merged_primary_scope.is_empty();
+        let existing_target_view = refresh_state
+            .queued_refresh
+            .as_ref()
+            .and_then(|queued| scoped_target_view(merged_scope, queued.target_view));
+        let incoming_target_view = scoped_target_view(merged_scope, dispatch.target_view);
+        let merged_target_view = match (existing_target_view, incoming_target_view) {
+            (Some(existing), Some(next)) if existing == next => Some(existing),
+            (Some(existing), None) => Some(existing),
+            (None, Some(next)) => Some(next),
+            _ => None,
+        };
         refresh_state.queued_refresh = Some(QueuedRefresh {
             request_id,
             namespace,
@@ -710,9 +786,15 @@ pub(crate) fn request_refresh(
                     || options.include_cluster_info,
                 skip_core: merged_skip_core,
             },
+            target_view: merged_target_view,
             context_generation: refresh_state.context_generation,
         });
     }
+}
+
+fn scoped_target_view(scope: RefreshScope, target_view: Option<AppView>) -> Option<AppView> {
+    let view = target_view?;
+    (scope == GlobalState::view_ready_scope(view)).then_some(view)
 }
 
 pub(crate) fn queued_refresh_requires_two_phase(

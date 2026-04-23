@@ -52,6 +52,7 @@ pub struct QueuedRefresh {
     pub namespace: Option<String>,
     pub primary_scope: RefreshScope,
     pub options: RefreshOptions,
+    pub target_view: Option<AppView>,
     pub context_generation: u64,
 }
 
@@ -60,6 +61,8 @@ pub struct RefreshRuntimeState {
     pub request_seq: u64,
     pub in_flight_id: Option<u64>,
     pub in_flight_options: Option<RefreshOptions>,
+    pub in_flight_namespace: Option<String>,
+    pub in_flight_target_view: Option<AppView>,
     pub in_flight_task: Option<tokio::task::JoinHandle<()>>,
     pub queued_refresh: Option<QueuedRefresh>,
     pub context_generation: u64,
@@ -360,6 +363,7 @@ pub struct MutationRuntime<'a> {
 pub struct RefreshDispatch {
     pub primary_scope: RefreshScope,
     pub options: RefreshOptions,
+    pub target_view: Option<AppView>,
 }
 
 impl RefreshDispatch {
@@ -371,6 +375,12 @@ impl RefreshDispatch {
                 include_cluster_info: false,
                 skip_core: false,
             },
+            target_view: None,
         }
+    }
+
+    pub const fn for_view(mut self, view: AppView) -> Self {
+        self.target_view = Some(view);
+        self
     }
 }

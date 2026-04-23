@@ -1988,6 +1988,8 @@ pub(crate) async fn run_app_inner(
                     let completed_options = refresh_state.in_flight_options.take();
                     refresh_state.in_flight_id = None;
                     refresh_state.in_flight_task = None;
+                    refresh_state.in_flight_namespace = None;
+                    refresh_state.in_flight_target_view = None;
                     needs_redraw = true;
                     let active_namespace_scope = namespace_scope(app.get_namespace()).map(str::to_string);
                     let namespace_matches = result.requested_namespace == active_namespace_scope;
@@ -2090,6 +2092,7 @@ pub(crate) async fn run_app_inner(
                                 RefreshDispatch {
                                     primary_scope: queued.primary_scope,
                                     options: queued.options,
+                                    target_view: queued.target_view,
                                 },
                                 &mut refresh_state,
                                 &mut snapshot_dirty,
@@ -2097,14 +2100,19 @@ pub(crate) async fn run_app_inner(
                         } else {
                             refresh_state.in_flight_id = Some(queued.request_id);
                             refresh_state.in_flight_options = Some(queued.options);
+                            refresh_state.in_flight_namespace = queued.namespace.clone();
+                            refresh_state.in_flight_target_view = queued.target_view;
                             refresh_state.in_flight_task = Some(spawn_refresh_task(
                                 refresh_tx.clone(),
                                 global_state.clone(),
                                 client.clone(),
-                                queued.namespace,
-                                queued.options,
-                                queued.request_id,
-                                queued.context_generation,
+                                RefreshTaskRequest {
+                                    namespace: queued.namespace,
+                                    options: queued.options,
+                                    target_view: queued.target_view,
+                                    request_id: queued.request_id,
+                                    context_generation: queued.context_generation,
+                                },
                             ));
                         }
                     }
