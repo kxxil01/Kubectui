@@ -388,6 +388,52 @@ fn detail_shortcuts_route_expected_actions() {
 }
 
 #[test]
+fn detail_shortcuts_reject_control_alt_modifier_variants() {
+    for case in detail_shortcut_cases() {
+        for modifiers in [KeyModifiers::ALT, KeyModifiers::CONTROL] {
+            let mut app = AppState::default();
+            app.detail_view = Some((case.make_detail)());
+            app.focus = Focus::Content;
+
+            let action = route_keyboard_input(
+                KeyEvent::new(KeyCode::Char(case.expected_key), modifiers),
+                &mut app,
+            );
+
+            match &case.expectation {
+                DetailExpectation::Action(expected_action) => {
+                    assert_ne!(
+                        &action, expected_action,
+                        "{:?} fired from {:?}+{:?}",
+                        case.action, modifiers, case.expected_key
+                    );
+                }
+                DetailExpectation::OpensDeleteConfirm => {
+                    assert!(
+                        app.detail_view
+                            .as_ref()
+                            .is_none_or(|detail| !detail.confirm_delete),
+                        "delete confirm opened from {:?}+{:?}",
+                        modifiers,
+                        case.expected_key
+                    );
+                }
+                DetailExpectation::OpensDrainConfirm => {
+                    assert!(
+                        app.detail_view
+                            .as_ref()
+                            .is_none_or(|detail| !detail.confirm_drain),
+                        "drain confirm opened from {:?}+{:?}",
+                        modifiers,
+                        case.expected_key
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn workspace_hotkey_targets_route_expected_actions() {
     let mut app = AppState::default();
     app.focus = Focus::Content;
