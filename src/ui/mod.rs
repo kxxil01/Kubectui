@@ -1110,7 +1110,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 content,
                 cluster,
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::Nodes => views::nodes::render_nodes(
                 frame,

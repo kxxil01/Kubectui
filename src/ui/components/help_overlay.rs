@@ -207,6 +207,9 @@ const SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("", "Overcommit & governance panel"),
             ("", "Top-5 CPU/memory pod consumers"),
             ("", "Namespace utilization with %CPU/R %MEM/R"),
+            ("PageDown / PageUp", "Scroll alerts"),
+            ("; then j/k", "Focus and scroll alerts"),
+            ("Ctrl+f / Ctrl+b", "Scroll alerts by page"),
             (":", "Toggle pod metric columns via palette"),
         ],
     ),
@@ -822,6 +825,31 @@ mod tests {
             section
                 .iter()
                 .any(|(key, desc)| *key == "Ctrl+R" && desc.contains("Refresh data"))
+        );
+    }
+
+    #[test]
+    fn dashboard_help_lists_alert_scroll_shortcuts() {
+        let section = SECTIONS
+            .iter()
+            .find(|(title, _)| *title == "Dashboard & Metrics")
+            .expect("dashboard section exists")
+            .1;
+
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "PageDown / PageUp" && desc.contains("alerts"))
+        );
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "; then j/k" && desc.contains("alerts"))
+        );
+        assert!(
+            section
+                .iter()
+                .any(|(key, desc)| *key == "Ctrl+f / Ctrl+b" && desc.contains("alerts"))
         );
     }
 }
