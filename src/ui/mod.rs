@@ -27,8 +27,8 @@ use std::{
 
 use crate::{
     app::{
-        AppState, AppView, Focus, PodSortColumn, PodSortState, ResourceRef, WorkloadSortColumn,
-        WorkloadSortState, filtered_pod_indices,
+        ActiveComponent, AppState, AppView, Focus, PodSortColumn, PodSortState, ResourceRef,
+        WorkloadSortColumn, WorkloadSortState, filtered_pod_indices,
     },
     bookmarks::BookmarkEntry,
     icons::view_icon,
@@ -317,6 +317,13 @@ pub(crate) struct TableFrame<'a> {
     pub window: TableWindow,
     pub total: usize,
     pub selected: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SplitPaneFocus {
+    None,
+    List,
+    Detail,
 }
 
 /// Shared configuration for the common resource table render path.
@@ -725,6 +732,48 @@ fn truncate_error(msg: &str, max_len: usize) -> &str {
     &msg[..end]
 }
 
+fn focus_owner_label(app: &AppState, secondary_pane_active: bool) -> &'static str {
+    if app.help_overlay.is_open() {
+        return "help";
+    }
+    if app.resource_template_dialog.is_some() {
+        return "template dialog";
+    }
+    if app.command_palette.is_open() {
+        return "palette";
+    }
+    if app.is_context_picker_open() {
+        return "context picker";
+    }
+    if app.is_namespace_picker_open() {
+        return "namespace picker";
+    }
+    if app.confirm_quit {
+        return "quit confirm";
+    }
+
+    match app.active_component() {
+        ActiveComponent::LogsViewer => return "logs",
+        ActiveComponent::PortForward => return "port-forward",
+        ActiveComponent::DebugContainer => return "debug dialog",
+        ActiveComponent::NodeDebug => return "node debug",
+        ActiveComponent::Scale => return "scale dialog",
+        ActiveComponent::ProbePanel => return "probe panel",
+        ActiveComponent::None => {}
+    }
+
+    if app.detail_view.is_some() {
+        return "detail";
+    }
+
+    match app.focus {
+        Focus::Sidebar => "sidebar",
+        Focus::Content if secondary_pane_active => "secondary pane",
+        Focus::Content => "resource list",
+        Focus::Workbench => "workbench",
+    }
+}
+
 fn active_overlay_mask(app: &AppState) -> u16 {
     let mut mask = 0_u16;
     if app.detail_view.is_some() {
@@ -759,6 +808,7 @@ struct ViewRenderKey {
     snapshot_version: u64,
     selected_idx: usize,
     content_detail_scroll: usize,
+    split_pane_focus: SplitPaneFocus,
     query_hash: u64,
     focused: bool,
     theme_index: u8,
@@ -1042,7 +1092,15 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     }
 
     let visible_columns = resolve_visible_columns(app);
-    let content_focused = app.focus == Focus::Content;
+    let secondary_pane_active = app.content_secondary_pane_active();
+    let split_pane_focus = if secondary_pane_active {
+        SplitPaneFocus::Detail
+    } else if app.focus == Focus::Content {
+        SplitPaneFocus::List
+    } else {
+        SplitPaneFocus::None
+    };
+    let content_focused = matches!(split_pane_focus, SplitPaneFocus::List);
     let view_cache_key = ViewRenderKey {
         view: app.view(),
         area: content,
@@ -1050,6 +1108,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         snapshot_version: cluster.snapshot_version,
         selected_idx: app.selected_idx(),
         content_detail_scroll: app.content_detail_scroll,
+        split_pane_focus,
         query_hash: hash_str(app.search_query()),
         focused: content_focused,
         theme_index: crate::ui::theme::active_theme_index(),
@@ -1093,7 +1152,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 content,
                 cluster,
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::Nodes => views::nodes::render_nodes(
                 frame,
@@ -1364,7 +1423,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::Governance => views::governance::center::render_governance(
                 frame,
@@ -1373,7 +1432,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::HealthReport => views::issue_center::render_health_report(
                 frame,
@@ -1480,7 +1539,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 app.workload_sort(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::RoleBindings => views::security::role_bindings::render_role_bindings(
                 frame,
@@ -1491,7 +1550,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 app.workload_sort(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::ClusterRoles => views::security::cluster_roles::render_cluster_roles(
                 frame,
@@ -1502,7 +1561,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 app.workload_sort(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::ClusterRoleBindings => {
                 views::security::cluster_role_bindings::render_cluster_role_bindings(
@@ -1514,7 +1573,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     app.search_query(),
                     app.workload_sort(),
                     app.content_detail_scroll,
-                    content_focused,
+                    split_pane_focus,
                 )
             }
             AppView::ResourceQuotas => views::governance::quotas::render_resource_quotas(
@@ -1559,22 +1618,23 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     // Toast notifications take priority over regular status messages
     let active_toast = app.toasts.last();
+    let focus_owner = focus_owner_label(app, secondary_pane_active);
+    let status_prefix = format!(
+        "[{}] view: {} • focus: {focus_owner}",
+        app.get_namespace(),
+        app.view().label()
+    );
     let status = if let Some(toast) = active_toast.filter(|t| t.is_error) {
         format!(
-            "[{}] ✗ {}",
-            app.get_namespace(),
+            "{status_prefix} • ✗ {}",
             truncate_error(&toast.message, 120)
         )
     } else if let Some(err) = app.error_message() {
-        format!(
-            "[{}] ERROR: {}",
-            app.get_namespace(),
-            truncate_error(err, 120)
-        )
+        format!("{status_prefix} • ERROR: {}", truncate_error(err, 120))
     } else if let Some(toast) = active_toast {
-        format!("[{}] ● {}", app.get_namespace(), toast.message)
+        format!("{status_prefix} • ● {}", toast.message)
     } else if let Some(message) = app.status_message() {
-        format!("[{}] {message}", app.get_namespace())
+        format!("{status_prefix} • {message}")
     } else {
         let theme_name = theme::active_theme().name;
         let current_activity = current_view_activity(cluster, app.view(), app.spinner_char())
@@ -1622,18 +1682,23 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             " • [H] history • [b] workbench"
         };
         let focus_hint = match app.focus {
-            Focus::Workbench if app.workbench().maximized => {
-                " • WORKBENCH ACTIVE [Esc] exit maximize"
+            Focus::Workbench if app.workbench().maximized => " • [Esc] exit maximize",
+            Focus::Workbench => " • [Esc] return",
+            Focus::Content if secondary_pane_active => " • [;] resource list",
+            Focus::Content
+                if app.detail_view.is_none() && app.view().supports_secondary_pane_scroll() =>
+            {
+                " • [;] secondary pane"
             }
-            Focus::Workbench => " • WORKBENCH ACTIVE [Esc] return",
-            Focus::Content => " • resource list active",
-            Focus::Sidebar => " • sidebar active",
+            _ => "",
+        };
+        let navigation_hint = if secondary_pane_active {
+            "[j/k] scroll"
+        } else {
+            "[j/k] navigate"
         };
         format!(
-            "[{}]{}{}{staleness} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit",
-            app.get_namespace(),
-            current_activity,
-            focus_hint
+            "{status_prefix}{current_activity}{focus_hint}{staleness} {navigation_hint} • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit"
         )
     };
 
@@ -3192,6 +3257,51 @@ mod tests {
     }
 
     #[test]
+    fn render_invalidates_when_secondary_pane_focus_blurs_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Projects);
+        app.focus = crate::app::Focus::Content;
+        app.content_pane_focus = crate::app::ContentPaneFocus::Secondary;
+        let snapshot = projects_snapshot_for_detail_scroll_tests();
+        let mut terminal =
+            Terminal::new(TestBackend::new(120, 18)).expect("test terminal should initialize");
+
+        let content = Rect::new(
+            effective_sidebar_width(120),
+            3,
+            120 - effective_sidebar_width(120),
+            13,
+        );
+        let (_, summary_area) = vertical_primary_detail_chunks(content, 60, 8, 24);
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let active_summary_border = terminal.backend().buffer()[(summary_area.x, summary_area.y)]
+            .style()
+            .fg;
+        assert_eq!(
+            active_summary_border,
+            default_theme().border_active_style().fg
+        );
+
+        app.focus = crate::app::Focus::Sidebar;
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let blurred_summary_border = terminal.backend().buffer()[(summary_area.x, summary_area.y)]
+            .style()
+            .fg;
+
+        assert_ne!(active_summary_border, blurred_summary_border);
+        assert_eq!(blurred_summary_border, default_theme().border_style().fg);
+    }
+
+    #[test]
     fn effective_workbench_height_preserves_main_content_budget() {
         assert_eq!(effective_workbench_height(10, 12, true, false), 0);
         assert_eq!(effective_workbench_height(20, 12, true, false), 12);
@@ -3217,6 +3327,65 @@ mod tests {
         app.workbench.toggle_open();
         let snapshot = ClusterSnapshot::default();
         draw_with_size(&app, &snapshot, 120, 40);
+    }
+
+    #[test]
+    fn status_bar_labels_sidebar_focus_even_when_error_is_visible() {
+        let mut app = app_with_view(AppView::Pods);
+        app.focus = Focus::Sidebar;
+        app.set_error("boom".to_string());
+
+        let rendered = render_to_string(&app, &pods_snapshot_for_render_tests());
+
+        assert!(
+            rendered.contains("[all] view: Pods • focus: sidebar • ERROR: boom"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn status_bar_labels_secondary_pane_focus_and_scroll_mode() {
+        let mut app = app_with_view(AppView::Projects);
+        app.focus = Focus::Content;
+        app.content_pane_focus = crate::app::ContentPaneFocus::Secondary;
+
+        let rendered = render_to_string(&app, &projects_snapshot_for_detail_scroll_tests());
+
+        assert!(rendered.contains("[all] view: Projects • focus: secondary pane"));
+        assert!(rendered.contains("[j/k] scroll"));
+    }
+
+    #[test]
+    fn status_bar_labels_workbench_focus_even_when_status_message_is_visible() {
+        let mut app = app_with_view(AppView::Dashboard);
+        app.focus = Focus::Workbench;
+        app.set_status("busy".to_string());
+
+        let rendered = render_to_string(&app, &ClusterSnapshot::default());
+
+        assert!(rendered.contains("[all] view: Dashboard • focus: workbench • busy"));
+    }
+
+    #[test]
+    fn status_bar_repaints_on_fresh_terminal_when_cached_state_matches() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let mut app = app_with_view(AppView::Pods);
+        app.focus = Focus::Content;
+        let snapshot = pods_snapshot_for_render_tests();
+
+        let first = render_to_string(&app, &snapshot);
+        let second = render_to_string(&app, &snapshot);
+
+        assert!(
+            first.contains("[all] view: Pods • focus: resource list"),
+            "{first}"
+        );
+        assert!(
+            second.contains("[all] view: Pods • focus: resource list"),
+            "{second}"
+        );
     }
 
     #[test]

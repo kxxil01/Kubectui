@@ -4,7 +4,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::views::AppView;
 use super::{
-    ActiveComponent, AppAction, AppState, DetailViewState, Focus, PodSortColumn, WorkloadSortColumn,
+    ActiveComponent, AppAction, AppState, ContentPaneFocus, DetailViewState, Focus, PodSortColumn,
+    WorkloadSortColumn,
 };
 use crate::{
     policy::{DetailAction, ViewAction},
@@ -18,16 +19,7 @@ fn plain_shortcut(key: KeyEvent) -> bool {
 }
 
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
-    matches!(
-        view,
-        AppView::Dashboard
-            | AppView::Projects
-            | AppView::Governance
-            | AppView::RoleBindings
-            | AppView::ClusterRoleBindings
-            | AppView::Roles
-            | AppView::ClusterRoles
-    )
+    view.supports_secondary_pane_scroll()
 }
 
 impl AppState {
@@ -2224,7 +2216,7 @@ impl AppState {
                 self.focus = Focus::Content;
                 AppAction::None
             }
-            KeyCode::Esc => {
+            KeyCode::Esc if plain_shortcut(key) => {
                 self.confirm_quit = true;
                 AppAction::None
             }
@@ -2660,6 +2652,38 @@ impl AppState {
                     && self.focus == Focus::Content
                     && view_supports_content_detail_scroll(self.view) =>
             {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
+                AppAction::None
+            }
+            KeyCode::Char(';')
+                if self.detail_view.is_none()
+                    && self.focus == Focus::Content
+                    && plain_shortcut(key)
+                    && view_supports_content_detail_scroll(self.view) =>
+            {
+                self.content_pane_focus = match self.content_pane_focus() {
+                    ContentPaneFocus::List => ContentPaneFocus::Secondary,
+                    ContentPaneFocus::Secondary => ContentPaneFocus::List,
+                };
+                AppAction::None
+            }
+            KeyCode::Char('j') | KeyCode::Down
+                if self.content_secondary_pane_active() && plain_shortcut(key) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_add(1);
+                AppAction::None
+            }
+            KeyCode::Char('k') | KeyCode::Up
+                if self.content_secondary_pane_active() && plain_shortcut(key) =>
+            {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_sub(1);
+                AppAction::None
+            }
+            KeyCode::Char('d') if self.content_secondary_pane_active() && plain_shortcut(key) => {
+                self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
+                AppAction::None
+            }
+            KeyCode::Char('u') if self.content_secondary_pane_active() && plain_shortcut(key) => {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
                 AppAction::None
             }

@@ -34,7 +34,7 @@ use crate::{
     k8s::dtos::RbacRule,
     state::ClusterSnapshot,
     ui::{
-        TableFrame, bookmarked_name_cell,
+        SplitPaneFocus, TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices_with_variant, data_fingerprint},
         format_age, format_small_int, render_centered_message, render_table_frame,
@@ -107,7 +107,7 @@ static ROLE_RULES_CACHE: LazyLock<Mutex<Option<(RoleRulesCacheKey, RoleRulesCach
     LazyLock::new(|| Mutex::new(None));
 
 #[allow(clippy::too_many_arguments)]
-pub fn render_roles(
+pub(crate) fn render_roles(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
@@ -116,8 +116,10 @@ pub fn render_roles(
     query: &str,
     sort: Option<WorkloadSortState>,
     detail_scroll: usize,
-    focused: bool,
+    focus: SplitPaneFocus,
 ) {
+    let list_focused = matches!(focus, SplitPaneFocus::List);
+    let detail_focused = matches!(focus, SplitPaneFocus::Detail);
     let query = query.trim();
     let cache_variant = sort.map_or(0, WorkloadSortState::cache_variant);
     let indices = cached_filter_indices_with_variant(
@@ -142,7 +144,7 @@ pub fn render_roles(
             "Loading roles...",
             "No roles found",
             "No roles match the search query",
-            focused,
+            list_focused,
         );
         return;
     }
@@ -225,7 +227,7 @@ pub fn render_roles(
             header,
             widths: &widths,
             title: &title,
-            focused,
+            focused: list_focused,
             window,
             total,
             selected,
@@ -246,7 +248,7 @@ pub fn render_roles(
         frame,
         detail_area,
         "Selected Role Rules",
-        focused,
+        detail_focused,
         (*detail).clone(),
         detail_scroll,
     );

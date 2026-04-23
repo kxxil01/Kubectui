@@ -501,6 +501,21 @@ fn test_main_view_quit_requires_escape_then_enter_only() {
 }
 
 #[test]
+fn test_main_view_modified_escape_does_not_start_quit_confirmation() {
+    for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+        let mut app = AppState::default();
+        let action = route_keyboard_input(KeyEvent::new(KeyCode::Esc, modifiers), &mut app);
+        assert_eq!(action, AppAction::None);
+        assert!(!app.confirm_quit);
+        assert!(!app.should_quit());
+
+        let action = route_keyboard_input(KeyEvent::from(KeyCode::Enter), &mut app);
+        assert_ne!(action, AppAction::Quit);
+        assert!(!app.should_quit());
+    }
+}
+
+#[test]
 fn test_logs_viewer_with_capital_l() {
     let mut app = AppState::default();
     app.detail_view = Some(pod_detail());

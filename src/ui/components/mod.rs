@@ -597,6 +597,10 @@ pub fn render_status_bar_with_overlay_mask(
     is_error: bool,
     overlay_mask: u16,
 ) {
+    if area.width == 0 || area.height == 0 {
+        return;
+    }
+
     let theme_index = crate::ui::theme::active_theme_index();
     let frame_count = frame.count();
     let render_key = StatusRenderKey {
@@ -630,6 +634,37 @@ pub fn render_status_bar_with_overlay_mask(
 
     let theme = default_theme();
     let text = cached_status_line(theme_index, message, is_error, &theme);
+
+    if area.height < 3 {
+        let border = Block::default()
+            .borders(Borders::TOP)
+            .border_type(theme.border_type())
+            .border_style(if is_error {
+                theme.badge_error_style()
+            } else {
+                theme.border_style()
+            })
+            .style(Style::default().bg(theme.statusbar_bg));
+        frame.render_widget(border, area);
+
+        if area.height > 1 {
+            let text_area = Rect {
+                x: area.x.saturating_add(1),
+                y: area.y.saturating_add(1),
+                width: area.width.saturating_sub(2),
+                height: 1,
+            };
+            frame.render_widget(
+                Paragraph::new((*text).clone()).style(Style::default().bg(theme.statusbar_bg)),
+                text_area,
+            );
+        }
+
+        STATUS_RENDERED.with(|cell| {
+            *cell.borrow_mut() = Some((render_key, frame_count));
+        });
+        return;
+    }
 
     let block = Block::default()
         .borders(Borders::ALL)
