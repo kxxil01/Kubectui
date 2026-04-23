@@ -1,6 +1,6 @@
 //! Command palette — fuzzy-search jump to any view with `:`.
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     prelude::{Frame, Style},
@@ -28,6 +28,11 @@ const MAX_ACTIVITY_RESULTS: usize = 16;
 const MAX_RESOURCE_RESULTS: usize = 40;
 const COMPACT_PALETTE_WIDTH: u16 = 48;
 const COMPACT_PALETTE_HEIGHT: u16 = 12;
+
+fn plain_shortcut(key: KeyEvent) -> bool {
+    !key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
 
 fn command_palette_popup(area: Rect) -> Rect {
     let preferred_width = (area.width * 2 / 5).clamp(44, 60);
@@ -1025,7 +1030,7 @@ impl CommandPalette {
 
         match key.code {
             KeyCode::Esc => CommandPaletteAction::Close,
-            KeyCode::Enter => {
+            KeyCode::Enter if plain_shortcut(key) => {
                 let entries = self.filtered();
                 if let Some(entry) = entries.get(self.selected_index) {
                     match entry {
@@ -1083,7 +1088,7 @@ impl CommandPalette {
                     CommandPaletteAction::None
                 }
             }
-            KeyCode::Down => {
+            KeyCode::Down if plain_shortcut(key) => {
                 let len = self.filtered().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
@@ -1091,7 +1096,7 @@ impl CommandPalette {
                 }
                 CommandPaletteAction::None
             }
-            KeyCode::Up => {
+            KeyCode::Up if plain_shortcut(key) => {
                 let len = self.filtered().len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {
@@ -1657,6 +1662,28 @@ mod tests {
         assert_eq!(p.selected_index, 1);
         p.handle_key(KeyEvent::from(KeyCode::Up));
         assert_eq!(p.selected_index, 0);
+    }
+
+    #[test]
+    fn modified_enter_and_arrows_do_not_execute_or_navigate() {
+        let mut p = CommandPalette::default();
+        p.open();
+
+        for (code, modifiers) in [
+            (KeyCode::Enter, KeyModifiers::CONTROL),
+            (KeyCode::Down, KeyModifiers::CONTROL),
+            (KeyCode::Up, KeyModifiers::CONTROL),
+            (KeyCode::Enter, KeyModifiers::ALT),
+            (KeyCode::Down, KeyModifiers::ALT),
+            (KeyCode::Up, KeyModifiers::ALT),
+        ] {
+            assert_eq!(
+                p.handle_key(KeyEvent::new(code, modifiers)),
+                CommandPaletteAction::None,
+                "{code:?} {modifiers:?}"
+            );
+            assert_eq!(p.selected_index, 0);
+        }
     }
 
     #[test]

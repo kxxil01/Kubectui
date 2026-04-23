@@ -12,6 +12,11 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
 
+fn plain_shortcut(key: KeyEvent) -> bool {
+    !key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
 /// Actions emitted by namespace picker keyboard handling.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NamespacePickerAction {
@@ -118,13 +123,13 @@ impl NamespacePicker {
 
         match key.code {
             KeyCode::Esc => NamespacePickerAction::Close,
-            KeyCode::Enter => self
+            KeyCode::Enter if plain_shortcut(key) => self
                 .filtered_namespaces()
                 .get(self.selected_index)
                 .cloned()
                 .map(NamespacePickerAction::Select)
                 .unwrap_or(NamespacePickerAction::None),
-            KeyCode::Down => {
+            KeyCode::Down if plain_shortcut(key) => {
                 let len = self.filtered_namespaces().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
@@ -133,7 +138,7 @@ impl NamespacePicker {
                 }
                 NamespacePickerAction::None
             }
-            KeyCode::Up => {
+            KeyCode::Up if plain_shortcut(key) => {
                 let len = self.filtered_namespaces().len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {
@@ -448,6 +453,32 @@ mod tests {
 
         picker.handle_key(KeyEvent::from(KeyCode::Up));
         assert_eq!(picker.selected_index(), 0);
+    }
+
+    #[test]
+    fn namespace_picker_modified_enter_and_arrows_do_not_select_or_navigate() {
+        let mut picker = NamespacePicker::new(vec![
+            "all".to_string(),
+            "default".to_string(),
+            "kube-system".to_string(),
+        ]);
+        picker.open();
+
+        for (code, modifiers) in [
+            (KeyCode::Enter, KeyModifiers::CONTROL),
+            (KeyCode::Down, KeyModifiers::CONTROL),
+            (KeyCode::Up, KeyModifiers::CONTROL),
+            (KeyCode::Enter, KeyModifiers::ALT),
+            (KeyCode::Down, KeyModifiers::ALT),
+            (KeyCode::Up, KeyModifiers::ALT),
+        ] {
+            assert_eq!(
+                picker.handle_key(KeyEvent::new(code, modifiers)),
+                NamespacePickerAction::None,
+                "{code:?} {modifiers:?}"
+            );
+            assert_eq!(picker.selected_index(), 0);
+        }
     }
 
     #[test]

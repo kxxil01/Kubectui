@@ -304,6 +304,100 @@ fn workspace_shortcuts_emit_actions() {
 }
 
 #[test]
+fn ctrl_shift_w_does_not_save_workspace() {
+    let mut app = AppState::default();
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('W'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
+fn ctrl_shift_t_and_i_do_not_cycle_theme_or_icons() {
+    let mut app = AppState::default();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('T'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('I'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::None
+    );
+}
+
+#[test]
+fn modified_plain_main_shortcuts_do_not_fire_without_configured_hotkey() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+    app.selected_idx = 3;
+
+    for (code, modifiers) in [
+        (KeyCode::Char('n'), KeyModifiers::CONTROL),
+        (KeyCode::Char('a'), KeyModifiers::CONTROL),
+        (KeyCode::Char('1'), KeyModifiers::ALT),
+        (KeyCode::Char('2'), KeyModifiers::CONTROL),
+        (KeyCode::Char('3'), KeyModifiers::CONTROL),
+        (KeyCode::Char('0'), KeyModifiers::CONTROL),
+        (KeyCode::Char('/'), KeyModifiers::CONTROL),
+        (
+            KeyCode::Char('~'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('{'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('}'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (KeyCode::Char('b'), KeyModifiers::CONTROL),
+        (KeyCode::Char('c'), KeyModifiers::CONTROL),
+        (
+            KeyCode::Char(':'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('T'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('I'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('?'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(code, modifiers)),
+            AppAction::None,
+            "{code:?} {modifiers:?}"
+        );
+    }
+
+    assert_eq!(app.pod_sort(), None);
+    assert_eq!(app.selected_idx, 3);
+    assert!(!app.is_search_mode());
+    assert!(!app.namespace_picker.is_open());
+    assert!(!app.command_palette.is_open());
+    assert!(!app.help_overlay.is_open());
+    assert!(!app.workbench.open);
+}
+
+#[test]
 fn configured_workspace_hotkey_routes_before_main_navigation() {
     let mut app = AppState::default();
     let prefs = app.preferences.get_or_insert_with(Default::default);
@@ -510,6 +604,24 @@ fn workbench_b_key_toggles_from_workbench_focus() {
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('b'))),
         AppAction::ToggleWorkbench
+    );
+}
+
+#[test]
+fn ctrl_b_does_not_toggle_workbench_from_workbench_focus() {
+    use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.workbench
+        .ensure_background_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
+    app.toggle_workbench();
+    app.focus = Focus::Workbench;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+        AppAction::None
     );
 }
 
@@ -777,6 +889,38 @@ fn delete_confirm_accepts_lowercase_d() {
     });
     let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('d')));
     assert_eq!(action, AppAction::DeleteResource);
+}
+
+#[test]
+fn ctrl_d_does_not_open_delete_confirmation_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".into(), "default".into())),
+        yaml: Some("kind: Pod".into()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::None);
+    assert!(
+        !app.detail_view
+            .as_ref()
+            .is_some_and(|detail| detail.confirm_delete),
+        "ctrl+d should not arm delete"
+    );
+}
+
+#[test]
+fn ctrl_w_does_not_open_relationships_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".into(), "default".into())),
+        yaml: Some("kind: Pod".into()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]
@@ -1173,6 +1317,17 @@ fn namespace_picker_takes_precedence_over_global_context_shortcut() {
 }
 
 #[test]
+fn ctrl_c_does_not_open_context_picker() {
+    let mut app = AppState::default();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert!(!app.context_picker.is_open());
+}
+
+#[test]
 fn command_palette_takes_precedence_over_help_shortcut() {
     let mut app = AppState::default();
     app.command_palette.open();
@@ -1223,6 +1378,118 @@ fn help_overlay_page_keys_scroll_overlay() {
 }
 
 #[test]
+fn content_detail_page_keys_scroll_secondary_panes_without_moving_selection() {
+    for view in [
+        AppView::Dashboard,
+        AppView::Projects,
+        AppView::Governance,
+        AppView::Roles,
+        AppView::RoleBindings,
+        AppView::ClusterRoles,
+        AppView::ClusterRoleBindings,
+    ] {
+        let mut app = AppState::default();
+        app.view = view;
+        app.focus = Focus::Content;
+        app.selected_idx = 3;
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::PageDown)),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 10, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::PageUp)),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 0, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 10, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 0, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char('F'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 10, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char('B'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 0, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char('D'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 10, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char('U'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            AppAction::None,
+            "{view:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 0, "{view:?}");
+        assert_eq!(app.selected_idx, 3, "{view:?}");
+    }
+}
+
+#[test]
+fn ctrl_b_and_ctrl_f_do_not_trigger_unrelated_content_actions() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('f'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert!(!app.workbench.open);
+}
+
+#[test]
 fn workbench_focus_supports_command_palette_shortcut() {
     let mut app = AppState::default();
     app.workbench.open_tab(WorkbenchTabState::ActionHistory(
@@ -1234,6 +1501,109 @@ fn workbench_focus_supports_command_palette_shortcut() {
         app.handle_key_event(KeyEvent::from(KeyCode::Char(':'))),
         AppAction::OpenCommandPalette
     );
+}
+
+#[test]
+fn ctrl_z_does_not_toggle_workbench_maximize() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert!(!app.workbench.maximized);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::WorkbenchToggleMaximize
+    );
+}
+
+#[test]
+fn modified_plain_workbench_shortcuts_do_not_fire() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.focus_workbench();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::ActionHistory(tab) = &mut tab.state
+    {
+        tab.selected = 5;
+    }
+
+    for (code, modifiers) in [
+        (KeyCode::Char('j'), KeyModifiers::CONTROL),
+        (KeyCode::Char('k'), KeyModifiers::CONTROL),
+        (KeyCode::Char('g'), KeyModifiers::CONTROL),
+        (
+            KeyCode::Char('G'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (KeyCode::Char('z'), KeyModifiers::CONTROL),
+        (KeyCode::Char('b'), KeyModifiers::CONTROL),
+        (KeyCode::Char('['), KeyModifiers::CONTROL),
+        (KeyCode::Char(']'), KeyModifiers::CONTROL),
+        (
+            KeyCode::Char(':'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('?'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('~'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(code, modifiers)),
+            AppAction::None,
+            "{code:?} {modifiers:?}"
+        );
+    }
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::ActionHistory(tab) = &tab.state else {
+        panic!("expected action history tab");
+    };
+    assert_eq!(tab.selected, 5);
+    assert!(app.workbench.open);
+    assert!(!app.workbench.maximized);
+    assert!(!app.command_palette.is_open());
+    assert!(!app.help_overlay.is_open());
+    assert!(!app.namespace_picker.is_open());
+}
+
+#[test]
+fn ctrl_brackets_do_not_switch_workbench_tabs_from_content_focus() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.workbench
+        .ensure_background_tab(WorkbenchTabState::ActionHistory(
+            crate::workbench::ActionHistoryTabState::default(),
+        ));
+    app.focus = Focus::Content;
+    let active_before = app.workbench.active_tab;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('['), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert_eq!(app.workbench.active_tab, active_before);
 }
 
 #[test]
@@ -1317,6 +1687,34 @@ fn pod_logs_shortcuts_toggle_regex_and_structured_view() {
 }
 
 #[test]
+fn pod_logs_control_modified_plain_shortcuts_do_not_fire() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    for key in ['T', 'C', 'J', 'S', 'M', 'y', 'g', 'G', '[', ']'] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char(key),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            )),
+            AppAction::None,
+            "{key}"
+        );
+    }
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('R'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::RefreshData
+    );
+}
+
+#[test]
 fn workload_logs_shortcuts_toggle_regex_and_structured_view() {
     use crate::events::input::apply_action;
     use crate::log_investigation::LogQueryMode;
@@ -1361,6 +1759,37 @@ fn workload_logs_shortcuts_toggle_regex_and_structured_view() {
         crate::log_investigation::LogTimeWindow::Last5Minutes
     );
     assert!(!logs_tab.structured_view);
+}
+
+#[test]
+fn workload_logs_control_modified_plain_shortcuts_do_not_fire() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+        )));
+    app.focus_workbench();
+
+    for key in [
+        'T', 'L', 'C', 'J', 'S', 'M', 'y', 'p', 'c', 'g', 'G', '[', ']',
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char(key),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            )),
+            AppAction::None,
+            "{key}"
+        );
+    }
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('R'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::RefreshData
+    );
 }
 
 #[test]
@@ -1519,6 +1948,7 @@ fn filtered_workload_indices_apply_age_sort_with_name_tie_breaker() {
 fn test_namespace_persistence() {
     use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
 
+    let _icon_mode_lock = crate::icons::icon_mode_test_lock();
     let path =
         std::env::temp_dir().join(format!("kubectui-config-test-{}.json", std::process::id()));
 
@@ -1563,26 +1993,64 @@ fn save_config_skips_write_when_parent_is_not_directory() {
     let _ = std::fs::remove_file(marker);
 }
 
-/// Verifies quit requires confirmation: first q sets confirm_quit, second q quits.
+/// Verifies quit requires confirmation: first Esc sets confirm_quit, Enter quits.
 #[test]
 fn quit_action_sets_should_quit() {
     let mut app = AppState::default();
 
-    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Esc));
     assert_eq!(action, AppAction::None);
     assert!(app.confirm_quit);
     assert!(!app.should_quit());
 
-    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
     assert_eq!(action, AppAction::Quit);
     assert!(app.should_quit());
+}
+
+#[test]
+fn quit_requires_esc_then_enter_only() {
+    for key in [KeyCode::Char('q'), KeyCode::Char('y'), KeyCode::Esc] {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        assert!(app.confirm_quit);
+
+        let action = app.handle_key_event(KeyEvent::from(key));
+        assert_eq!(action, AppAction::None);
+        assert!(!app.should_quit());
+        assert!(!app.confirm_quit);
+    }
+}
+
+#[test]
+fn modified_enter_does_not_confirm_quit() {
+    for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+        let mut app = AppState::default();
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+        assert!(app.confirm_quit);
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Enter, modifiers));
+        assert_eq!(action, AppAction::None);
+        assert!(!app.should_quit());
+        assert!(!app.confirm_quit);
+    }
+}
+
+#[test]
+fn q_does_not_start_quit_confirmation() {
+    let mut app = AppState::default();
+
+    let action = app.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
+    assert_eq!(action, AppAction::None);
+    assert!(!app.confirm_quit);
+    assert!(!app.should_quit());
 }
 
 /// Verifies any other key cancels the quit confirmation.
 #[test]
 fn quit_confirm_cancelled_by_other_key() {
     let mut app = AppState::default();
-    app.handle_key_event(KeyEvent::from(KeyCode::Char('q')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Esc));
     assert!(app.confirm_quit);
 
     app.handle_key_event(KeyEvent::from(KeyCode::Char('n')));
@@ -1863,6 +2331,20 @@ fn shift_y_returns_copy_full_name() {
 }
 
 #[test]
+fn ctrl_shift_y_uses_copy_resource_name_not_full_name() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('Y'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+
+    assert_eq!(action, AppAction::CopyResourceName);
+}
+
+#[test]
 fn c_key_returns_cordon_in_node_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -1872,6 +2354,19 @@ fn c_key_returns_cordon_in_node_detail() {
     });
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
     assert_eq!(action, AppAction::CordonNode);
+}
+
+#[test]
+fn ctrl_c_does_not_cordon_in_node_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]
@@ -1902,6 +2397,23 @@ fn d_key_opens_drain_confirmation_in_node_detail() {
 }
 
 #[test]
+fn ctrl_shift_d_does_not_open_drain_confirmation_in_node_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('D'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+    assert!(!app.detail_view.as_ref().unwrap().confirm_drain);
+}
+
+#[test]
 fn drain_confirm_d_returns_drain_node() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -1912,6 +2424,24 @@ fn drain_confirm_d_returns_drain_node() {
     });
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('D'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::DrainNode);
+}
+
+#[test]
+fn ctrl_shift_d_does_not_confirm_drain_dialog() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        confirm_drain: true,
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('D'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+    assert!(app.detail_view.as_ref().unwrap().confirm_drain);
 }
 
 #[test]
@@ -2080,6 +2610,23 @@ fn uppercase_d_opens_resource_diff_for_pod_detail() {
 }
 
 #[test]
+fn ctrl_shift_d_scrolls_detail_panels_instead_of_opening_diff_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('D'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+    assert_eq!(app.detail_view.as_ref().unwrap().top_panel_scroll, 10);
+}
+
+#[test]
 fn g_key_opens_debug_dialog_for_pod_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -2106,6 +2653,22 @@ fn uppercase_c_opens_connectivity_for_pod_detail() {
 }
 
 #[test]
+fn ctrl_shift_c_does_not_open_connectivity_for_pod_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('C'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
 fn uppercase_a_opens_access_review_for_pod_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -2126,6 +2689,22 @@ fn uppercase_a_opens_access_review_from_content_focus() {
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('A'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::OpenAccessReview);
+}
+
+#[test]
+fn ctrl_shift_a_does_not_open_access_review() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('A'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]
@@ -2506,6 +3085,55 @@ fn helm_history_confirm_mode_executes_rollback_on_enter_y_or_r() {
 }
 
 #[test]
+fn helm_history_confirm_mode_ctrl_shift_r_does_not_execute_rollback() {
+    let mut app = app_with_helm_history_workbench_tab();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &mut tab.state
+    {
+        helm_tab.confirm_rollback_revision = Some(4);
+    }
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('R'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench.active_tab()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &tab.state
+    {
+        assert_eq!(helm_tab.confirm_rollback_revision, Some(4));
+    } else {
+        panic!("expected helm history tab");
+    }
+}
+
+#[test]
+fn helm_history_confirm_mode_ctrl_shift_d_scrolls_instead_of_confirming() {
+    let mut app = app_with_helm_history_workbench_tab();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &mut tab.state
+    {
+        helm_tab.confirm_rollback_revision = Some(4);
+    }
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('D'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench.active_tab()
+        && let crate::workbench::WorkbenchTabState::HelmHistory(helm_tab) = &tab.state
+    {
+        assert_eq!(helm_tab.confirm_rollback_revision, Some(4));
+        assert_eq!(helm_tab.scroll, 10);
+    } else {
+        panic!("expected helm history tab");
+    }
+}
+
+#[test]
 fn helm_history_escape_cancels_rollback_confirmation() {
     let mut app = app_with_helm_history_workbench_tab();
     if let Some(tab) = app.workbench.active_tab_mut()
@@ -2540,6 +3168,25 @@ fn uppercase_o_opens_rollout_for_deployment_detail() {
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('O'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::OpenRollout);
+}
+
+#[test]
+fn ctrl_shift_o_does_not_open_rollout_for_deployment_detail() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Deployment(
+            "api".to_string(),
+            "default".to_string(),
+        )),
+        yaml: Some("kind: Deployment".to_string()),
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('O'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]
@@ -2689,6 +3336,56 @@ fn rollout_workbench_shortcuts_dispatch_expected_actions() {
 }
 
 #[test]
+fn rollout_confirm_mode_ctrl_shift_u_scrolls_instead_of_execute_undo() {
+    let mut app = AppState::default();
+    app.open_rollout_tab(
+        ResourceRef::Deployment("api".to_string(), "default".to_string()),
+        Some(RolloutInspection {
+            kind: RolloutWorkloadKind::Deployment,
+            strategy: "RollingUpdate".to_string(),
+            paused: false,
+            current_revision: Some(5),
+            update_target_revision: Some(5),
+            summary_lines: vec!["Desired 3".to_string()],
+            conditions: Vec::new(),
+            revisions: vec![RolloutRevisionInfo {
+                revision: 4,
+                name: "api-4".to_string(),
+                created: None,
+                summary: "3/3 ready".to_string(),
+                change_cause: None,
+                is_current: false,
+                is_update_target: false,
+            }],
+        }),
+        None,
+        None,
+    );
+    app.focus_workbench();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &mut tab.state
+    {
+        rollout_tab.confirm_undo_revision = Some(4);
+        rollout_tab.detail_scroll = 10;
+    }
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('U'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench.active_tab()
+        && let WorkbenchTabState::Rollout(rollout_tab) = &tab.state
+    {
+        assert_eq!(rollout_tab.confirm_undo_revision, Some(4));
+        assert_eq!(rollout_tab.detail_scroll, 0);
+    } else {
+        panic!("expected rollout tab");
+    }
+}
+
+#[test]
 fn runbook_workbench_shortcuts_dispatch_expected_actions() {
     let mut app = AppState::default();
     app.focus = Focus::Workbench;
@@ -2732,6 +3429,20 @@ fn runbook_workbench_shortcuts_dispatch_expected_actions() {
         app.handle_key_event(KeyEvent::from(KeyCode::Char('s'))),
         AppAction::RunbookToggleStepSkipped
     );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('D'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::None
+    );
+    if let Some(tab) = app.workbench.active_tab()
+        && let WorkbenchTabState::Runbook(tab) = &tab.state
+    {
+        assert_eq!(tab.detail_scroll, 10);
+    } else {
+        panic!("expected active runbook tab");
+    }
 
     app.handle_key_event(KeyEvent::from(KeyCode::Down));
     if let Some(tab) = app.workbench.active_tab()
@@ -3388,6 +4099,69 @@ fn y_key_in_drain_confirm_dispatches_drain_not_yaml() {
 }
 
 #[test]
+fn ctrl_y_does_not_confirm_drain_dialog() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        confirm_drain: true,
+        ..DetailViewState::default()
+    });
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::None);
+    assert!(app.detail_view.as_ref().unwrap().confirm_drain);
+}
+
+#[test]
+fn modified_confirmation_keys_do_not_execute_dialog_actions() {
+    let mut drain = AppState::default();
+    drain.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        confirm_drain: true,
+        ..DetailViewState::default()
+    });
+    assert_eq!(
+        drain.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+    assert!(drain.detail_view.as_ref().unwrap().confirm_drain);
+
+    let mut delete = AppState::default();
+    delete.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        confirm_delete: true,
+        ..DetailViewState::default()
+    });
+    assert_eq!(
+        delete.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+    assert!(delete.detail_view.as_ref().unwrap().confirm_delete);
+
+    let mut cron = AppState::default();
+    cron.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::CronJob("job-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: CronJob".to_string()),
+        confirm_cronjob_suspend: Some(true),
+        ..DetailViewState::default()
+    });
+    assert_eq!(
+        cron.handle_key_event(KeyEvent::new(
+            KeyCode::Char('S'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+        )),
+        AppAction::None
+    );
+    assert_eq!(
+        cron.detail_view.as_ref().unwrap().confirm_cronjob_suspend,
+        Some(true)
+    );
+}
+
+#[test]
 fn palette_blocked_during_drain_confirm() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
@@ -3476,6 +4250,19 @@ fn uppercase_b_toggles_bookmark_for_selected_resource() {
 
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('B'), KeyModifiers::SHIFT));
     assert_eq!(action, AppAction::ToggleBookmark);
+}
+
+#[test]
+fn ctrl_shift_b_does_not_toggle_bookmark_for_selected_resource() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('B'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    ));
+    assert_eq!(action, AppAction::None);
 }
 
 #[test]
@@ -3629,6 +4416,7 @@ fn config_round_trip_with_preferences() {
             WorkspacePreferences, WorkspaceSnapshot,
         },
     };
+    let _icon_mode_lock = crate::icons::icon_mode_test_lock();
     let path = std::env::temp_dir().join("kubectui_test_config_prefs.json");
 
     let mut app = AppState::default();

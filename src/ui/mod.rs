@@ -758,6 +758,7 @@ struct ViewRenderKey {
     overlay_mask: u16,
     snapshot_version: u64,
     selected_idx: usize,
+    content_detail_scroll: usize,
     query_hash: u64,
     focused: bool,
     theme_index: u8,
@@ -1048,6 +1049,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         overlay_mask,
         snapshot_version: cluster.snapshot_version,
         selected_idx: app.selected_idx(),
+        content_detail_scroll: app.content_detail_scroll,
         query_hash: hash_str(app.search_query()),
         focused: content_focused,
         theme_index: crate::ui::theme::active_theme_index(),
@@ -1628,7 +1630,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             Focus::Sidebar => " • sidebar active",
         };
         format!(
-            "[{}]{}{}{staleness} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [q] quit",
+            "[{}]{}{}{staleness} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit",
             app.get_namespace(),
             current_activity,
             focus_hint
@@ -1734,12 +1736,12 @@ fn render_quit_confirm(frame: &mut Frame, area: ratatui::layout::Rect) {
     frame.render_widget(
         Paragraph::new(Line::from(vec![
             Span::styled(
-                "  [y/q/Enter] ",
+                "  [Enter] ",
                 ratatui::style::Style::default()
                     .fg(theme.error)
                     .add_modifier(Modifier::BOLD),
             ),
-            Span::styled("yes  ", theme.inactive_style()),
+            Span::styled("quit  ", theme.inactive_style()),
             Span::styled("[any] ", theme.keybind_key_style()),
             Span::styled("cancel", theme.keybind_desc_style()),
         ])),
@@ -2356,7 +2358,10 @@ pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {
 }
 #[cfg(test)]
 mod tests {
-    use std::sync::{LazyLock, Mutex};
+    use std::{
+        collections::BTreeMap,
+        sync::{LazyLock, Mutex},
+    };
 
     use jiff::ToSpan;
 
@@ -2541,6 +2546,46 @@ mod tests {
             status: "Running".to_string(),
             ..PodInfo::default()
         });
+        snapshot
+    }
+
+    fn projects_snapshot_for_detail_scroll_tests() -> ClusterSnapshot {
+        let labels = BTreeMap::from([(
+            "app.kubernetes.io/part-of".to_string(),
+            "checkout".to_string(),
+        )]);
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.view_load_states[AppView::Projects.index()] = ViewLoadState::Ready;
+        snapshot.pods.push(PodInfo {
+            name: "checkout-pod".to_string(),
+            namespace: "payments".to_string(),
+            status: "Running".to_string(),
+            labels: labels
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
+            ..PodInfo::default()
+        });
+        for idx in 0..4 {
+            snapshot.deployments.push(DeploymentInfo {
+                name: format!("checkout-worker-{idx}"),
+                namespace: "payments".to_string(),
+                pod_template_labels: labels.clone(),
+                ..DeploymentInfo::default()
+            });
+            snapshot.services.push(ServiceInfo {
+                name: format!("checkout-svc-{idx}"),
+                namespace: "payments".to_string(),
+                labels: labels.clone(),
+                ..ServiceInfo::default()
+            });
+            snapshot.ingresses.push(IngressInfo {
+                name: format!("checkout-ingress-{idx}"),
+                namespace: "payments".to_string(),
+                labels: labels.clone(),
+                ..IngressInfo::default()
+            });
+        }
         snapshot
     }
 
@@ -2948,6 +2993,7 @@ mod tests {
             .lock()
             .expect("lock should not poison");
         let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
         let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
         crate::ui::theme::set_active_theme(0);
         crate::icons::set_icon_mode(IconMode::Plain);
@@ -2976,6 +3022,7 @@ mod tests {
             .lock()
             .expect("lock should not poison");
         let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
         let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
         crate::ui::theme::set_active_theme(0);
         crate::icons::set_icon_mode(IconMode::Plain);
@@ -3005,6 +3052,7 @@ mod tests {
         let _render_lock = RENDER_INVALIDATION_TEST_LOCK
             .lock()
             .expect("lock should not poison");
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
         let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
         crate::icons::set_icon_mode(IconMode::Nerd);
 
@@ -3030,6 +3078,7 @@ mod tests {
             .lock()
             .expect("lock should not poison");
         let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
         let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
         crate::ui::theme::set_active_theme(0);
         crate::icons::set_icon_mode(IconMode::Plain);
@@ -3058,6 +3107,7 @@ mod tests {
             .lock()
             .expect("lock should not poison");
         let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
         let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
         crate::ui::theme::set_active_theme(0);
         crate::icons::set_icon_mode(IconMode::Plain);
@@ -3086,6 +3136,7 @@ mod tests {
             .lock()
             .expect("lock should not poison");
         let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
         let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
         crate::ui::theme::set_active_theme(0);
         crate::icons::set_icon_mode(IconMode::Plain);
@@ -3108,6 +3159,35 @@ mod tests {
         let after = cells_with_colors(&terminal, theme.selection_fg, theme.selection_bg);
 
         assert!(!after.is_empty(), "selected row should remain highlighted");
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn render_invalidates_when_content_detail_scroll_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Projects);
+        app.focus = crate::app::Focus::Content;
+        let snapshot = projects_snapshot_for_detail_scroll_tests();
+        let backend = TestBackend::new(120, 18);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+        assert!(before.contains("Project Summary"));
+
+        app.content_detail_scroll = 3;
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(after.contains("Project Summary"));
         assert_ne!(before, after);
     }
 

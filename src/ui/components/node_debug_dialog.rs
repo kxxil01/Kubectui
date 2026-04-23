@@ -17,6 +17,11 @@ use crate::ui::{
     wrapped_line_count,
 };
 
+fn plain_shortcut(key: KeyEvent) -> bool {
+    !key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeDebugField {
     Preset,
@@ -136,17 +141,17 @@ impl NodeDebugDialogState {
         if self.is_editing_custom_image() {
             match key.code {
                 KeyCode::Esc => return NodeDebugDialogEvent::Close,
-                KeyCode::Tab | KeyCode::Down => {
+                KeyCode::Tab | KeyCode::Down if plain_shortcut(key) => {
                     self.error_message = None;
                     self.focus_field = self.focus_field.next();
                     return NodeDebugDialogEvent::None;
                 }
-                KeyCode::BackTab | KeyCode::Up => {
+                KeyCode::BackTab | KeyCode::Up if plain_shortcut(key) => {
                     self.error_message = None;
                     self.focus_field = self.focus_field.previous();
                     return NodeDebugDialogEvent::None;
                 }
-                KeyCode::Enter => return self.activate_focused(),
+                KeyCode::Enter if plain_shortcut(key) => return self.activate_focused(),
                 KeyCode::Backspace => {
                     self.delete_custom_image_left();
                     self.error_message = None;
@@ -222,24 +227,24 @@ impl NodeDebugDialogState {
 
         match key.code {
             KeyCode::Esc => NodeDebugDialogEvent::Close,
-            KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down => {
+            KeyCode::Tab | KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                 self.error_message = None;
                 self.focus_field = self.focus_field.next();
                 NodeDebugDialogEvent::None
             }
-            KeyCode::BackTab | KeyCode::Char('k') | KeyCode::Up => {
+            KeyCode::BackTab | KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                 self.error_message = None;
                 self.focus_field = self.focus_field.previous();
                 NodeDebugDialogEvent::None
             }
-            KeyCode::Enter => self.activate_focused(),
-            KeyCode::Char(' ') => self.activate_focused(),
-            KeyCode::Char('h') | KeyCode::Left => {
+            KeyCode::Enter if plain_shortcut(key) => self.activate_focused(),
+            KeyCode::Char(' ') if plain_shortcut(key) => self.activate_focused(),
+            KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                 self.error_message = None;
                 self.adjust_focused(false);
                 NodeDebugDialogEvent::None
             }
-            KeyCode::Char('l') | KeyCode::Right => {
+            KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                 self.error_message = None;
                 self.adjust_focused(true);
                 NodeDebugDialogEvent::None
@@ -882,6 +887,30 @@ mod tests {
         assert_eq!(state.notes_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.notes_scroll, 0);
+    }
+
+    #[test]
+    fn modified_plain_shortcuts_do_not_activate_or_adjust_node_debug_dialog() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.focus_field = NodeDebugField::Launch;
+
+        for (code, modifiers) in [
+            (KeyCode::Enter, KeyModifiers::CONTROL),
+            (KeyCode::Char(' '), KeyModifiers::CONTROL),
+            (KeyCode::Char('h'), KeyModifiers::CONTROL),
+            (KeyCode::Char('l'), KeyModifiers::CONTROL),
+            (KeyCode::Enter, KeyModifiers::ALT),
+            (KeyCode::Char(' '), KeyModifiers::ALT),
+            (KeyCode::Char('h'), KeyModifiers::ALT),
+            (KeyCode::Char('l'), KeyModifiers::ALT),
+        ] {
+            assert_eq!(
+                state.handle_key(KeyEvent::new(code, modifiers)),
+                NodeDebugDialogEvent::None,
+                "{code:?} {modifiers:?}"
+            );
+            assert_eq!(state.focus_field, NodeDebugField::Launch);
+        }
     }
 
     #[test]
