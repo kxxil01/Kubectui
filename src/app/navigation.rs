@@ -4,8 +4,7 @@ impl AppState {
     pub fn set_namespace(&mut self, ns: String) {
         self.current_namespace = ns;
         self.selected_idx = 0;
-        self.content_detail_scroll = 0;
-        self.content_pane_focus = ContentPaneFocus::List;
+        self.reset_content_secondary_pane_state();
         self.search_query.clear();
         self.search_cursor = 0;
         self.is_search_mode = false;
@@ -116,8 +115,7 @@ impl AppState {
         }
         self.view = view;
         self.selected_idx = 0;
-        self.content_detail_scroll = 0;
-        self.content_pane_focus = ContentPaneFocus::List;
+        self.reset_content_secondary_pane_state();
         self.search_query.clear();
         self.search_cursor = 0;
         self.is_search_mode = false;
@@ -135,14 +133,12 @@ impl AppState {
 
     pub(super) fn select_next(&mut self) {
         self.selected_idx = self.selected_idx.saturating_add(1);
-        self.content_detail_scroll = 0;
-        self.content_pane_focus = ContentPaneFocus::List;
+        self.reset_content_secondary_pane_state();
     }
 
     pub(super) fn select_previous(&mut self) {
         self.selected_idx = self.selected_idx.saturating_sub(1);
-        self.content_detail_scroll = 0;
-        self.content_pane_focus = ContentPaneFocus::List;
+        self.reset_content_secondary_pane_state();
     }
 
     pub fn sidebar_cursor_down(&mut self) {

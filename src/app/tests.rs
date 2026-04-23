@@ -4738,6 +4738,33 @@ fn apply_workspace_snapshot_records_recent_view_jump_in_restored_scope() {
 }
 
 #[test]
+fn apply_workspace_snapshot_resets_secondary_pane_focus_and_scroll() {
+    let mut app = AppState::default();
+    app.view = AppView::Governance;
+    app.focus = Focus::Content;
+    app.content_detail_scroll = 17;
+    app.content_pane_focus = ContentPaneFocus::Secondary;
+
+    let snapshot = WorkspaceSnapshot {
+        context: Some("prod".into()),
+        namespace: "payments".into(),
+        view: AppView::Projects,
+        search_query: Some("checkout".into()),
+        collapsed_groups: Vec::new(),
+        workbench_open: false,
+        workbench_height: 15,
+        workbench_maximized: false,
+        action_history_tab: false,
+    };
+
+    app.apply_workspace_snapshot(&snapshot);
+
+    assert_eq!(app.content_detail_scroll, 0);
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
+    assert!(!app.content_secondary_pane_active());
+}
+
+#[test]
 fn save_and_cycle_pod_log_presets_round_trip() {
     use crate::events::input::apply_action;
     use crate::log_investigation::{LogEntry, LogQueryMode};

@@ -14,7 +14,7 @@ use crate::{
     k8s::dtos::AlertSeverity,
     state::{ClusterSnapshot, RefreshScope},
     ui::{
-        TableFrame,
+        SplitPaneFocus, TableFrame,
         components::{default_theme, render_scrollable_text_block},
         render_centered_message, render_table_frame, table_viewport_rows, table_window,
         vertical_primary_detail_chunks,
@@ -54,15 +54,17 @@ fn governance_widths(area: Rect) -> [Constraint; 10] {
     }
 }
 
-pub fn render_governance(
+pub(crate) fn render_governance(
     frame: &mut Frame,
     area: Rect,
     cluster: &ClusterSnapshot,
     selected_idx: usize,
     search: &str,
     detail_scroll: usize,
-    focused: bool,
+    focus: SplitPaneFocus,
 ) {
+    let list_focused = matches!(focus, SplitPaneFocus::List);
+    let detail_focused = matches!(focus, SplitPaneFocus::Detail);
     let summaries = compute_governance(cluster);
     let indices = filtered_governance_indices(&summaries, search.trim());
     let loaded = cluster.scope_loaded(
@@ -88,7 +90,7 @@ pub fn render_governance(
             },
             "No governance rows inferred from the current snapshot",
             "No governance rows match the search query",
-            focused,
+            list_focused,
         );
         return;
     }
@@ -104,14 +106,14 @@ pub fn render_governance(
         &indices,
         selected,
         search.trim(),
-        focused,
+        list_focused,
     );
     render_governance_summary(
         frame,
         summary_area,
         selected_summary,
         detail_scroll,
-        focused,
+        detail_focused,
     );
 }
 
@@ -386,7 +388,7 @@ mod tests {
                     0,
                     "",
                     0,
-                    true,
+                    SplitPaneFocus::List,
                 );
             })
             .expect("render");

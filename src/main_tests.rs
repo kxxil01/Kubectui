@@ -21,7 +21,10 @@ use crate::async_types::{QueuedRefresh, RefreshRuntimeState};
 use kubectui::ui::components::command_palette::PaletteEntry;
 use kubectui::{
     action_history::ActionKind,
-    app::{AppAction, AppState, AppView, DetailViewState, Focus, ResourceRef, SidebarItem},
+    app::{
+        AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus, ResourceRef,
+        SidebarItem,
+    },
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
     extensions::AiWorkflowKind,
@@ -42,7 +45,7 @@ use kubectui::{
     ui::components::{
         debug_container_dialog::DebugContainerDialogState, node_debug_dialog::NodeDebugDialogState,
     },
-    workbench::{PodLogsTabState, RolloutTabState, WorkbenchTabState},
+    workbench::{PodLogsTabState, ResourceYamlTabState, RolloutTabState, WorkbenchTabState},
 };
 use std::time::{Duration, Instant};
 
@@ -71,6 +74,39 @@ fn root_enter_shortcut_rejects_control_alt_modifiers() {
     assert!(!super::should_handle_root_enter(
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         &app
+    ));
+}
+
+#[test]
+fn prepare_context_switch_ui_resets_secondary_pane_focus_and_scroll() {
+    let mut app = AppState::default();
+    app.view = AppView::Governance;
+    app.focus = Focus::Content;
+    app.content_detail_scroll = 13;
+    app.content_pane_focus = ContentPaneFocus::Secondary;
+    app.search_query = "team-a".into();
+    app.search_cursor = 6;
+    app.is_search_mode = true;
+    app.detail_view = Some(DetailViewState::default());
+    app.open_action_history_tab(true);
+    app.workbench
+        .open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState::new(
+            ResourceRef::Pod("api-0".into(), "team-a".into()),
+        )));
+
+    super::prepare_context_switch_ui(&mut app);
+
+    assert_eq!(app.selected_idx(), 0);
+    assert_eq!(app.content_detail_scroll, 0);
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
+    assert_eq!(app.search_query(), "");
+    assert_eq!(app.search_cursor(), 0);
+    assert!(!app.is_search_mode);
+    assert!(app.detail_view.is_none());
+    assert_eq!(app.workbench().tabs.len(), 1);
+    assert!(matches!(
+        &app.workbench().tabs[0].state,
+        WorkbenchTabState::ActionHistory(_)
     ));
 }
 

@@ -319,6 +319,13 @@ pub(crate) struct TableFrame<'a> {
     pub selected: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SplitPaneFocus {
+    None,
+    List,
+    Detail,
+}
+
 /// Shared configuration for the common resource table render path.
 pub(crate) struct ResourceTableConfig<'a> {
     pub snapshot: &'a ClusterSnapshot,
@@ -1043,7 +1050,15 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     }
 
     let visible_columns = resolve_visible_columns(app);
-    let content_focused = app.focus == Focus::Content && !app.content_secondary_pane_active();
+    let secondary_pane_active = app.content_secondary_pane_active();
+    let split_pane_focus = if secondary_pane_active {
+        SplitPaneFocus::Detail
+    } else if app.focus == Focus::Content {
+        SplitPaneFocus::List
+    } else {
+        SplitPaneFocus::None
+    };
+    let content_focused = matches!(split_pane_focus, SplitPaneFocus::List);
     let view_cache_key = ViewRenderKey {
         view: app.view(),
         area: content,
@@ -1366,7 +1381,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::Governance => views::governance::center::render_governance(
                 frame,
@@ -1375,7 +1390,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.selected_idx(),
                 app.search_query(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::HealthReport => views::issue_center::render_health_report(
                 frame,
@@ -1482,7 +1497,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 app.workload_sort(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::RoleBindings => views::security::role_bindings::render_role_bindings(
                 frame,
@@ -1493,7 +1508,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 app.workload_sort(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::ClusterRoles => views::security::cluster_roles::render_cluster_roles(
                 frame,
@@ -1504,7 +1519,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                 app.search_query(),
                 app.workload_sort(),
                 app.content_detail_scroll,
-                content_focused,
+                split_pane_focus,
             ),
             AppView::ClusterRoleBindings => {
                 views::security::cluster_role_bindings::render_cluster_role_bindings(
@@ -1516,7 +1531,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
                     app.search_query(),
                     app.workload_sort(),
                     app.content_detail_scroll,
-                    content_focused,
+                    split_pane_focus,
                 )
             }
             AppView::ResourceQuotas => views::governance::quotas::render_resource_quotas(
@@ -1623,7 +1638,6 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         } else {
             " • [H] history • [b] workbench"
         };
-        let secondary_pane_active = app.content_secondary_pane_active();
         let focus_hint = match app.focus {
             Focus::Workbench if app.workbench().maximized => {
                 " • WORKBENCH ACTIVE [Esc] exit maximize"

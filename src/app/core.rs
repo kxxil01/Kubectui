@@ -78,6 +78,11 @@ impl AppState {
             && self.content_pane_focus() == ContentPaneFocus::Secondary
     }
 
+    pub fn reset_content_secondary_pane_state(&mut self) {
+        self.content_detail_scroll = 0;
+        self.content_pane_focus = ContentPaneFocus::List;
+    }
+
     pub fn workload_sort_for_view(&self, view: AppView) -> Option<WorkloadSortState> {
         self.workload_sort
             .filter(|sort| view.supports_shared_sort(sort.column))
