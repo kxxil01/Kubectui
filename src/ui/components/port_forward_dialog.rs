@@ -14,6 +14,11 @@ use crate::ui::{
     bounded_popup_rect, table_window, truncate_message, wrap_span_groups, wrapped_line_count,
 };
 
+fn plain_shortcut(key: KeyEvent) -> bool {
+    !key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
 /// Port forward dialog modes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PortForwardMode {
@@ -155,7 +160,7 @@ impl PortForwardDialog {
                 self.switch_mode(PortForwardMode::List);
                 PortForwardAction::None
             }
-            KeyCode::Enter => match self.validate() {
+            KeyCode::Enter if plain_shortcut(key) => match self.validate() {
                 Ok((target, config)) => {
                     self.clear_form();
                     self.set_success_message("Creating tunnel...");
@@ -218,29 +223,31 @@ impl PortForwardDialog {
 
     fn handle_list_mode(&mut self, key: KeyEvent) -> PortForwardAction {
         match key.code {
-            KeyCode::Esc | KeyCode::Char('q') => PortForwardAction::Close,
+            KeyCode::Esc => PortForwardAction::Close,
+            KeyCode::Char('q') if plain_shortcut(key) => PortForwardAction::Close,
             KeyCode::F(1) => {
                 self.switch_mode(PortForwardMode::Create);
                 PortForwardAction::None
             }
-            KeyCode::Up | KeyCode::Char('k') => {
+            KeyCode::Up | KeyCode::Char('k') if plain_shortcut(key) => {
                 self.selected_tunnel = self.selected_tunnel.saturating_sub(1);
                 PortForwardAction::None
             }
-            KeyCode::Down | KeyCode::Char('j') => {
+            KeyCode::Down | KeyCode::Char('j') if plain_shortcut(key) => {
                 if !self.registry.is_empty() {
                     self.selected_tunnel = (self.selected_tunnel + 1) % self.registry.len();
                 }
                 PortForwardAction::None
             }
-            KeyCode::Char('d') | KeyCode::Delete => {
+            KeyCode::Char('d') | KeyCode::Delete if plain_shortcut(key) => {
                 if let Some(tunnel) = self.get_selected_tunnel() {
                     PortForwardAction::Stop(tunnel.id.clone())
                 } else {
                     PortForwardAction::None
                 }
             }
-            KeyCode::Char('r') | KeyCode::F(5) => PortForwardAction::Refresh,
+            KeyCode::Char('r') if plain_shortcut(key) => PortForwardAction::Refresh,
+            KeyCode::F(5) => PortForwardAction::Refresh,
             _ => PortForwardAction::None,
         }
     }
@@ -855,6 +862,23 @@ mod tests {
     }
 
     #[test]
+    fn modified_enter_does_not_submit_create_form() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.pod_name_field.value = "logs-test".to_string();
+        dialog.remote_port_field.value = "80".to_string();
+
+        for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+            assert_eq!(
+                dialog.handle_key(KeyEvent::new(KeyCode::Enter, modifiers)),
+                PortForwardAction::None
+            );
+            assert_eq!(dialog.pod_name_field.value, "logs-test");
+            assert_eq!(dialog.remote_port_field.value, "80");
+            assert!(dialog.success.is_none());
+        }
+    }
+
+    #[test]
     fn create_submit_clears_stale_error_message() {
         let mut dialog = PortForwardDialog::new();
         dialog.error = Some("previous failure".to_string());
@@ -948,6 +972,46 @@ mod tests {
         // Delete action should target the currently selected tunnel (second one)
         let action = dialog.handle_key(KeyEvent::from(KeyCode::Char('d')));
         assert_eq!(action, PortForwardAction::Stop(second_tunnel.id));
+    }
+
+    #[test]
+    fn modified_plain_list_shortcuts_do_not_navigate_stop_or_refresh() {
+        let mut dialog = PortForwardDialog::new();
+        dialog.mode = PortForwardMode::List;
+
+        let mut registry = TunnelRegistry::new();
+        registry.add_tunnel(make_tunnel("t1", "pod-1", TunnelState::Active, 4001));
+        registry.add_tunnel(make_tunnel("t2", "pod-2", TunnelState::Error, 4002));
+        dialog.update_registry(registry);
+
+        for (code, modifiers) in [
+            (KeyCode::Char('j'), KeyModifiers::CONTROL),
+            (KeyCode::Char('k'), KeyModifiers::CONTROL),
+            (KeyCode::Char('d'), KeyModifiers::CONTROL),
+            (KeyCode::Char('r'), KeyModifiers::CONTROL),
+            (KeyCode::Char('q'), KeyModifiers::CONTROL),
+            (KeyCode::Char('j'), KeyModifiers::ALT),
+            (KeyCode::Char('d'), KeyModifiers::ALT),
+            (KeyCode::Char('r'), KeyModifiers::ALT),
+            (KeyCode::Char('q'), KeyModifiers::ALT),
+        ] {
+            assert_eq!(
+                dialog.handle_key(KeyEvent::new(code, modifiers)),
+                PortForwardAction::None,
+                "{code:?} {modifiers:?}"
+            );
+            assert_eq!(dialog.selected_tunnel, 0);
+            assert_eq!(dialog.mode, PortForwardMode::List);
+        }
+
+        assert_eq!(
+            dialog.handle_key(KeyEvent::from(KeyCode::F(5))),
+            PortForwardAction::Refresh
+        );
+        assert!(matches!(
+            dialog.handle_key(KeyEvent::from(KeyCode::Delete)),
+            PortForwardAction::Stop(_)
+        ));
     }
 
     #[test]

@@ -122,7 +122,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             } else if app_state.detail_view.is_some() {
                 app_state.detail_view = None;
             } else {
-                app_state.should_quit = true;
+                return false;
             }
             true
         }

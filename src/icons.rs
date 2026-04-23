@@ -23,6 +23,16 @@ pub enum IconMode {
 const ICON_MODE_COUNT: u8 = 3;
 static ACTIVE_ICON_MODE: AtomicU8 = AtomicU8::new(0);
 
+#[cfg(test)]
+static ICON_MODE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+#[cfg(test)]
+pub(crate) fn icon_mode_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    ICON_MODE_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Sets the active icon mode.
 pub fn set_icon_mode(mode: IconMode) {
     ACTIVE_ICON_MODE.store(mode as u8, Ordering::Relaxed);
@@ -572,6 +582,7 @@ mod tests {
 
     #[test]
     fn default_mode_is_nerd() {
+        let _icon_mode_lock = icon_mode_test_lock();
         // Reset to default
         ACTIVE_ICON_MODE.store(0, Ordering::Relaxed);
         assert_eq!(active_icon_mode(), IconMode::Nerd);
@@ -579,6 +590,7 @@ mod tests {
 
     #[test]
     fn cycle_mode_wraps_around() {
+        let _icon_mode_lock = icon_mode_test_lock();
         ACTIVE_ICON_MODE.store(0, Ordering::Relaxed);
         assert_eq!(cycle_icon_mode(), IconMode::Emoji);
         assert_eq!(cycle_icon_mode(), IconMode::Plain);

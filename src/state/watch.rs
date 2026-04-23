@@ -39,7 +39,9 @@ const STREAMING_LISTS_MIN_MINOR: u32 = 34;
 const WATCH_PUBLISH_DEBOUNCE_MS: u64 = 75;
 
 fn normalize_watch_scope(scope: RefreshScope) -> RefreshScope {
-    scope.union(RefreshScope::NAMESPACES)
+    scope
+        .without(RefreshScope::FLUX)
+        .union(RefreshScope::NAMESPACES)
 }
 
 fn should_restart_watches_for_scope(
@@ -1154,6 +1156,15 @@ mod tests {
 
         assert!(active.contains(RefreshScope::PODS));
         assert!(!active.contains(RefreshScope::FLUX));
+    }
+
+    #[test]
+    fn normalized_watch_scope_uses_polling_for_flux() {
+        let scope = normalize_watch_scope(RefreshScope::FLUX.union(RefreshScope::PODS));
+
+        assert!(scope.contains(RefreshScope::PODS));
+        assert!(scope.contains(RefreshScope::NAMESPACES));
+        assert!(!scope.contains(RefreshScope::FLUX));
     }
 
     // ── ResourceStore tests ──
