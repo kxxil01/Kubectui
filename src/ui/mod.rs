@@ -27,8 +27,8 @@ use std::{
 
 use crate::{
     app::{
-        AppState, AppView, Focus, PodSortColumn, PodSortState, ResourceRef, WorkloadSortColumn,
-        WorkloadSortState, filtered_pod_indices,
+        ActiveComponent, AppState, AppView, Focus, PodSortColumn, PodSortState, ResourceRef,
+        WorkloadSortColumn, WorkloadSortState, filtered_pod_indices,
     },
     bookmarks::BookmarkEntry,
     icons::view_icon,
@@ -730,6 +730,48 @@ fn truncate_error(msg: &str, max_len: usize) -> &str {
     }
     let end = msg.floor_char_boundary(max_len.saturating_sub(1));
     &msg[..end]
+}
+
+fn focus_owner_label(app: &AppState, secondary_pane_active: bool) -> &'static str {
+    if app.help_overlay.is_open() {
+        return "help";
+    }
+    if app.resource_template_dialog.is_some() {
+        return "template dialog";
+    }
+    if app.command_palette.is_open() {
+        return "palette";
+    }
+    if app.is_context_picker_open() {
+        return "context picker";
+    }
+    if app.is_namespace_picker_open() {
+        return "namespace picker";
+    }
+    if app.confirm_quit {
+        return "quit confirm";
+    }
+
+    match app.active_component() {
+        ActiveComponent::LogsViewer => return "logs",
+        ActiveComponent::PortForward => return "port-forward",
+        ActiveComponent::DebugContainer => return "debug dialog",
+        ActiveComponent::NodeDebug => return "node debug",
+        ActiveComponent::Scale => return "scale dialog",
+        ActiveComponent::ProbePanel => return "probe panel",
+        ActiveComponent::None => {}
+    }
+
+    if app.detail_view.is_some() {
+        return "detail";
+    }
+
+    match app.focus {
+        Focus::Sidebar => "sidebar",
+        Focus::Content if secondary_pane_active => "secondary pane",
+        Focus::Content => "resource list",
+        Focus::Workbench => "workbench",
+    }
 }
 
 fn active_overlay_mask(app: &AppState) -> u16 {
@@ -1576,22 +1618,23 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
 
     // Toast notifications take priority over regular status messages
     let active_toast = app.toasts.last();
+    let focus_owner = focus_owner_label(app, secondary_pane_active);
+    let status_prefix = format!(
+        "[{}] view: {} • focus: {focus_owner}",
+        app.get_namespace(),
+        app.view().label()
+    );
     let status = if let Some(toast) = active_toast.filter(|t| t.is_error) {
         format!(
-            "[{}] ✗ {}",
-            app.get_namespace(),
+            "{status_prefix} • ✗ {}",
             truncate_error(&toast.message, 120)
         )
     } else if let Some(err) = app.error_message() {
-        format!(
-            "[{}] ERROR: {}",
-            app.get_namespace(),
-            truncate_error(err, 120)
-        )
+        format!("{status_prefix} • ERROR: {}", truncate_error(err, 120))
     } else if let Some(toast) = active_toast {
-        format!("[{}] ● {}", app.get_namespace(), toast.message)
+        format!("{status_prefix} • ● {}", toast.message)
     } else if let Some(message) = app.status_message() {
-        format!("[{}] {message}", app.get_namespace())
+        format!("{status_prefix} • {message}")
     } else {
         let theme_name = theme::active_theme().name;
         let current_activity = current_view_activity(cluster, app.view(), app.spinner_char())
@@ -1639,18 +1682,15 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             " • [H] history • [b] workbench"
         };
         let focus_hint = match app.focus {
-            Focus::Workbench if app.workbench().maximized => {
-                " • WORKBENCH ACTIVE [Esc] exit maximize"
-            }
-            Focus::Workbench => " • WORKBENCH ACTIVE [Esc] return",
-            Focus::Content if secondary_pane_active => " • secondary pane active [;] list",
+            Focus::Workbench if app.workbench().maximized => " • [Esc] exit maximize",
+            Focus::Workbench => " • [Esc] return",
+            Focus::Content if secondary_pane_active => " • [;] resource list",
             Focus::Content
                 if app.detail_view.is_none() && app.view().supports_secondary_pane_scroll() =>
             {
-                " • resource list active [;] secondary"
+                " • [;] secondary pane"
             }
-            Focus::Content => " • resource list active",
-            Focus::Sidebar => " • sidebar active",
+            _ => "",
         };
         let navigation_hint = if secondary_pane_active {
             "[j/k] scroll"
@@ -1658,10 +1698,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
             "[j/k] navigate"
         };
         format!(
-            "[{}]{}{}{staleness} {navigation_hint} • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit",
-            app.get_namespace(),
-            current_activity,
-            focus_hint
+            "{status_prefix}{current_activity}{focus_hint}{staleness} {navigation_hint} • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit"
         )
     };
 
@@ -3290,6 +3327,65 @@ mod tests {
         app.workbench.toggle_open();
         let snapshot = ClusterSnapshot::default();
         draw_with_size(&app, &snapshot, 120, 40);
+    }
+
+    #[test]
+    fn status_bar_labels_sidebar_focus_even_when_error_is_visible() {
+        let mut app = app_with_view(AppView::Pods);
+        app.focus = Focus::Sidebar;
+        app.set_error("boom".to_string());
+
+        let rendered = render_to_string(&app, &pods_snapshot_for_render_tests());
+
+        assert!(
+            rendered.contains("[all] view: Pods • focus: sidebar • ERROR: boom"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn status_bar_labels_secondary_pane_focus_and_scroll_mode() {
+        let mut app = app_with_view(AppView::Projects);
+        app.focus = Focus::Content;
+        app.content_pane_focus = crate::app::ContentPaneFocus::Secondary;
+
+        let rendered = render_to_string(&app, &projects_snapshot_for_detail_scroll_tests());
+
+        assert!(rendered.contains("[all] view: Projects • focus: secondary pane"));
+        assert!(rendered.contains("[j/k] scroll"));
+    }
+
+    #[test]
+    fn status_bar_labels_workbench_focus_even_when_status_message_is_visible() {
+        let mut app = app_with_view(AppView::Dashboard);
+        app.focus = Focus::Workbench;
+        app.set_status("busy".to_string());
+
+        let rendered = render_to_string(&app, &ClusterSnapshot::default());
+
+        assert!(rendered.contains("[all] view: Dashboard • focus: workbench • busy"));
+    }
+
+    #[test]
+    fn status_bar_repaints_on_fresh_terminal_when_cached_state_matches() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let mut app = app_with_view(AppView::Pods);
+        app.focus = Focus::Content;
+        let snapshot = pods_snapshot_for_render_tests();
+
+        let first = render_to_string(&app, &snapshot);
+        let second = render_to_string(&app, &snapshot);
+
+        assert!(
+            first.contains("[all] view: Pods • focus: resource list"),
+            "{first}"
+        );
+        assert!(
+            second.contains("[all] view: Pods • focus: resource list"),
+            "{second}"
+        );
     }
 
     #[test]
