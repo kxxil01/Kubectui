@@ -1442,6 +1442,26 @@ fn workbench_focus_supports_command_palette_shortcut() {
 }
 
 #[test]
+fn ctrl_z_does_not_toggle_workbench_maximize() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.focus_workbench();
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('z'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert!(!app.workbench.maximized);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
+        AppAction::WorkbenchToggleMaximize
+    );
+}
+
+#[test]
 fn workbench_local_editor_keeps_help_and_palette_shortcuts_as_text() {
     let mut app = AppState::default();
     app.workbench
@@ -1522,6 +1542,34 @@ fn pod_logs_shortcuts_toggle_regex_and_structured_view() {
 }
 
 #[test]
+fn pod_logs_control_modified_plain_shortcuts_do_not_fire() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::PodLogs(PodLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+        )));
+    app.focus_workbench();
+
+    for key in ['T', 'C', 'J', 'S', 'M', 'y', 'g', 'G', '[', ']'] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char(key),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            )),
+            AppAction::None,
+            "{key}"
+        );
+    }
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('R'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::RefreshData
+    );
+}
+
+#[test]
 fn workload_logs_shortcuts_toggle_regex_and_structured_view() {
     use crate::events::input::apply_action;
     use crate::log_investigation::LogQueryMode;
@@ -1566,6 +1614,37 @@ fn workload_logs_shortcuts_toggle_regex_and_structured_view() {
         crate::log_investigation::LogTimeWindow::Last5Minutes
     );
     assert!(!logs_tab.structured_view);
+}
+
+#[test]
+fn workload_logs_control_modified_plain_shortcuts_do_not_fire() {
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::WorkloadLogs(WorkloadLogsTabState::new(
+            ResourceRef::Pod("pod-1".into(), "default".into()),
+            1,
+        )));
+    app.focus_workbench();
+
+    for key in [
+        'T', 'L', 'C', 'J', 'S', 'M', 'y', 'p', 'c', 'g', 'G', '[', ']',
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char(key),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            )),
+            AppAction::None,
+            "{key}"
+        );
+    }
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('R'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        )),
+        AppAction::RefreshData
+    );
 }
 
 #[test]

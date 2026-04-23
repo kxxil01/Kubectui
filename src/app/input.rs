@@ -132,7 +132,9 @@ impl AppState {
         // Common workbench keys (apply to all tab types)
         if !local_editor_active {
             match key.code {
-                KeyCode::Char('z') => return AppAction::WorkbenchToggleMaximize,
+                KeyCode::Char('z') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    return AppAction::WorkbenchToggleMaximize;
+                }
                 KeyCode::Char('b') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                     return AppAction::ToggleWorkbench;
                 }
@@ -998,58 +1000,103 @@ impl AppState {
                                     .unwrap_or(AppAction::None)
                             }
                         }
-                        KeyCode::Char('g') => AppAction::LogsViewerScrollTop,
-                        KeyCode::Char('G') => AppAction::LogsViewerScrollBottom,
+                        KeyCode::Char('g') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            AppAction::LogsViewerScrollTop
+                        }
+                        KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            AppAction::LogsViewerScrollBottom
+                        }
                         KeyCode::Char('f') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             AppAction::LogsViewerToggleFollow
                         }
-                        KeyCode::Char('P') if !tab.viewer.picking_container => {
+                        KeyCode::Char('P')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::LogsViewerTogglePrevious
                         }
-                        KeyCode::Char('t') if !tab.viewer.picking_container => {
+                        KeyCode::Char('t')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::LogsViewerToggleTimestamps
                         }
-                        KeyCode::Char('/') if !tab.viewer.picking_container => {
+                        KeyCode::Char('/')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::LogsViewerSearchOpen
                         }
-                        KeyCode::Char('n') if !tab.viewer.picking_container => {
+                        KeyCode::Char('n')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::LogsViewerSearchNext
                         }
-                        KeyCode::Char('N') if !tab.viewer.picking_container => {
+                        KeyCode::Char('N')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::LogsViewerSearchPrev
                         }
-                        KeyCode::Char('R') if !tab.viewer.picking_container => {
+                        KeyCode::Char('R')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ToggleLogRegexMode
                         }
-                        KeyCode::Char('W') if !tab.viewer.picking_container => {
+                        KeyCode::Char('W')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ToggleLogTimeWindow
                         }
-                        KeyCode::Char('T') if !tab.viewer.picking_container => {
+                        KeyCode::Char('T')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::OpenLogTimeJump
                         }
-                        KeyCode::Char('C') if !tab.viewer.picking_container => {
+                        KeyCode::Char('C')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ToggleLogCorrelation
                         }
-                        KeyCode::Char('J') if !tab.viewer.picking_container => {
+                        KeyCode::Char('J')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ToggleStructuredLogView
                         }
-                        KeyCode::Char('y') if !tab.viewer.picking_container => {
+                        KeyCode::Char('y')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::CopyLogContent
                         }
                         KeyCode::Char('S') | KeyCode::Char('s')
-                            if !tab.viewer.picking_container =>
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             AppAction::ExportLogs
                         }
                         KeyCode::Char('M') | KeyCode::Char('m')
-                            if !tab.viewer.picking_container =>
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
                         {
                             AppAction::SaveLogPreset
                         }
-                        KeyCode::Char('[') if !tab.viewer.picking_container => {
+                        KeyCode::Char('[')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ApplyPreviousLogPreset
                         }
-                        KeyCode::Char(']') if !tab.viewer.picking_container => {
+                        KeyCode::Char(']')
+                            if !tab.viewer.picking_container
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ApplyNextLogPreset
                         }
                         _ => AppAction::None,
@@ -1198,12 +1245,12 @@ impl AppState {
                             tab.follow_mode = false;
                             AppAction::None
                         }
-                        KeyCode::Char('g') => {
+                        KeyCode::Char('g') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.scroll = 0;
                             tab.follow_mode = false;
                             AppAction::None
                         }
-                        KeyCode::Char('G') => {
+                        KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.scroll = if filtered_len <= 1 && filtered_len > 0 {
                                 usize::MAX
                             } else {
@@ -1237,37 +1284,66 @@ impl AppState {
                             }
                             AppAction::None
                         }
-                        KeyCode::Char('/') => {
+                        KeyCode::Char('/') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.editing_text_filter = true;
                             tab.filter_input = tab.text_filter.clone();
                             tab.filter_input_cursor = tab.filter_input.chars().count();
                             AppAction::None
                         }
-                        KeyCode::Char('p') => {
+                        KeyCode::Char('p') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.cycle_pod_filter();
                             AppAction::None
                         }
-                        KeyCode::Char('c') => {
+                        KeyCode::Char('c') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                             tab.cycle_container_filter();
                             AppAction::None
                         }
-                        KeyCode::Char('R') => AppAction::ToggleLogRegexMode,
-                        KeyCode::Char('W') => AppAction::ToggleLogTimeWindow,
-                        KeyCode::Char('T') => AppAction::OpenLogTimeJump,
-                        KeyCode::Char('L') => AppAction::CycleWorkloadLogLabelFilter,
-                        KeyCode::Char('C') => AppAction::ToggleLogCorrelation,
-                        KeyCode::Char('J') => AppAction::ToggleStructuredLogView,
-                        KeyCode::Char('y') if !tab.editing_text_filter => AppAction::CopyLogContent,
-                        KeyCode::Char('S') | KeyCode::Char('s') if !tab.editing_text_filter => {
+                        KeyCode::Char('R') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            AppAction::ToggleLogRegexMode
+                        }
+                        KeyCode::Char('W') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            AppAction::ToggleLogTimeWindow
+                        }
+                        KeyCode::Char('T') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            AppAction::OpenLogTimeJump
+                        }
+                        KeyCode::Char('L') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            AppAction::CycleWorkloadLogLabelFilter
+                        }
+                        KeyCode::Char('C') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            AppAction::ToggleLogCorrelation
+                        }
+                        KeyCode::Char('J') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            AppAction::ToggleStructuredLogView
+                        }
+                        KeyCode::Char('y')
+                            if !tab.editing_text_filter
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
+                            AppAction::CopyLogContent
+                        }
+                        KeyCode::Char('S') | KeyCode::Char('s')
+                            if !tab.editing_text_filter
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ExportLogs
                         }
-                        KeyCode::Char('M') | KeyCode::Char('m') if !tab.editing_text_filter => {
+                        KeyCode::Char('M') | KeyCode::Char('m')
+                            if !tab.editing_text_filter
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::SaveLogPreset
                         }
-                        KeyCode::Char('[') if !tab.editing_text_filter => {
+                        KeyCode::Char('[')
+                            if !tab.editing_text_filter
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ApplyPreviousLogPreset
                         }
-                        KeyCode::Char(']') if !tab.editing_text_filter => {
+                        KeyCode::Char(']')
+                            if !tab.editing_text_filter
+                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                        {
                             AppAction::ApplyNextLogPreset
                         }
                         _ => AppAction::None,
