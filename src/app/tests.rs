@@ -2119,6 +2119,21 @@ fn modified_enter_does_not_confirm_quit() {
 }
 
 #[test]
+fn modified_esc_does_not_start_quit_confirmation() {
+    for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+        let mut app = AppState::default();
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Esc, modifiers));
+        assert_eq!(action, AppAction::None);
+        assert!(!app.confirm_quit);
+        assert!(!app.should_quit());
+
+        let action = app.handle_key_event(KeyEvent::from(KeyCode::Enter));
+        assert_ne!(action, AppAction::Quit);
+        assert!(!app.should_quit());
+    }
+}
+
+#[test]
 fn q_does_not_start_quit_confirmation() {
     let mut app = AppState::default();
 

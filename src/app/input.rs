@@ -2216,7 +2216,7 @@ impl AppState {
                 self.focus = Focus::Content;
                 AppAction::None
             }
-            KeyCode::Esc => {
+            KeyCode::Esc if plain_shortcut(key) => {
                 self.confirm_quit = true;
                 AppAction::None
             }

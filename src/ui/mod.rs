@@ -27,8 +27,8 @@ use std::{
 
 use crate::{
     app::{
-        AppState, AppView, ContentPaneFocus, Focus, PodSortColumn, PodSortState, ResourceRef,
-        WorkloadSortColumn, WorkloadSortState, filtered_pod_indices,
+        AppState, AppView, Focus, PodSortColumn, PodSortState, ResourceRef, WorkloadSortColumn,
+        WorkloadSortState, filtered_pod_indices,
     },
     bookmarks::BookmarkEntry,
     icons::view_icon,
@@ -766,7 +766,7 @@ struct ViewRenderKey {
     snapshot_version: u64,
     selected_idx: usize,
     content_detail_scroll: usize,
-    content_pane_focus: ContentPaneFocus,
+    split_pane_focus: SplitPaneFocus,
     query_hash: u64,
     focused: bool,
     theme_index: u8,
@@ -1066,7 +1066,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         snapshot_version: cluster.snapshot_version,
         selected_idx: app.selected_idx(),
         content_detail_scroll: app.content_detail_scroll,
-        content_pane_focus: app.content_pane_focus(),
+        split_pane_focus,
         query_hash: hash_str(app.search_query()),
         focused: content_focused,
         theme_index: crate::ui::theme::active_theme_index(),
@@ -3217,6 +3217,51 @@ mod tests {
 
         assert!(after.contains("Project Summary"));
         assert_ne!(before, after);
+    }
+
+    #[test]
+    fn render_invalidates_when_secondary_pane_focus_blurs_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Projects);
+        app.focus = crate::app::Focus::Content;
+        app.content_pane_focus = crate::app::ContentPaneFocus::Secondary;
+        let snapshot = projects_snapshot_for_detail_scroll_tests();
+        let mut terminal =
+            Terminal::new(TestBackend::new(120, 18)).expect("test terminal should initialize");
+
+        let content = Rect::new(
+            effective_sidebar_width(120),
+            3,
+            120 - effective_sidebar_width(120),
+            13,
+        );
+        let (_, summary_area) = vertical_primary_detail_chunks(content, 60, 8, 24);
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let active_summary_border = terminal.backend().buffer()[(summary_area.x, summary_area.y)]
+            .style()
+            .fg;
+        assert_eq!(
+            active_summary_border,
+            default_theme().border_active_style().fg
+        );
+
+        app.focus = crate::app::Focus::Sidebar;
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let blurred_summary_border = terminal.backend().buffer()[(summary_area.x, summary_area.y)]
+            .style()
+            .fg;
+
+        assert_ne!(active_summary_border, blurred_summary_border);
+        assert_eq!(blurred_summary_border, default_theme().border_style().fg);
     }
 
     #[test]
