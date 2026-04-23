@@ -27,8 +27,8 @@ use std::{
 
 use crate::{
     app::{
-        AppState, AppView, Focus, PodSortColumn, PodSortState, ResourceRef, WorkloadSortColumn,
-        WorkloadSortState, filtered_pod_indices,
+        AppState, AppView, ContentPaneFocus, Focus, PodSortColumn, PodSortState, ResourceRef,
+        WorkloadSortColumn, WorkloadSortState, filtered_pod_indices,
     },
     bookmarks::BookmarkEntry,
     icons::view_icon,
@@ -759,6 +759,7 @@ struct ViewRenderKey {
     snapshot_version: u64,
     selected_idx: usize,
     content_detail_scroll: usize,
+    content_pane_focus: ContentPaneFocus,
     query_hash: u64,
     focused: bool,
     theme_index: u8,
@@ -1042,7 +1043,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     }
 
     let visible_columns = resolve_visible_columns(app);
-    let content_focused = app.focus == Focus::Content;
+    let content_focused = app.focus == Focus::Content && !app.content_secondary_pane_active();
     let view_cache_key = ViewRenderKey {
         view: app.view(),
         area: content,
@@ -1050,6 +1051,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         snapshot_version: cluster.snapshot_version,
         selected_idx: app.selected_idx(),
         content_detail_scroll: app.content_detail_scroll,
+        content_pane_focus: app.content_pane_focus(),
         query_hash: hash_str(app.search_query()),
         focused: content_focused,
         theme_index: crate::ui::theme::active_theme_index(),
@@ -1621,16 +1623,28 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         } else {
             " • [H] history • [b] workbench"
         };
+        let secondary_pane_active = app.content_secondary_pane_active();
         let focus_hint = match app.focus {
             Focus::Workbench if app.workbench().maximized => {
                 " • WORKBENCH ACTIVE [Esc] exit maximize"
             }
             Focus::Workbench => " • WORKBENCH ACTIVE [Esc] return",
+            Focus::Content if secondary_pane_active => " • secondary pane active [;] list",
+            Focus::Content
+                if app.detail_view.is_none() && app.view().supports_secondary_pane_scroll() =>
+            {
+                " • resource list active [;] secondary"
+            }
             Focus::Content => " • resource list active",
             Focus::Sidebar => " • sidebar active",
         };
+        let navigation_hint = if secondary_pane_active {
+            "[j/k] scroll"
+        } else {
+            "[j/k] navigate"
+        };
         format!(
-            "[{}]{}{}{staleness} [j/k] navigate • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit",
+            "[{}]{}{}{staleness} {navigation_hint} • [/] search • [~] ns • [c] ctx • [T] theme:{theme_name}{sort_hint}{flux_reconcile_hint}{workbench_hint} • [r] refresh • [Esc then Enter] quit",
             app.get_namespace(),
             current_activity,
             focus_hint

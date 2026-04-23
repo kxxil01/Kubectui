@@ -593,6 +593,19 @@ impl AppView {
         )
     }
 
+    pub const fn supports_secondary_pane_scroll(self) -> bool {
+        matches!(
+            self,
+            AppView::Dashboard
+                | AppView::Projects
+                | AppView::Governance
+                | AppView::RoleBindings
+                | AppView::ClusterRoleBindings
+                | AppView::Roles
+                | AppView::ClusterRoles
+        )
+    }
+
     pub(crate) fn index(self) -> usize {
         Self::ORDER
             .iter()

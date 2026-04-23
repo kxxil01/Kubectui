@@ -1472,6 +1472,88 @@ fn content_detail_page_keys_scroll_secondary_panes_without_moving_selection() {
 }
 
 #[test]
+fn secondary_pane_focus_routes_plain_navigation_to_scrollable_detail_pane() {
+    let mut app = AppState::default();
+    app.view = AppView::Governance;
+    app.focus = Focus::Content;
+    app.selected_idx = 3;
+
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
+    assert!(!app.content_secondary_pane_active());
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(';'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::Secondary);
+    assert!(app.content_secondary_pane_active());
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('j'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_detail_scroll, 1);
+    assert_eq!(app.selected_idx, 3);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('d'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_detail_scroll, 11);
+    assert_eq!(app.selected_idx, 3);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('u'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_detail_scroll, 1);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('k'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_detail_scroll, 0);
+    assert_eq!(app.selected_idx, 3);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(';'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('j'))),
+        AppAction::None
+    );
+    assert_eq!(app.selected_idx, 4);
+}
+
+#[test]
+fn secondary_pane_focus_is_scoped_to_supported_split_views() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(';'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
+    assert!(!app.content_secondary_pane_active());
+
+    app.view = AppView::Governance;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char(';'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::Secondary);
+
+    app.navigate_to_view(AppView::Projects);
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
+    assert!(!app.content_secondary_pane_active());
+}
+
+#[test]
 fn ctrl_b_and_ctrl_f_do_not_trigger_unrelated_content_actions() {
     let mut app = AppState::default();
     app.view = AppView::Pods;

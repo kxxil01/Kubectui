@@ -4,6 +4,7 @@ impl AppState {
     pub(super) fn set_or_toggle_pod_sort(&mut self, column: PodSortColumn) {
         self.selected_idx = 0;
         self.content_detail_scroll = 0;
+        self.content_pane_focus = ContentPaneFocus::List;
         self.pod_sort = match self.pod_sort {
             Some(current) if current.column == column => {
                 Some(PodSortState::new(column, !current.descending))
@@ -16,6 +17,7 @@ impl AppState {
     pub(super) fn clear_pod_sort(&mut self) {
         self.selected_idx = 0;
         self.content_detail_scroll = 0;
+        self.content_pane_focus = ContentPaneFocus::List;
         self.pod_sort = None;
         self.save_sort_to_preferences("pods");
     }
@@ -23,6 +25,7 @@ impl AppState {
     pub(super) fn set_or_toggle_workload_sort(&mut self, column: WorkloadSortColumn) {
         self.selected_idx = 0;
         self.content_detail_scroll = 0;
+        self.content_pane_focus = ContentPaneFocus::List;
         self.workload_sort = match self.workload_sort {
             Some(current) if current.column == column => {
                 Some(WorkloadSortState::new(column, !current.descending))
@@ -36,6 +39,7 @@ impl AppState {
     pub(super) fn clear_workload_sort(&mut self) {
         self.selected_idx = 0;
         self.content_detail_scroll = 0;
+        self.content_pane_focus = ContentPaneFocus::List;
         self.workload_sort = None;
         let view_key = crate::columns::view_key(self.view);
         self.save_sort_to_preferences(view_key);
