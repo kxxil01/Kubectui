@@ -424,7 +424,10 @@ impl ClusterSnapshot {
     /// doesn't map to a direct collection.
     pub fn resource_count(&self, view: AppView) -> Option<usize> {
         let required_scope = GlobalState::view_ready_scope(view);
-        if !required_scope.is_empty() && !self.loaded_scope.contains(required_scope) {
+        if !required_scope.is_empty()
+            && !self.loaded_scope.contains(required_scope)
+            && self.view_load_state(view) != ViewLoadState::Ready
+        {
             return None;
         }
 
@@ -992,7 +995,7 @@ impl GlobalState {
         &self.namespaces
     }
 
-    const fn view_ready_scope(view: AppView) -> RefreshScope {
+    pub const fn view_ready_scope(view: AppView) -> RefreshScope {
         match view {
             AppView::Dashboard => RefreshScope::DASHBOARD_WATCHED,
             AppView::Projects => RefreshScope::CORE_OVERVIEW
@@ -1175,6 +1178,21 @@ impl GlobalState {
     pub fn mark_refresh_requested(&mut self, options: RefreshOptions) {
         let mut changed = false;
         changed |= self.mark_scope_requested(options.scope);
+        changed |= self.set_view_load_state(AppView::PortForwarding, ViewLoadState::Ready);
+
+        if changed {
+            self.snapshot_dirty = true;
+            self.publish_snapshot();
+        }
+    }
+
+    pub fn mark_view_refresh_requested(&mut self, view: AppView) {
+        let next = if self.has_view_data(view) {
+            ViewLoadState::Refreshing
+        } else {
+            ViewLoadState::Loading
+        };
+        let mut changed = self.set_view_load_state(view, next);
         changed |= self.set_view_load_state(AppView::PortForwarding, ViewLoadState::Ready);
 
         if changed {
@@ -3075,6 +3093,170 @@ mod tests {
 
             assert_fetch_counts(scenario, &counters, expected);
         }
+    }
+
+    #[tokio::test]
+    async fn targeted_group_view_refresh_fetches_only_selected_empty_resource() {
+        let scenarios = [
+            (
+                "network policies",
+                AppView::NetworkPolicies,
+                RefreshScope::NETWORK,
+                ExpectedFetchCounts {
+                    total: 1,
+                    nodes: 0,
+                    pods: 0,
+                    services: 0,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 1,
+                    config_calls: 0,
+                    storage_calls: 0,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 0,
+                    cluster_pod_count: 0,
+                    node_metrics: 0,
+                    pod_metrics: 0,
+                    service_accounts: 0,
+                    pvcs: 0,
+                },
+            ),
+            (
+                "config maps",
+                AppView::ConfigMaps,
+                RefreshScope::CONFIG,
+                ExpectedFetchCounts {
+                    total: 1,
+                    nodes: 0,
+                    pods: 0,
+                    services: 0,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 0,
+                    config_calls: 1,
+                    storage_calls: 0,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 0,
+                    cluster_pod_count: 0,
+                    node_metrics: 0,
+                    pod_metrics: 0,
+                    service_accounts: 0,
+                    pvcs: 0,
+                },
+            ),
+            (
+                "storage classes",
+                AppView::StorageClasses,
+                RefreshScope::STORAGE,
+                ExpectedFetchCounts {
+                    total: 1,
+                    nodes: 0,
+                    pods: 0,
+                    services: 0,
+                    namespaces: 0,
+                    workload_calls: 0,
+                    network_calls: 0,
+                    config_calls: 0,
+                    storage_calls: 1,
+                    security_calls: 0,
+                    helm_calls: 0,
+                    extension_calls: 0,
+                    flux_resources: 0,
+                    cluster_version: 0,
+                    cluster_pod_count: 0,
+                    node_metrics: 0,
+                    pod_metrics: 0,
+                    service_accounts: 0,
+                    pvcs: 0,
+                },
+            ),
+        ];
+
+        for (scenario, view, scope, expected) in scenarios {
+            let mut state = GlobalState::default();
+            let source = MockDataSource::success();
+            let counters = Arc::clone(&source.fetch_counters);
+
+            state.begin_loading_transition(false);
+            state.mark_view_refresh_requested(view);
+            assert_eq!(
+                state.snapshot().view_load_state(view),
+                ViewLoadState::Loading
+            );
+            assert_eq!(
+                state.snapshot().view_load_state(match scope {
+                    RefreshScope::NETWORK => AppView::Endpoints,
+                    RefreshScope::CONFIG => AppView::Secrets,
+                    RefreshScope::STORAGE => AppView::PersistentVolumes,
+                    _ => unreachable!(),
+                }),
+                ViewLoadState::Idle
+            );
+
+            state
+                .refresh_view_with_options(
+                    &source,
+                    Some("default"),
+                    refresh_options(scope, false),
+                    Some(view),
+                )
+                .await
+                .unwrap_or_else(|err| panic!("{scenario}: refresh should succeed: {err}"));
+
+            let snapshot = state.snapshot();
+            assert_eq!(snapshot.view_load_state(view), ViewLoadState::Ready);
+            assert_eq!(snapshot.resource_count(view), Some(0));
+            assert_fetch_counts(scenario, &counters, expected);
+        }
+    }
+
+    #[tokio::test]
+    async fn aggregate_view_stays_loading_until_all_required_scopes_complete() {
+        let mut state = GlobalState::default();
+        let source = MockDataSource::success();
+
+        state.begin_loading_transition(false);
+        state.mark_view_refresh_requested(AppView::Projects);
+        state
+            .refresh_view_with_options(
+                &source,
+                Some("default"),
+                refresh_options(RefreshScope::CORE_OVERVIEW, false),
+                Some(AppView::Projects),
+            )
+            .await
+            .expect("core refresh should succeed");
+
+        assert_eq!(
+            state.snapshot().view_load_state(AppView::Projects),
+            ViewLoadState::Loading
+        );
+
+        state
+            .refresh_view_with_options(
+                &source,
+                Some("default"),
+                refresh_options(
+                    RefreshScope::LEGACY_SECONDARY
+                        .union(RefreshScope::NETWORK)
+                        .union(RefreshScope::SECURITY),
+                    true,
+                ),
+                Some(AppView::Projects),
+            )
+            .await
+            .expect("secondary refresh should succeed");
+
+        assert_eq!(
+            state.snapshot().view_load_state(AppView::Projects),
+            ViewLoadState::Ready
+        );
     }
 
     #[tokio::test]

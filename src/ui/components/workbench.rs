@@ -2275,7 +2275,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
             Paragraph::new(entries[window.start..window.end].to_vec()),
             log_area,
         );
-        render_scrollbar(frame, log_area, total, window.start);
+        render_scrollbar(frame, log_area, total, selected);
         return;
     }
 
@@ -2323,7 +2323,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), log_area);
-    render_scrollbar(frame, log_area, total, window.start);
+    render_scrollbar(frame, log_area, total, cursor);
 }
 
 fn highlight_search<'a>(
