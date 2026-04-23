@@ -12,6 +12,11 @@ use crate::{
     workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
 
+fn plain_shortcut(key: KeyEvent) -> bool {
+    !key.modifiers
+        .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
+}
+
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
     matches!(
         view,
@@ -39,29 +44,24 @@ impl AppState {
                 detail.confirm_cronjob_suspend = None;
                 AppAction::None
             }
-            KeyCode::Char('F')
-                if detail.confirm_drain && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('F') if detail.confirm_drain && plain_shortcut(key) => {
                 AppAction::ForceDrainNode
             }
             KeyCode::Char('D') | KeyCode::Char('y') | KeyCode::Enter
-                if detail.confirm_drain && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if detail.confirm_drain && plain_shortcut(key) =>
             {
                 AppAction::DrainNode
             }
-            KeyCode::Char('F')
-                if detail.confirm_delete && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('F') if detail.confirm_delete && plain_shortcut(key) => {
                 AppAction::ForceDeleteResource
             }
             KeyCode::Char('D') | KeyCode::Char('d') | KeyCode::Char('y') | KeyCode::Enter
-                if detail.confirm_delete && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if detail.confirm_delete && plain_shortcut(key) =>
             {
                 AppAction::DeleteResource
             }
             KeyCode::Char('S') | KeyCode::Char('y') | KeyCode::Enter
-                if detail.confirm_cronjob_suspend.is_some()
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if detail.confirm_cronjob_suspend.is_some() && plain_shortcut(key) =>
             {
                 AppAction::SetCronJobSuspend(detail.confirm_cronjob_suspend.unwrap_or(false))
             }
@@ -108,9 +108,9 @@ impl AppState {
         }
 
         match key.code {
-            KeyCode::Char(':') => Some(AppAction::OpenCommandPalette),
-            KeyCode::Char('?') => Some(AppAction::OpenHelp),
-            KeyCode::Char('~') => Some(AppAction::OpenNamespacePicker),
+            KeyCode::Char(':') if plain_shortcut(key) => Some(AppAction::OpenCommandPalette),
+            KeyCode::Char('?') if plain_shortcut(key) => Some(AppAction::OpenHelp),
+            KeyCode::Char('~') if plain_shortcut(key) => Some(AppAction::OpenNamespacePicker),
             _ => None,
         }
     }
@@ -132,10 +132,10 @@ impl AppState {
         // Common workbench keys (apply to all tab types)
         if !local_editor_active {
             match key.code {
-                KeyCode::Char('z') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('z') if plain_shortcut(key) => {
                     return AppAction::WorkbenchToggleMaximize;
                 }
-                KeyCode::Char('b') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('b') if plain_shortcut(key) => {
                     return AppAction::ToggleWorkbench;
                 }
                 KeyCode::Tab
@@ -150,10 +150,10 @@ impl AppState {
                 KeyCode::Tab if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     return AppAction::WorkbenchNextTab;
                 }
-                KeyCode::Char('[') if !reserve_bracket_shortcuts => {
+                KeyCode::Char('[') if plain_shortcut(key) && !reserve_bracket_shortcuts => {
                     return AppAction::WorkbenchPreviousTab;
                 }
-                KeyCode::Char(']') if !reserve_bracket_shortcuts => {
+                KeyCode::Char(']') if plain_shortcut(key) && !reserve_bracket_shortcuts => {
                     return AppAction::WorkbenchNextTab;
                 }
                 KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -181,19 +181,19 @@ impl AppState {
         match &mut tab.state {
             WorkbenchTabState::ActionHistory(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
-                KeyCode::Char('j') | KeyCode::Down => {
+                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     tab.select_next(&action_history_ids);
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                     tab.select_previous(&action_history_ids);
                     AppAction::None
                 }
-                KeyCode::Char('g') => {
+                KeyCode::Char('g') if plain_shortcut(key) => {
                     tab.select_top(&action_history_ids);
                     AppAction::None
                 }
-                KeyCode::Char('G') => {
+                KeyCode::Char('G') if plain_shortcut(key) => {
                     tab.select_bottom(&action_history_ids);
                     AppAction::None
                 }
@@ -217,23 +217,25 @@ impl AppState {
                 match tab.focus {
                     AccessReviewFocus::Summary => match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
-                        KeyCode::Tab | KeyCode::Char('s') | KeyCode::Char('/') => {
+                        KeyCode::Tab | KeyCode::Char('s') | KeyCode::Char('/')
+                            if plain_shortcut(key) =>
+                        {
                             tab.start_subject_input();
                             AppAction::None
                         }
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
                             AppAction::None
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::Char('g') => {
+                        KeyCode::Char('g') if plain_shortcut(key) => {
                             tab.scroll = 0;
                             AppAction::None
                         }
-                        KeyCode::Char('G') => {
+                        KeyCode::Char('G') if plain_shortcut(key) => {
                             tab.scroll = max_scroll;
                             AppAction::None
                         }
@@ -305,19 +307,19 @@ impl AppState {
                     .unwrap_or(0);
                 match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('j') | KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
                         AppAction::None
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
+                    KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_sub(1);
                         AppAction::None
                     }
-                    KeyCode::Char('g') => {
+                    KeyCode::Char('g') if plain_shortcut(key) => {
                         tab.scroll = 0;
                         AppAction::None
                     }
-                    KeyCode::Char('G') => {
+                    KeyCode::Char('G') if plain_shortcut(key) => {
                         tab.scroll = max_scroll;
                         AppAction::None
                     }
@@ -336,19 +338,19 @@ impl AppState {
                 let max_scroll = tab.lines.len().saturating_sub(1);
                 match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('j') | KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_add(1).min(max_scroll);
                         AppAction::None
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
+                    KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                         tab.scroll = tab.scroll.saturating_sub(1);
                         AppAction::None
                     }
-                    KeyCode::Char('g') => {
+                    KeyCode::Char('g') if plain_shortcut(key) => {
                         tab.scroll = 0;
                         AppAction::None
                     }
-                    KeyCode::Char('G') => {
+                    KeyCode::Char('G') if plain_shortcut(key) => {
                         tab.scroll = max_scroll;
                         AppAction::None
                     }
@@ -365,19 +367,19 @@ impl AppState {
             }
             WorkbenchTabState::ExtensionOutput(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
-                KeyCode::Char('j') | KeyCode::Down => {
+                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_add(1);
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_sub(1);
                     AppAction::None
                 }
-                KeyCode::Char('g') => {
+                KeyCode::Char('g') if plain_shortcut(key) => {
                     tab.scroll = 0;
                     AppAction::None
                 }
-                KeyCode::Char('G') => {
+                KeyCode::Char('G') if plain_shortcut(key) => {
                     tab.scroll = usize::MAX;
                     AppAction::None
                 }
@@ -393,19 +395,19 @@ impl AppState {
             },
             WorkbenchTabState::AiAnalysis(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
-                KeyCode::Char('j') | KeyCode::Down => {
+                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_add(1);
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_sub(1);
                     AppAction::None
                 }
-                KeyCode::Char('g') => {
+                KeyCode::Char('g') if plain_shortcut(key) => {
                     tab.scroll = 0;
                     AppAction::None
                 }
-                KeyCode::Char('G') => {
+                KeyCode::Char('G') if plain_shortcut(key) => {
                     tab.scroll = usize::MAX;
                     AppAction::None
                 }
@@ -445,19 +447,19 @@ impl AppState {
                     tab.scroll_detail_up(10);
                     AppAction::None
                 }
-                KeyCode::Char('j') | KeyCode::Down => {
+                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     tab.select_next();
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                     tab.select_previous();
                     AppAction::None
                 }
-                KeyCode::Char('g') => {
+                KeyCode::Char('g') if plain_shortcut(key) => {
                     tab.select_top();
                     AppAction::None
                 }
-                KeyCode::Char('G') => {
+                KeyCode::Char('G') if plain_shortcut(key) => {
                     tab.select_bottom();
                     AppAction::None
                 }
@@ -473,19 +475,19 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Char('d') => AppAction::RunbookToggleStepDone,
-                KeyCode::Char('s') => AppAction::RunbookToggleStepSkipped,
+                KeyCode::Char('d') if plain_shortcut(key) => AppAction::RunbookToggleStepDone,
+                KeyCode::Char('s') if plain_shortcut(key) => AppAction::RunbookToggleStepSkipped,
                 KeyCode::Enter => AppAction::RunbookExecuteSelectedStep,
                 _ => AppAction::None,
             },
             WorkbenchTabState::HelmHistory(tab) => {
                 if tab.rollback_pending {
                     return match key.code {
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_add(1);
                             AppAction::None
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_sub(1);
                             AppAction::None
                         }
@@ -512,11 +514,11 @@ impl AppState {
                             tab.cancel_rollback_confirm();
                             AppAction::None
                         }
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_add(1);
                             AppAction::None
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             tab.scroll = tab.scroll.saturating_sub(1);
                             AppAction::None
                         }
@@ -533,7 +535,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char('R') | KeyCode::Char('y') | KeyCode::Enter
-                            if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if plain_shortcut(key) =>
                         {
                             AppAction::ExecuteHelmRollback
                         }
@@ -548,19 +550,19 @@ impl AppState {
                             tab.close_diff();
                             AppAction::None
                         }
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             diff.scroll = diff.scroll.saturating_add(1).min(max_scroll);
                             AppAction::None
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             diff.scroll = diff.scroll.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::Char('g') => {
+                        KeyCode::Char('g') if plain_shortcut(key) => {
                             diff.scroll = 0;
                             AppAction::None
                         }
-                        KeyCode::Char('G') => {
+                        KeyCode::Char('G') if plain_shortcut(key) => {
                             diff.scroll = max_scroll;
                             AppAction::None
                         }
@@ -573,8 +575,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char('R')
-                            if tab.selected_target_revision().is_some()
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if tab.selected_target_revision().is_some() && plain_shortcut(key) =>
                         {
                             AppAction::ConfirmHelmRollback
                         }
@@ -584,19 +585,19 @@ impl AppState {
 
                 match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('j') | KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.select_next();
                         AppAction::None
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
+                    KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                         tab.select_previous();
                         AppAction::None
                     }
-                    KeyCode::Char('g') => {
+                    KeyCode::Char('g') if plain_shortcut(key) => {
                         tab.select_top();
                         AppAction::None
                     }
-                    KeyCode::Char('G') => {
+                    KeyCode::Char('G') if plain_shortcut(key) => {
                         tab.select_bottom();
                         AppAction::None
                     }
@@ -615,7 +616,9 @@ impl AppState {
                     KeyCode::Enter if tab.selected_target_revision().is_some() => {
                         AppAction::OpenHelmValuesDiff
                     }
-                    KeyCode::Char('R') if tab.selected_target_revision().is_some() => {
+                    KeyCode::Char('R')
+                        if tab.selected_target_revision().is_some() && plain_shortcut(key) =>
+                    {
                         AppAction::ConfirmHelmRollback
                     }
                     _ => AppAction::None,
@@ -624,11 +627,11 @@ impl AppState {
             WorkbenchTabState::Rollout(tab) => {
                 if tab.mutation_pending.is_some() {
                     return match key.code {
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_add(1);
                             AppAction::None
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(1);
                             AppAction::None
                         }
@@ -654,11 +657,11 @@ impl AppState {
                             tab.cancel_undo_confirm();
                             AppAction::None
                         }
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_add(1);
                             AppAction::None
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(1);
                             AppAction::None
                         }
@@ -675,7 +678,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char('U') | KeyCode::Char('y') | KeyCode::Enter
-                            if !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if plain_shortcut(key) =>
                         {
                             AppAction::ExecuteRolloutUndo
                         }
@@ -685,19 +688,19 @@ impl AppState {
 
                 match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Char('j') | KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.select_next();
                         AppAction::None
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
+                    KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                         tab.select_previous();
                         AppAction::None
                     }
-                    KeyCode::Char('g') => {
+                    KeyCode::Char('g') if plain_shortcut(key) => {
                         tab.select_top();
                         AppAction::None
                     }
-                    KeyCode::Char('G') => {
+                    KeyCode::Char('G') if plain_shortcut(key) => {
                         tab.select_bottom();
                         AppAction::None
                     }
@@ -713,14 +716,17 @@ impl AppState {
                         }
                         AppAction::None
                     }
-                    KeyCode::Char('R') => AppAction::RolloutRestart,
+                    KeyCode::Char('R') if plain_shortcut(key) => AppAction::RolloutRestart,
                     KeyCode::Char('P')
                         if tab.kind
-                            == Some(crate::k8s::rollout::RolloutWorkloadKind::Deployment) =>
+                            == Some(crate::k8s::rollout::RolloutWorkloadKind::Deployment)
+                            && plain_shortcut(key) =>
                     {
                         AppAction::ToggleRolloutPauseResume
                     }
-                    KeyCode::Char('U') if tab.selected_undo_revision().is_some() => {
+                    KeyCode::Char('U')
+                        if tab.selected_undo_revision().is_some() && plain_shortcut(key) =>
+                    {
                         AppAction::ConfirmRolloutUndo
                     }
                     _ => AppAction::None,
@@ -792,31 +798,31 @@ impl AppState {
                 } else {
                     match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             tab.select_next();
                             tab.scroll = tab.scroll.max(tab.selected.saturating_sub(1));
                             AppAction::None
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             tab.select_previous();
                             tab.scroll = tab.scroll.min(tab.selected);
                             AppAction::None
                         }
-                        KeyCode::Char('g') => {
+                        KeyCode::Char('g') if plain_shortcut(key) => {
                             tab.select_top();
                             tab.scroll = 0;
                             AppAction::None
                         }
-                        KeyCode::Char('G') => {
+                        KeyCode::Char('G') if plain_shortcut(key) => {
                             tab.select_bottom();
                             tab.scroll = tab.selected;
                             AppAction::None
                         }
-                        KeyCode::Char('m') => {
+                        KeyCode::Char('m') if plain_shortcut(key) => {
                             tab.masked = !tab.masked;
                             AppAction::None
                         }
-                        KeyCode::Char('e') | KeyCode::Enter => {
+                        KeyCode::Char('e') | KeyCode::Enter if plain_shortcut(key) => {
                             if let Some(entry) = tab.selected_entry()
                                 && let Some(value) = entry.editable_text()
                             {
@@ -826,7 +832,7 @@ impl AppState {
                             }
                             AppAction::None
                         }
-                        KeyCode::Char('s') if tab.has_unsaved_changes() => {
+                        KeyCode::Char('s') if tab.has_unsaved_changes() && plain_shortcut(key) => {
                             AppAction::SaveDecodedSecret
                         }
                         _ => AppAction::None,
@@ -835,19 +841,19 @@ impl AppState {
             }
             WorkbenchTabState::ResourceEvents(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
-                KeyCode::Char('j') | KeyCode::Down => {
+                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_add(1);
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                     tab.scroll = tab.scroll.saturating_sub(1);
                     AppAction::None
                 }
-                KeyCode::Char('g') => {
+                KeyCode::Char('g') if plain_shortcut(key) => {
                     tab.scroll = 0;
                     AppAction::None
                 }
-                KeyCode::Char('G') => {
+                KeyCode::Char('G') if plain_shortcut(key) => {
                     tab.scroll = usize::MAX;
                     AppAction::None
                 }
@@ -967,14 +973,14 @@ impl AppState {
                 } else {
                     match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             if tab.viewer.picking_container {
                                 AppAction::LogsViewerPickerUp
                             } else {
                                 AppAction::LogsViewerScrollUp
                             }
                         }
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             if tab.viewer.picking_container {
                                 AppAction::LogsViewerPickerDown
                             } else {
@@ -1000,102 +1006,85 @@ impl AppState {
                                     .unwrap_or(AppAction::None)
                             }
                         }
-                        KeyCode::Char('g') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            AppAction::LogsViewerScrollTop
-                        }
-                        KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('g') if plain_shortcut(key) => AppAction::LogsViewerScrollTop,
+                        KeyCode::Char('G') if plain_shortcut(key) => {
                             AppAction::LogsViewerScrollBottom
                         }
-                        KeyCode::Char('f') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('f') if plain_shortcut(key) => {
                             AppAction::LogsViewerToggleFollow
                         }
                         KeyCode::Char('P')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::LogsViewerTogglePrevious
                         }
                         KeyCode::Char('t')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::LogsViewerToggleTimestamps
                         }
                         KeyCode::Char('/')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::LogsViewerSearchOpen
                         }
                         KeyCode::Char('n')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::LogsViewerSearchNext
                         }
                         KeyCode::Char('N')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::LogsViewerSearchPrev
                         }
                         KeyCode::Char('R')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::ToggleLogRegexMode
                         }
                         KeyCode::Char('W')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::ToggleLogTimeWindow
                         }
                         KeyCode::Char('T')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::OpenLogTimeJump
                         }
                         KeyCode::Char('C')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::ToggleLogCorrelation
                         }
                         KeyCode::Char('J')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::ToggleStructuredLogView
                         }
                         KeyCode::Char('y')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::CopyLogContent
                         }
                         KeyCode::Char('S') | KeyCode::Char('s')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::ExportLogs
                         }
                         KeyCode::Char('M') | KeyCode::Char('m')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::SaveLogPreset
                         }
                         KeyCode::Char('[')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::ApplyPreviousLogPreset
                         }
                         KeyCode::Char(']')
-                            if !tab.viewer.picking_container
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.viewer.picking_container && plain_shortcut(key) =>
                         {
                             AppAction::ApplyNextLogPreset
                         }
@@ -1219,7 +1208,7 @@ impl AppState {
                 } else {
                     match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             if filtered_len <= 1 {
                                 if filtered_len == 0 {
                                     tab.scroll = 0;
@@ -1232,7 +1221,7 @@ impl AppState {
                             tab.follow_mode = false;
                             AppAction::None
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             if filtered_len <= 1 {
                                 if filtered_len == 0 {
                                     tab.scroll = 0;
@@ -1245,12 +1234,12 @@ impl AppState {
                             tab.follow_mode = false;
                             AppAction::None
                         }
-                        KeyCode::Char('g') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('g') if plain_shortcut(key) => {
                             tab.scroll = 0;
                             tab.follow_mode = false;
                             AppAction::None
                         }
-                        KeyCode::Char('G') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('G') if plain_shortcut(key) => {
                             tab.scroll = if filtered_len <= 1 && filtered_len > 0 {
                                 usize::MAX
                             } else {
@@ -1277,73 +1266,56 @@ impl AppState {
                             tab.follow_mode = false;
                             AppAction::None
                         }
-                        KeyCode::Char('f') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('f') if plain_shortcut(key) => {
                             tab.follow_mode = !tab.follow_mode;
                             if tab.follow_mode {
                                 tab.scroll = filtered_len.saturating_sub(1);
                             }
                             AppAction::None
                         }
-                        KeyCode::Char('/') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('/') if plain_shortcut(key) => {
                             tab.editing_text_filter = true;
                             tab.filter_input = tab.text_filter.clone();
                             tab.filter_input_cursor = tab.filter_input.chars().count();
                             AppAction::None
                         }
-                        KeyCode::Char('p') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('p') if plain_shortcut(key) => {
                             tab.cycle_pod_filter();
                             AppAction::None
                         }
-                        KeyCode::Char('c') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('c') if plain_shortcut(key) => {
                             tab.cycle_container_filter();
                             AppAction::None
                         }
-                        KeyCode::Char('R') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            AppAction::ToggleLogRegexMode
-                        }
-                        KeyCode::Char('W') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            AppAction::ToggleLogTimeWindow
-                        }
-                        KeyCode::Char('T') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            AppAction::OpenLogTimeJump
-                        }
-                        KeyCode::Char('L') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('R') if plain_shortcut(key) => AppAction::ToggleLogRegexMode,
+                        KeyCode::Char('W') if plain_shortcut(key) => AppAction::ToggleLogTimeWindow,
+                        KeyCode::Char('T') if plain_shortcut(key) => AppAction::OpenLogTimeJump,
+                        KeyCode::Char('L') if plain_shortcut(key) => {
                             AppAction::CycleWorkloadLogLabelFilter
                         }
-                        KeyCode::Char('C') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('C') if plain_shortcut(key) => {
                             AppAction::ToggleLogCorrelation
                         }
-                        KeyCode::Char('J') if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        KeyCode::Char('J') if plain_shortcut(key) => {
                             AppAction::ToggleStructuredLogView
                         }
-                        KeyCode::Char('y')
-                            if !tab.editing_text_filter
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('y') if !tab.editing_text_filter && plain_shortcut(key) => {
                             AppAction::CopyLogContent
                         }
                         KeyCode::Char('S') | KeyCode::Char('s')
-                            if !tab.editing_text_filter
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.editing_text_filter && plain_shortcut(key) =>
                         {
                             AppAction::ExportLogs
                         }
                         KeyCode::Char('M') | KeyCode::Char('m')
-                            if !tab.editing_text_filter
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if !tab.editing_text_filter && plain_shortcut(key) =>
                         {
                             AppAction::SaveLogPreset
                         }
-                        KeyCode::Char('[')
-                            if !tab.editing_text_filter
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char('[') if !tab.editing_text_filter && plain_shortcut(key) => {
                             AppAction::ApplyPreviousLogPreset
                         }
-                        KeyCode::Char(']')
-                            if !tab.editing_text_filter
-                                && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-                        {
+                        KeyCode::Char(']') if !tab.editing_text_filter && plain_shortcut(key) => {
                             AppAction::ApplyNextLogPreset
                         }
                         _ => AppAction::None,
@@ -1359,11 +1331,11 @@ impl AppState {
                             tab.picking_container = false;
                             AppAction::None
                         }
-                        KeyCode::Char('k') | KeyCode::Up => {
+                        KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                             tab.container_cursor = tab.container_cursor.saturating_sub(1);
                             AppAction::None
                         }
-                        KeyCode::Char('j') | KeyCode::Down => {
+                        KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                             let max = tab.containers.len().saturating_sub(1);
                             tab.container_cursor = (tab.container_cursor + 1).min(max);
                             AppAction::None
@@ -1452,27 +1424,27 @@ impl AppState {
                 PortForwardAction::Stop(tunnel_id) => AppAction::PortForwardStop(tunnel_id),
             },
             WorkbenchTabState::Relations(tab) => match key.code {
-                KeyCode::Char('j') | KeyCode::Down => {
+                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if !flat.is_empty() {
                         tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
                     }
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                     tab.cursor = tab.cursor.saturating_sub(1);
                     AppAction::None
                 }
-                KeyCode::Char('g') => {
+                KeyCode::Char('g') if plain_shortcut(key) => {
                     tab.cursor = 0;
                     AppAction::None
                 }
-                KeyCode::Char('G') => {
+                KeyCode::Char('G') if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     tab.cursor = flat.len().saturating_sub(1);
                     AppAction::None
                 }
-                KeyCode::Char('l') | KeyCode::Right => {
+                KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if let Some(node) = flat.get(tab.cursor)
                         && node.has_children
@@ -1485,7 +1457,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Char('h') | KeyCode::Left => {
+                KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if let Some(node) = flat.get(tab.cursor) {
                         if node.expanded {
@@ -1518,27 +1490,27 @@ impl AppState {
                 _ => AppAction::None,
             },
             WorkbenchTabState::NetworkPolicy(tab) => match key.code {
-                KeyCode::Char('j') | KeyCode::Down => {
+                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if !flat.is_empty() {
                         tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
                     }
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                     tab.cursor = tab.cursor.saturating_sub(1);
                     AppAction::None
                 }
-                KeyCode::Char('g') => {
+                KeyCode::Char('g') if plain_shortcut(key) => {
                     tab.cursor = 0;
                     AppAction::None
                 }
-                KeyCode::Char('G') => {
+                KeyCode::Char('G') if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     tab.cursor = flat.len().saturating_sub(1);
                     AppAction::None
                 }
-                KeyCode::Char('l') | KeyCode::Right => {
+                KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if let Some(node) = flat.get(tab.cursor)
                         && node.has_children
@@ -1552,7 +1524,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Char('h') | KeyCode::Left => {
+                KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if let Some(node) = flat.get(tab.cursor) {
                         if node.expanded {
@@ -1587,27 +1559,27 @@ impl AppState {
                 _ => AppAction::None,
             },
             WorkbenchTabState::TrafficDebug(tab) => match key.code {
-                KeyCode::Char('j') | KeyCode::Down => {
+                KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if !flat.is_empty() {
                         tab.cursor = (tab.cursor + 1).min(flat.len().saturating_sub(1));
                     }
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up => {
+                KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                     tab.cursor = tab.cursor.saturating_sub(1);
                     AppAction::None
                 }
-                KeyCode::Char('g') => {
+                KeyCode::Char('g') if plain_shortcut(key) => {
                     tab.cursor = 0;
                     AppAction::None
                 }
-                KeyCode::Char('G') => {
+                KeyCode::Char('G') if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     tab.cursor = flat.len().saturating_sub(1);
                     AppAction::None
                 }
-                KeyCode::Char('l') | KeyCode::Right => {
+                KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if let Some(node) = flat.get(tab.cursor)
                         && node.has_children
@@ -1620,7 +1592,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
-                KeyCode::Char('h') | KeyCode::Left => {
+                KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                     let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                     if let Some(node) = flat.get(tab.cursor) {
                         if node.expanded {
@@ -1716,23 +1688,23 @@ impl AppState {
                         tab.focus = ConnectivityTabFocus::Filter;
                         AppAction::None
                     }
-                    KeyCode::Char('/') => {
+                    KeyCode::Char('/') if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Filter;
                         AppAction::None
                     }
-                    KeyCode::Char('j') | KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         tab.select_next_target();
                         AppAction::None
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
+                    KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                         tab.select_previous_target();
                         AppAction::None
                     }
-                    KeyCode::Char('g') => {
+                    KeyCode::Char('g') if plain_shortcut(key) => {
                         tab.select_top_target();
                         AppAction::None
                     }
-                    KeyCode::Char('G') => {
+                    KeyCode::Char('G') if plain_shortcut(key) => {
                         tab.select_bottom_target();
                         AppAction::None
                     }
@@ -1749,11 +1721,11 @@ impl AppState {
                         tab.focus = ConnectivityTabFocus::Targets;
                         AppAction::None
                     }
-                    KeyCode::Char('/') => {
+                    KeyCode::Char('/') if plain_shortcut(key) => {
                         tab.focus = ConnectivityTabFocus::Filter;
                         AppAction::None
                     }
-                    KeyCode::Char('j') | KeyCode::Down => {
+                    KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                         if !flat.is_empty() {
@@ -1762,21 +1734,21 @@ impl AppState {
                         }
                         AppAction::None
                     }
-                    KeyCode::Char('k') | KeyCode::Up => {
+                    KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
                         tab.tree_cursor = tab.tree_cursor.saturating_sub(1);
                         AppAction::None
                     }
-                    KeyCode::Char('g') => {
+                    KeyCode::Char('g') if plain_shortcut(key) => {
                         tab.tree_cursor = 0;
                         AppAction::None
                     }
-                    KeyCode::Char('G') => {
+                    KeyCode::Char('G') if plain_shortcut(key) => {
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                         tab.tree_cursor = flat.len().saturating_sub(1);
                         AppAction::None
                     }
-                    KeyCode::Char('l') | KeyCode::Right => {
+                    KeyCode::Char('l') | KeyCode::Right if plain_shortcut(key) => {
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                         if let Some(node) = flat.get(tab.tree_cursor)
@@ -1790,7 +1762,7 @@ impl AppState {
                         }
                         AppAction::None
                     }
-                    KeyCode::Char('h') | KeyCode::Left => {
+                    KeyCode::Char('h') | KeyCode::Left if plain_shortcut(key) => {
                         let flat =
                             crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
                         if let Some(node) = flat.get(tab.tree_cursor) {
@@ -1886,7 +1858,9 @@ impl AppState {
         };
 
         match key.code {
-            KeyCode::Char('r') if allow_plain_r => Some(AppAction::RefreshData),
+            KeyCode::Char('r') if allow_plain_r && plain_shortcut(key) => {
+                Some(AppAction::RefreshData)
+            }
             KeyCode::Char('R')
                 if key.modifiers.contains(KeyModifiers::CONTROL) && allow_plain_r =>
             {
@@ -2148,22 +2122,34 @@ impl AppState {
                     KeyCode::Esc => AppAction::EscapePressed,
                     KeyCode::Enter => AppAction::ScaleDialogSubmit,
                     KeyCode::Backspace => AppAction::ScaleDialogBackspace,
-                    KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up => {
+                    KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up
+                        if plain_shortcut(key) =>
+                    {
                         AppAction::ScaleDialogIncrement
                     }
-                    KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::Down => {
+                    KeyCode::Char('-') | KeyCode::Char('_') | KeyCode::Down
+                        if plain_shortcut(key) =>
+                    {
                         AppAction::ScaleDialogDecrement
                     }
-                    KeyCode::Char(c) if c.is_ascii_digit() => AppAction::ScaleDialogUpdateInput(c),
+                    KeyCode::Char(c) if c.is_ascii_digit() && plain_shortcut(key) => {
+                        AppAction::ScaleDialogUpdateInput(c)
+                    }
                     _ => AppAction::None,
                 };
             }
             ActiveComponent::ProbePanel => {
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
-                    KeyCode::Enter | KeyCode::Char(' ') => AppAction::ProbeToggleExpand,
-                    KeyCode::Char('j') | KeyCode::Down => AppAction::ProbeSelectNext,
-                    KeyCode::Char('k') | KeyCode::Up => AppAction::ProbeSelectPrev,
+                    KeyCode::Enter | KeyCode::Char(' ') if plain_shortcut(key) => {
+                        AppAction::ProbeToggleExpand
+                    }
+                    KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
+                        AppAction::ProbeSelectNext
+                    }
+                    KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
+                        AppAction::ProbeSelectPrev
+                    }
                     _ => AppAction::None,
                 };
             }
@@ -2239,7 +2225,7 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('l') | KeyCode::Char('L')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self
                         .detail_view
                         .as_ref()
@@ -2254,7 +2240,7 @@ impl AppState {
                 AppAction::CopyResourceName
             }
             KeyCode::Char('y')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewYaml)
                             && !detail.has_confirmation_dialog()
@@ -2263,7 +2249,7 @@ impl AppState {
                 AppAction::OpenResourceYaml
             }
             KeyCode::Char('D')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewConfigDrift)
                             && !detail.supports_action(DetailAction::Drain)
@@ -2273,7 +2259,7 @@ impl AppState {
                 AppAction::OpenResourceDiff
             }
             KeyCode::Char('O')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewRollout)
                             && !detail.has_confirmation_dialog()
@@ -2282,7 +2268,7 @@ impl AppState {
                 AppAction::OpenRollout
             }
             KeyCode::Char('h')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewHelmHistory)
                             && !detail.has_confirmation_dialog()
@@ -2293,7 +2279,7 @@ impl AppState {
                 AppAction::OpenHelmHistory
             }
             KeyCode::Char('A')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewAccessReview)
                     }) || (self.detail_view.is_none() && self.focus == Focus::Content))
@@ -2305,7 +2291,7 @@ impl AppState {
                 AppAction::OpenAccessReview
             }
             KeyCode::Char('N')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewNetworkPolicies)
                     })
@@ -2317,7 +2303,7 @@ impl AppState {
                 AppAction::OpenNetworkPolicyView
             }
             KeyCode::Char('C')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::CheckNetworkConnectivity)
                     })
@@ -2329,7 +2315,7 @@ impl AppState {
                 AppAction::OpenNetworkConnectivity
             }
             KeyCode::Char('t')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewTrafficDebug)
                     }) || (self.detail_view.is_none()
@@ -2349,7 +2335,7 @@ impl AppState {
                 AppAction::OpenTrafficDebug
             }
             KeyCode::Char('o')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewDecodedSecret)
                     }) || (self.detail_view.is_none()
@@ -2359,7 +2345,7 @@ impl AppState {
                 AppAction::OpenDecodedSecret
             }
             KeyCode::Char('B')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self
                         .detail_view
                         .as_ref()
@@ -2380,12 +2366,12 @@ impl AppState {
             KeyCode::Char('Y')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && plain_shortcut(key) =>
             {
                 AppAction::CopyResourceFullName
             }
             KeyCode::Char('v')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewEvents)
                     }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
@@ -2393,7 +2379,7 @@ impl AppState {
                 AppAction::OpenResourceEvents
             }
             KeyCode::Char('H')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && !self
                         .detail_view
                         .as_ref()
@@ -2402,7 +2388,7 @@ impl AppState {
                 AppAction::OpenActionHistory
             }
             KeyCode::Char('x')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self
                         .detail_view
                         .as_ref()
@@ -2412,7 +2398,7 @@ impl AppState {
                 AppAction::OpenExec
             }
             KeyCode::Char('g')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::DebugContainer)
                             || detail.supports_action(DetailAction::NodeDebugShell)
@@ -2438,7 +2424,7 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('f')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::PortForward)
                     }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
@@ -2450,7 +2436,7 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| detail.supports_action(DetailAction::Scale))
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && plain_shortcut(key) =>
             {
                 AppAction::ScaleDialogOpen
             }
@@ -2459,13 +2445,11 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| detail.supports_action(DetailAction::Probes))
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && plain_shortcut(key) =>
             {
                 AppAction::ProbePanelOpen
             }
-            KeyCode::Char('R')
-                if self.detail_view.is_some() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('R') if self.detail_view.is_some() && plain_shortcut(key) => {
                 match self.detail_view.as_ref() {
                     Some(detail) if detail.supports_action(DetailAction::Restart) => {
                         AppAction::RolloutRestart
@@ -2481,13 +2465,11 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| detail.supports_action(DetailAction::EditYaml))
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && plain_shortcut(key) =>
             {
                 AppAction::EditYaml
             }
-            KeyCode::Char('m')
-                if self.detail_view.is_some() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('m') if self.detail_view.is_some() && plain_shortcut(key) => {
                 AppAction::ToggleDetailMetadata
             }
             KeyCode::Char('d')
@@ -2495,7 +2477,7 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| detail.supports_action(DetailAction::Delete))
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && plain_shortcut(key) =>
             {
                 // Toggle delete confirmation prompt
                 if let Some(detail) = &mut self.detail_view {
@@ -2682,7 +2664,7 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| !detail.has_confirmation_dialog())
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && plain_shortcut(key) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.select_next_cronjob_history();
@@ -2694,27 +2676,23 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| !detail.has_confirmation_dialog())
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && plain_shortcut(key) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.select_prev_cronjob_history();
                 }
                 AppAction::None
             }
-            KeyCode::Tab
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Tab if self.detail_view.is_none() && plain_shortcut(key) => {
                 self.next_view();
                 AppAction::None
             }
-            KeyCode::BackTab
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::BackTab if self.detail_view.is_none() && plain_shortcut(key) => {
                 self.previous_view();
                 AppAction::None
             }
             KeyCode::Char('j') | KeyCode::Down
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if self.detail_view.is_none() && plain_shortcut(key) =>
             {
                 match self.focus {
                     Focus::Sidebar => self.sidebar_cursor_down(),
@@ -2732,7 +2710,7 @@ impl AppState {
                 AppAction::None
             }
             KeyCode::Char('k') | KeyCode::Up
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if self.detail_view.is_none() && plain_shortcut(key) =>
             {
                 match self.focus {
                     Focus::Sidebar => self.sidebar_cursor_up(),
@@ -2753,86 +2731,110 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Down
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Down if self.detail_view.is_none() && plain_shortcut(key) => {
                 self.select_next();
                 AppAction::None
             }
-            KeyCode::Up
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Up if self.detail_view.is_none() && plain_shortcut(key) => {
                 self.select_previous();
                 AppAction::None
             }
-            KeyCode::Char('n') if self.detail_view.is_none() && self.view == AppView::Pods => {
+            KeyCode::Char('n')
+                if self.detail_view.is_none()
+                    && self.view == AppView::Pods
+                    && plain_shortcut(key) =>
+            {
                 self.set_or_toggle_pod_sort(PodSortColumn::Name);
                 AppAction::None
             }
             KeyCode::Char('n')
                 if self.detail_view.is_none()
-                    && self.view.supports_shared_sort(WorkloadSortColumn::Name) =>
+                    && self.view.supports_shared_sort(WorkloadSortColumn::Name)
+                    && plain_shortcut(key) =>
             {
                 self.set_or_toggle_workload_sort(WorkloadSortColumn::Name);
                 AppAction::None
             }
-            KeyCode::Char('a') if self.detail_view.is_none() && self.view == AppView::Pods => {
+            KeyCode::Char('a')
+                if self.detail_view.is_none()
+                    && self.view == AppView::Pods
+                    && plain_shortcut(key) =>
+            {
                 self.set_or_toggle_pod_sort(PodSortColumn::Age);
                 AppAction::None
             }
             KeyCode::Char('a')
                 if self.detail_view.is_none()
-                    && self.view.supports_shared_sort(WorkloadSortColumn::Age) =>
+                    && self.view.supports_shared_sort(WorkloadSortColumn::Age)
+                    && plain_shortcut(key) =>
             {
                 self.set_or_toggle_workload_sort(WorkloadSortColumn::Age);
                 AppAction::None
             }
-            KeyCode::Char('1') if self.detail_view.is_none() && self.view == AppView::Pods => {
+            KeyCode::Char('1')
+                if self.detail_view.is_none()
+                    && self.view == AppView::Pods
+                    && plain_shortcut(key) =>
+            {
                 self.set_or_toggle_pod_sort(PodSortColumn::Age);
                 AppAction::None
             }
             KeyCode::Char('1')
                 if self.detail_view.is_none()
-                    && self.view.supports_shared_sort(WorkloadSortColumn::Age) =>
+                    && self.view.supports_shared_sort(WorkloadSortColumn::Age)
+                    && plain_shortcut(key) =>
             {
                 self.set_or_toggle_workload_sort(WorkloadSortColumn::Age);
                 AppAction::None
             }
-            KeyCode::Char('2') if self.detail_view.is_none() && self.view == AppView::Pods => {
+            KeyCode::Char('2')
+                if self.detail_view.is_none()
+                    && self.view == AppView::Pods
+                    && plain_shortcut(key) =>
+            {
                 self.set_or_toggle_pod_sort(PodSortColumn::Status);
                 AppAction::None
             }
-            KeyCode::Char('3') if self.detail_view.is_none() && self.view == AppView::Pods => {
+            KeyCode::Char('3')
+                if self.detail_view.is_none()
+                    && self.view == AppView::Pods
+                    && plain_shortcut(key) =>
+            {
                 self.set_or_toggle_pod_sort(PodSortColumn::Restarts);
                 AppAction::None
             }
-            KeyCode::Char('0') if self.detail_view.is_none() && self.view == AppView::Pods => {
+            KeyCode::Char('0')
+                if self.detail_view.is_none()
+                    && self.view == AppView::Pods
+                    && plain_shortcut(key) =>
+            {
                 self.clear_pod_sort();
                 AppAction::None
             }
             KeyCode::Char('0')
                 if self.detail_view.is_none()
-                    && !self.view.shared_sort_capabilities().is_empty() =>
+                    && !self.view.shared_sort_capabilities().is_empty()
+                    && plain_shortcut(key) =>
             {
                 self.clear_workload_sort();
                 AppAction::None
             }
-            KeyCode::Char('/') => {
+            KeyCode::Char('/') if plain_shortcut(key) => {
                 self.is_search_mode = true;
                 self.search_cursor = self.search_query.chars().count();
                 AppAction::None
             }
-            KeyCode::Char('~') => AppAction::OpenNamespacePicker,
-            KeyCode::Char('W')
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('~') if plain_shortcut(key) => AppAction::OpenNamespacePicker,
+            KeyCode::Char('W') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::SaveWorkspace
             }
-            KeyCode::Char('{') if self.detail_view.is_none() => AppAction::ApplyPreviousWorkspace,
-            KeyCode::Char('}') if self.detail_view.is_none() => AppAction::ApplyNextWorkspace,
-            KeyCode::Char('b')
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('{') if self.detail_view.is_none() && plain_shortcut(key) => {
+                AppAction::ApplyPreviousWorkspace
+            }
+            KeyCode::Char('}') if self.detail_view.is_none() && plain_shortcut(key) => {
+                AppAction::ApplyNextWorkspace
+            }
+            KeyCode::Char('b') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::ToggleWorkbench
             }
             KeyCode::Tab
@@ -2857,10 +2859,14 @@ impl AppState {
             {
                 AppAction::WorkbenchNextTab
             }
-            KeyCode::Char('[') if self.detail_view.is_none() && self.workbench.open => {
+            KeyCode::Char('[')
+                if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
+            {
                 AppAction::WorkbenchPreviousTab
             }
-            KeyCode::Char(']') if self.detail_view.is_none() && self.workbench.open => {
+            KeyCode::Char(']')
+                if self.detail_view.is_none() && self.workbench.open && plain_shortcut(key) =>
+            {
                 AppAction::WorkbenchNextTab
             }
             KeyCode::Char('w')
@@ -2884,16 +2890,15 @@ impl AppState {
             {
                 AppAction::WorkbenchDecreaseHeight
             }
-            KeyCode::Char('c')
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('c') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::OpenContextPicker
             }
             KeyCode::Char(':')
-                if !self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
+                if plain_shortcut(key)
+                    && !self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::OpenCommandPalette
             }
@@ -2902,15 +2907,16 @@ impl AppState {
                     && self
                         .view
                         .supports_view_action(ViewAction::SelectedFluxReconcile)
-                    && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && plain_shortcut(key) =>
             {
                 AppAction::FluxReconcile
             }
             KeyCode::Char('r')
-                if !self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
+                if plain_shortcut(key)
+                    && !self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::RefreshData
             }
@@ -2926,12 +2932,12 @@ impl AppState {
             KeyCode::Char('w')
                 if self.detail_view.as_ref().is_some_and(|detail| {
                     detail.supports_action(DetailAction::ViewRelationships)
-                }) && !key.modifiers.contains(KeyModifiers::CONTROL) =>
+                }) && plain_shortcut(key) =>
             {
                 AppAction::OpenRelationships
             }
             KeyCode::Char('T')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self
                         .detail_view
                         .as_ref()
@@ -2940,7 +2946,7 @@ impl AppState {
                 AppAction::TriggerCronJob
             }
             KeyCode::Char('S')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::SuspendCronJob)
                             || detail.supports_action(DetailAction::ResumeCronJob)
@@ -2953,7 +2959,7 @@ impl AppState {
                 )
             }
             KeyCode::Char('c')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self
                         .detail_view
                         .as_ref()
@@ -2962,7 +2968,7 @@ impl AppState {
                 AppAction::CordonNode
             }
             KeyCode::Char('u')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self
                         .detail_view
                         .as_ref()
@@ -2971,7 +2977,7 @@ impl AppState {
                 AppAction::UncordonNode
             }
             KeyCode::Char('D')
-                if !key.modifiers.contains(KeyModifiers::CONTROL)
+                if plain_shortcut(key)
                     && self
                         .detail_view
                         .as_ref()
@@ -2983,21 +2989,18 @@ impl AppState {
                 }
                 AppAction::None
             }
-            KeyCode::Char('T')
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('T') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::CycleTheme
             }
-            KeyCode::Char('I')
-                if self.detail_view.is_none() && !key.modifiers.contains(KeyModifiers::CONTROL) =>
-            {
+            KeyCode::Char('I') if self.detail_view.is_none() && plain_shortcut(key) => {
                 AppAction::CycleIconMode
             }
             KeyCode::Char('?')
-                if !self
-                    .detail_view
-                    .as_ref()
-                    .is_some_and(DetailViewState::has_confirmation_dialog) =>
+                if plain_shortcut(key)
+                    && !self
+                        .detail_view
+                        .as_ref()
+                        .is_some_and(DetailViewState::has_confirmation_dialog) =>
             {
                 AppAction::OpenHelp
             }

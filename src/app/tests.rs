@@ -336,6 +336,68 @@ fn ctrl_shift_t_and_i_do_not_cycle_theme_or_icons() {
 }
 
 #[test]
+fn modified_plain_main_shortcuts_do_not_fire_without_configured_hotkey() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+    app.selected_idx = 3;
+
+    for (code, modifiers) in [
+        (KeyCode::Char('n'), KeyModifiers::CONTROL),
+        (KeyCode::Char('a'), KeyModifiers::CONTROL),
+        (KeyCode::Char('1'), KeyModifiers::ALT),
+        (KeyCode::Char('2'), KeyModifiers::CONTROL),
+        (KeyCode::Char('3'), KeyModifiers::CONTROL),
+        (KeyCode::Char('0'), KeyModifiers::CONTROL),
+        (KeyCode::Char('/'), KeyModifiers::CONTROL),
+        (
+            KeyCode::Char('~'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('{'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('}'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (KeyCode::Char('b'), KeyModifiers::CONTROL),
+        (KeyCode::Char('c'), KeyModifiers::CONTROL),
+        (
+            KeyCode::Char(':'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('T'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('I'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('?'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(code, modifiers)),
+            AppAction::None,
+            "{code:?} {modifiers:?}"
+        );
+    }
+
+    assert_eq!(app.pod_sort(), None);
+    assert_eq!(app.selected_idx, 3);
+    assert!(!app.is_search_mode());
+    assert!(!app.namespace_picker.is_open());
+    assert!(!app.command_palette.is_open());
+    assert!(!app.help_overlay.is_open());
+    assert!(!app.workbench.open);
+}
+
+#[test]
 fn configured_workspace_hotkey_routes_before_main_navigation() {
     let mut app = AppState::default();
     let prefs = app.preferences.get_or_insert_with(Default::default);
@@ -1459,6 +1521,89 @@ fn ctrl_z_does_not_toggle_workbench_maximize() {
         app.handle_key_event(KeyEvent::from(KeyCode::Char('z'))),
         AppAction::WorkbenchToggleMaximize
     );
+}
+
+#[test]
+fn modified_plain_workbench_shortcuts_do_not_fire() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.focus_workbench();
+    if let Some(tab) = app.workbench.active_tab_mut()
+        && let WorkbenchTabState::ActionHistory(tab) = &mut tab.state
+    {
+        tab.selected = 5;
+    }
+
+    for (code, modifiers) in [
+        (KeyCode::Char('j'), KeyModifiers::CONTROL),
+        (KeyCode::Char('k'), KeyModifiers::CONTROL),
+        (KeyCode::Char('g'), KeyModifiers::CONTROL),
+        (
+            KeyCode::Char('G'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (KeyCode::Char('z'), KeyModifiers::CONTROL),
+        (KeyCode::Char('b'), KeyModifiers::CONTROL),
+        (KeyCode::Char('['), KeyModifiers::CONTROL),
+        (KeyCode::Char(']'), KeyModifiers::CONTROL),
+        (
+            KeyCode::Char(':'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('?'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+        (
+            KeyCode::Char('~'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+        ),
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(code, modifiers)),
+            AppAction::None,
+            "{code:?} {modifiers:?}"
+        );
+    }
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("expected active workbench tab");
+    };
+    let WorkbenchTabState::ActionHistory(tab) = &tab.state else {
+        panic!("expected action history tab");
+    };
+    assert_eq!(tab.selected, 5);
+    assert!(app.workbench.open);
+    assert!(!app.workbench.maximized);
+    assert!(!app.command_palette.is_open());
+    assert!(!app.help_overlay.is_open());
+    assert!(!app.namespace_picker.is_open());
+}
+
+#[test]
+fn ctrl_brackets_do_not_switch_workbench_tabs_from_content_focus() {
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        crate::workbench::ActionHistoryTabState::default(),
+    ));
+    app.workbench
+        .ensure_background_tab(WorkbenchTabState::ActionHistory(
+            crate::workbench::ActionHistoryTabState::default(),
+        ));
+    app.focus = Focus::Content;
+    let active_before = app.workbench.active_tab;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('['), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::CONTROL)),
+        AppAction::None
+    );
+    assert_eq!(app.workbench.active_tab, active_before);
 }
 
 #[test]
@@ -3952,6 +4097,54 @@ fn ctrl_y_does_not_confirm_drain_dialog() {
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
     assert_eq!(action, AppAction::None);
     assert!(app.detail_view.as_ref().unwrap().confirm_drain);
+}
+
+#[test]
+fn modified_confirmation_keys_do_not_execute_dialog_actions() {
+    let mut drain = AppState::default();
+    drain.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Node("node-0".to_string())),
+        yaml: Some("kind: Node".to_string()),
+        confirm_drain: true,
+        ..DetailViewState::default()
+    });
+    assert_eq!(
+        drain.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+    assert!(drain.detail_view.as_ref().unwrap().confirm_drain);
+
+    let mut delete = AppState::default();
+    delete.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        confirm_delete: true,
+        ..DetailViewState::default()
+    });
+    assert_eq!(
+        delete.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::ALT)),
+        AppAction::None
+    );
+    assert!(delete.detail_view.as_ref().unwrap().confirm_delete);
+
+    let mut cron = AppState::default();
+    cron.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::CronJob("job-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: CronJob".to_string()),
+        confirm_cronjob_suspend: Some(true),
+        ..DetailViewState::default()
+    });
+    assert_eq!(
+        cron.handle_key_event(KeyEvent::new(
+            KeyCode::Char('S'),
+            KeyModifiers::ALT | KeyModifiers::SHIFT,
+        )),
+        AppAction::None
+    );
+    assert_eq!(
+        cron.detail_view.as_ref().unwrap().confirm_cronjob_suspend,
+        Some(true)
+    );
 }
 
 #[test]
