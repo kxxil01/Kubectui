@@ -11,8 +11,8 @@ use super::{
     normalize_recent_events, palette_action_requires_loaded_detail, parse_editor_command,
     prepare_bookmark_target, prepare_resource_target, preserve_detail_selection_identity,
     queued_refresh_requires_two_phase, refresh_options_for_view, refresh_palette_resources,
-    refresh_scope_pending, selected_extension_crd, selected_flux_reconcile_resource,
-    selected_resource, should_include_flux_in_auto_refresh,
+    refresh_scope_pending, request_refresh, selected_extension_crd,
+    selected_flux_reconcile_resource, selected_resource, should_include_flux_in_auto_refresh,
     should_preserve_current_flux_after_refresh, should_request_periodic_redraw,
     strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
     workbench_follow_streams_to_stop,
@@ -482,6 +482,7 @@ fn refresh_scope_pending_detects_queued_flux_scope() {
                 include_cluster_info: false,
                 skip_core: false,
             },
+            target_view: Some(AppView::FluxCDKustomizations),
             context_generation: 9,
         }),
         ..RefreshRuntimeState::default()
@@ -492,6 +493,167 @@ fn refresh_scope_pending_detects_queued_flux_scope() {
         &refresh_state,
         RefreshScope::METRICS
     ));
+}
+
+#[tokio::test]
+async fn visible_targeted_refresh_preempts_in_flight_secondary_backfill() {
+    let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
+    let mut global_state = GlobalState::default();
+    let client = kubectui::k8s::client::K8sClient::dummy();
+    let mut snapshot_dirty = false;
+    let mut refresh_state = RefreshRuntimeState {
+        request_seq: 5,
+        in_flight_id: Some(5),
+        in_flight_options: Some(RefreshOptions {
+            scope: RefreshScope::CONFIG,
+            include_cluster_info: false,
+            skip_core: true,
+        }),
+        in_flight_namespace: Some("default".to_string()),
+        in_flight_target_view: None,
+        in_flight_task: Some(tokio::spawn(async {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+        })),
+        ..RefreshRuntimeState::default()
+    };
+
+    request_refresh(
+        &refresh_tx,
+        &mut global_state,
+        &client,
+        Some("default".to_string()),
+        refresh_options_for_view(AppView::Secrets, false, false),
+        &mut refresh_state,
+        &mut snapshot_dirty,
+    );
+
+    assert!(snapshot_dirty);
+    assert_eq!(
+        global_state.snapshot().view_load_state(AppView::Secrets),
+        kubectui::state::ViewLoadState::Loading
+    );
+    assert_eq!(refresh_state.in_flight_target_view, Some(AppView::Secrets));
+    let in_flight = refresh_state
+        .in_flight_options
+        .expect("visible targeted refresh should be active");
+    assert_eq!(in_flight.scope, RefreshScope::CONFIG);
+    assert!(!in_flight.include_cluster_info);
+    assert!(!in_flight.skip_core);
+    assert_eq!(
+        refresh_state.in_flight_namespace.as_deref(),
+        Some("default")
+    );
+    assert!(
+        refresh_state
+            .queued_refresh
+            .as_ref()
+            .is_some_and(|queued| queued.target_view.is_none() && queued.options.skip_core)
+    );
+}
+
+#[tokio::test]
+async fn aggregate_secondary_backfill_stays_untargeted() {
+    let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
+    let mut global_state = GlobalState::default();
+    let client = kubectui::k8s::client::K8sClient::dummy();
+    let mut snapshot_dirty = false;
+    let mut refresh_state = RefreshRuntimeState::default();
+
+    request_refresh(
+        &refresh_tx,
+        &mut global_state,
+        &client,
+        Some("default".to_string()),
+        refresh_options_for_view(AppView::Projects, false, false),
+        &mut refresh_state,
+        &mut snapshot_dirty,
+    );
+
+    assert!(snapshot_dirty);
+    assert_eq!(refresh_state.in_flight_target_view, None);
+    let in_flight = refresh_state
+        .in_flight_options
+        .expect("projects core refresh should be active");
+    assert_eq!(in_flight.scope, RefreshScope::CORE_OVERVIEW);
+    assert!(!in_flight.skip_core);
+
+    let queued = refresh_state
+        .queued_refresh
+        .as_ref()
+        .expect("projects secondary backfill should be queued");
+    assert!(queued.options.skip_core);
+    assert_eq!(queued.target_view, None);
+    assert!(
+        queued
+            .options
+            .scope
+            .contains(RefreshScope::LEGACY_SECONDARY)
+    );
+    assert!(queued.options.scope.contains(RefreshScope::NETWORK));
+    assert!(queued.options.scope.contains(RefreshScope::SECURITY));
+}
+
+#[tokio::test]
+async fn visible_targeted_refresh_preempts_actual_aggregate_secondary_backfill() {
+    let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
+    let mut global_state = GlobalState::default();
+    let client = kubectui::k8s::client::K8sClient::dummy();
+    let mut snapshot_dirty = false;
+    let mut refresh_state = RefreshRuntimeState::default();
+
+    request_refresh(
+        &refresh_tx,
+        &mut global_state,
+        &client,
+        Some("default".to_string()),
+        refresh_options_for_view(AppView::Projects, false, false),
+        &mut refresh_state,
+        &mut snapshot_dirty,
+    );
+
+    let queued = refresh_state
+        .queued_refresh
+        .take()
+        .expect("projects secondary backfill should be queued");
+    refresh_state.in_flight_id = Some(queued.request_id);
+    refresh_state.in_flight_options = Some(queued.options);
+    refresh_state.in_flight_namespace = queued.namespace.clone();
+    refresh_state.in_flight_target_view = queued.target_view;
+    refresh_state.in_flight_task = Some(tokio::spawn(async {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+    }));
+
+    request_refresh(
+        &refresh_tx,
+        &mut global_state,
+        &client,
+        Some("default".to_string()),
+        refresh_options_for_view(AppView::Secrets, false, false),
+        &mut refresh_state,
+        &mut snapshot_dirty,
+    );
+
+    assert_eq!(refresh_state.in_flight_target_view, Some(AppView::Secrets));
+    let in_flight = refresh_state
+        .in_flight_options
+        .expect("secrets refresh should preempt aggregate secondary");
+    assert_eq!(in_flight.scope, RefreshScope::CONFIG);
+    assert!(!in_flight.skip_core);
+
+    let queued = refresh_state
+        .queued_refresh
+        .as_ref()
+        .expect("aggregate secondary should continue in background");
+    assert!(queued.options.skip_core);
+    assert_eq!(queued.target_view, None);
+    assert!(
+        queued
+            .options
+            .scope
+            .contains(RefreshScope::LEGACY_SECONDARY)
+    );
+    assert!(queued.options.scope.contains(RefreshScope::NETWORK));
+    assert!(queued.options.scope.contains(RefreshScope::SECURITY));
 }
 
 #[test]

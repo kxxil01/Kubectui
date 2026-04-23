@@ -223,7 +223,7 @@ pub fn refresh_options_for_view(
     force_cluster_info: bool,
 ) -> RefreshDispatch {
     let include_cluster_info = force_cluster_info || view_wants_cluster_info(view);
-    match view {
+    let dispatch = match view {
         AppView::Dashboard => {
             let mut dispatch = RefreshDispatch::new(
                 RefreshScope::DASHBOARD_WATCHED,
@@ -338,7 +338,8 @@ pub fn refresh_options_for_view(
         AppView::Extensions => {
             RefreshDispatch::new(RefreshScope::EXTENSIONS, RefreshScope::EXTENSIONS)
         }
-    }
+    };
+    dispatch.for_view(view)
 }
 
 /// Builds the refresh dispatch appropriate for a post-mutation refresh.

@@ -16,8 +16,9 @@ use crate::k8s::dtos::{ClusterInfo, ClusterVersionInfo, NamespaceInfo, NodeInfo}
 use crate::time::now;
 
 impl GlobalState {
-    fn mark_refresh_completed(&mut self, options: RefreshOptions) {
-        let loaded_scope = self.snapshot.loaded_scope.union(options.completed_scope());
+    fn mark_refresh_completed(&mut self, options: RefreshOptions, target_view: Option<AppView>) {
+        let completed_scope = Self::completed_scope_for_refresh(options, target_view);
+        let loaded_scope = self.snapshot.loaded_scope.union(completed_scope);
         let mut changed = false;
         changed |= AppView::tabs().iter().fold(false, |acc, &view| {
             let required_scope = Self::view_ready_scope(view);
@@ -26,11 +27,57 @@ impl GlobalState {
             }
             self.set_view_load_state(view, ViewLoadState::Ready) || acc
         });
+        if let Some(view) = target_view {
+            let required_scope = Self::view_ready_scope(view);
+            if Self::scope_uses_targeted_fetch(required_scope)
+                || required_scope.is_empty()
+                || loaded_scope.contains(required_scope)
+            {
+                changed |= self.set_view_load_state(view, ViewLoadState::Ready);
+            }
+        }
         changed |= self.set_view_load_state(AppView::PortForwarding, ViewLoadState::Ready);
 
         if changed {
             self.snapshot_dirty = true;
         }
+    }
+
+    fn completed_scope_for_refresh(
+        options: RefreshOptions,
+        target_view: Option<AppView>,
+    ) -> RefreshScope {
+        let completed = options.completed_scope();
+        let Some(view) = target_view else {
+            return completed;
+        };
+        let view_scope = Self::view_ready_scope(view);
+        if Self::scope_uses_targeted_fetch(view_scope) {
+            completed.without(view_scope)
+        } else {
+            completed
+        }
+    }
+
+    const fn scope_uses_targeted_fetch(scope: RefreshScope) -> bool {
+        scope.0 == RefreshScope::NETWORK.0
+            || scope.0 == RefreshScope::CONFIG.0
+            || scope.0 == RefreshScope::STORAGE.0
+            || scope.0 == RefreshScope::SECURITY.0
+    }
+
+    fn fetch_for_view(scope_enabled: bool, target_view: Option<AppView>, view: AppView) -> bool {
+        if !scope_enabled {
+            return false;
+        }
+        let Some(target) = target_view else {
+            return true;
+        };
+        let target_scope = Self::view_ready_scope(target);
+        let view_scope = Self::view_ready_scope(view);
+        !Self::scope_uses_targeted_fetch(target_scope)
+            || target_scope != view_scope
+            || target == view
     }
 
     fn build_cluster_info(
@@ -99,9 +146,23 @@ impl GlobalState {
     where
         D: ClusterDataSource + Sync,
     {
+        self.refresh_view_with_options(client, namespace, options, None)
+            .await
+    }
+
+    pub async fn refresh_view_with_options<D>(
+        &mut self,
+        client: &D,
+        namespace: Option<&str>,
+        options: RefreshOptions,
+        target_view: Option<AppView>,
+    ) -> Result<()>
+    where
+        D: ClusterDataSource + Sync,
+    {
         match tokio::time::timeout(
             Duration::from_secs(60),
-            self.refresh_inner(client, namespace, options),
+            self.refresh_inner(client, namespace, options, target_view),
         )
         .await
         {
@@ -122,6 +183,7 @@ impl GlobalState {
         client: &D,
         namespace: Option<&str>,
         options: RefreshOptions,
+        target_view: Option<AppView>,
     ) -> Result<()>
     where
         D: ClusterDataSource + Sync,
@@ -249,49 +311,63 @@ impl GlobalState {
             async {
                 tokio::join!(
                     maybe_fetch(
-                        fetch_config,
+                        Self::fetch_for_view(fetch_config, target_view, AppView::ResourceQuotas),
                         "resourcequotas",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_resource_quotas(namespace)
                     ),
                     maybe_fetch(
-                        fetch_config,
+                        Self::fetch_for_view(fetch_config, target_view, AppView::LimitRanges),
                         "limitranges",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_limit_ranges(namespace)
                     ),
-                    maybe_fetch(fetch_config, "pdbs", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_pod_disruption_budgets(namespace)
-                    }),
                     maybe_fetch(
-                        fetch_security,
+                        Self::fetch_for_view(
+                            fetch_config,
+                            target_view,
+                            AppView::PodDisruptionBudgets
+                        ),
+                        "pdbs",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_pod_disruption_budgets(namespace) }
+                    ),
+                    maybe_fetch(
+                        Self::fetch_for_view(fetch_security, target_view, AppView::ServiceAccounts),
                         "serviceaccounts",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_service_accounts(namespace)
                     ),
-                    maybe_fetch(fetch_security, "roles", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_roles(namespace)
-                    }),
                     maybe_fetch(
-                        fetch_security,
+                        Self::fetch_for_view(fetch_security, target_view, AppView::Roles),
+                        "roles",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_roles(namespace) }
+                    ),
+                    maybe_fetch(
+                        Self::fetch_for_view(fetch_security, target_view, AppView::RoleBindings),
                         "rolebindings",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_role_bindings(namespace)
                     ),
                     maybe_fetch(
-                        fetch_security,
+                        Self::fetch_for_view(fetch_security, target_view, AppView::ClusterRoles),
                         "clusterroles",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_cluster_roles()
                     ),
                     maybe_fetch(
-                        fetch_security,
+                        Self::fetch_for_view(
+                            fetch_security,
+                            target_view,
+                            AppView::ClusterRoleBindings
+                        ),
                         "clusterrolebindings",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_cluster_role_bindings()
                     ),
                     maybe_fetch(
-                        fetch_security,
+                        Self::fetch_for_view(fetch_security, target_view, AppView::Vulnerabilities),
                         "vulnerabilityreports",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_vulnerability_reports(namespace)
@@ -300,85 +376,105 @@ impl GlobalState {
                         client.fetch_custom_resource_definitions()
                     }),
                     maybe_fetch(
-                        fetch_network,
+                        Self::fetch_for_view(fetch_network, target_view, AppView::Endpoints),
                         "endpoints",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || { client.fetch_endpoints(namespace) }
                     ),
                     maybe_fetch(
-                        fetch_network,
+                        Self::fetch_for_view(fetch_network, target_view, AppView::Ingresses),
                         "ingresses",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || { client.fetch_ingresses(namespace) }
                     ),
                     maybe_fetch(
-                        fetch_network,
+                        Self::fetch_for_view(fetch_network, target_view, AppView::IngressClasses),
                         "ingressclasses",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_ingress_classes()
                     ),
                     maybe_fetch(
-                        fetch_network,
+                        Self::fetch_for_view(fetch_network, target_view, AppView::GatewayClasses),
                         "gatewayclasses",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_gateway_classes()
                     ),
                     maybe_fetch(
-                        fetch_network,
+                        Self::fetch_for_view(fetch_network, target_view, AppView::Gateways),
                         "gateways",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_gateways(namespace)
                     ),
                     maybe_fetch(
-                        fetch_network,
+                        Self::fetch_for_view(fetch_network, target_view, AppView::HttpRoutes),
                         "httproutes",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_http_routes(namespace)
                     ),
                     maybe_fetch(
-                        fetch_network,
+                        Self::fetch_for_view(fetch_network, target_view, AppView::GrpcRoutes),
                         "grpcroutes",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_grpc_routes(namespace)
                     ),
                     maybe_fetch(
-                        fetch_network,
+                        Self::fetch_for_view(fetch_network, target_view, AppView::ReferenceGrants),
                         "referencegrants",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_reference_grants(namespace)
                     ),
                     maybe_fetch(
-                        fetch_network,
+                        Self::fetch_for_view(fetch_network, target_view, AppView::NetworkPolicies),
                         "networkpolicies",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_network_policies(namespace)
                     ),
                     maybe_fetch(
-                        fetch_config,
+                        Self::fetch_for_view(fetch_config, target_view, AppView::ConfigMaps),
                         "configmaps",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || { client.fetch_config_maps(namespace) }
                     ),
-                    maybe_fetch(fetch_config, "secrets", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_secrets(namespace)
-                    }),
-                    maybe_fetch(fetch_config, "hpas", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_hpas(namespace)
-                    }),
-                    maybe_fetch(fetch_storage, "pvcs", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_pvcs(namespace)
-                    }),
-                    maybe_fetch(fetch_storage, "pvs", &SECONDARY_FETCH_SEMAPHORE, || {
-                        client.fetch_pvs()
-                    }),
                     maybe_fetch(
-                        fetch_storage,
+                        Self::fetch_for_view(fetch_config, target_view, AppView::Secrets),
+                        "secrets",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_secrets(namespace) }
+                    ),
+                    maybe_fetch(
+                        Self::fetch_for_view(fetch_config, target_view, AppView::HPAs),
+                        "hpas",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_hpas(namespace) }
+                    ),
+                    maybe_fetch(
+                        Self::fetch_for_view(
+                            fetch_storage,
+                            target_view,
+                            AppView::PersistentVolumeClaims
+                        ),
+                        "pvcs",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_pvcs(namespace) }
+                    ),
+                    maybe_fetch(
+                        Self::fetch_for_view(
+                            fetch_storage,
+                            target_view,
+                            AppView::PersistentVolumes
+                        ),
+                        "pvs",
+                        &SECONDARY_FETCH_SEMAPHORE,
+                        || { client.fetch_pvs() }
+                    ),
+                    maybe_fetch(
+                        Self::fetch_for_view(fetch_storage, target_view, AppView::StorageClasses),
                         "storageclasses",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_storage_classes()
                     ),
                     maybe_fetch(
-                        fetch_config,
+                        Self::fetch_for_view(fetch_config, target_view, AppView::PriorityClasses),
                         "priorityclasses",
                         &SECONDARY_FETCH_SEMAPHORE,
                         || client.fetch_priority_classes()
@@ -862,9 +958,10 @@ impl GlobalState {
             if fetch_local_helm_repositories {
                 snap.helm_repositories = crate::k8s::helm::read_helm_repositories();
             }
-            snap.loaded_scope = prev_loaded_scope.union(options.completed_scope());
+            snap.loaded_scope =
+                prev_loaded_scope.union(Self::completed_scope_for_refresh(options, target_view));
         }
-        self.mark_refresh_completed(options);
+        self.mark_refresh_completed(options, target_view);
         // Arc refcount is 1 here — make_mut is a no-op pointer return.
         let snap = Arc::make_mut(&mut self.snapshot);
         snap.snapshot_version = snap.snapshot_version.saturating_add(1);
