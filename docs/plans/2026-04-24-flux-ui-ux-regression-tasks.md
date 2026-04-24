@@ -11,6 +11,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Flux detail closes when the selected Flux resource is deleted.
 - [x] Flux selected delete falls back to nearest neighbor for first/middle/last rows.
 - [x] Flux active search preserves matching selection and falls back with status when hidden.
+- [x] Flux name/age sort paths preserve selected identity after reorder.
 
 ## Next Tasks
 
@@ -38,10 +39,10 @@ Done when:
 
 ### 3. Sort Stability
 
-- [ ] Add regression: Flux name sort reorder preserves selected identity.
-- [ ] Add regression: Flux age sort reorder preserves selected identity.
-- [ ] Check viewport window keeps selected row visible after sort-driven moves.
-- [ ] Patch if sort-specific cache/filtered indices bypass identity restore.
+- [x] Add regression: Flux name sort reorder preserves selected identity.
+- [x] Add regression: Flux age sort reorder preserves selected identity.
+- [x] Check viewport window keeps selected row visible after sort-driven moves.
+- [x] Patch if sort-specific cache/filtered indices bypass identity restore.
 
 Done when:
 - Same selected resource remains highlighted under name/age sort after refresh/watch reorder.

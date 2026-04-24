@@ -24,7 +24,7 @@ use kubectui::{
     action_history::ActionKind,
     app::{
         AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus, ResourceRef,
-        SidebarItem,
+        SidebarItem, WorkloadSortColumn, WorkloadSortState,
     },
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
@@ -1344,6 +1344,101 @@ fn flux_active_search_selection_fallback_is_predictable() {
     assert_eq!(
         app.status_message(),
         Some("Selected Flux resource no longer matches search; moved to nearest visible result.")
+    );
+}
+
+#[test]
+fn flux_sort_reorder_preserves_selected_identity() {
+    fn kustomization(name: &str, created_at: AppTimestamp) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            created_at: Some(created_at),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    fn snapshot(version: u64, now: AppTimestamp, resources: &[(&str, i64)]) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version: version,
+            flux_resources: resources
+                .iter()
+                .map(|(name, age_secs)| {
+                    kustomization(
+                        name,
+                        now.checked_sub(age_secs.seconds())
+                            .expect("timestamp in range"),
+                    )
+                })
+                .collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn selected_name(app: &AppState, snapshot: &ClusterSnapshot) -> Option<String> {
+        selected_resource(app, snapshot).map(|resource| resource.name().to_string())
+    }
+
+    let now = now();
+
+    let previous_name = snapshot(1, now, &[("platform", 30), ("apps", 20), ("bootstrap", 10)]);
+    let reordered_name = snapshot(2, now, &[("apps", 20), ("bootstrap", 10), ("platform", 30)]);
+    let mut name_sorted = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 2,
+        workload_sort: Some(WorkloadSortState::new(WorkloadSortColumn::Name, false)),
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        selected_name(&name_sorted, &previous_name).as_deref(),
+        Some("platform")
+    );
+    assert!(!preserve_flux_selection_identity_after_snapshot_change(
+        &mut name_sorted,
+        &previous_name,
+        &reordered_name
+    ));
+    assert_eq!(name_sorted.selected_idx(), 2);
+    assert_eq!(
+        selected_name(&name_sorted, &reordered_name).as_deref(),
+        Some("platform")
+    );
+
+    let previous_age = snapshot(
+        3,
+        now,
+        &[("apps", 300), ("bootstrap", 200), ("platform", 100)],
+    );
+    let moved_by_age = snapshot(
+        4,
+        now,
+        &[("platform", 200), ("bootstrap", 300), ("apps", 100)],
+    );
+    let mut age_sorted = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 0,
+        workload_sort: Some(WorkloadSortState::new(WorkloadSortColumn::Age, true)),
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        selected_name(&age_sorted, &previous_age).as_deref(),
+        Some("apps")
+    );
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut age_sorted,
+        &previous_age,
+        &moved_by_age
+    ));
+    assert_eq!(age_sorted.selected_idx(), 2);
+    assert_eq!(
+        selected_name(&age_sorted, &moved_by_age).as_deref(),
+        Some("apps")
     );
 }
 
