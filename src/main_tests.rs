@@ -10,7 +10,7 @@ use super::{
     fail_context_switch, map_palette_detail_action, mutation_refresh_options,
     normalize_recent_events, palette_action_requires_loaded_detail, parse_editor_command,
     prepare_bookmark_target, prepare_resource_target, preserve_detail_selection_identity,
-    preserve_flux_selection_identity_after_snapshot_change, queued_refresh_requires_two_phase,
+    preserve_selection_identity_after_snapshot_change, queued_refresh_requires_two_phase,
     refresh_options_for_view, refresh_palette_resources, refresh_scope_pending, request_refresh,
     selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
     should_include_flux_in_auto_refresh, should_preserve_current_flux_after_refresh,
@@ -32,8 +32,9 @@ use kubectui::{
     k8s::{
         client::FluxWatchTarget,
         dtos::{
-            ConfigMapInfo, CustomResourceDefinitionInfo, CustomResourceInfo, FluxResourceInfo,
-            K8sEventInfo, NodeInfo, PodInfo, VulnerabilityReportInfo, VulnerabilitySummaryCounts,
+            ConfigMapInfo, CustomResourceDefinitionInfo, CustomResourceInfo, DeploymentInfo,
+            FluxResourceInfo, JobInfo, K8sEventInfo, NamespaceInfo, NodeInfo, PodInfo, ServiceInfo,
+            VulnerabilityReportInfo, VulnerabilitySummaryCounts,
         },
     },
     policy::DetailAction,
@@ -1091,7 +1092,7 @@ fn flux_selection_identity_survives_watch_reorder_and_delete_updates() {
     };
 
     assert_eq!(selected_resource(&app, &previous), Some(expected.clone()));
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut app, &previous, &reordered
     ));
     assert_eq!(app.selected_idx(), 0);
@@ -1101,7 +1102,7 @@ fn flux_selection_identity_survives_watch_reorder_and_delete_updates() {
     let deleted_before_selection = snapshot(4, &["apps", "platform"]);
     app.selected_idx = 1;
 
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut app,
         &previous,
         &deleted_before_selection,
@@ -1159,7 +1160,7 @@ fn flux_detail_alignment_survives_watch_reorder_and_selected_delete() {
         ..AppState::default()
     };
 
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut app, &previous, &reordered
     ));
     assert_eq!(selected_resource(&app, &reordered), Some(selected.clone()));
@@ -1171,7 +1172,7 @@ fn flux_detail_alignment_survives_watch_reorder_and_selected_delete() {
     );
 
     let deleted_selected = snapshot(3, &["bootstrap", "platform"]);
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut app,
         &reordered,
         &deleted_selected
@@ -1217,7 +1218,7 @@ fn flux_delete_selected_resource_falls_back_to_nearest_neighbor() {
         ..AppState::default()
     };
     let deleted_first = snapshot(2, &["apps", "platform"]);
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut first,
         &previous,
         &deleted_first
@@ -1234,7 +1235,7 @@ fn flux_delete_selected_resource_falls_back_to_nearest_neighbor() {
         ..AppState::default()
     };
     let deleted_middle = snapshot(3, &["bootstrap", "platform"]);
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut middle,
         &previous,
         &deleted_middle
@@ -1251,7 +1252,7 @@ fn flux_delete_selected_resource_falls_back_to_nearest_neighbor() {
         ..AppState::default()
     };
     let deleted_last = snapshot(4, &["bootstrap", "apps"]);
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut last,
         &previous,
         &deleted_last
@@ -1314,7 +1315,7 @@ fn flux_active_search_selection_fallback_is_predictable() {
     };
 
     assert_eq!(selected_name(&app, &previous).as_deref(), Some("apps"));
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut app, &previous, &reordered
     ));
     assert_eq!(app.selected_idx(), 0);
@@ -1331,7 +1332,7 @@ fn flux_active_search_selection_fallback_is_predictable() {
     );
     app.selected_idx = 1;
 
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut app,
         &previous,
         &hidden_by_search
@@ -1343,7 +1344,7 @@ fn flux_active_search_selection_fallback_is_predictable() {
     );
     assert_eq!(
         app.status_message(),
-        Some("Selected Flux resource no longer matches search; moved to nearest visible result.")
+        Some("Selected resource no longer matches search; moved to nearest visible result.")
     );
 }
 
@@ -1398,7 +1399,7 @@ fn flux_sort_reorder_preserves_selected_identity() {
         selected_name(&name_sorted, &previous_name).as_deref(),
         Some("platform")
     );
-    assert!(!preserve_flux_selection_identity_after_snapshot_change(
+    assert!(!preserve_selection_identity_after_snapshot_change(
         &mut name_sorted,
         &previous_name,
         &reordered_name
@@ -1430,7 +1431,7 @@ fn flux_sort_reorder_preserves_selected_identity() {
         selected_name(&age_sorted, &previous_age).as_deref(),
         Some("apps")
     );
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut age_sorted,
         &previous_age,
         &moved_by_age
@@ -1521,7 +1522,7 @@ fn flux_reconcile_completion_after_watch_reorder_keeps_ui_identity_aligned() {
         deadline: Instant::now() + Duration::from_secs(5),
     }];
 
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut app, &previous, &reordered
     ));
     assert_eq!(app.selected_idx(), 0);
@@ -1597,7 +1598,7 @@ fn flux_secondary_pane_state_tracks_selected_resource_identity_after_reorder() {
     };
 
     assert_eq!(selected_name(&app, &previous).as_deref(), Some("apps"));
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut app, &previous, &reordered
     ));
     assert_eq!(selected_name(&app, &reordered).as_deref(), Some("apps"));
@@ -1628,7 +1629,7 @@ fn flux_secondary_pane_state_tracks_selected_resource_identity_after_reorder() {
     assert_eq!(app.selected_idx(), 0);
 
     let deleted_selected = snapshot(3, &["bootstrap", "platform"]);
-    assert!(preserve_flux_selection_identity_after_snapshot_change(
+    assert!(preserve_selection_identity_after_snapshot_change(
         &mut app,
         &reordered,
         &deleted_selected,
@@ -1691,7 +1692,7 @@ fn flux_repeated_watch_churn_never_moves_highlight_to_wrong_resource() {
 
     for (version, target_position) in [0, 19, 2, 16, 4, 12, 7].into_iter().enumerate() {
         let current = snapshot(version as u64 + 2, &names_with_target_at(target_position));
-        assert!(preserve_flux_selection_identity_after_snapshot_change(
+        assert!(preserve_selection_identity_after_snapshot_change(
             &mut app, &previous, &current
         ));
         assert_eq!(app.selected_idx(), target_position);
@@ -1699,6 +1700,168 @@ fn flux_repeated_watch_churn_never_moves_highlight_to_wrong_resource() {
         assert_eq!(app.status_message(), None);
         previous = current;
     }
+}
+
+#[test]
+fn watched_resource_views_preserve_selected_identity_after_reorder() {
+    fn selected_name(app: &AppState, snapshot: &ClusterSnapshot) -> Option<String> {
+        selected_resource(app, snapshot).map(|resource| resource.name().to_string())
+    }
+
+    fn assert_preserves(
+        view: AppView,
+        previous: ClusterSnapshot,
+        current: ClusterSnapshot,
+        initial_idx: usize,
+        expected_idx: usize,
+        expected_name: &str,
+    ) {
+        let mut app = AppState {
+            view,
+            selected_idx: initial_idx,
+            ..AppState::default()
+        };
+
+        assert_eq!(
+            selected_name(&app, &previous).as_deref(),
+            Some(expected_name)
+        );
+        assert!(preserve_selection_identity_after_snapshot_change(
+            &mut app, &previous, &current
+        ));
+        assert_eq!(app.selected_idx(), expected_idx);
+        assert_eq!(
+            selected_name(&app, &current).as_deref(),
+            Some(expected_name)
+        );
+        assert_eq!(app.status_message(), None);
+    }
+
+    fn pod(name: &str) -> PodInfo {
+        PodInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            ..PodInfo::default()
+        }
+    }
+
+    fn deployment(name: &str) -> DeploymentInfo {
+        DeploymentInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            ..DeploymentInfo::default()
+        }
+    }
+
+    fn service(name: &str) -> ServiceInfo {
+        ServiceInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            ..ServiceInfo::default()
+        }
+    }
+
+    fn job(name: &str) -> JobInfo {
+        JobInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            ..JobInfo::default()
+        }
+    }
+
+    fn namespace(name: &str) -> NamespaceInfo {
+        NamespaceInfo {
+            name: name.to_string(),
+            ..NamespaceInfo::default()
+        }
+    }
+
+    assert_preserves(
+        AppView::Pods,
+        ClusterSnapshot {
+            pods: vec![pod("api-0"), pod("api-1"), pod("api-2")],
+            ..ClusterSnapshot::default()
+        },
+        ClusterSnapshot {
+            pods: vec![pod("api-1"), pod("api-0"), pod("api-2")],
+            ..ClusterSnapshot::default()
+        },
+        1,
+        0,
+        "api-1",
+    );
+    assert_preserves(
+        AppView::Deployments,
+        ClusterSnapshot {
+            deployments: vec![
+                deployment("worker"),
+                deployment("api"),
+                deployment("frontend"),
+            ],
+            ..ClusterSnapshot::default()
+        },
+        ClusterSnapshot {
+            deployments: vec![
+                deployment("api"),
+                deployment("frontend"),
+                deployment("worker"),
+            ],
+            ..ClusterSnapshot::default()
+        },
+        1,
+        0,
+        "api",
+    );
+    assert_preserves(
+        AppView::Services,
+        ClusterSnapshot {
+            services: vec![service("web"), service("api"), service("metrics")],
+            ..ClusterSnapshot::default()
+        },
+        ClusterSnapshot {
+            services: vec![service("metrics"), service("web"), service("api")],
+            ..ClusterSnapshot::default()
+        },
+        1,
+        2,
+        "api",
+    );
+    assert_preserves(
+        AppView::Jobs,
+        ClusterSnapshot {
+            jobs: vec![job("seed"), job("backup"), job("cleanup")],
+            ..ClusterSnapshot::default()
+        },
+        ClusterSnapshot {
+            jobs: vec![job("cleanup"), job("seed"), job("backup")],
+            ..ClusterSnapshot::default()
+        },
+        1,
+        2,
+        "backup",
+    );
+    assert_preserves(
+        AppView::Namespaces,
+        ClusterSnapshot {
+            namespace_list: vec![
+                namespace("default"),
+                namespace("prod"),
+                namespace("staging"),
+            ],
+            ..ClusterSnapshot::default()
+        },
+        ClusterSnapshot {
+            namespace_list: vec![
+                namespace("staging"),
+                namespace("default"),
+                namespace("prod"),
+            ],
+            ..ClusterSnapshot::default()
+        },
+        1,
+        2,
+        "prod",
+    );
 }
 
 #[test]
