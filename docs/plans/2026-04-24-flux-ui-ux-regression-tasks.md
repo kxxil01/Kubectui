@@ -1,0 +1,111 @@
+# Flux UI/UX Regression Tasks
+
+Use this backlog one item at a time. Keep each patch small, tested, and tied to one observable regression.
+
+## Done
+
+- [x] Preserve Flux selected resource identity across watch/refresh reorder.
+- [x] Regression for reorder after watch/apply-style update.
+- [x] Regression for delete-before-selection update.
+
+## Next Tasks
+
+### 1. Detail Pane Alignment
+
+- [ ] Add regression: Flux detail open, watch reorder preserves selected list resource and detail resource alignment.
+- [ ] Decide deleted-selected behavior with detail open: close detail vs move to fallback resource.
+- [ ] Patch canonical detail/list sync path if stale detail survives.
+- [ ] Verify with focused test and full gate.
+
+Done when:
+- List highlight and detail title/resource always refer to same resource after reorder.
+- Deleted selected resource has explicit, tested behavior.
+
+### 2. Active Search Fallback
+
+- [ ] Add regression: selected Flux resource remains visible after reorder with active search.
+- [ ] Add regression: selected Flux resource stops matching search after update.
+- [ ] Decide UX message for selection disappearing from filtered results.
+- [ ] Patch fallback if raw clamp feels wrong or loses nearest identity.
+
+Done when:
+- Search-visible resources preserve identity.
+- Search-hidden selected resource fallback is predictable and documented by tests.
+
+### 3. Sort Stability
+
+- [ ] Add regression: Flux name sort reorder preserves selected identity.
+- [ ] Add regression: Flux age sort reorder preserves selected identity.
+- [ ] Check viewport window keeps selected row visible after sort-driven moves.
+- [ ] Patch if sort-specific cache/filtered indices bypass identity restore.
+
+Done when:
+- Same selected resource remains highlighted under name/age sort after refresh/watch reorder.
+
+### 4. Delete Selected Resource
+
+- [ ] Add regression: deleting selected first row selects next row.
+- [ ] Add regression: deleting selected middle row selects nearest next row.
+- [ ] Add regression: deleting selected last row selects previous row.
+- [ ] Patch fallback from raw clamp to nearest-neighbor policy if needed.
+
+Done when:
+- Delete behavior is deterministic and matches user expectation.
+- No arbitrary jump to unrelated row when better neighbor exists.
+
+### 5. Pending Reconcile Race
+
+- [ ] Add regression: pending Flux reconcile, watch reorder, verification completion.
+- [ ] Add regression: pending Flux reconcile, refresh result after watch changed same target.
+- [ ] Ensure action history, status message, selected list row, and detail resource agree.
+
+Done when:
+- Reconcile status never appears to complete for a different highlighted resource.
+
+### 6. Secondary Pane Focus
+
+- [ ] Add regression: Flux secondary pane focused, watch reorder preserves focus mode.
+- [ ] Add regression: detail scroll not reset when same selected resource moves rows.
+- [ ] Add regression: detail scroll resets only when selected resource changes.
+
+Done when:
+- `;`, `j/k`, page keys, and Enter still route predictably after watch reorder.
+
+### 7. Visual Stability Audit
+
+- [ ] Manual run: reorder selected row outside visible window.
+- [ ] Manual run: repeated watch churn while Flux view active.
+- [ ] Capture any flicker/viewport snap symptoms as tests where practical.
+
+Done when:
+- Selected row remains visible.
+- No visible highlight flash to wrong resource.
+
+### 8. Generalize Beyond Flux
+
+- [ ] Audit Pods watch update selection behavior.
+- [ ] Audit Deployments watch update selection behavior.
+- [ ] Audit Services/Jobs/Namespaces if first two expose same raw-index risk.
+- [ ] Decide whether to generalize helper for all resource tables or keep Flux-only.
+
+Done when:
+- Same class of regression is either fixed canonically or explicitly scoped out with evidence.
+
+## Suggested Order
+
+1. Detail pane alignment.
+2. Delete selected resource fallback.
+3. Active search fallback.
+4. Sort stability.
+5. Pending reconcile race.
+6. Secondary pane focus.
+7. Visual audit.
+8. Non-Flux watched tables.
+
+## Patch Rules
+
+- One task per PR.
+- Add failing regression first when practical.
+- Use existing selection/filtering helpers, not duplicate per-view logic.
+- Keep event-loop changes narrow.
+- No screenshots or logs containing secrets.
