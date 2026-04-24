@@ -9,6 +9,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Regression for delete-before-selection update.
 - [x] Flux detail stays aligned with selected list resource after watch reorder.
 - [x] Flux detail closes when the selected Flux resource is deleted.
+- [x] Flux selected delete falls back to nearest neighbor for first/middle/last rows.
 
 ## Next Tasks
 
@@ -46,10 +47,10 @@ Done when:
 
 ### 4. Delete Selected Resource
 
-- [ ] Add regression: deleting selected first row selects next row.
-- [ ] Add regression: deleting selected middle row selects nearest next row.
-- [ ] Add regression: deleting selected last row selects previous row.
-- [ ] Patch fallback from raw clamp to nearest-neighbor policy if needed.
+- [x] Add regression: deleting selected first row selects next row.
+- [x] Add regression: deleting selected middle row selects nearest next row.
+- [x] Add regression: deleting selected last row selects previous row.
+- [x] Patch fallback from raw clamp to nearest-neighbor policy if needed.
 
 Done when:
 - Delete behavior is deterministic and matches user expectation.
