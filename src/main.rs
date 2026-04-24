@@ -1996,6 +1996,7 @@ pub(crate) async fn run_app_inner(
                     if namespace_matches {
                         match result.result {
                             Ok(mut new_state) => {
+                                let previous_snapshot = global_state.snapshot();
                                 let current_flux_target_fingerprints =
                                     global_state.flux_target_fingerprints();
                                 if should_preserve_current_flux_after_refresh(
@@ -2009,6 +2010,13 @@ pub(crate) async fn run_app_inner(
                                     );
                                 }
                                 global_state = new_state;
+                                if preserve_flux_selection_identity_after_snapshot_change(
+                                    &mut app,
+                                    &previous_snapshot,
+                                    &global_state.snapshot(),
+                                ) {
+                                    needs_redraw = true;
+                                }
                                 consecutive_refresh_failures = 0;
                                 backoff_until = None;
                                 let previously_selected_namespace = app.get_namespace().to_string();
@@ -2167,8 +2175,20 @@ pub(crate) async fn run_app_inner(
             Some(update) = watch_rx.recv() => {
                 if update.context_generation == refresh_state.context_generation {
                     let watched_resource = update.resource;
+                    let previous_snapshot =
+                        (watched_resource == WatchedResource::Flux && app.view().is_fluxcd())
+                            .then(|| global_state.snapshot());
                     let flux_changed = watch_update_needs_flux_refresh(&update);
                     global_state.apply_watch_update(update);
+                    if let Some(previous_snapshot) = previous_snapshot
+                        && preserve_flux_selection_identity_after_snapshot_change(
+                            &mut app,
+                            &previous_snapshot,
+                            &global_state.snapshot(),
+                        )
+                    {
+                        needs_redraw = true;
+                    }
                     if flux_changed
                         && process_flux_reconcile_verifications(
                             &mut app,

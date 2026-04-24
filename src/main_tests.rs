@@ -10,12 +10,13 @@ use super::{
     fail_context_switch, map_palette_detail_action, mutation_refresh_options,
     normalize_recent_events, palette_action_requires_loaded_detail, parse_editor_command,
     prepare_bookmark_target, prepare_resource_target, preserve_detail_selection_identity,
-    queued_refresh_requires_two_phase, refresh_options_for_view, refresh_palette_resources,
-    refresh_scope_pending, request_refresh, selected_extension_crd,
-    selected_flux_reconcile_resource, selected_resource, should_include_flux_in_auto_refresh,
-    should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
-    should_request_periodic_redraw, strip_active_watch_scope_from_refresh, ui_staleness_visible,
-    watch_scope_for_view, workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
+    preserve_flux_selection_identity_after_snapshot_change, queued_refresh_requires_two_phase,
+    refresh_options_for_view, refresh_palette_resources, refresh_scope_pending, request_refresh,
+    selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
+    should_include_flux_in_auto_refresh, should_preserve_current_flux_after_refresh,
+    should_request_navigation_refresh, should_request_periodic_redraw,
+    strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
+    workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
 use crate::async_types::{QueuedRefresh, RefreshDispatch, RefreshRuntimeState};
 use kubectui::ui::components::command_palette::PaletteEntry;
@@ -1047,6 +1048,68 @@ fn selected_resource_uses_bookmark_view_selection() {
     assert_eq!(
         selected,
         ResourceRef::Secret("app-secret".to_string(), "default".to_string())
+    );
+}
+
+#[test]
+fn flux_selection_identity_survives_watch_reorder_and_delete_updates() {
+    fn kustomization(name: &str) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    fn snapshot(version: u64, names: &[&str]) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version: version,
+            flux_resources: names.iter().map(|name| kustomization(name)).collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    let expected = ResourceRef::CustomResource {
+        name: "apps".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "kustomize.toolkit.fluxcd.io".to_string(),
+        version: "v1".to_string(),
+        kind: "Kustomization".to_string(),
+        plural: "kustomizations".to_string(),
+    };
+
+    let previous = snapshot(1, &["bootstrap", "apps", "platform"]);
+    let reordered = snapshot(2, &["apps", "bootstrap", "platform"]);
+    let mut app = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 1,
+        ..AppState::default()
+    };
+
+    assert_eq!(selected_resource(&app, &previous), Some(expected.clone()));
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut app, &previous, &reordered
+    ));
+    assert_eq!(app.selected_idx(), 0);
+    assert_eq!(selected_resource(&app, &reordered), Some(expected.clone()));
+
+    let previous = snapshot(3, &["bootstrap", "apps", "platform"]);
+    let deleted_before_selection = snapshot(4, &["apps", "platform"]);
+    app.selected_idx = 1;
+
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut app,
+        &previous,
+        &deleted_before_selection,
+    ));
+    assert_eq!(app.selected_idx(), 0);
+    assert_eq!(
+        selected_resource(&app, &deleted_before_selection),
+        Some(expected)
     );
 }
 

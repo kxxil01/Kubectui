@@ -12,6 +12,7 @@ use kubectui::{
 };
 
 use crate::async_types::{DetailAsyncResult, ExtensionFetchResult};
+use crate::flux_reconcile::flux_resource_matches;
 
 /// Converts the namespace string to `Option`: `"all"` becomes `None`.
 pub fn namespace_scope(namespace: &str) -> Option<&str> {
@@ -413,6 +414,51 @@ pub fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<R
             }
         }
     }
+}
+
+/// Preserves the highlighted Flux resource across watch or refresh reorders.
+pub fn preserve_flux_selection_identity_after_snapshot_change(
+    app: &mut AppState,
+    previous: &ClusterSnapshot,
+    current: &ClusterSnapshot,
+) -> bool {
+    if !app.view().is_fluxcd() {
+        return false;
+    }
+
+    let Some(selected) = selected_resource(app, previous) else {
+        return false;
+    };
+
+    let indices = kubectui::ui::views::filtering::filtered_indices_for_view(
+        app.view(),
+        current,
+        app.search_query(),
+        app.workload_sort(),
+        app.pod_sort(),
+    );
+    let next_idx = indices.iter().position(|&resource_idx| {
+        current
+            .flux_resources
+            .get(resource_idx)
+            .is_some_and(|candidate| flux_resource_matches(&selected, candidate))
+    });
+
+    let Some(next_idx) = next_idx else {
+        let clamped_idx = app.selected_idx().min(indices.len().saturating_sub(1));
+        if app.selected_idx == clamped_idx {
+            return false;
+        }
+        app.selected_idx = clamped_idx;
+        return true;
+    };
+
+    if app.selected_idx == next_idx {
+        return false;
+    }
+
+    app.selected_idx = next_idx;
+    true
 }
 
 /// Returns the resource context (with node/cronjob metadata) for the selection.
