@@ -21,7 +21,7 @@ use super::{
 use crate::async_types::{QueuedRefresh, RefreshDispatch, RefreshRuntimeState};
 use kubectui::ui::components::command_palette::PaletteEntry;
 use kubectui::{
-    action_history::ActionKind,
+    action_history::{ActionKind, ActionStatus},
     app::{
         AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus, ResourceRef,
         SidebarItem, WorkloadSortColumn, WorkloadSortState,
@@ -1439,6 +1439,123 @@ fn flux_sort_reorder_preserves_selected_identity() {
     assert_eq!(
         selected_name(&age_sorted, &moved_by_age).as_deref(),
         Some("apps")
+    );
+}
+
+#[test]
+fn flux_reconcile_completion_after_watch_reorder_keeps_ui_identity_aligned() {
+    fn kustomization(name: &str, last_reconcile_time: AppTimestamp) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            status: "Ready".to_string(),
+            last_reconcile_time: Some(last_reconcile_time),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    fn snapshot(version: u64, resources: &[(&str, AppTimestamp)]) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version: version,
+            flux_resources: resources
+                .iter()
+                .map(|(name, last_reconcile_time)| kustomization(name, *last_reconcile_time))
+                .collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn resource(name: &str) -> ResourceRef {
+        ResourceRef::CustomResource {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+        }
+    }
+
+    let base = now();
+    let apps_ref = resource("apps");
+    let previous = snapshot(
+        1,
+        &[("bootstrap", base), ("apps", base), ("platform", base)],
+    );
+    let reordered = snapshot(
+        2,
+        &[
+            (
+                "apps",
+                base.checked_add(30.seconds()).expect("timestamp in range"),
+            ),
+            ("bootstrap", base),
+            ("platform", base),
+        ],
+    );
+    let mut app = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 1,
+        detail_view: Some(DetailViewState {
+            resource: Some(apps_ref.clone()),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+    let entry_id = app.record_action_pending(
+        ActionKind::FluxReconcile,
+        AppView::FluxCDKustomizations,
+        Some(apps_ref.clone()),
+        "Kustomization 'apps'".to_string(),
+        "Requesting reconcile for Kustomization 'apps'".to_string(),
+    );
+    let mut pending = vec![PendingFluxReconcileVerification {
+        action_history_id: entry_id,
+        resource: apps_ref.clone(),
+        resource_label: "Kustomization 'apps'".to_string(),
+        baseline: Some(flux_observed_state(&kustomization("apps", base))),
+        deadline: Instant::now() + Duration::from_secs(5),
+    }];
+
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut app, &previous, &reordered
+    ));
+    assert_eq!(app.selected_idx(), 0);
+    assert_eq!(selected_resource(&app, &reordered), Some(apps_ref.clone()));
+
+    assert!(process_flux_reconcile_verifications(
+        &mut app,
+        &reordered,
+        &mut pending,
+        &mut |a, msg| a.set_status(msg),
+    ));
+
+    assert!(pending.is_empty());
+    assert_eq!(selected_resource(&app, &reordered), Some(apps_ref.clone()));
+    assert_eq!(
+        app.detail_view
+            .as_ref()
+            .and_then(|detail| detail.resource.as_ref()),
+        Some(&apps_ref)
+    );
+    let entry = app
+        .action_history()
+        .find_by_id(entry_id)
+        .expect("history entry");
+    assert_eq!(entry.status, ActionStatus::Succeeded);
+    assert_eq!(
+        entry.target.as_ref().map(|target| &target.resource),
+        Some(&apps_ref)
+    );
+    assert!(entry.message.contains("Kustomization 'apps'"));
+    assert!(
+        app.status_message()
+            .expect("status message")
+            .contains("Kustomization 'apps'")
     );
 }
 

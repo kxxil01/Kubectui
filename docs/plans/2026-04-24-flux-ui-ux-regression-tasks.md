@@ -12,6 +12,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Flux selected delete falls back to nearest neighbor for first/middle/last rows.
 - [x] Flux active search preserves matching selection and falls back with status when hidden.
 - [x] Flux name/age sort paths preserve selected identity after reorder.
+- [x] Flux pending reconcile completion stays aligned after watch reorder/stale refresh.
 
 ## Next Tasks
 
@@ -60,9 +61,9 @@ Done when:
 
 ### 5. Pending Reconcile Race
 
-- [ ] Add regression: pending Flux reconcile, watch reorder, verification completion.
-- [ ] Add regression: pending Flux reconcile, refresh result after watch changed same target.
-- [ ] Ensure action history, status message, selected list row, and detail resource agree.
+- [x] Add regression: pending Flux reconcile, watch reorder, verification completion.
+- [x] Add regression: pending Flux reconcile, refresh result after watch changed same target.
+- [x] Ensure action history, status message, selected list row, and detail resource agree.
 
 Done when:
 - Reconcile status never appears to complete for a different highlighted resource.
