@@ -1184,6 +1184,83 @@ fn flux_detail_alignment_survives_watch_reorder_and_selected_delete() {
 }
 
 #[test]
+fn flux_delete_selected_resource_falls_back_to_nearest_neighbor() {
+    fn kustomization(name: &str) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    fn snapshot(version: u64, names: &[&str]) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version: version,
+            flux_resources: names.iter().map(|name| kustomization(name)).collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn selected_name(app: &AppState, snapshot: &ClusterSnapshot) -> Option<String> {
+        selected_resource(app, snapshot).map(|resource| resource.name().to_string())
+    }
+
+    let previous = snapshot(1, &["bootstrap", "apps", "platform"]);
+
+    let mut first = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 0,
+        ..AppState::default()
+    };
+    let deleted_first = snapshot(2, &["apps", "platform"]);
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut first,
+        &previous,
+        &deleted_first
+    ));
+    assert_eq!(first.selected_idx(), 0);
+    assert_eq!(
+        selected_name(&first, &deleted_first).as_deref(),
+        Some("apps")
+    );
+
+    let mut middle = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 1,
+        ..AppState::default()
+    };
+    let deleted_middle = snapshot(3, &["bootstrap", "platform"]);
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut middle,
+        &previous,
+        &deleted_middle
+    ));
+    assert_eq!(middle.selected_idx(), 1);
+    assert_eq!(
+        selected_name(&middle, &deleted_middle).as_deref(),
+        Some("platform")
+    );
+
+    let mut last = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 2,
+        ..AppState::default()
+    };
+    let deleted_last = snapshot(4, &["bootstrap", "apps"]);
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut last,
+        &previous,
+        &deleted_last
+    ));
+    assert_eq!(last.selected_idx(), 1);
+    assert_eq!(selected_name(&last, &deleted_last).as_deref(), Some("apps"));
+}
+
+#[test]
 fn prepare_bookmark_target_navigates_to_resource_view() {
     let mut app = AppState::default();
     app.view = AppView::Bookmarks;

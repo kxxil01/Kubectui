@@ -446,10 +446,9 @@ pub fn preserve_flux_selection_identity_after_snapshot_change(
 
     let Some(next_idx) = next_idx else {
         let clamped_idx = app.selected_idx().min(indices.len().saturating_sub(1));
-        let selection_changed = app.selected_idx != clamped_idx;
         app.selected_idx = clamped_idx;
-        let detail_changed = close_stale_flux_detail_after_selection_change(app, current);
-        return selection_changed || detail_changed;
+        close_stale_flux_detail_after_selection_change(app, current);
+        return true;
     };
 
     let selection_changed = app.selected_idx != next_idx;
