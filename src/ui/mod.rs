@@ -2612,6 +2612,26 @@ mod tests {
         cells
     }
 
+    fn selected_lines(terminal: &Terminal<TestBackend>) -> Vec<String> {
+        let theme = default_theme();
+        let buffer = terminal.backend().buffer();
+        let mut lines = Vec::new();
+        for y in 0..buffer.area.height {
+            let selected = (0..buffer.area.width).any(|x| {
+                let cell = &buffer[(x, y)];
+                cell.fg == theme.selection_fg && cell.bg == theme.selection_bg
+            });
+            if selected {
+                let mut line = String::new();
+                for x in 0..buffer.area.width {
+                    line.push_str(buffer[(x, y)].symbol());
+                }
+                lines.push(line);
+            }
+        }
+        lines
+    }
+
     fn pods_snapshot_for_render_tests() -> ClusterSnapshot {
         let mut snapshot = ClusterSnapshot::default();
         snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Ready;
@@ -4236,6 +4256,75 @@ mod tests {
 
         let app = app_with_view(AppView::FluxCDAll);
         draw(&app, &snapshot);
+    }
+
+    #[test]
+    fn render_flux_selected_row_stays_visible_after_far_reorder() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        fn flux_snapshot(version: u64, target_idx: usize) -> ClusterSnapshot {
+            let mut names = (0..60)
+                .filter(|idx| *idx != 50)
+                .map(|idx| format!("resource-{idx:02}"))
+                .collect::<Vec<_>>();
+            names.insert(target_idx.min(names.len()), "resource-50".to_string());
+            ClusterSnapshot {
+                snapshot_version: version,
+                flux_resources: names
+                    .into_iter()
+                    .map(|name| FluxResourceInfo {
+                        name,
+                        namespace: Some("flux-system".to_string()),
+                        kind: "Kustomization".to_string(),
+                        group: "kustomize.toolkit.fluxcd.io".to_string(),
+                        version: "v1".to_string(),
+                        plural: "kustomizations".to_string(),
+                        status: "Ready".to_string(),
+                        message: Some("Applied".to_string()),
+                        ..FluxResourceInfo::default()
+                    })
+                    .collect(),
+                ..ClusterSnapshot::default()
+            }
+        }
+
+        let mut app = app_with_view(AppView::FluxCDKustomizations);
+        app.focus = Focus::Content;
+        app.selected_idx = 50;
+        let backend = TestBackend::new(120, 10);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &flux_snapshot(1, 50));
+        let selected_before = selected_lines(&terminal);
+        assert!(
+            selected_before
+                .iter()
+                .any(|line| line.contains("resource-50")),
+            "selected row should be visible before reorder: {selected_before:?}"
+        );
+
+        app.selected_idx = 2;
+        draw_in_terminal(&mut terminal, &app, &flux_snapshot(2, 2));
+        let selected_after = selected_lines(&terminal);
+        assert!(
+            selected_after
+                .iter()
+                .any(|line| line.contains("resource-50")),
+            "selected row should be visible after reorder: {selected_after:?}"
+        );
+        assert!(
+            selected_after
+                .iter()
+                .all(|line| !line.contains("resource-02")),
+            "highlight should not flash to raw-index neighbor: {selected_after:?}"
+        );
     }
 
     /// Verifies detail overlay renders for a CustomResource without panic.

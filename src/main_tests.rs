@@ -1642,6 +1642,66 @@ fn flux_secondary_pane_state_tracks_selected_resource_identity_after_reorder() {
 }
 
 #[test]
+fn flux_repeated_watch_churn_never_moves_highlight_to_wrong_resource() {
+    fn kustomization(name: &str) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    fn snapshot(version: u64, names: &[String]) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version: version,
+            flux_resources: names.iter().map(|name| kustomization(name)).collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn names_with_target_at(position: usize) -> Vec<String> {
+        let mut names = (0..20)
+            .filter(|idx| *idx != 7)
+            .map(|idx| format!("resource-{idx:02}"))
+            .collect::<Vec<_>>();
+        names.insert(position.min(names.len()), "resource-07".to_string());
+        names
+    }
+
+    let target = ResourceRef::CustomResource {
+        name: "resource-07".to_string(),
+        namespace: Some("flux-system".to_string()),
+        group: "kustomize.toolkit.fluxcd.io".to_string(),
+        version: "v1".to_string(),
+        kind: "Kustomization".to_string(),
+        plural: "kustomizations".to_string(),
+    };
+    let mut previous = snapshot(1, &names_with_target_at(7));
+    let mut app = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 7,
+        ..AppState::default()
+    };
+
+    assert_eq!(selected_resource(&app, &previous), Some(target.clone()));
+
+    for (version, target_position) in [0, 19, 2, 16, 4, 12, 7].into_iter().enumerate() {
+        let current = snapshot(version as u64 + 2, &names_with_target_at(target_position));
+        assert!(preserve_flux_selection_identity_after_snapshot_change(
+            &mut app, &previous, &current
+        ));
+        assert_eq!(app.selected_idx(), target_position);
+        assert_eq!(selected_resource(&app, &current), Some(target.clone()));
+        assert_eq!(app.status_message(), None);
+        previous = current;
+    }
+}
+
+#[test]
 fn prepare_bookmark_target_navigates_to_resource_view() {
     let mut app = AppState::default();
     app.view = AppView::Bookmarks;
