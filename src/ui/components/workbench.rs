@@ -262,7 +262,7 @@ fn render_action_history_tab(
         .collect();
 
     frame.render_widget(Paragraph::new(lines), area);
-    render_scrollbar(frame, area, entries.len(), window.start);
+    render_scrollbar(frame, area, entries.len(), selected);
 }
 
 fn render_access_review_tab(
@@ -280,7 +280,7 @@ fn render_access_review_tab(
         .take(window.end.saturating_sub(window.start))
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(visible), area);
-    render_scrollbar(frame, area, total_lines, window.start);
+    render_scroll_window_scrollbar(frame, area, total_lines, window.start);
 }
 
 fn access_review_lines(
@@ -1114,7 +1114,7 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
     };
 
     frame.render_widget(Paragraph::new(body), area);
-    render_scrollbar(frame, area, total, window.start);
+    render_scroll_window_scrollbar(frame, area, total, window.start);
 }
 
 fn render_resource_diff_tab(
@@ -1424,7 +1424,7 @@ fn render_rollout_tab(
         Paragraph::new(lines[window.start..window.end].to_vec()),
         sections[1],
     );
-    render_scrollbar(frame, sections[1], lines.len(), window.start);
+    render_scroll_window_scrollbar(frame, sections[1], lines.len(), window.start);
 }
 
 fn rollout_live_summary(
@@ -1627,7 +1627,7 @@ fn render_helm_history_tab(
         .collect::<Vec<_>>();
 
     frame.render_widget(Paragraph::new(lines), sections[1]);
-    render_scrollbar(frame, sections[1], total, window.start);
+    render_scrollbar(frame, sections[1], total, selected);
 }
 
 fn render_helm_values_diff(
@@ -1752,7 +1752,7 @@ fn render_diff_lines(
         .collect::<Vec<_>>();
 
     frame.render_widget(Paragraph::new(rendered), area);
-    render_scrollbar(frame, area, total, window.start);
+    render_scroll_window_scrollbar(frame, area, total, window.start);
 }
 
 fn render_diff_line<'a>(line: &crate::resource_diff::ResourceDiffLine) -> Line<'a> {
@@ -1926,7 +1926,7 @@ fn render_decoded_secret_tab(
         .collect();
 
     frame.render_widget(Paragraph::new(lines), content_area);
-    render_scrollbar(frame, content_area, total, window.start);
+    render_scrollbar(frame, content_area, total, tab_state.selected);
 }
 
 fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &WorkbenchTab) {
@@ -2702,7 +2702,7 @@ fn render_workload_logs_tab(
     let window = scroll_window(
         total,
         tab.scroll,
-        sections[1].height.saturating_sub(1) as usize,
+        content_area.height.saturating_sub(1) as usize,
     );
     let lines: Vec<Line> = tab
         .lines
@@ -2748,8 +2748,8 @@ fn render_workload_logs_tab(
             Line::from(spans)
         })
         .collect();
-    frame.render_widget(Paragraph::new(lines), sections[1]);
-    render_scrollbar(frame, sections[1], total, window.start);
+    frame.render_widget(Paragraph::new(lines), content_area);
+    render_scroll_window_scrollbar(frame, content_area, total, window.start);
 }
 
 fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTabState) {
@@ -2837,7 +2837,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             Paragraph::new(entries[window.start..window.end].to_vec()),
             sections[1],
         );
-        render_scrollbar(frame, sections[1], total, window.start);
+        render_scrollbar(frame, sections[1], total, selected);
     } else {
         let total = tab.lines.len() + usize::from(!tab.pending_fragment.is_empty());
         if total == 0 {
@@ -2870,7 +2870,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             }
 
             frame.render_widget(Paragraph::new(lines), sections[1]);
-            render_scrollbar(frame, sections[1], total, window.start);
+            render_scroll_window_scrollbar(frame, sections[1], total, window.start);
         }
     }
 
@@ -3083,7 +3083,7 @@ fn render_runbook_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::Run
             .collect::<Vec<_>>()
     };
     frame.render_widget(Paragraph::new(step_lines), left_inner);
-    render_scrollbar(frame, left_inner, tab.steps.len(), window.start);
+    render_scrollbar(frame, left_inner, tab.steps.len(), tab.selected);
 
     let right_block = Block::default()
         .title(Span::styled(" Step Detail ", theme.section_title_style()))
@@ -3299,19 +3299,52 @@ fn render_scrollbar(frame: &mut Frame, area: Rect, total: usize, position: usize
     );
 }
 
+fn render_scroll_window_scrollbar(
+    frame: &mut Frame,
+    area: Rect,
+    total: usize,
+    window_start: usize,
+) {
+    render_scrollbar(
+        frame,
+        area,
+        total,
+        scroll_window_scrollbar_position(total, area.height.max(1) as usize, window_start),
+    );
+}
+
+fn scroll_window_scrollbar_position(
+    total: usize,
+    viewport_rows: usize,
+    window_start: usize,
+) -> usize {
+    if total == 0 {
+        return 0;
+    }
+    let visible = viewport_rows.max(1).min(total);
+    let max_start = total.saturating_sub(visible);
+    if max_start == 0 {
+        return 0;
+    }
+    window_start
+        .min(max_start)
+        .saturating_mul(total.saturating_sub(1))
+        / max_start
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         VisibleWindow, access_review_lines, centered_window, render_connectivity_tab,
         render_events_tab, render_extension_output_tab, render_helm_values_diff, render_logs_tab,
-        render_workload_logs_tab, scroll_window,
+        render_workload_logs_tab, scroll_window, scroll_window_scrollbar_position,
     };
     use crate::{
         action_history::{ActionKind, ActionStatus},
         app::ResourceRef,
         authorization::{ActionAccessReview, DetailActionAuthorization, ResourceAccessCheck},
         k8s::dtos::RbacRule,
-        log_investigation::LogTimeWindow,
+        log_investigation::{LogEntry, LogTimeWindow},
         policy::DetailAction,
         rbac_subjects::{
             AccessReviewSubject, SubjectAccessReview, SubjectBindingResolution,
@@ -3818,6 +3851,47 @@ mod tests {
         terminal
             .draw(|frame| render_workload_logs_tab(frame, Rect::new(0, 0, 72, 12), &tab))
             .expect("workload logs header should wrap on narrow width");
+    }
+
+    #[test]
+    fn scroll_window_scrollbar_position_reaches_bottom_at_last_viewport() {
+        assert_eq!(scroll_window_scrollbar_position(100, 10, 0), 0);
+        assert_eq!(scroll_window_scrollbar_position(100, 10, 45), 49);
+        assert_eq!(scroll_window_scrollbar_position(100, 10, 90), 99);
+        assert_eq!(scroll_window_scrollbar_position(1, 10, usize::MAX), 0);
+    }
+
+    #[test]
+    fn workload_logs_filter_input_is_not_overwritten_by_log_rows() {
+        let backend = TestBackend::new(100, 16);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "default".into()), 1);
+        tab.loading = false;
+        tab.editing_text_filter = true;
+        tab.filter_input = "needle".into();
+        tab.filter_input_cursor = tab.filter_input.len();
+        for idx in 0..8 {
+            tab.push_line(crate::workbench::WorkloadLogLine {
+                pod_name: "api-0".into(),
+                container_name: "main".into(),
+                entry: LogEntry::from_raw(format!("line-{idx}")),
+                is_stderr: false,
+            });
+        }
+
+        terminal
+            .draw(|frame| render_workload_logs_tab(frame, Rect::new(0, 0, 100, 16), &tab))
+            .expect("workload logs should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("needle"));
     }
 
     #[test]

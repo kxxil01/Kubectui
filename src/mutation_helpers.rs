@@ -284,7 +284,7 @@ pub fn refresh_options_for_view(
         ),
         AppView::PortForwarding => RefreshDispatch::new(RefreshScope::NONE, RefreshScope::NONE),
         AppView::Issues | AppView::HealthReport => RefreshDispatch::new(
-            RefreshScope::DASHBOARD_WATCHED,
+            RefreshScope::CORE_OVERVIEW,
             RefreshScope::CORE_OVERVIEW
                 .union(RefreshScope::LEGACY_SECONDARY)
                 .union(RefreshScope::SECURITY)

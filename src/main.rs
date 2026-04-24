@@ -123,6 +123,10 @@ fn should_include_flux_in_auto_refresh(auto_refresh_count: u64) -> bool {
     auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY)
 }
 
+fn should_request_navigation_refresh(view: AppView) -> bool {
+    view != AppView::PortForwarding
+}
+
 fn strip_active_watch_scope_from_refresh(
     mut dispatch: RefreshDispatch,
     active_watch_scope: RefreshScope,
@@ -408,12 +412,7 @@ async fn apply_workspace_snapshot_and_refresh(
     runtime.port_forwarder.stop_all().await;
     app.tunnel_registry.update_tunnels(Vec::new());
     app.apply_workspace_snapshot(snapshot);
-    if previous_view != app.view()
-        && !matches!(
-            app.view(),
-            kubectui::app::AppView::PortForwarding | kubectui::app::AppView::HelmCharts
-        )
-    {
+    if previous_view != app.view() && should_request_navigation_refresh(app.view()) {
         request_refresh(
             runtime.refresh_tx,
             runtime.global_state,
@@ -4529,10 +4528,7 @@ pub(crate) async fn run_app_inner(
                     app.navigate_to_view(view);
                     app.focus = kubectui::app::Focus::Content;
                     app.extension_in_instances = false;
-                    if !matches!(
-                        view,
-                        kubectui::app::AppView::PortForwarding | kubectui::app::AppView::HelmCharts
-                    ) {
+                    if should_request_navigation_refresh(view) {
                         request_refresh(
                             &refresh_tx,
                             &mut global_state,

@@ -644,7 +644,12 @@ pub(crate) fn request_refresh(
     }
 
     let options = dispatch.options;
-    let immediate_scope = dispatch.primary_scope.intersection(options.scope);
+    let primary_scope = dispatch.primary_scope.intersection(options.scope);
+    let immediate_scope = if primary_scope.is_empty() {
+        options.scope
+    } else {
+        primary_scope
+    };
     let background_scope = options.scope.without(immediate_scope);
     let target_view = dispatch.target_view;
 
