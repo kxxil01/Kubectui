@@ -1261,6 +1261,93 @@ fn flux_delete_selected_resource_falls_back_to_nearest_neighbor() {
 }
 
 #[test]
+fn flux_active_search_selection_fallback_is_predictable() {
+    fn kustomization(name: &str, status: &str) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            status: status.to_string(),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    fn snapshot(version: u64, resources: &[(&str, &str)]) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version: version,
+            flux_resources: resources
+                .iter()
+                .map(|(name, status)| kustomization(name, status))
+                .collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn selected_name(app: &AppState, snapshot: &ClusterSnapshot) -> Option<String> {
+        selected_resource(app, snapshot).map(|resource| resource.name().to_string())
+    }
+
+    let previous = snapshot(
+        1,
+        &[
+            ("bootstrap", "Ready"),
+            ("apps", "Ready"),
+            ("platform", "Ready"),
+        ],
+    );
+    let reordered = snapshot(
+        2,
+        &[
+            ("apps", "Ready"),
+            ("bootstrap", "Ready"),
+            ("platform", "Ready"),
+        ],
+    );
+    let mut app = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 1,
+        search_query: "ready".to_string(),
+        ..AppState::default()
+    };
+
+    assert_eq!(selected_name(&app, &previous).as_deref(), Some("apps"));
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut app, &previous, &reordered
+    ));
+    assert_eq!(app.selected_idx(), 0);
+    assert_eq!(selected_name(&app, &reordered).as_deref(), Some("apps"));
+    assert_eq!(app.status_message(), None);
+
+    let hidden_by_search = snapshot(
+        3,
+        &[
+            ("bootstrap", "Ready"),
+            ("apps", "Stalled"),
+            ("platform", "Ready"),
+        ],
+    );
+    app.selected_idx = 1;
+
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut app,
+        &previous,
+        &hidden_by_search
+    ));
+    assert_eq!(app.selected_idx(), 1);
+    assert_eq!(
+        selected_name(&app, &hidden_by_search).as_deref(),
+        Some("platform")
+    );
+    assert_eq!(
+        app.status_message(),
+        Some("Selected Flux resource no longer matches search; moved to nearest visible result.")
+    );
+}
+
+#[test]
 fn prepare_bookmark_target_navigates_to_resource_view() {
     let mut app = AppState::default();
     app.view = AppView::Bookmarks;

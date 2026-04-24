@@ -445,6 +445,14 @@ pub fn preserve_flux_selection_identity_after_snapshot_change(
     });
 
     let Some(next_idx) = next_idx else {
+        if selected_flux_resource_exists(current, &selected)
+            && !app.search_query().trim().is_empty()
+        {
+            app.set_status(
+                "Selected Flux resource no longer matches search; moved to nearest visible result."
+                    .to_string(),
+            );
+        }
         let clamped_idx = app.selected_idx().min(indices.len().saturating_sub(1));
         app.selected_idx = clamped_idx;
         close_stale_flux_detail_after_selection_change(app, current);
@@ -496,6 +504,13 @@ fn is_flux_custom_resource_ref(resource: &ResourceRef) -> bool {
         resource,
         ResourceRef::CustomResource { group, .. } if group.ends_with(".fluxcd.io")
     )
+}
+
+fn selected_flux_resource_exists(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> bool {
+    snapshot
+        .flux_resources
+        .iter()
+        .any(|candidate| flux_resource_matches(resource, candidate))
 }
 
 /// Returns the resource context (with node/cronjob metadata) for the selection.
