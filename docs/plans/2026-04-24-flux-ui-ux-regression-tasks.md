@@ -13,6 +13,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Flux active search preserves matching selection and falls back with status when hidden.
 - [x] Flux name/age sort paths preserve selected identity after reorder.
 - [x] Flux pending reconcile completion stays aligned after watch reorder/stale refresh.
+- [x] Flux secondary pane focus/scroll stays stable across reorder and resets on resource change.
 
 ## Next Tasks
 
@@ -70,9 +71,9 @@ Done when:
 
 ### 6. Secondary Pane Focus
 
-- [ ] Add regression: Flux secondary pane focused, watch reorder preserves focus mode.
-- [ ] Add regression: detail scroll not reset when same selected resource moves rows.
-- [ ] Add regression: detail scroll resets only when selected resource changes.
+- [x] Add regression: Flux secondary pane focused, watch reorder preserves focus mode.
+- [x] Add regression: detail scroll not reset when same selected resource moves rows.
+- [x] Add regression: detail scroll resets only when selected resource changes.
 
 Done when:
 - `;`, `j/k`, page keys, and Enter still route predictably after watch reorder.

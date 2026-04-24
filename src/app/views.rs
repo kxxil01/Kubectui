@@ -603,6 +603,16 @@ impl AppView {
                 | AppView::ClusterRoleBindings
                 | AppView::Roles
                 | AppView::ClusterRoles
+                | AppView::FluxCDAll
+                | AppView::FluxCDKustomizations
+                | AppView::FluxCDHelmReleases
+                | AppView::FluxCDSources
+                | AppView::FluxCDHelmRepositories
+                | AppView::FluxCDImages
+                | AppView::FluxCDArtifacts
+                | AppView::FluxCDReceivers
+                | AppView::FluxCDAlerts
+                | AppView::FluxCDAlertProviders
         )
     }
 

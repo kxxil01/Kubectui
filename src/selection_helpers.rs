@@ -455,6 +455,7 @@ pub fn preserve_flux_selection_identity_after_snapshot_change(
         }
         let clamped_idx = app.selected_idx().min(indices.len().saturating_sub(1));
         app.selected_idx = clamped_idx;
+        reset_content_detail_scroll_if_selection_changed(app, current, &selected);
         close_stale_flux_detail_after_selection_change(app, current);
         return true;
     };
@@ -464,6 +465,20 @@ pub fn preserve_flux_selection_identity_after_snapshot_change(
     app.selected_idx = next_idx;
     let detail_changed = close_stale_flux_detail_after_selection_change(app, current);
     selection_changed || detail_changed
+}
+
+fn reset_content_detail_scroll_if_selection_changed(
+    app: &mut AppState,
+    current: &ClusterSnapshot,
+    previous_selected: &ResourceRef,
+) -> bool {
+    if selected_resource(app, current).as_ref() == Some(previous_selected) {
+        return false;
+    }
+
+    let changed = app.content_detail_scroll != 0;
+    app.content_detail_scroll = 0;
+    changed
 }
 
 fn close_stale_flux_detail_after_selection_change(

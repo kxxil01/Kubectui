@@ -1387,6 +1387,7 @@ fn content_detail_page_keys_scroll_secondary_panes_without_moving_selection() {
         AppView::RoleBindings,
         AppView::ClusterRoles,
         AppView::ClusterRoleBindings,
+        AppView::FluxCDKustomizations,
     ] {
         let mut app = AppState::default();
         app.view = view;
@@ -1541,7 +1542,7 @@ fn secondary_pane_focus_is_scoped_to_supported_split_views() {
     assert_eq!(app.content_pane_focus(), ContentPaneFocus::List);
     assert!(!app.content_secondary_pane_active());
 
-    app.view = AppView::Governance;
+    app.view = AppView::FluxCDKustomizations;
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char(';'))),
         AppAction::None
