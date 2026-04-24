@@ -446,19 +446,57 @@ pub fn preserve_flux_selection_identity_after_snapshot_change(
 
     let Some(next_idx) = next_idx else {
         let clamped_idx = app.selected_idx().min(indices.len().saturating_sub(1));
-        if app.selected_idx == clamped_idx {
-            return false;
-        }
+        let selection_changed = app.selected_idx != clamped_idx;
         app.selected_idx = clamped_idx;
-        return true;
+        let detail_changed = close_stale_flux_detail_after_selection_change(app, current);
+        return selection_changed || detail_changed;
     };
 
-    if app.selected_idx == next_idx {
+    let selection_changed = app.selected_idx != next_idx;
+
+    app.selected_idx = next_idx;
+    let detail_changed = close_stale_flux_detail_after_selection_change(app, current);
+    selection_changed || detail_changed
+}
+
+fn close_stale_flux_detail_after_selection_change(
+    app: &mut AppState,
+    current: &ClusterSnapshot,
+) -> bool {
+    let Some(detail_resource) = app
+        .detail_view
+        .as_ref()
+        .and_then(|detail| detail.resource.as_ref())
+    else {
+        return false;
+    };
+
+    if !is_flux_custom_resource_ref(detail_resource) {
         return false;
     }
 
-    app.selected_idx = next_idx;
+    if !current
+        .flux_resources
+        .iter()
+        .any(|candidate| flux_resource_matches(detail_resource, candidate))
+    {
+        app.detail_view = None;
+        return true;
+    }
+
+    if selected_resource(app, current).as_ref() == Some(detail_resource) {
+        return false;
+    }
+
+    app.detail_view = None;
     true
+}
+
+fn is_flux_custom_resource_ref(resource: &ResourceRef) -> bool {
+    matches!(
+        resource,
+        ResourceRef::CustomResource { group, .. } if group.ends_with(".fluxcd.io")
+    )
 }
 
 /// Returns the resource context (with node/cronjob metadata) for the selection.
