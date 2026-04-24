@@ -10,6 +10,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Flux detail stays aligned with selected list resource after watch reorder.
 - [x] Flux detail closes when the selected Flux resource is deleted.
 - [x] Flux selected delete falls back to nearest neighbor for first/middle/last rows.
+- [x] Flux active search preserves matching selection and falls back with status when hidden.
 
 ## Next Tasks
 
@@ -26,10 +27,10 @@ Done when:
 
 ### 2. Active Search Fallback
 
-- [ ] Add regression: selected Flux resource remains visible after reorder with active search.
-- [ ] Add regression: selected Flux resource stops matching search after update.
-- [ ] Decide UX message for selection disappearing from filtered results.
-- [ ] Patch fallback if raw clamp feels wrong or loses nearest identity.
+- [x] Add regression: selected Flux resource remains visible after reorder with active search.
+- [x] Add regression: selected Flux resource stops matching search after update.
+- [x] Decide UX message for selection disappearing from filtered results.
+- [x] Patch fallback if raw clamp feels wrong or loses nearest identity.
 
 Done when:
 - Search-visible resources preserve identity.
