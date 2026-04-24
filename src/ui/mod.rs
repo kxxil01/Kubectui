@@ -34,7 +34,7 @@ use crate::{
     icons::view_icon,
     policy::ViewAction,
     state::{
-        ClusterSnapshot, DataPhase, ViewLoadState,
+        ClusterSnapshot, DataPhase, RefreshScope, ViewLoadState,
         alerts::{format_mib, format_millicores, parse_mib, parse_millicores},
     },
     time::{AppTimestamp, age_seconds_since, now_unix_seconds},
@@ -51,6 +51,8 @@ use filter_cache::{
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct SidebarCountsCacheKey {
     snapshot_version: u64,
+    loaded_scope: RefreshScope,
+    view_load_states_hash: u64,
     collapsed_mask: u16,
     bookmark_count: usize,
 }
@@ -69,6 +71,8 @@ fn cached_sidebar_counts(
 
     let key = SidebarCountsCacheKey {
         snapshot_version: cluster.snapshot_version,
+        loaded_scope: cluster.loaded_scope,
+        view_load_states_hash: hash_view_load_states(&cluster.view_load_states),
         collapsed_mask: crate::app::sidebar::collapsed_mask(&app.collapsed_groups),
         bookmark_count: app.bookmark_count(),
     };
@@ -106,6 +110,18 @@ fn cached_sidebar_counts(
     }
 
     (counts, counts_hash)
+}
+
+fn hash_view_load_states(states: &[ViewLoadState]) -> u64 {
+    states.iter().fold(0xcbf29ce484222325_u64, |hash, state| {
+        let state_bits = match state {
+            ViewLoadState::Idle => 0,
+            ViewLoadState::Loading => 1,
+            ViewLoadState::Refreshing => 2,
+            ViewLoadState::Ready => 3,
+        };
+        hash.wrapping_mul(0x100000001b3) ^ state_bits
+    })
 }
 
 /// Case-insensitive substring match without allocating a new lowercase string.
@@ -2874,7 +2890,16 @@ mod tests {
     #[test]
     fn sidebar_uses_unknown_count_placeholder_for_unloaded_scopes() {
         // Use Pods view so Workloads group is expanded and Pods is visible.
-        let text = render_to_string(&app_with_view(AppView::Pods), &ClusterSnapshot::default());
+        let loaded_snapshot = ClusterSnapshot {
+            loaded_scope: crate::state::RefreshScope::PODS,
+            ..ClusterSnapshot::default()
+        };
+        let app = app_with_view(AppView::Pods);
+
+        let loaded_text = render_to_string(&app, &loaded_snapshot);
+        assert!(loaded_text.contains("Pods (0)"));
+
+        let text = render_to_string(&app, &ClusterSnapshot::default());
         assert!(text.contains("Pods (…)"));
         assert!(!text.contains("Pods (0)"));
     }
