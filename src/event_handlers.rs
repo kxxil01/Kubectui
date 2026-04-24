@@ -394,6 +394,18 @@ pub(crate) fn workbench_follow_streams_to_stop(
         _ => Vec::new(),
     };
 
+    pod_log_follow_streams_from_tabs(tabs)
+}
+
+pub(crate) fn workbench_all_follow_streams_to_stop(
+    app: &AppState,
+) -> Vec<(String, String, String)> {
+    pod_log_follow_streams_from_tabs(app.workbench().tabs.iter().map(|tab| &tab.state))
+}
+
+fn pod_log_follow_streams_from_tabs<'a>(
+    tabs: impl IntoIterator<Item = &'a WorkbenchTabState>,
+) -> Vec<(String, String, String)> {
     tabs.into_iter()
         .filter_map(|state| match state {
             WorkbenchTabState::PodLogs(logs_tab) => {

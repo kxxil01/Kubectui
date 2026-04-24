@@ -280,7 +280,13 @@ fn render_access_review_tab(
         .take(window.end.saturating_sub(window.start))
         .collect::<Vec<_>>();
     frame.render_widget(Paragraph::new(visible), area);
-    render_scroll_window_scrollbar(frame, area, total_lines, window.start);
+    render_scroll_window_scrollbar(
+        frame,
+        area,
+        total_lines,
+        area.height.max(1) as usize,
+        window.start,
+    );
 }
 
 fn access_review_lines(
@@ -1094,7 +1100,8 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
     };
 
     let total = yaml.lines().count();
-    let window = scroll_window(total, scroll, area.height.saturating_sub(1) as usize);
+    let viewport_rows = area.height.saturating_sub(1) as usize;
+    let window = scroll_window(total, scroll, viewport_rows);
     let body = if window.start < window.end {
         yaml.lines()
             .enumerate()
@@ -1114,7 +1121,7 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
     };
 
     frame.render_widget(Paragraph::new(body), area);
-    render_scroll_window_scrollbar(frame, area, total, window.start);
+    render_scroll_window_scrollbar(frame, area, total, viewport_rows, window.start);
 }
 
 fn render_resource_diff_tab(
@@ -1424,7 +1431,13 @@ fn render_rollout_tab(
         Paragraph::new(lines[window.start..window.end].to_vec()),
         sections[1],
     );
-    render_scroll_window_scrollbar(frame, sections[1], lines.len(), window.start);
+    render_scroll_window_scrollbar(
+        frame,
+        sections[1],
+        lines.len(),
+        sections[1].height.max(1) as usize,
+        window.start,
+    );
 }
 
 fn rollout_live_summary(
@@ -1752,7 +1765,13 @@ fn render_diff_lines(
         .collect::<Vec<_>>();
 
     frame.render_widget(Paragraph::new(rendered), area);
-    render_scroll_window_scrollbar(frame, area, total, window.start);
+    render_scroll_window_scrollbar(
+        frame,
+        area,
+        total,
+        area.height.max(1) as usize,
+        window.start,
+    );
 }
 
 fn render_diff_line<'a>(line: &crate::resource_diff::ResourceDiffLine) -> Line<'a> {
@@ -2699,11 +2718,8 @@ fn render_workload_logs_tab(
         return;
     }
 
-    let window = scroll_window(
-        total,
-        tab.scroll,
-        content_area.height.saturating_sub(1) as usize,
-    );
+    let viewport_rows = content_area.height.saturating_sub(1) as usize;
+    let window = scroll_window(total, tab.scroll, viewport_rows);
     let lines: Vec<Line> = tab
         .lines
         .iter()
@@ -2749,7 +2765,7 @@ fn render_workload_logs_tab(
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), content_area);
-    render_scroll_window_scrollbar(frame, content_area, total, window.start);
+    render_scroll_window_scrollbar(frame, content_area, total, viewport_rows, window.start);
 }
 
 fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTabState) {
@@ -2850,11 +2866,8 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
                 sections[1],
             );
         } else {
-            let window = scroll_window(
-                total,
-                tab.scroll,
-                sections[1].height.saturating_sub(1) as usize,
-            );
+            let viewport_rows = sections[1].height.saturating_sub(1) as usize;
+            let window = scroll_window(total, tab.scroll, viewport_rows);
             let complete_start = window.start.min(tab.lines.len());
             let complete_end = window.end.min(tab.lines.len());
             let mut lines: Vec<Line> = tab.lines[complete_start..complete_end]
@@ -2870,7 +2883,7 @@ fn render_exec_tab(frame: &mut Frame, area: Rect, tab: &crate::workbench::ExecTa
             }
 
             frame.render_widget(Paragraph::new(lines), sections[1]);
-            render_scroll_window_scrollbar(frame, sections[1], total, window.start);
+            render_scroll_window_scrollbar(frame, sections[1], total, viewport_rows, window.start);
         }
     }
 
@@ -3303,13 +3316,14 @@ fn render_scroll_window_scrollbar(
     frame: &mut Frame,
     area: Rect,
     total: usize,
+    viewport_rows: usize,
     window_start: usize,
 ) {
     render_scrollbar(
         frame,
         area,
         total,
-        scroll_window_scrollbar_position(total, area.height.max(1) as usize, window_start),
+        scroll_window_scrollbar_position(total, viewport_rows, window_start),
     );
 }
 

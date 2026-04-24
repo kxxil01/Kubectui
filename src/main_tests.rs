@@ -15,7 +15,7 @@ use super::{
     selected_flux_reconcile_resource, selected_resource, should_include_flux_in_auto_refresh,
     should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
     should_request_periodic_redraw, strip_active_watch_scope_from_refresh, ui_staleness_visible,
-    watch_scope_for_view, workbench_follow_streams_to_stop,
+    watch_scope_for_view, workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
 use crate::async_types::{QueuedRefresh, RefreshDispatch, RefreshRuntimeState};
 use kubectui::ui::components::command_palette::PaletteEntry;
@@ -802,6 +802,39 @@ fn closing_active_logs_tab_collects_follow_stream_to_stop() {
     assert_eq!(
         streams,
         vec![("pod-0".to_string(), "ns".to_string(), "main".to_string())]
+    );
+}
+
+#[test]
+fn namespace_switch_collects_all_follow_streams_before_closing_resource_tabs() {
+    let mut app = AppState::default();
+    app.open_pod_logs_tab(ResourceRef::Pod("pod-0".to_string(), "ns".to_string()));
+    if let Some(tab) = app.workbench_mut().active_tab_mut()
+        && let WorkbenchTabState::PodLogs(PodLogsTabState { viewer, .. }) = &mut tab.state
+    {
+        viewer.pod_name = "pod-0".to_string();
+        viewer.pod_namespace = "ns".to_string();
+        viewer.container_name = "main".to_string();
+        viewer.follow_mode = true;
+    }
+
+    app.open_pod_logs_tab(ResourceRef::Pod("pod-1".to_string(), "ns".to_string()));
+    if let Some(tab) = app.workbench_mut().active_tab_mut()
+        && let WorkbenchTabState::PodLogs(PodLogsTabState { viewer, .. }) = &mut tab.state
+    {
+        viewer.pod_name = "pod-1".to_string();
+        viewer.pod_namespace = "ns".to_string();
+        viewer.container_name = "sidecar".to_string();
+        viewer.follow_mode = true;
+    }
+
+    let streams = workbench_all_follow_streams_to_stop(&app);
+    assert_eq!(
+        streams,
+        vec![
+            ("pod-0".to_string(), "ns".to_string(), "main".to_string()),
+            ("pod-1".to_string(), "ns".to_string(), "sidecar".to_string()),
+        ]
     );
 }
 
