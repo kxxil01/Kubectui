@@ -15,7 +15,6 @@ use kubectui::{
 };
 
 use crate::async_types::{DetailAsyncResult, ExtensionFetchResult};
-use crate::flux_reconcile::flux_resource_matches;
 
 /// Converts the namespace string to `Option`: `"all"` becomes `None`.
 pub fn namespace_scope(namespace: &str) -> Option<&str> {
@@ -455,14 +454,14 @@ pub fn preserve_selection_identity_after_snapshot_change(
         let clamped_idx = app.selected_idx().min(indices.len().saturating_sub(1));
         app.selected_idx = clamped_idx;
         reset_content_detail_scroll_if_selection_changed(app, current, &selected);
-        close_stale_flux_detail_after_selection_change(app, current);
+        close_stale_detail_after_selection_change(app, current);
         return true;
     };
 
     let selection_changed = app.selected_idx != next_idx;
 
     app.selected_idx = next_idx;
-    let detail_changed = close_stale_flux_detail_after_selection_change(app, current);
+    let detail_changed = close_stale_detail_after_selection_change(app, current);
     selection_changed || detail_changed
 }
 
@@ -480,7 +479,7 @@ fn reset_content_detail_scroll_if_selection_changed(
     changed
 }
 
-fn close_stale_flux_detail_after_selection_change(
+fn close_stale_detail_after_selection_change(
     app: &mut AppState,
     current: &ClusterSnapshot,
 ) -> bool {
@@ -492,15 +491,16 @@ fn close_stale_flux_detail_after_selection_change(
         return false;
     };
 
-    if !is_flux_custom_resource_ref(detail_resource) {
+    let active_view_matches_detail = if app.view().is_fluxcd() {
+        is_flux_custom_resource_ref(detail_resource)
+    } else {
+        detail_resource.primary_view() == Some(app.view())
+    };
+    if !active_view_matches_detail {
         return false;
     }
 
-    if !current
-        .flux_resources
-        .iter()
-        .any(|candidate| flux_resource_matches(detail_resource, candidate))
-    {
+    if !resource_exists(current, detail_resource) {
         app.detail_view = None;
         return true;
     }

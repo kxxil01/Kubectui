@@ -16,6 +16,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Flux secondary pane focus/scroll stays stable across reorder and resets on resource change.
 - [x] Flux visual stability covered for far reorder and repeated watch churn.
 - [x] Non-Flux watched resource tables preserve selected identity after reorder.
+- [x] Non-Flux watched resource details close when selected resource is deleted.
 
 ## Next Tasks
 
@@ -99,6 +100,16 @@ Done when:
 
 Done when:
 - Same class of regression is either fixed canonically or explicitly scoped out with evidence.
+
+### 9. Watched Detail Alignment
+
+- [x] Add regression: Pod detail closes when selected Pod disappears after watch update.
+- [x] Add regression: Deployment detail closes when selected Deployment disappears after watch update.
+- [x] Add regression: Pod detail remains open when same selected Pod only reorders.
+- [x] Generalize stale detail cleanup beyond Flux for active resource-table views.
+
+Done when:
+- List highlight and detail pane never refer to different active-view resources after watch fallback.
 
 ## Suggested Order
 
