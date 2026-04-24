@@ -7,15 +7,17 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Preserve Flux selected resource identity across watch/refresh reorder.
 - [x] Regression for reorder after watch/apply-style update.
 - [x] Regression for delete-before-selection update.
+- [x] Flux detail stays aligned with selected list resource after watch reorder.
+- [x] Flux detail closes when the selected Flux resource is deleted.
 
 ## Next Tasks
 
 ### 1. Detail Pane Alignment
 
-- [ ] Add regression: Flux detail open, watch reorder preserves selected list resource and detail resource alignment.
-- [ ] Decide deleted-selected behavior with detail open: close detail vs move to fallback resource.
-- [ ] Patch canonical detail/list sync path if stale detail survives.
-- [ ] Verify with focused test and full gate.
+- [x] Add regression: Flux detail open, watch reorder preserves selected list resource and detail resource alignment.
+- [x] Decide deleted-selected behavior with detail open: close detail vs move to fallback resource.
+- [x] Patch canonical detail/list sync path if stale detail survives.
+- [x] Verify with focused test and full gate.
 
 Done when:
 - List highlight and detail title/resource always refer to same resource after reorder.

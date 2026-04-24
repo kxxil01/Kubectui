@@ -1114,6 +1114,76 @@ fn flux_selection_identity_survives_watch_reorder_and_delete_updates() {
 }
 
 #[test]
+fn flux_detail_alignment_survives_watch_reorder_and_selected_delete() {
+    fn kustomization(name: &str) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    fn snapshot(version: u64, names: &[&str]) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version: version,
+            flux_resources: names.iter().map(|name| kustomization(name)).collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn resource(name: &str) -> ResourceRef {
+        ResourceRef::CustomResource {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+        }
+    }
+
+    let previous = snapshot(1, &["bootstrap", "apps", "platform"]);
+    let reordered = snapshot(2, &["apps", "bootstrap", "platform"]);
+    let selected = resource("apps");
+    let mut app = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 1,
+        detail_view: Some(DetailViewState {
+            resource: Some(selected.clone()),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut app, &previous, &reordered
+    ));
+    assert_eq!(selected_resource(&app, &reordered), Some(selected.clone()));
+    assert_eq!(
+        app.detail_view
+            .as_ref()
+            .and_then(|detail| detail.resource.as_ref()),
+        Some(&selected)
+    );
+
+    let deleted_selected = snapshot(3, &["bootstrap", "platform"]);
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut app,
+        &reordered,
+        &deleted_selected
+    ));
+    assert_eq!(
+        selected_resource(&app, &deleted_selected),
+        Some(resource("bootstrap"))
+    );
+    assert!(app.detail_view.is_none());
+}
+
+#[test]
 fn prepare_bookmark_target_navigates_to_resource_view() {
     let mut app = AppState::default();
     app.view = AppView::Bookmarks;
