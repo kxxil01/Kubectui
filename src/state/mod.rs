@@ -4156,6 +4156,62 @@ mod tests {
     }
 
     #[test]
+    fn preserve_changed_flux_targets_keeps_watch_reconcile_progress_over_stale_refresh() {
+        let kustomize_group = "kustomize.toolkit.fluxcd.io";
+        let mut start = GlobalState::default();
+        Arc::make_mut(&mut start.snapshot).flux_resources = vec![FluxResourceInfo {
+            status: "Reconciling".to_string(),
+            last_applied_revision: Some("main@sha1:old".to_string()),
+            ..flux_resource(
+                "apps",
+                kustomize_group,
+                "v1",
+                "Kustomization",
+                "kustomizations",
+            )
+        }];
+        let start_fingerprints = start.flux_target_fingerprints();
+
+        let mut current = GlobalState::default();
+        Arc::make_mut(&mut current.snapshot).flux_resources = vec![FluxResourceInfo {
+            status: "Ready".to_string(),
+            last_applied_revision: Some("main@sha1:new".to_string()),
+            ..flux_resource(
+                "apps",
+                kustomize_group,
+                "v1",
+                "Kustomization",
+                "kustomizations",
+            )
+        }];
+
+        let mut refresh_result = GlobalState::default();
+        Arc::make_mut(&mut refresh_result.snapshot).flux_resources = vec![FluxResourceInfo {
+            status: "Reconciling".to_string(),
+            last_applied_revision: Some("main@sha1:old".to_string()),
+            ..flux_resource(
+                "apps",
+                kustomize_group,
+                "v1",
+                "Kustomization",
+                "kustomizations",
+            )
+        }];
+
+        refresh_result
+            .preserve_changed_flux_targets_from_snapshot(&current.snapshot(), &start_fingerprints);
+
+        let apps = refresh_result
+            .snapshot
+            .flux_resources
+            .iter()
+            .find(|resource| resource.name == "apps")
+            .expect("apps kustomization");
+        assert_eq!(apps.status, "Ready");
+        assert_eq!(apps.last_applied_revision.as_deref(), Some("main@sha1:new"));
+    }
+
+    #[test]
     fn flux_fingerprint_ignores_age_and_tracks_status() {
         let mut state = GlobalState::default();
         Arc::make_mut(&mut state.snapshot).flux_resources = vec![FluxResourceInfo {
