@@ -14,6 +14,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Flux name/age sort paths preserve selected identity after reorder.
 - [x] Flux pending reconcile completion stays aligned after watch reorder/stale refresh.
 - [x] Flux secondary pane focus/scroll stays stable across reorder and resets on resource change.
+- [x] Flux visual stability covered for far reorder and repeated watch churn.
 
 ## Next Tasks
 
@@ -80,9 +81,9 @@ Done when:
 
 ### 7. Visual Stability Audit
 
-- [ ] Manual run: reorder selected row outside visible window.
-- [ ] Manual run: repeated watch churn while Flux view active.
-- [ ] Capture any flicker/viewport snap symptoms as tests where practical.
+- [x] Regression: reorder selected row outside visible window.
+- [x] Regression: repeated watch churn while Flux view active.
+- [x] Capture any flicker/viewport snap symptoms as tests where practical.
 
 Done when:
 - Selected row remains visible.
