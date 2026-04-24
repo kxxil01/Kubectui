@@ -2010,7 +2010,7 @@ pub(crate) async fn run_app_inner(
                                     );
                                 }
                                 global_state = new_state;
-                                if preserve_flux_selection_identity_after_snapshot_change(
+                                if preserve_selection_identity_after_snapshot_change(
                                     &mut app,
                                     &previous_snapshot,
                                     &global_state.snapshot(),
@@ -2175,13 +2175,14 @@ pub(crate) async fn run_app_inner(
             Some(update) = watch_rx.recv() => {
                 if update.context_generation == refresh_state.context_generation {
                     let watched_resource = update.resource;
-                    let previous_snapshot =
-                        (watched_resource == WatchedResource::Flux && app.view().is_fluxcd())
-                            .then(|| global_state.snapshot());
+                    let previous_snapshot = {
+                        let snapshot = global_state.snapshot();
+                        selected_resource(&app, &snapshot).is_some().then_some(snapshot)
+                    };
                     let flux_changed = watch_update_needs_flux_refresh(&update);
                     global_state.apply_watch_update(update);
                     if let Some(previous_snapshot) = previous_snapshot
-                        && preserve_flux_selection_identity_after_snapshot_change(
+                        && preserve_selection_identity_after_snapshot_change(
                             &mut app,
                             &previous_snapshot,
                             &global_state.snapshot(),

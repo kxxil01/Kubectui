@@ -15,6 +15,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Flux pending reconcile completion stays aligned after watch reorder/stale refresh.
 - [x] Flux secondary pane focus/scroll stays stable across reorder and resets on resource change.
 - [x] Flux visual stability covered for far reorder and repeated watch churn.
+- [x] Non-Flux watched resource tables preserve selected identity after reorder.
 
 ## Next Tasks
 
@@ -91,10 +92,10 @@ Done when:
 
 ### 8. Generalize Beyond Flux
 
-- [ ] Audit Pods watch update selection behavior.
-- [ ] Audit Deployments watch update selection behavior.
-- [ ] Audit Services/Jobs/Namespaces if first two expose same raw-index risk.
-- [ ] Decide whether to generalize helper for all resource tables or keep Flux-only.
+- [x] Audit Pods watch update selection behavior.
+- [x] Audit Deployments watch update selection behavior.
+- [x] Audit Services/Jobs/Namespaces if first two expose same raw-index risk.
+- [x] Decide whether to generalize helper for all resource tables or keep Flux-only.
 
 Done when:
 - Same class of regression is either fixed canonically or explicitly scoped out with evidence.

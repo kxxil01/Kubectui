@@ -3,7 +3,10 @@
 use kubectui::{
     app::{AppState, AppView, DetailViewState, ResourceRef},
     authorization::DetailActionAuthorization,
-    bookmarks::{bookmark_selected_index, resource_exists, selected_bookmark_resource},
+    bookmarks::{
+        bookmark_selected_index, resource_exists, resource_selected_index,
+        selected_bookmark_resource,
+    },
     cronjob::{cronjob_history_entries, preferred_history_index},
     detail_sections::metadata_for_resource,
     k8s::client::K8sClient,
@@ -416,43 +419,39 @@ pub fn selected_resource(app: &AppState, snapshot: &ClusterSnapshot) -> Option<R
     }
 }
 
-/// Preserves the highlighted Flux resource across watch or refresh reorders.
-pub fn preserve_flux_selection_identity_after_snapshot_change(
+/// Preserves the highlighted resource across watch or refresh reorders.
+pub fn preserve_selection_identity_after_snapshot_change(
     app: &mut AppState,
     previous: &ClusterSnapshot,
     current: &ClusterSnapshot,
 ) -> bool {
-    if !app.view().is_fluxcd() {
-        return false;
-    }
-
     let Some(selected) = selected_resource(app, previous) else {
         return false;
     };
 
-    let indices = kubectui::ui::views::filtering::filtered_indices_for_view(
+    let next_idx = resource_selected_index(
         app.view(),
         current,
+        &selected,
         app.search_query(),
         app.workload_sort(),
         app.pod_sort(),
     );
-    let next_idx = indices.iter().position(|&resource_idx| {
-        current
-            .flux_resources
-            .get(resource_idx)
-            .is_some_and(|candidate| flux_resource_matches(&selected, candidate))
-    });
 
     let Some(next_idx) = next_idx else {
-        if selected_flux_resource_exists(current, &selected)
-            && !app.search_query().trim().is_empty()
-        {
+        if resource_exists(current, &selected) && !app.search_query().trim().is_empty() {
             app.set_status(
-                "Selected Flux resource no longer matches search; moved to nearest visible result."
+                "Selected resource no longer matches search; moved to nearest visible result."
                     .to_string(),
             );
         }
+        let indices = kubectui::ui::views::filtering::filtered_indices_for_view(
+            app.view(),
+            current,
+            app.search_query(),
+            app.workload_sort(),
+            app.pod_sort(),
+        );
         let clamped_idx = app.selected_idx().min(indices.len().saturating_sub(1));
         app.selected_idx = clamped_idx;
         reset_content_detail_scroll_if_selection_changed(app, current, &selected);
@@ -519,13 +518,6 @@ fn is_flux_custom_resource_ref(resource: &ResourceRef) -> bool {
         resource,
         ResourceRef::CustomResource { group, .. } if group.ends_with(".fluxcd.io")
     )
-}
-
-fn selected_flux_resource_exists(snapshot: &ClusterSnapshot, resource: &ResourceRef) -> bool {
-    snapshot
-        .flux_resources
-        .iter()
-        .any(|candidate| flux_resource_matches(resource, candidate))
 }
 
 /// Returns the resource context (with node/cronjob metadata) for the selection.
