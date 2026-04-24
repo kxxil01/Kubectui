@@ -1560,6 +1560,88 @@ fn flux_reconcile_completion_after_watch_reorder_keeps_ui_identity_aligned() {
 }
 
 #[test]
+fn flux_secondary_pane_state_tracks_selected_resource_identity_after_reorder() {
+    fn kustomization(name: &str) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    fn snapshot(version: u64, names: &[&str]) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version: version,
+            flux_resources: names.iter().map(|name| kustomization(name)).collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    fn selected_name(app: &AppState, snapshot: &ClusterSnapshot) -> Option<String> {
+        selected_resource(app, snapshot).map(|resource| resource.name().to_string())
+    }
+
+    let previous = snapshot(1, &["bootstrap", "apps", "platform"]);
+    let reordered = snapshot(2, &["apps", "bootstrap", "platform"]);
+    let mut app = AppState {
+        view: AppView::FluxCDKustomizations,
+        focus: Focus::Content,
+        selected_idx: 1,
+        content_pane_focus: ContentPaneFocus::Secondary,
+        content_detail_scroll: 12,
+        ..AppState::default()
+    };
+
+    assert_eq!(selected_name(&app, &previous).as_deref(), Some("apps"));
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut app, &previous, &reordered
+    ));
+    assert_eq!(selected_name(&app, &reordered).as_deref(), Some("apps"));
+    assert_eq!(app.selected_idx(), 0);
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::Secondary);
+    assert!(app.content_secondary_pane_active());
+    assert_eq!(app.content_detail_scroll, 12);
+    assert!(super::should_handle_root_enter(
+        KeyEvent::from(KeyCode::Enter),
+        &app
+    ));
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('j'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_detail_scroll, 13);
+    assert_eq!(app.selected_idx(), 0);
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('k'))),
+        AppAction::None
+    );
+    assert_eq!(app.content_detail_scroll, 12);
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::PageDown)),
+        AppAction::None
+    );
+    assert_eq!(app.content_detail_scroll, 22);
+    assert_eq!(app.selected_idx(), 0);
+
+    let deleted_selected = snapshot(3, &["bootstrap", "platform"]);
+    assert!(preserve_flux_selection_identity_after_snapshot_change(
+        &mut app,
+        &reordered,
+        &deleted_selected,
+    ));
+    assert_eq!(
+        selected_name(&app, &deleted_selected).as_deref(),
+        Some("bootstrap")
+    );
+    assert_eq!(app.content_pane_focus(), ContentPaneFocus::Secondary);
+    assert_eq!(app.content_detail_scroll, 0);
+}
+
+#[test]
 fn prepare_bookmark_target_navigates_to_resource_view() {
     let mut app = AppState::default();
     app.view = AppView::Bookmarks;
