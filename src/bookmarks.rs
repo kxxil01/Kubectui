@@ -297,10 +297,21 @@ pub fn bookmark_selected_index(
     workload_sort: Option<WorkloadSortState>,
     pod_sort: Option<PodSortState>,
 ) -> Option<usize> {
+    resource_selected_index(view, snapshot, resource, "", workload_sort, pod_sort)
+}
+
+pub fn resource_selected_index(
+    view: AppView,
+    snapshot: &ClusterSnapshot,
+    resource: &ResourceRef,
+    query: &str,
+    workload_sort: Option<WorkloadSortState>,
+    pod_sort: Option<PodSortState>,
+) -> Option<usize> {
     let indices = crate::ui::views::filtering::filtered_indices_for_view(
         view,
         snapshot,
-        "",
+        query,
         workload_sort,
         pod_sort,
     );
