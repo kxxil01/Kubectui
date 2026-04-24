@@ -13,11 +13,11 @@ use super::{
     queued_refresh_requires_two_phase, refresh_options_for_view, refresh_palette_resources,
     refresh_scope_pending, request_refresh, selected_extension_crd,
     selected_flux_reconcile_resource, selected_resource, should_include_flux_in_auto_refresh,
-    should_preserve_current_flux_after_refresh, should_request_periodic_redraw,
-    strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
-    workbench_follow_streams_to_stop,
+    should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
+    should_request_periodic_redraw, strip_active_watch_scope_from_refresh, ui_staleness_visible,
+    watch_scope_for_view, workbench_follow_streams_to_stop,
 };
-use crate::async_types::{QueuedRefresh, RefreshRuntimeState};
+use crate::async_types::{QueuedRefresh, RefreshDispatch, RefreshRuntimeState};
 use kubectui::ui::components::command_palette::PaletteEntry;
 use kubectui::{
     action_history::ActionKind,
@@ -395,7 +395,7 @@ fn auto_refresh_strips_only_active_watch_scope() {
         refresh_options_for_view(AppView::Issues, false, false),
         RefreshScope::DASHBOARD_WATCHED.union(RefreshScope::NAMESPACES),
     );
-    assert!(issues.primary_scope.is_empty());
+    assert!(issues.primary_scope.contains(RefreshScope::JOBS));
     assert!(issues.options.scope.contains(RefreshScope::JOBS));
     assert!(issues.options.scope.contains(RefreshScope::CRONJOBS));
     assert!(issues.options.scope.contains(RefreshScope::REPLICASETS));
@@ -412,6 +412,28 @@ fn auto_refresh_strips_only_active_watch_scope() {
     );
     assert!(bookmarks.primary_scope.contains(RefreshScope::PODS));
     assert!(bookmarks.options.scope.contains(RefreshScope::PODS));
+}
+
+#[test]
+fn navigation_refresh_includes_empty_local_helm_repositories_view() {
+    assert!(should_request_navigation_refresh(AppView::HelmCharts));
+    assert!(should_request_navigation_refresh(AppView::HelmReleases));
+    assert!(!should_request_navigation_refresh(AppView::PortForwarding));
+}
+
+#[test]
+fn view_refresh_profiles_have_nonempty_primary_phase() {
+    for view in AppView::tabs().iter().copied() {
+        let dispatch = refresh_options_for_view(view, false, false);
+        if dispatch.options.scope.is_empty() {
+            continue;
+        }
+
+        assert!(
+            dispatch.primary_scope.intersects(dispatch.options.scope),
+            "{view:?} primary scope must intersect requested scope"
+        );
+    }
 }
 
 #[test]
@@ -654,6 +676,78 @@ async fn visible_targeted_refresh_preempts_actual_aggregate_secondary_backfill()
     );
     assert!(queued.options.scope.contains(RefreshScope::NETWORK));
     assert!(queued.options.scope.contains(RefreshScope::SECURITY));
+}
+
+#[tokio::test]
+async fn issues_refresh_starts_core_scope_without_empty_noop_phase() {
+    let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
+    let mut global_state = GlobalState::default();
+    let client = kubectui::k8s::client::K8sClient::dummy();
+    let mut snapshot_dirty = false;
+    let mut refresh_state = RefreshRuntimeState::default();
+
+    request_refresh(
+        &refresh_tx,
+        &mut global_state,
+        &client,
+        Some("default".to_string()),
+        refresh_options_for_view(AppView::Issues, false, false),
+        &mut refresh_state,
+        &mut snapshot_dirty,
+    );
+
+    assert!(snapshot_dirty);
+    assert_eq!(
+        global_state.snapshot().view_load_state(AppView::Issues),
+        kubectui::state::ViewLoadState::Loading
+    );
+    let in_flight = refresh_state
+        .in_flight_options
+        .expect("issues refresh should start immediately");
+    assert!(!in_flight.scope.is_empty());
+    assert!(in_flight.scope.contains(RefreshScope::CORE_OVERVIEW));
+    assert!(!in_flight.skip_core);
+
+    let queued = refresh_state
+        .queued_refresh
+        .as_ref()
+        .expect("issues secondary backfill should be queued");
+    assert!(queued.options.skip_core);
+    assert!(
+        queued
+            .options
+            .scope
+            .contains(RefreshScope::LEGACY_SECONDARY)
+    );
+    assert!(queued.options.scope.contains(RefreshScope::FLUX));
+}
+
+#[tokio::test]
+async fn disjoint_refresh_dispatch_starts_requested_scope_without_noop_phase() {
+    let (refresh_tx, _refresh_rx) = tokio::sync::mpsc::channel(4);
+    let mut global_state = GlobalState::default();
+    let client = kubectui::k8s::client::K8sClient::dummy();
+    let mut snapshot_dirty = false;
+    let mut refresh_state = RefreshRuntimeState::default();
+
+    request_refresh(
+        &refresh_tx,
+        &mut global_state,
+        &client,
+        Some("default".to_string()),
+        RefreshDispatch::new(RefreshScope::DASHBOARD_WATCHED, RefreshScope::CONFIG)
+            .for_view(AppView::Secrets),
+        &mut refresh_state,
+        &mut snapshot_dirty,
+    );
+
+    assert!(snapshot_dirty);
+    let in_flight = refresh_state
+        .in_flight_options
+        .expect("disjoint refresh should still start immediately");
+    assert_eq!(in_flight.scope, RefreshScope::CONFIG);
+    assert!(!in_flight.skip_core);
+    assert!(refresh_state.queued_refresh.is_none());
 }
 
 #[test]
@@ -1427,7 +1521,7 @@ fn services_and_issues_refresh_profiles_keep_services_scope_lightweight() {
 
     assert_eq!(services.primary_scope, RefreshScope::SERVICES);
     assert_eq!(services.options.scope, RefreshScope::SERVICES);
-    assert_eq!(issues.primary_scope, RefreshScope::DASHBOARD_WATCHED);
+    assert_eq!(issues.primary_scope, RefreshScope::CORE_OVERVIEW);
     assert!(issues.options.scope.contains(RefreshScope::CORE_OVERVIEW));
     assert!(
         issues
