@@ -4617,6 +4617,7 @@ pub(crate) async fn run_app_inner(
                     events_state.queued_namespace = None;
                     refresh_state.queued_refresh = None;
                     delete_in_flight_id = None;
+                    let follow_streams_to_stop = workbench_all_follow_streams_to_stop(&app);
                     for (_, handle) in exec_sessions.drain() {
                         let _ = handle.cancel_tx.send(());
                     }
@@ -4624,6 +4625,11 @@ pub(crate) async fn run_app_inner(
                         let _ = session
                             .client
                             .delete_node_debug_pod(&session.namespace, &session.pod_name)
+                            .await;
+                    }
+                    for (pod_name, namespace, container_name) in follow_streams_to_stop {
+                        let _ = coordinator
+                            .stop_log_streaming(&pod_name, &namespace, &container_name)
                             .await;
                     }
                     for (_, streams) in workload_log_sessions.drain() {
