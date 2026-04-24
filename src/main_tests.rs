@@ -1865,6 +1865,144 @@ fn watched_resource_views_preserve_selected_identity_after_reorder() {
 }
 
 #[test]
+fn watched_resource_detail_closes_when_selected_resource_is_deleted() {
+    fn pod(name: &str) -> PodInfo {
+        PodInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            ..PodInfo::default()
+        }
+    }
+
+    fn deployment(name: &str) -> DeploymentInfo {
+        DeploymentInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            ..DeploymentInfo::default()
+        }
+    }
+
+    let selected_pod = ResourceRef::Pod("api-1".to_string(), "default".to_string());
+    let previous_pods = ClusterSnapshot {
+        pods: vec![pod("api-0"), pod("api-1"), pod("api-2")],
+        ..ClusterSnapshot::default()
+    };
+    let current_pods = ClusterSnapshot {
+        pods: vec![pod("api-0"), pod("api-2")],
+        ..ClusterSnapshot::default()
+    };
+    let mut pod_app = AppState {
+        view: AppView::Pods,
+        selected_idx: 1,
+        detail_view: Some(DetailViewState {
+            resource: Some(selected_pod.clone()),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        selected_resource(&pod_app, &previous_pods),
+        Some(selected_pod)
+    );
+    assert!(preserve_selection_identity_after_snapshot_change(
+        &mut pod_app,
+        &previous_pods,
+        &current_pods
+    ));
+    assert_eq!(pod_app.selected_idx(), 1);
+    assert_eq!(
+        selected_resource(&pod_app, &current_pods),
+        Some(ResourceRef::Pod("api-2".to_string(), "default".to_string()))
+    );
+    assert!(pod_app.detail_view.is_none());
+
+    let selected_deployment = ResourceRef::Deployment("api".to_string(), "default".to_string());
+    let previous_deployments = ClusterSnapshot {
+        deployments: vec![
+            deployment("worker"),
+            deployment("api"),
+            deployment("frontend"),
+        ],
+        ..ClusterSnapshot::default()
+    };
+    let current_deployments = ClusterSnapshot {
+        deployments: vec![deployment("worker"), deployment("frontend")],
+        ..ClusterSnapshot::default()
+    };
+    let mut deployment_app = AppState {
+        view: AppView::Deployments,
+        selected_idx: 1,
+        detail_view: Some(DetailViewState {
+            resource: Some(selected_deployment.clone()),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        selected_resource(&deployment_app, &previous_deployments),
+        Some(selected_deployment)
+    );
+    assert!(preserve_selection_identity_after_snapshot_change(
+        &mut deployment_app,
+        &previous_deployments,
+        &current_deployments
+    ));
+    assert_eq!(deployment_app.selected_idx(), 1);
+    assert_eq!(
+        selected_resource(&deployment_app, &current_deployments),
+        Some(ResourceRef::Deployment(
+            "frontend".to_string(),
+            "default".to_string()
+        ))
+    );
+    assert!(deployment_app.detail_view.is_none());
+}
+
+#[test]
+fn watched_resource_detail_stays_open_when_selected_resource_reorders() {
+    fn pod(name: &str) -> PodInfo {
+        PodInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            ..PodInfo::default()
+        }
+    }
+
+    let selected = ResourceRef::Pod("api-1".to_string(), "default".to_string());
+    let previous = ClusterSnapshot {
+        pods: vec![pod("api-0"), pod("api-1"), pod("api-2")],
+        ..ClusterSnapshot::default()
+    };
+    let current = ClusterSnapshot {
+        pods: vec![pod("api-1"), pod("api-0"), pod("api-2")],
+        ..ClusterSnapshot::default()
+    };
+    let mut app = AppState {
+        view: AppView::Pods,
+        selected_idx: 1,
+        detail_view: Some(DetailViewState {
+            resource: Some(selected.clone()),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    assert!(preserve_selection_identity_after_snapshot_change(
+        &mut app, &previous, &current
+    ));
+    assert_eq!(app.selected_idx(), 0);
+    assert_eq!(selected_resource(&app, &current), Some(selected.clone()));
+    assert_eq!(
+        app.detail_view
+            .as_ref()
+            .and_then(|detail| detail.resource.as_ref()),
+        Some(&selected)
+    );
+}
+
+#[test]
 fn prepare_bookmark_target_navigates_to_resource_view() {
     let mut app = AppState::default();
     app.view = AppView::Bookmarks;
