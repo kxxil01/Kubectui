@@ -4071,15 +4071,16 @@ pub(crate) async fn run_app_inner(
                     app.command_palette.close();
 
                     let mapped = map_palette_detail_action(action);
-                    let needs_detail = palette_detail_action_needs_detail(action);
+                    let needs_detail =
+                        palette_detail_action_needs_resource_load(&app, action, &resource);
 
-                    if needs_detail && app.detail_view.is_none() {
+                    if needs_detail {
                         open_detail_for_resource(
                             &mut app,
                             &cached_snapshot,
                             &client,
                             &detail_tx,
-                            resource,
+                            resource.clone(),
                             &mut detail_request_seq,
                         );
                     }
@@ -4184,9 +4185,11 @@ pub(crate) async fn run_app_inner(
                                 continue;
                             };
                             let detail_action = action.into_detail_action();
-                            if palette_detail_action_needs_detail(detail_action)
-                                && app.detail_view.is_none()
-                            {
+                            if palette_detail_action_needs_resource_load(
+                                &app,
+                                detail_action,
+                                &resource,
+                            ) {
                                 open_detail_for_resource(
                                     &mut app,
                                     &cached_snapshot,
