@@ -4851,6 +4851,56 @@ fn apply_workspace_snapshot_reopens_active_group() {
 }
 
 #[test]
+fn apply_workspace_snapshot_clears_selection_search_status() {
+    let mut app = AppState {
+        search_query: "stale".to_string(),
+        search_cursor: "stale".chars().count(),
+        is_search_mode: true,
+        ..AppState::default()
+    };
+    app.set_status(SELECTION_SEARCH_FALLBACK_STATUS.to_string());
+    let snapshot = WorkspaceSnapshot {
+        context: Some("prod".into()),
+        namespace: "payments".into(),
+        view: AppView::Pods,
+        search_query: Some("checkout".into()),
+        collapsed_groups: Vec::new(),
+        workbench_open: false,
+        workbench_height: 15,
+        workbench_maximized: false,
+        action_history_tab: false,
+    };
+
+    app.apply_workspace_snapshot(&snapshot);
+
+    assert_eq!(app.search_query(), "checkout");
+    assert!(!app.is_search_mode());
+    assert_eq!(app.status_message(), None);
+}
+
+#[test]
+fn apply_workspace_snapshot_preserves_unrelated_status() {
+    let mut app = AppState::default();
+    app.set_status("Saved workspace: ops".to_string());
+    let snapshot = WorkspaceSnapshot {
+        context: Some("prod".into()),
+        namespace: "payments".into(),
+        view: AppView::Pods,
+        search_query: None,
+        collapsed_groups: Vec::new(),
+        workbench_open: false,
+        workbench_height: 15,
+        workbench_maximized: false,
+        action_history_tab: false,
+    };
+
+    app.apply_workspace_snapshot(&snapshot);
+
+    assert!(app.search_query().is_empty());
+    assert_eq!(app.status_message(), Some("Saved workspace: ops"));
+}
+
+#[test]
 fn apply_workspace_snapshot_keeps_workbench_closed_without_restored_tabs() {
     let mut app = AppState::default();
     app.workbench
