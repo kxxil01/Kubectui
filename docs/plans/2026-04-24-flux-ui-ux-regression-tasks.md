@@ -18,6 +18,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Non-Flux watched resource tables preserve selected identity after reorder.
 - [x] Non-Flux watched resource details close when selected resource is deleted.
 - [x] Non-Flux active search fallback preserves identity or closes stale detail.
+- [x] Watched active-search fallback status clears after selection recovers.
 
 ## Next Tasks
 
@@ -121,6 +122,15 @@ Done when:
 
 Done when:
 - Active search on watched tables never leaves highlight/detail on different resources.
+
+### 11. Watched Search Status Recovery
+
+- [x] Add regression: fallback status clears after selected visible resource matches search again.
+- [x] Add regression: unrelated status survives visible selection preservation.
+- [x] Clear only the canonical search-fallback status.
+
+Done when:
+- Stale search-fallback status cannot linger after selection is back on a visible matching resource.
 
 ## Suggested Order
 
