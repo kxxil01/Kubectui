@@ -18,6 +18,8 @@ use crate::async_types::{DetailAsyncResult, ExtensionFetchResult};
 
 const SELECTION_SEARCH_FALLBACK_STATUS: &str =
     "Selected resource no longer matches search; moved to nearest visible result.";
+const SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS: &str =
+    "Selected resource no longer matches search; no visible results.";
 
 /// Converts the namespace string to `Option`: `"all"` becomes `None`.
 pub fn namespace_scope(namespace: &str) -> Option<&str> {
@@ -428,7 +430,7 @@ pub fn preserve_selection_identity_after_snapshot_change(
     current: &ClusterSnapshot,
 ) -> bool {
     let Some(selected) = selected_resource(app, previous) else {
-        return false;
+        return clear_selection_search_fallback_status_if_results_visible(app, current);
     };
 
     let next_idx = resource_selected_index(
@@ -441,9 +443,6 @@ pub fn preserve_selection_identity_after_snapshot_change(
     );
 
     let Some(next_idx) = next_idx else {
-        if resource_exists(current, &selected) && !app.search_query().trim().is_empty() {
-            app.set_status(SELECTION_SEARCH_FALLBACK_STATUS.to_string());
-        }
         let indices = kubectui::ui::views::filtering::filtered_indices_for_view(
             app.view(),
             current,
@@ -451,6 +450,14 @@ pub fn preserve_selection_identity_after_snapshot_change(
             app.workload_sort(),
             app.pod_sort(),
         );
+        if resource_exists(current, &selected) && !app.search_query().trim().is_empty() {
+            let status = if indices.is_empty() {
+                SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS
+            } else {
+                SELECTION_SEARCH_FALLBACK_STATUS
+            };
+            app.set_status(status.to_string());
+        }
         let clamped_idx = app.selected_idx().min(indices.len().saturating_sub(1));
         app.selected_idx = clamped_idx;
         reset_content_detail_scroll_if_selection_changed(app, current, &selected);
@@ -467,7 +474,36 @@ pub fn preserve_selection_identity_after_snapshot_change(
 }
 
 fn clear_selection_search_fallback_status(app: &mut AppState) -> bool {
-    if app.status_message() != Some(SELECTION_SEARCH_FALLBACK_STATUS) {
+    if !matches!(
+        app.status_message(),
+        Some(SELECTION_SEARCH_FALLBACK_STATUS | SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS)
+    ) {
+        return false;
+    }
+
+    app.clear_status();
+    true
+}
+
+fn clear_selection_search_fallback_status_if_results_visible(
+    app: &mut AppState,
+    current: &ClusterSnapshot,
+) -> bool {
+    if !matches!(
+        app.status_message(),
+        Some(SELECTION_SEARCH_FALLBACK_STATUS | SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS)
+    ) {
+        return false;
+    }
+
+    let indices = kubectui::ui::views::filtering::filtered_indices_for_view(
+        app.view(),
+        current,
+        app.search_query(),
+        app.workload_sort(),
+        app.pod_sort(),
+    );
+    if indices.is_empty() {
         return false;
     }
 
