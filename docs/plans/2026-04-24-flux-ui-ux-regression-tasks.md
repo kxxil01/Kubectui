@@ -17,6 +17,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Flux visual stability covered for far reorder and repeated watch churn.
 - [x] Non-Flux watched resource tables preserve selected identity after reorder.
 - [x] Non-Flux watched resource details close when selected resource is deleted.
+- [x] Non-Flux active search fallback preserves identity or closes stale detail.
 
 ## Next Tasks
 
@@ -110,6 +111,16 @@ Done when:
 
 Done when:
 - List highlight and detail pane never refer to different active-view resources after watch fallback.
+
+### 10. Watched Active Search Fallback
+
+- [x] Add regression: selected Pod remains highlighted when visible search results reorder.
+- [x] Add regression: selected Pod stops matching search after watch update and falls to visible neighbor.
+- [x] Add regression: selected Service stops matching search after watch update and falls to visible neighbor.
+- [x] Ensure stale detail closes when active search fallback changes selected resource.
+
+Done when:
+- Active search on watched tables never leaves highlight/detail on different resources.
 
 ## Suggested Order
 
