@@ -178,6 +178,25 @@ fn navigation_preserves_unrelated_status() {
 }
 
 #[test]
+fn navigation_closes_stale_detail() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        selected_idx: 3,
+        detail_view: Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("api-0".to_string(), "default".to_string())),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    app.navigate_to_view(AppView::Services);
+
+    assert_eq!(app.view(), AppView::Services);
+    assert_eq!(app.selected_idx(), 0);
+    assert!(app.detail_view.is_none());
+}
+
+#[test]
 fn namespace_switch_clears_selection_search_status() {
     let mut app = AppState {
         search_query: "Running".to_string(),
