@@ -29,6 +29,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] View navigation closes stale detail panes.
 - [x] Search escape with empty query closes stale detail pane.
 - [x] Action-history resource jump preserves list/detail alignment.
+- [x] Palette and runbook detail actions load the targeted resource detail.
 
 ## Next Tasks
 
@@ -235,6 +236,14 @@ Done when:
 
 Done when:
 - Opening a resource from action history cannot show target detail while the list highlight remains on a reset row.
+
+### 22. Palette Target Detail Alignment
+
+- [x] Add regression: palette/runbook detail actions require loading the target resource when another detail pane is open.
+- [x] Patch palette and runbook deferred detail-action paths to compare resource identity, not just detail presence.
+
+Done when:
+- Palette/runbook actions cannot run a target-specific command against a stale open detail pane for another resource.
 
 ## Suggested Order
 

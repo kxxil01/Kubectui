@@ -6,7 +6,7 @@
 use std::time::{Duration, Instant};
 
 use kubectui::{
-    app::{AppAction, AppState, AppView, Focus},
+    app::{AppAction, AppState, AppView, Focus, ResourceRef},
     policy::DetailAction,
     state::RefreshScope,
 };
@@ -116,6 +116,20 @@ pub fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
             | DetailAction::Uncordon
             | DetailAction::Drain
     )
+}
+
+/// Returns `true` when a detail action must first load the requested resource.
+pub fn palette_detail_action_needs_resource_load(
+    app: &AppState,
+    action: DetailAction,
+    resource: &ResourceRef,
+) -> bool {
+    palette_detail_action_needs_detail(action)
+        && app
+            .detail_view
+            .as_ref()
+            .and_then(|detail| detail.resource.as_ref())
+            != Some(resource)
 }
 
 /// Converts a palette [`DetailAction`] into the corresponding [`AppAction`].
@@ -374,5 +388,67 @@ pub fn queue_deferred_refreshes(
             tokio::time::sleep(Duration::from_secs(delay_secs)).await;
             let _ = tx.send(trigger).await;
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::palette_detail_action_needs_resource_load;
+    use kubectui::{
+        app::{AppState, DetailViewState, ResourceRef},
+        policy::DetailAction,
+    };
+
+    #[test]
+    fn palette_detail_action_loads_when_no_detail_is_open() {
+        let app = AppState::default();
+        let target = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+
+        assert!(palette_detail_action_needs_resource_load(
+            &app,
+            DetailAction::Delete,
+            &target
+        ));
+    }
+
+    #[test]
+    fn palette_detail_action_loads_when_open_detail_is_different_resource() {
+        let target = ResourceRef::Pod("api-1".to_string(), "default".to_string());
+        let mut app = AppState {
+            detail_view: Some(DetailViewState {
+                resource: Some(ResourceRef::Pod("api-0".to_string(), "default".to_string())),
+                ..DetailViewState::default()
+            }),
+            ..AppState::default()
+        };
+
+        assert!(palette_detail_action_needs_resource_load(
+            &app,
+            DetailAction::Delete,
+            &target
+        ));
+
+        app.detail_view = Some(DetailViewState {
+            resource: Some(target.clone()),
+            ..DetailViewState::default()
+        });
+
+        assert!(!palette_detail_action_needs_resource_load(
+            &app,
+            DetailAction::Delete,
+            &target
+        ));
+    }
+
+    #[test]
+    fn palette_non_detail_action_does_not_load_resource_detail() {
+        let app = AppState::default();
+        let target = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+
+        assert!(!palette_detail_action_needs_resource_load(
+            &app,
+            DetailAction::ViewYaml,
+            &target
+        ));
     }
 }
