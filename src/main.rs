@@ -330,6 +330,7 @@ fn prepare_context_switch_ui(app: &mut kubectui::app::AppState) {
     app.search_query.clear();
     app.search_cursor = 0;
     app.is_search_mode = false;
+    app.clear_selection_search_status();
     app.detail_view = None;
     app.workbench.close_resource_tabs();
     app.sync_workbench_focus();
