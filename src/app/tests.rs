@@ -141,6 +141,37 @@ fn search_query_edit_preserves_unrelated_status() {
 }
 
 #[test]
+fn search_query_edit_resets_selected_idx_to_first_result() {
+    let mut app = AppState {
+        selected_idx: 9,
+        ..AppState::default()
+    };
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+
+    assert_eq!(app.search_query(), "a");
+    assert_eq!(app.selected_idx, 0);
+}
+
+#[test]
+fn search_cursor_move_does_not_reset_selected_idx() {
+    let mut app = AppState {
+        selected_idx: 9,
+        search_query: "api".to_string(),
+        search_cursor: 3,
+        is_search_mode: true,
+        ..AppState::default()
+    };
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Left));
+
+    assert_eq!(app.search_query(), "api");
+    assert_eq!(app.search_cursor, 2);
+    assert_eq!(app.selected_idx, 9);
+}
+
+#[test]
 fn search_query_supports_cursor_editing() {
     let mut app = AppState::default();
 
