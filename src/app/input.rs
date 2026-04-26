@@ -3046,6 +3046,8 @@ impl AppState {
                 self.is_search_mode = false;
                 // Reset selection so the user doesn't land on a stale filtered index.
                 self.selected_idx = 0;
+                self.detail_view = None;
+                self.clear_selection_search_status();
             }
             KeyCode::Enter if plain_shortcut(key) => {
                 self.is_search_mode = false;

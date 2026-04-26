@@ -283,6 +283,39 @@ fn search_query_edit_closes_stale_detail() {
 }
 
 #[test]
+fn search_esc_with_empty_query_closes_stale_detail() {
+    let mut app = AppState {
+        selected_idx: 5,
+        is_search_mode: true,
+        detail_view: Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("api-5".to_string(), "default".to_string())),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+
+    assert_eq!(app.selected_idx, 0);
+    assert!(!app.is_search_mode());
+    assert!(app.search_query().is_empty());
+    assert!(app.detail_view.is_none());
+}
+
+#[test]
+fn search_esc_with_empty_query_clears_selection_search_status() {
+    let mut app = AppState {
+        is_search_mode: true,
+        ..AppState::default()
+    };
+    app.set_status(SELECTION_SEARCH_FALLBACK_STATUS.to_string());
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Esc));
+
+    assert_eq!(app.status_message(), None);
+}
+
+#[test]
 fn search_cursor_move_keeps_detail_open() {
     let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
     let mut app = AppState {

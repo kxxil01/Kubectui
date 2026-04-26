@@ -27,6 +27,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Workspace restore and context switch clear stale watched-search fallback status.
 - [x] Namespace switch closes stale detail panes.
 - [x] View navigation closes stale detail panes.
+- [x] Search escape with empty query closes stale detail pane.
 
 ## Next Tasks
 
@@ -216,6 +217,15 @@ Done when:
 
 Done when:
 - Switching views cannot leave list highlight and detail pane pointed at different resource views.
+
+### 20. Search Escape Empty-Query Alignment
+
+- [x] Add regression: search escape with empty query closes open detail pane.
+- [x] Add regression: search escape with empty query clears watched-search fallback status.
+- [x] Patch canonical search escape branch.
+
+Done when:
+- Exiting empty search cannot reset list selection while leaving detail pane on old resource.
 
 ## Suggested Order
 
