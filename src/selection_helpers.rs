@@ -16,6 +16,9 @@ use kubectui::{
 
 use crate::async_types::{DetailAsyncResult, ExtensionFetchResult};
 
+const SELECTION_SEARCH_FALLBACK_STATUS: &str =
+    "Selected resource no longer matches search; moved to nearest visible result.";
+
 /// Converts the namespace string to `Option`: `"all"` becomes `None`.
 pub fn namespace_scope(namespace: &str) -> Option<&str> {
     if namespace == "all" {
@@ -439,10 +442,7 @@ pub fn preserve_selection_identity_after_snapshot_change(
 
     let Some(next_idx) = next_idx else {
         if resource_exists(current, &selected) && !app.search_query().trim().is_empty() {
-            app.set_status(
-                "Selected resource no longer matches search; moved to nearest visible result."
-                    .to_string(),
-            );
+            app.set_status(SELECTION_SEARCH_FALLBACK_STATUS.to_string());
         }
         let indices = kubectui::ui::views::filtering::filtered_indices_for_view(
             app.view(),
@@ -461,8 +461,18 @@ pub fn preserve_selection_identity_after_snapshot_change(
     let selection_changed = app.selected_idx != next_idx;
 
     app.selected_idx = next_idx;
+    let status_cleared = clear_selection_search_fallback_status(app);
     let detail_changed = close_stale_detail_after_selection_change(app, current);
-    selection_changed || detail_changed
+    selection_changed || detail_changed || status_cleared
+}
+
+fn clear_selection_search_fallback_status(app: &mut AppState) -> bool {
+    if app.status_message() != Some(SELECTION_SEARCH_FALLBACK_STATUS) {
+        return false;
+    }
+
+    app.clear_status();
+    true
 }
 
 fn reset_content_detail_scroll_if_selection_changed(
