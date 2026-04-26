@@ -1,7 +1,10 @@
 //! Resource selection and lookup helpers extracted from the main event loop.
 
 use kubectui::{
-    app::{AppState, AppView, DetailViewState, ResourceRef},
+    app::{
+        AppState, AppView, DetailViewState, ResourceRef, SELECTION_SEARCH_FALLBACK_STATUS,
+        SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS,
+    },
     authorization::DetailActionAuthorization,
     bookmarks::{
         bookmark_selected_index, resource_exists, resource_selected_index,
@@ -15,11 +18,6 @@ use kubectui::{
 };
 
 use crate::async_types::{DetailAsyncResult, ExtensionFetchResult};
-
-const SELECTION_SEARCH_FALLBACK_STATUS: &str =
-    "Selected resource no longer matches search; moved to nearest visible result.";
-const SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS: &str =
-    "Selected resource no longer matches search; no visible results.";
 
 /// Converts the namespace string to `Option`: `"all"` becomes `None`.
 pub fn namespace_scope(namespace: &str) -> Option<&str> {
@@ -474,15 +472,7 @@ pub fn preserve_selection_identity_after_snapshot_change(
 }
 
 fn clear_selection_search_fallback_status(app: &mut AppState) -> bool {
-    if !matches!(
-        app.status_message(),
-        Some(SELECTION_SEARCH_FALLBACK_STATUS | SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS)
-    ) {
-        return false;
-    }
-
-    app.clear_status();
-    true
+    app.clear_selection_search_status()
 }
 
 fn clear_selection_search_fallback_status_if_results_visible(
@@ -507,8 +497,7 @@ fn clear_selection_search_fallback_status_if_results_visible(
         return false;
     }
 
-    app.clear_status();
-    true
+    app.clear_selection_search_status()
 }
 
 fn reset_content_detail_scroll_if_selection_changed(

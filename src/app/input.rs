@@ -3037,6 +3037,8 @@ impl AppState {
     }
 
     fn handle_search_input(&mut self, key: KeyEvent) -> AppAction {
+        let previous_query = self.search_query.clone();
+
         match key.code {
             KeyCode::Esc => {
                 self.search_query.clear();
@@ -3091,6 +3093,9 @@ impl AppState {
                 self.search_cursor += 1;
             }
             _ => {}
+        }
+        if self.search_query != previous_query {
+            self.clear_selection_search_status();
         }
         AppAction::None
     }

@@ -1,5 +1,10 @@
 use super::*;
 
+pub const SELECTION_SEARCH_FALLBACK_STATUS: &str =
+    "Selected resource no longer matches search; moved to nearest visible result.";
+pub const SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS: &str =
+    "Selected resource no longer matches search; no visible results.";
+
 impl Default for AppState {
     fn default() -> Self {
         Self {
@@ -284,6 +289,18 @@ impl AppState {
 
     pub fn clear_status(&mut self) {
         self.status_message = None;
+    }
+
+    pub fn clear_selection_search_status(&mut self) -> bool {
+        if !matches!(
+            self.status_message(),
+            Some(SELECTION_SEARCH_FALLBACK_STATUS | SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS)
+        ) {
+            return false;
+        }
+
+        self.clear_status();
+        true
     }
 
     pub fn advance_spinner(&mut self) {
