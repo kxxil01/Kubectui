@@ -8,6 +8,7 @@ impl AppState {
         self.search_query.clear();
         self.search_cursor = 0;
         self.is_search_mode = false;
+        self.clear_selection_search_status();
         self.sync_action_history_selection();
     }
 
@@ -119,6 +120,7 @@ impl AppState {
         self.search_query.clear();
         self.search_cursor = 0;
         self.is_search_mode = false;
+        self.clear_selection_search_status();
         self.sync_collapsed_to_active_view();
         self.apply_sort_from_preferences(crate::columns::view_key(self.view));
     }

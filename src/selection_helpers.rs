@@ -693,6 +693,7 @@ pub fn prepare_resource_target(
 
     app.search_query.clear();
     app.is_search_mode = false;
+    app.clear_selection_search_status();
 
     let Some(view) = resource.primary_view() else {
         return Err(format!(

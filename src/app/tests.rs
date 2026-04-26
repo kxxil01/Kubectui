@@ -141,6 +141,61 @@ fn search_query_edit_preserves_unrelated_status() {
 }
 
 #[test]
+fn navigation_clears_selection_search_status() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        search_query: "Running".to_string(),
+        search_cursor: "Running".chars().count(),
+        is_search_mode: true,
+        ..AppState::default()
+    };
+    app.set_status(SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS.to_string());
+
+    app.navigate_to_view(AppView::Services);
+
+    assert_eq!(app.view(), AppView::Services);
+    assert!(app.search_query().is_empty());
+    assert!(!app.is_search_mode());
+    assert_eq!(app.status_message(), None);
+}
+
+#[test]
+fn navigation_preserves_unrelated_status() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        search_query: "api".to_string(),
+        search_cursor: "api".chars().count(),
+        is_search_mode: true,
+        ..AppState::default()
+    };
+    app.set_status("Saved workspace: ops".to_string());
+
+    app.navigate_to_view(AppView::Services);
+
+    assert!(app.search_query().is_empty());
+    assert!(!app.is_search_mode());
+    assert_eq!(app.status_message(), Some("Saved workspace: ops"));
+}
+
+#[test]
+fn namespace_switch_clears_selection_search_status() {
+    let mut app = AppState {
+        search_query: "Running".to_string(),
+        search_cursor: "Running".chars().count(),
+        is_search_mode: true,
+        ..AppState::default()
+    };
+    app.set_status(SELECTION_SEARCH_FALLBACK_STATUS.to_string());
+
+    app.set_namespace("prod".to_string());
+
+    assert_eq!(app.get_namespace(), "prod");
+    assert!(app.search_query().is_empty());
+    assert!(!app.is_search_mode());
+    assert_eq!(app.status_message(), None);
+}
+
+#[test]
 fn search_query_edit_resets_selected_idx_to_first_result() {
     let mut app = AppState {
         selected_idx: 9,

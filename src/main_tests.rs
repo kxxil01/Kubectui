@@ -24,7 +24,7 @@ use kubectui::{
     action_history::{ActionKind, ActionStatus},
     app::{
         AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus, ResourceRef,
-        SidebarItem, WorkloadSortColumn, WorkloadSortState,
+        SELECTION_SEARCH_FALLBACK_STATUS, SidebarItem, WorkloadSortColumn, WorkloadSortState,
     },
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
@@ -2390,6 +2390,7 @@ fn prepare_resource_target_syncs_sidebar_to_target_view() {
     app.collapsed_groups = kubectui::app::sidebar::all_groups().collect();
     app.sidebar_cursor = 0;
     app.search_query = "stale".to_string();
+    app.set_status(SELECTION_SEARCH_FALLBACK_STATUS.to_string());
 
     let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
     let mut snapshot = ClusterSnapshot::default();
@@ -2404,6 +2405,7 @@ fn prepare_resource_target_syncs_sidebar_to_target_view() {
     assert_eq!(app.view, AppView::Pods);
     assert_eq!(app.focus, kubectui::app::Focus::Content);
     assert!(app.search_query.is_empty());
+    assert_eq!(app.status_message(), None);
     assert!(
         !app.collapsed_groups
             .contains(&kubectui::app::NavGroup::Workloads)

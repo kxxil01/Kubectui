@@ -23,6 +23,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Manual search edits clear stale watched-search fallback status without clearing unrelated status.
 - [x] Manual search edits reset selection to first filtered result.
 - [x] Manual search edits close stale detail panes.
+- [x] View, namespace, and resource navigation clear stale watched-search fallback status.
 
 ## Next Tasks
 
@@ -175,6 +176,17 @@ Done when:
 Done when:
 - Search edit cannot leave list highlight and detail pane pointed at different resources.
 - Cursor movement inside the search box does not close detail.
+
+### 16. Navigation Search Status Recovery
+
+- [x] Add regression: view navigation clears watched-search fallback status.
+- [x] Add regression: namespace switch clears watched-search fallback status.
+- [x] Add regression: resource jump clears watched-search fallback status.
+- [x] Preserve unrelated status messages during view navigation.
+
+Done when:
+- Clearing search via navigation cannot leave stale watched-search fallback text.
+- Non-watch status messages still survive navigation.
 
 ## Suggested Order
 
