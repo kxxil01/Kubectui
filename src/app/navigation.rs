@@ -9,6 +9,7 @@ impl AppState {
         self.search_cursor = 0;
         self.is_search_mode = false;
         self.clear_selection_search_status();
+        self.detail_view = None;
         self.sync_action_history_selection();
     }
 

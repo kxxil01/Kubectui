@@ -25,6 +25,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Manual search edits close stale detail panes.
 - [x] View, namespace, and resource navigation clear stale watched-search fallback status.
 - [x] Workspace restore and context switch clear stale watched-search fallback status.
+- [x] Namespace switch closes stale detail panes.
 
 ## Next Tasks
 
@@ -198,6 +199,14 @@ Done when:
 Done when:
 - Workspace restore/context switch cannot leave stale watched-search fallback text.
 - Non-watch status messages still survive workspace restore.
+
+### 18. Namespace Detail Alignment
+
+- [x] Add regression: namespace switch closes open detail pane.
+- [x] Patch canonical namespace mutator.
+
+Done when:
+- Switching namespaces cannot leave list highlight and detail pane pointed at different namespace scopes.
 
 ## Suggested Order
 
