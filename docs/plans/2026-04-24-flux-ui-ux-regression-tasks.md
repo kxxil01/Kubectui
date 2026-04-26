@@ -20,6 +20,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Non-Flux active search fallback preserves identity or closes stale detail.
 - [x] Watched active-search fallback status clears after selection recovers.
 - [x] Watched active-search empty fallback reports no visible results and clears on recovery.
+- [x] Manual search edits clear stale watched-search fallback status without clearing unrelated status.
 
 ## Next Tasks
 
@@ -142,6 +143,16 @@ Done when:
 Done when:
 - Empty active-search fallback never claims selection moved to a visible row that does not exist.
 - Empty-result fallback status does not linger after search results return.
+
+### 13. Manual Search Edit Status Recovery
+
+- [x] Move watched-search fallback status strings to the app state source of truth.
+- [x] Add regression: editing search query clears stale watched-search fallback status.
+- [x] Add regression: editing search query preserves unrelated status messages.
+
+Done when:
+- Search edit/clear cannot leave a stale watch fallback message after user changes filter intent.
+- Non-watch status messages still survive search editing.
 
 ## Suggested Order
 
