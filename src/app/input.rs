@@ -3096,6 +3096,7 @@ impl AppState {
         }
         if self.search_query != previous_query {
             self.selected_idx = 0;
+            self.detail_view = None;
             self.clear_selection_search_status();
         }
         AppAction::None
