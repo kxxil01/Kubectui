@@ -24,6 +24,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Manual search edits reset selection to first filtered result.
 - [x] Manual search edits close stale detail panes.
 - [x] View, namespace, and resource navigation clear stale watched-search fallback status.
+- [x] Workspace restore and context switch clear stale watched-search fallback status.
 
 ## Next Tasks
 
@@ -187,6 +188,16 @@ Done when:
 Done when:
 - Clearing search via navigation cannot leave stale watched-search fallback text.
 - Non-watch status messages still survive navigation.
+
+### 17. Workspace Search Status Recovery
+
+- [x] Add regression: workspace restore clears watched-search fallback status.
+- [x] Add regression: workspace restore preserves unrelated status messages.
+- [x] Add regression: context switch UI reset clears watched-search fallback status.
+
+Done when:
+- Workspace restore/context switch cannot leave stale watched-search fallback text.
+- Non-watch status messages still survive workspace restore.
 
 ## Suggested Order
 

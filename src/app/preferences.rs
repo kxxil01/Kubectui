@@ -501,6 +501,7 @@ impl AppState {
         self.search_query = snapshot.search_query.clone().unwrap_or_default();
         self.search_cursor = self.search_query.chars().count();
         self.is_search_mode = false;
+        self.clear_selection_search_status();
         self.selected_idx = 0;
         self.extension_in_instances = false;
         self.current_namespace = snapshot.namespace.clone();

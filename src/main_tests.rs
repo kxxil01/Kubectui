@@ -90,6 +90,7 @@ fn prepare_context_switch_ui_resets_secondary_pane_focus_and_scroll() {
     app.search_cursor = 6;
     app.is_search_mode = true;
     app.detail_view = Some(DetailViewState::default());
+    app.set_status(SELECTION_SEARCH_FALLBACK_STATUS.to_string());
     app.open_action_history_tab(true);
     app.workbench
         .open_tab(WorkbenchTabState::ResourceYaml(ResourceYamlTabState::new(
@@ -105,6 +106,7 @@ fn prepare_context_switch_ui_resets_secondary_pane_focus_and_scroll() {
     assert_eq!(app.search_cursor(), 0);
     assert!(!app.is_search_mode);
     assert!(app.detail_view.is_none());
+    assert_eq!(app.status_message(), None);
     assert_eq!(app.workbench().tabs.len(), 1);
     assert!(matches!(
         &app.workbench().tabs[0].state,
