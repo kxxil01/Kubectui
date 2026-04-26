@@ -172,6 +172,49 @@ fn search_cursor_move_does_not_reset_selected_idx() {
 }
 
 #[test]
+fn search_query_edit_closes_stale_detail() {
+    let mut app = AppState {
+        search_query: "api".to_string(),
+        search_cursor: 3,
+        is_search_mode: true,
+        detail_view: Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("api-0".to_string(), "default".to_string())),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('x')));
+
+    assert_eq!(app.search_query(), "apix");
+    assert!(app.detail_view.is_none());
+}
+
+#[test]
+fn search_cursor_move_keeps_detail_open() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+    let mut app = AppState {
+        search_query: "api".to_string(),
+        search_cursor: 3,
+        is_search_mode: true,
+        detail_view: Some(DetailViewState {
+            resource: Some(resource.clone()),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Left));
+
+    assert_eq!(
+        app.detail_view
+            .as_ref()
+            .and_then(|detail| detail.resource.as_ref()),
+        Some(&resource)
+    );
+}
+
+#[test]
 fn search_query_supports_cursor_editing() {
     let mut app = AppState::default();
 
