@@ -98,20 +98,41 @@ pub fn full_refresh_options(include_flux: bool, include_cluster_info: bool) -> R
     dispatch
 }
 
-/// Returns `true` when the palette detail action requires a loaded detail resource.
+/// Returns `true` when a palette detail action must first target a resource.
 pub fn palette_detail_action_needs_detail(action: DetailAction) -> bool {
     matches!(
         action,
-        DetailAction::Scale
-            | DetailAction::Restart
-            | DetailAction::Probes
+        DetailAction::ViewYaml
+            | DetailAction::ViewConfigDrift
+            | DetailAction::ViewRollout
+            | DetailAction::ViewHelmHistory
+            | DetailAction::ViewHelmValuesDiff
+            | DetailAction::ViewDecodedSecret
+            | DetailAction::ToggleBookmark
+            | DetailAction::ViewEvents
+            | DetailAction::ViewAccessReview
+            | DetailAction::Logs
+            | DetailAction::Exec
             | DetailAction::DebugContainer
             | DetailAction::NodeDebugShell
-            | DetailAction::Delete
+            | DetailAction::PortForward
+            | DetailAction::Probes
+            | DetailAction::Scale
+            | DetailAction::Restart
+            | DetailAction::PauseRollout
+            | DetailAction::ResumeRollout
+            | DetailAction::RollbackRollout
+            | DetailAction::FluxReconcile
+            | DetailAction::RollbackHelm
             | DetailAction::EditYaml
+            | DetailAction::Delete
             | DetailAction::Trigger
             | DetailAction::SuspendCronJob
             | DetailAction::ResumeCronJob
+            | DetailAction::ViewNetworkPolicies
+            | DetailAction::CheckNetworkConnectivity
+            | DetailAction::ViewTrafficDebug
+            | DetailAction::ViewRelationships
             | DetailAction::Cordon
             | DetailAction::Uncordon
             | DetailAction::Drain
@@ -393,7 +414,10 @@ pub fn queue_deferred_refreshes(
 
 #[cfg(test)]
 mod tests {
-    use super::palette_detail_action_needs_resource_load;
+    use super::{
+        map_palette_detail_action, palette_action_requires_loaded_detail,
+        palette_detail_action_needs_resource_load,
+    };
     use kubectui::{
         app::{AppState, DetailViewState, ResourceRef},
         policy::DetailAction,
@@ -441,14 +465,34 @@ mod tests {
     }
 
     #[test]
-    fn palette_non_detail_action_does_not_load_resource_detail() {
+    fn palette_all_resource_actions_load_target_when_detail_missing() {
         let app = AppState::default();
         let target = ResourceRef::Pod("api-0".to_string(), "default".to_string());
 
-        assert!(!palette_detail_action_needs_resource_load(
-            &app,
+        for action in DetailAction::ALL {
+            assert!(
+                palette_detail_action_needs_resource_load(&app, *action, &target),
+                "{action:?} should point detail state at the palette target"
+            );
+        }
+    }
+
+    #[test]
+    fn palette_resource_only_actions_do_not_wait_for_loaded_detail_payload() {
+        for action in [
             DetailAction::ViewYaml,
-            &target
-        ));
+            DetailAction::ViewConfigDrift,
+            DetailAction::ToggleBookmark,
+            DetailAction::Logs,
+            DetailAction::Exec,
+            DetailAction::PortForward,
+            DetailAction::ViewRelationships,
+        ] {
+            let mapped = map_palette_detail_action(action);
+            assert!(
+                !palette_action_requires_loaded_detail(&mapped),
+                "{action:?} only needs the target resource identity"
+            );
+        }
     }
 }
