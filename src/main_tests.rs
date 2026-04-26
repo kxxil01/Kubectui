@@ -2167,6 +2167,121 @@ fn watched_resource_active_search_fallback_closes_stale_detail() {
 }
 
 #[test]
+fn watched_resource_active_search_status_clears_when_selection_matches_again() {
+    fn pod(name: &str, status: &str) -> PodInfo {
+        PodInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            status: status.to_string(),
+            ..PodInfo::default()
+        }
+    }
+
+    let previous = ClusterSnapshot {
+        pods: vec![
+            pod("api-0", "Running"),
+            pod("api-1", "Running"),
+            pod("api-2", "Running"),
+        ],
+        ..ClusterSnapshot::default()
+    };
+    let hidden = ClusterSnapshot {
+        pods: vec![
+            pod("api-0", "Running"),
+            pod("api-1", "Pending"),
+            pod("api-2", "Running"),
+        ],
+        ..ClusterSnapshot::default()
+    };
+    let visible_again = ClusterSnapshot {
+        pods: vec![
+            pod("api-0", "Running"),
+            pod("api-1", "Running"),
+            pod("api-2", "Running"),
+        ],
+        ..ClusterSnapshot::default()
+    };
+    let mut app = AppState {
+        view: AppView::Pods,
+        selected_idx: 1,
+        search_query: "Running".to_string(),
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        selected_resource(&app, &previous),
+        Some(ResourceRef::Pod("api-1".to_string(), "default".to_string()))
+    );
+    assert!(preserve_selection_identity_after_snapshot_change(
+        &mut app, &previous, &hidden
+    ));
+    assert_eq!(
+        selected_resource(&app, &hidden),
+        Some(ResourceRef::Pod("api-2".to_string(), "default".to_string()))
+    );
+    assert_eq!(
+        app.status_message(),
+        Some("Selected resource no longer matches search; moved to nearest visible result.")
+    );
+
+    assert!(preserve_selection_identity_after_snapshot_change(
+        &mut app,
+        &hidden,
+        &visible_again
+    ));
+    assert_eq!(app.selected_idx(), 2);
+    assert_eq!(
+        selected_resource(&app, &visible_again),
+        Some(ResourceRef::Pod("api-2".to_string(), "default".to_string()))
+    );
+    assert_eq!(app.status_message(), None);
+}
+
+#[test]
+fn watched_resource_active_search_visible_selection_preserves_unrelated_status() {
+    fn pod(name: &str, status: &str) -> PodInfo {
+        PodInfo {
+            name: name.to_string(),
+            namespace: "default".to_string(),
+            status: status.to_string(),
+            ..PodInfo::default()
+        }
+    }
+
+    let selected = ResourceRef::Pod("api-1".to_string(), "default".to_string());
+    let previous = ClusterSnapshot {
+        pods: vec![
+            pod("cache-0", "Running"),
+            pod("api-0", "Running"),
+            pod("api-1", "Running"),
+        ],
+        ..ClusterSnapshot::default()
+    };
+    let current = ClusterSnapshot {
+        pods: vec![
+            pod("api-1", "Running"),
+            pod("cache-0", "Running"),
+            pod("api-0", "Running"),
+        ],
+        ..ClusterSnapshot::default()
+    };
+    let mut app = AppState {
+        view: AppView::Pods,
+        selected_idx: 1,
+        search_query: "api".to_string(),
+        ..AppState::default()
+    };
+    app.set_status("Saved workspace: ops".to_string());
+
+    assert_eq!(selected_resource(&app, &previous), Some(selected.clone()));
+    assert!(preserve_selection_identity_after_snapshot_change(
+        &mut app, &previous, &current
+    ));
+    assert_eq!(selected_resource(&app, &current), Some(selected));
+    assert_eq!(app.status_message(), Some("Saved workspace: ops"));
+}
+
+#[test]
 fn prepare_bookmark_target_navigates_to_resource_view() {
     let mut app = AppState::default();
     app.view = AppView::Bookmarks;
