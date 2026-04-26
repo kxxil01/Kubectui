@@ -19,6 +19,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Non-Flux watched resource details close when selected resource is deleted.
 - [x] Non-Flux active search fallback preserves identity or closes stale detail.
 - [x] Watched active-search fallback status clears after selection recovers.
+- [x] Watched active-search empty fallback reports no visible results and clears on recovery.
 
 ## Next Tasks
 
@@ -131,6 +132,16 @@ Done when:
 
 Done when:
 - Stale search-fallback status cannot linger after selection is back on a visible matching resource.
+
+### 12. Watched Search Empty Result Recovery
+
+- [x] Add regression: selected resource stops matching search and filtered result set becomes empty.
+- [x] Add regression: stale empty-result fallback status clears when visible results return.
+- [x] Keep detail closed when no row is visible after active-search fallback.
+
+Done when:
+- Empty active-search fallback never claims selection moved to a visible row that does not exist.
+- Empty-result fallback status does not linger after search results return.
 
 ## Suggested Order
 
