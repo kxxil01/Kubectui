@@ -113,6 +113,34 @@ fn search_query_add_backspace_and_clear() {
 }
 
 #[test]
+fn search_query_edit_clears_selection_search_status() {
+    let mut app = AppState::default();
+    app.set_status(SELECTION_SEARCH_FALLBACK_STATUS.to_string());
+    app.search_query = "Running".to_string();
+    app.search_cursor = app.search_query.chars().count();
+    app.is_search_mode = true;
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Backspace));
+
+    assert_eq!(app.search_query(), "Runnin");
+    assert_eq!(app.status_message(), None);
+}
+
+#[test]
+fn search_query_edit_preserves_unrelated_status() {
+    let mut app = AppState::default();
+    app.set_status("Saved workspace: ops".to_string());
+    app.search_query = "Running".to_string();
+    app.search_cursor = app.search_query.chars().count();
+    app.is_search_mode = true;
+
+    app.handle_key_event(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+    assert_eq!(app.search_query(), "");
+    assert_eq!(app.status_message(), Some("Saved workspace: ops"));
+}
+
+#[test]
 fn search_query_supports_cursor_editing() {
     let mut app = AppState::default();
 
