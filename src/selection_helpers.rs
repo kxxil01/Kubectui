@@ -683,6 +683,24 @@ pub fn prepare_resource_target(
     snapshot: &ClusterSnapshot,
     resource: &ResourceRef,
 ) -> Result<(), String> {
+    let Some(view) = resource.primary_view() else {
+        return Err(format!(
+            "{} '{}' does not map to a navigable primary view.",
+            resource.kind(),
+            resource.name()
+        ));
+    };
+
+    prepare_resource_target_for_view(app, snapshot, resource, view)
+}
+
+/// Navigates to the target view and selects the resource when that view can display it.
+pub fn prepare_resource_target_for_view(
+    app: &mut AppState,
+    snapshot: &ClusterSnapshot,
+    resource: &ResourceRef,
+    view: AppView,
+) -> Result<(), String> {
     if !resource_exists(snapshot, resource) {
         return Err(format!(
             "{} '{}' is no longer present in the current snapshot.",
@@ -694,14 +712,6 @@ pub fn prepare_resource_target(
     app.search_query.clear();
     app.is_search_mode = false;
     app.clear_selection_search_status();
-
-    let Some(view) = resource.primary_view() else {
-        return Err(format!(
-            "{} '{}' does not map to a navigable primary view.",
-            resource.kind(),
-            resource.name()
-        ));
-    };
 
     app.navigate_to_view(view);
     app.focus = kubectui::app::Focus::Content;
@@ -957,8 +967,16 @@ pub fn apply_extension_fetch_result(app: &mut AppState, result: ExtensionFetchRe
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_detail_action_authorization;
-    use kubectui::authorization::DetailActionAuthorization;
+    use super::{
+        prepare_resource_target, prepare_resource_target_for_view,
+        resolve_detail_action_authorization, selected_resource,
+    };
+    use kubectui::{
+        app::{AppState, AppView, ResourceRef},
+        authorization::DetailActionAuthorization,
+        k8s::dtos::{FluxResourceInfo, PodInfo},
+        state::ClusterSnapshot,
+    };
 
     #[test]
     fn resolve_authorization_prefers_cached_value() {
@@ -1064,5 +1082,98 @@ mod tests {
             DetailActionAuthorization::Allowed,
         );
         assert!(msg.contains("already allowed"), "msg = {msg}");
+    }
+
+    #[test]
+    fn prepare_resource_target_selects_target_row_after_navigation_reset() {
+        let mut app = AppState::default();
+        app.current_namespace = "default".to_string();
+        app.view = AppView::Services;
+        app.selected_idx = 9;
+        app.search_query = "stale".to_string();
+        app.is_search_mode = true;
+        app.set_status(kubectui::app::SELECTION_SEARCH_FALLBACK_STATUS.to_string());
+
+        let snapshot = ClusterSnapshot {
+            pods: vec![
+                PodInfo {
+                    name: "api-0".to_string(),
+                    namespace: "default".to_string(),
+                    ..PodInfo::default()
+                },
+                PodInfo {
+                    name: "api-1".to_string(),
+                    namespace: "default".to_string(),
+                    ..PodInfo::default()
+                },
+                PodInfo {
+                    name: "api-2".to_string(),
+                    namespace: "default".to_string(),
+                    ..PodInfo::default()
+                },
+            ],
+            ..ClusterSnapshot::default()
+        };
+
+        let target = ResourceRef::Pod("api-1".to_string(), "default".to_string());
+
+        prepare_resource_target(&mut app, &snapshot, &target).expect("target should resolve");
+
+        assert_eq!(app.view(), AppView::Pods);
+        assert_eq!(app.selected_idx(), 1);
+        assert_eq!(selected_resource(&app, &snapshot), Some(target));
+        assert!(app.search_query().is_empty());
+        assert!(!app.is_search_mode);
+        assert_ne!(
+            app.status_message(),
+            Some(kubectui::app::SELECTION_SEARCH_FALLBACK_STATUS)
+        );
+    }
+
+    #[test]
+    fn prepare_resource_target_for_view_preserves_recorded_flux_origin_view() {
+        let mut app = AppState::default();
+        app.current_namespace = "default".to_string();
+        app.view = AppView::Services;
+        app.selected_idx = 9;
+
+        let snapshot = ClusterSnapshot {
+            flux_resources: vec![
+                FluxResourceInfo {
+                    name: "alpha".to_string(),
+                    namespace: Some("default".to_string()),
+                    group: "helm.toolkit.fluxcd.io".to_string(),
+                    version: "v2".to_string(),
+                    kind: "HelmRelease".to_string(),
+                    plural: "helmreleases".to_string(),
+                    ..FluxResourceInfo::default()
+                },
+                FluxResourceInfo {
+                    name: "target".to_string(),
+                    namespace: Some("default".to_string()),
+                    group: "helm.toolkit.fluxcd.io".to_string(),
+                    version: "v2".to_string(),
+                    kind: "HelmRelease".to_string(),
+                    plural: "helmreleases".to_string(),
+                    ..FluxResourceInfo::default()
+                },
+            ],
+            ..ClusterSnapshot::default()
+        };
+        let target = ResourceRef::CustomResource {
+            name: "target".to_string(),
+            namespace: Some("default".to_string()),
+            group: "helm.toolkit.fluxcd.io".to_string(),
+            version: "v2".to_string(),
+            kind: "HelmRelease".to_string(),
+            plural: "helmreleases".to_string(),
+        };
+
+        prepare_resource_target_for_view(&mut app, &snapshot, &target, AppView::FluxCDAll)
+            .expect("target should resolve in recorded view");
+
+        assert_eq!(app.view(), AppView::FluxCDAll);
+        assert_eq!(app.selected_idx(), 1);
+        assert_eq!(selected_resource(&app, &snapshot), Some(target));
     }
 }

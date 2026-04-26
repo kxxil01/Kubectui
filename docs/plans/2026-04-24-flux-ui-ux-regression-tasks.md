@@ -28,6 +28,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Namespace switch closes stale detail panes.
 - [x] View navigation closes stale detail panes.
 - [x] Search escape with empty query closes stale detail pane.
+- [x] Action-history resource jump preserves list/detail alignment.
 
 ## Next Tasks
 
@@ -226,6 +227,14 @@ Done when:
 
 Done when:
 - Exiting empty search cannot reset list selection while leaving detail pane on old resource.
+
+### 21. Action History Resource Jump Alignment
+
+- [x] Add regression: preparing a history/bookmark resource jump selects the target row after navigation reset.
+- [x] Patch action-history open-selected path to use canonical resource-target preparation.
+
+Done when:
+- Opening a resource from action history cannot show target detail while the list highlight remains on a reset row.
 
 ## Suggested Order
 
