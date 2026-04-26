@@ -21,6 +21,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Watched active-search fallback status clears after selection recovers.
 - [x] Watched active-search empty fallback reports no visible results and clears on recovery.
 - [x] Manual search edits clear stale watched-search fallback status without clearing unrelated status.
+- [x] Manual search edits reset selection to first filtered result.
 
 ## Next Tasks
 
@@ -153,6 +154,16 @@ Done when:
 Done when:
 - Search edit/clear cannot leave a stale watch fallback message after user changes filter intent.
 - Non-watch status messages still survive search editing.
+
+### 14. Manual Search Edit Selection Reset
+
+- [x] Add regression: editing search query resets selected index to first result.
+- [x] Add regression: cursor-only search navigation preserves selected index.
+- [x] Reset selected index only when query content changes.
+
+Done when:
+- Search narrowing/widening cannot reveal a stale raw selected index as an arbitrary row.
+- Cursor movement inside the search box does not disturb table selection.
 
 ## Suggested Order
 
