@@ -4776,9 +4776,15 @@ pub(crate) async fn run_app_inner(
                         );
                         continue;
                     };
-                    app.navigate_to_view(target.view);
-                    app.focus = kubectui::app::Focus::Content;
-                    app.extension_in_instances = false;
+                    if let Err(err) = prepare_resource_target_for_view(
+                        &mut app,
+                        &cached_snapshot,
+                        &target.resource,
+                        target.view,
+                    ) {
+                        app.set_error(err);
+                        continue;
+                    }
                     open_detail_for_resource(
                         &mut app,
                         &cached_snapshot,
