@@ -196,6 +196,24 @@ fn namespace_switch_clears_selection_search_status() {
 }
 
 #[test]
+fn namespace_switch_closes_stale_detail() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        detail_view: Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("api-0".to_string(), "default".to_string())),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    app.set_namespace("prod".to_string());
+
+    assert_eq!(app.get_namespace(), "prod");
+    assert_eq!(app.selected_idx(), 0);
+    assert!(app.detail_view.is_none());
+}
+
+#[test]
 fn search_query_edit_resets_selected_idx_to_first_result() {
     let mut app = AppState {
         selected_idx: 9,
