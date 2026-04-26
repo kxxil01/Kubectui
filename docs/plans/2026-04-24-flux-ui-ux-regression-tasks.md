@@ -22,6 +22,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Watched active-search empty fallback reports no visible results and clears on recovery.
 - [x] Manual search edits clear stale watched-search fallback status without clearing unrelated status.
 - [x] Manual search edits reset selection to first filtered result.
+- [x] Manual search edits close stale detail panes.
 
 ## Next Tasks
 
@@ -164,6 +165,16 @@ Done when:
 Done when:
 - Search narrowing/widening cannot reveal a stale raw selected index as an arbitrary row.
 - Cursor movement inside the search box does not disturb table selection.
+
+### 15. Manual Search Edit Detail Alignment
+
+- [x] Add regression: editing search query closes open detail pane.
+- [x] Add regression: cursor-only search navigation keeps detail pane open.
+- [x] Close detail pane only when query content changes.
+
+Done when:
+- Search edit cannot leave list highlight and detail pane pointed at different resources.
+- Cursor movement inside the search box does not close detail.
 
 ## Suggested Order
 
