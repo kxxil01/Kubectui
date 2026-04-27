@@ -447,6 +447,24 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
             }
             false
         }
+        AppAction::ScaleDialogNextField => {
+            if let Some(detail) = &mut app_state.detail_view
+                && let Some(scale) = &mut detail.scale_dialog
+            {
+                scale.next_field();
+                return true;
+            }
+            false
+        }
+        AppAction::ScaleDialogPrevField => {
+            if let Some(detail) = &mut app_state.detail_view
+                && let Some(scale) = &mut detail.scale_dialog
+            {
+                scale.prev_field();
+                return true;
+            }
+            false
+        }
         AppAction::ScaleDialogSubmit => {
             // Handled in main.rs event loop (needs async K8s call)
             true

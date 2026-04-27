@@ -122,6 +122,8 @@ pub enum AppAction {
     ScaleDialogBackspace,
     ScaleDialogIncrement,
     ScaleDialogDecrement,
+    ScaleDialogNextField,
+    ScaleDialogPrevField,
     ScaleDialogSubmit,
     ProbePanelOpen,
     ProbePanelClose,

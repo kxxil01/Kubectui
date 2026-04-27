@@ -9,7 +9,9 @@ use super::{
 };
 use crate::{
     policy::{DetailAction, ViewAction},
-    ui::components::{CommandPaletteAction, ContextPickerAction, NamespacePickerAction},
+    ui::components::{
+        CommandPaletteAction, ContextPickerAction, NamespacePickerAction, scale_dialog::ScaleField,
+    },
     workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
 
@@ -2114,9 +2116,21 @@ impl AppState {
                 return AppAction::None;
             }
             ActiveComponent::Scale => {
+                let scale_focus = self
+                    .detail_view
+                    .as_ref()
+                    .and_then(|detail| detail.scale_dialog.as_ref())
+                    .map(|scale| scale.focus_field);
                 return match key.code {
                     KeyCode::Esc => AppAction::EscapePressed,
+                    KeyCode::Enter
+                        if plain_shortcut(key) && scale_focus == Some(ScaleField::CancelBtn) =>
+                    {
+                        AppAction::EscapePressed
+                    }
                     KeyCode::Enter if plain_shortcut(key) => AppAction::ScaleDialogSubmit,
+                    KeyCode::Tab if plain_shortcut(key) => AppAction::ScaleDialogNextField,
+                    KeyCode::BackTab => AppAction::ScaleDialogPrevField,
                     KeyCode::Backspace => AppAction::ScaleDialogBackspace,
                     KeyCode::Char('+') | KeyCode::Char('=') | KeyCode::Up
                         if plain_shortcut(key) =>

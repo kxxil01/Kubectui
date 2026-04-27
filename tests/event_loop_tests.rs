@@ -10,7 +10,7 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use kubectui::events::{apply_action, route_keyboard_input};
 use kubectui::secret::{DecodedSecretEntry, DecodedSecretValue};
-use kubectui::ui::components::port_forward_dialog::PortForwardMode;
+use kubectui::ui::components::{ScaleField, port_forward_dialog::PortForwardMode};
 use kubectui::workbench::WorkbenchTabState;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
@@ -427,6 +427,53 @@ fn test_scale_dialog_backspace() {
     {
         assert_eq!(scale.desired_replicas, "4");
     }
+}
+
+#[test]
+fn test_scale_dialog_tab_navigation_routes_to_focus_fields() {
+    let mut app = AppState::default();
+    app.detail_view = Some(deployment_detail());
+    app.open_scale_dialog();
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Tab), &mut app);
+    apply_action(action, &mut app);
+    assert_eq!(
+        app.detail_view
+            .as_ref()
+            .and_then(|detail| detail.scale_dialog.as_ref())
+            .map(|scale| scale.focus_field),
+        Some(ScaleField::ApplyBtn)
+    );
+
+    let action = route_keyboard_input(
+        KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+        &mut app,
+    );
+    apply_action(action, &mut app);
+    assert_eq!(
+        app.detail_view
+            .as_ref()
+            .and_then(|detail| detail.scale_dialog.as_ref())
+            .map(|scale| scale.focus_field),
+        Some(ScaleField::InputField)
+    );
+}
+
+#[test]
+fn test_scale_dialog_enter_on_cancel_closes_dialog() {
+    let mut app = AppState::default();
+    app.detail_view = Some(deployment_detail());
+    app.open_scale_dialog();
+
+    for _ in 0..2 {
+        let action = route_keyboard_input(KeyEvent::from(KeyCode::Tab), &mut app);
+        apply_action(action, &mut app);
+    }
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Enter), &mut app);
+    apply_action(action, &mut app);
+
+    assert_eq!(app.active_component(), ActiveComponent::None);
 }
 
 #[test]
