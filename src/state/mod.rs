@@ -1226,8 +1226,9 @@ impl GlobalState {
         /// state — that is managed by the refresh pipeline so the loading
         /// spinner can display correctly.
         macro_rules! apply_watched {
-            ($snap:ident, $changed:ident, $field:ident, $items:expr) => {{
-                let items = $items;
+            ($snap:ident, $changed:ident, $field:ident, $items:expr, $sort:path) => {{
+                let mut items = $items;
+                $sort(&mut items);
                 if $snap.$field != items {
                     $snap.$field = items;
                     $snap.snapshot_version = $snap.snapshot_version.saturating_add(1);
@@ -1241,37 +1242,43 @@ impl GlobalState {
             let snap = Arc::make_mut(&mut self.snapshot);
             match update.data {
                 watch::WatchPayload::Pods(items) => {
-                    apply_watched!(snap, changed, pods, items);
+                    apply_watched!(snap, changed, pods, items, watch::sort_pods);
                 }
                 watch::WatchPayload::Deployments(items) => {
-                    apply_watched!(snap, changed, deployments, items);
+                    apply_watched!(snap, changed, deployments, items, watch::sort_deployments);
                 }
                 watch::WatchPayload::ReplicaSets(items) => {
-                    apply_watched!(snap, changed, replicasets, items);
+                    apply_watched!(snap, changed, replicasets, items, watch::sort_replicasets);
                 }
                 watch::WatchPayload::StatefulSets(items) => {
-                    apply_watched!(snap, changed, statefulsets, items);
+                    apply_watched!(snap, changed, statefulsets, items, watch::sort_statefulsets);
                 }
                 watch::WatchPayload::DaemonSets(items) => {
-                    apply_watched!(snap, changed, daemonsets, items);
+                    apply_watched!(snap, changed, daemonsets, items, watch::sort_daemonsets);
                 }
                 watch::WatchPayload::Services(items) => {
-                    apply_watched!(snap, changed, services, items);
+                    apply_watched!(snap, changed, services, items, watch::sort_services);
                 }
                 watch::WatchPayload::Nodes(items) => {
-                    apply_watched!(snap, changed, nodes, items);
+                    apply_watched!(snap, changed, nodes, items, watch::sort_nodes);
                 }
                 watch::WatchPayload::ReplicationControllers(items) => {
-                    apply_watched!(snap, changed, replication_controllers, items);
+                    apply_watched!(
+                        snap,
+                        changed,
+                        replication_controllers,
+                        items,
+                        watch::sort_replication_controllers
+                    );
                 }
                 watch::WatchPayload::Jobs(items) => {
-                    apply_watched!(snap, changed, jobs, items);
+                    apply_watched!(snap, changed, jobs, items, watch::sort_jobs);
                 }
                 watch::WatchPayload::CronJobs(items) => {
-                    apply_watched!(snap, changed, cronjobs, items);
+                    apply_watched!(snap, changed, cronjobs, items, watch::sort_cronjobs);
                 }
                 watch::WatchPayload::Namespaces(items) => {
-                    apply_watched!(snap, changed, namespace_list, items);
+                    apply_watched!(snap, changed, namespace_list, items, watch::sort_namespaces);
                 }
                 watch::WatchPayload::Flux { target, items } => {
                     let mut merged = Vec::with_capacity(snap.flux_resources.len() + items.len());
@@ -3939,6 +3946,29 @@ mod tests {
             data: watch::WatchPayload::Pods(pods),
         };
         state.apply_watch_update(update);
+        assert_eq!(state.snapshot.snapshot_version, version_after_first);
+    }
+
+    #[test]
+    fn apply_watch_update_normalizes_payload_order_before_version_compare() {
+        let mut state = GlobalState::default();
+
+        state.apply_watch_update(watch::WatchUpdate {
+            resource: watch::WatchedResource::Pods,
+            context_generation: 0,
+            data: watch::WatchPayload::Pods(vec![make_pod_info("pod-b"), make_pod_info("pod-a")]),
+        });
+
+        let version_after_first = state.snapshot.snapshot_version;
+        assert_eq!(state.snapshot.pods[0].name, "pod-a");
+        assert_eq!(state.snapshot.pods[1].name, "pod-b");
+
+        state.apply_watch_update(watch::WatchUpdate {
+            resource: watch::WatchedResource::Pods,
+            context_generation: 0,
+            data: watch::WatchPayload::Pods(vec![make_pod_info("pod-a"), make_pod_info("pod-b")]),
+        });
+
         assert_eq!(state.snapshot.snapshot_version, version_after_first);
     }
 

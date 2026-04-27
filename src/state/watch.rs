@@ -312,7 +312,7 @@ macro_rules! define_watcher {
     };
     (@impl $name:ident, $ApiType:ty, $EventType:ty, $DtoType:ty, $converter:path, $variant:ident, $scope:ident, $watch_fn:path) => {
         paste::paste! {
-            fn [<sort_ $name s>](items: &mut [$DtoType]) {
+            pub(crate) fn [<sort_ $name s>](items: &mut [$DtoType]) {
                 define_watcher!(@sort items, $scope);
             }
 
