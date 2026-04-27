@@ -27,6 +27,7 @@ pub struct ProjectSummary {
     pub source_label: String,
     pub cluster_scoped: bool,
     pub namespaces: Vec<String>,
+    pub namespaces_label: String,
     pub deployments: usize,
     pub statefulsets: usize,
     pub daemonsets: usize,
@@ -38,6 +39,10 @@ pub struct ProjectSummary {
     pub http_routes: usize,
     pub grpc_routes: usize,
     pub issue_count: usize,
+    pub workload_count_label: String,
+    pub services_label: String,
+    pub pods_label: String,
+    pub issue_count_label: String,
     pub highest_severity: AlertSeverity,
     pub representative: Option<ResourceRef>,
     pub recent_issues: Vec<String>,
@@ -303,23 +308,38 @@ impl ProjectAccumulator {
     }
 
     fn finish(self, key: String) -> ProjectSummary {
+        let namespaces: Vec<_> = self.namespaces.into_iter().collect();
+        let namespaces_label = namespaces.join(", ");
+        let deployments = self.deployments.len();
+        let statefulsets = self.statefulsets.len();
+        let daemonsets = self.daemonsets.len();
+        let jobs = self.jobs.len();
+        let cronjobs = self.cronjobs.len();
+        let services = self.services.len();
+        let issue_count = self.issue_count;
+        let workload_count = deployments + statefulsets + daemonsets + jobs + cronjobs;
         ProjectSummary {
             key,
             name: self.name,
             source_label: self.source_label,
             cluster_scoped: self.cluster_scoped,
-            namespaces: self.namespaces.into_iter().collect(),
-            deployments: self.deployments.len(),
-            statefulsets: self.statefulsets.len(),
-            daemonsets: self.daemonsets.len(),
-            jobs: self.jobs.len(),
-            cronjobs: self.cronjobs.len(),
+            namespaces,
+            namespaces_label,
+            deployments,
+            statefulsets,
+            daemonsets,
+            jobs,
+            cronjobs,
             pods: self.pod_count,
-            services: self.services.len(),
+            services,
             ingresses: self.ingresses.len(),
             http_routes: self.http_routes.len(),
             grpc_routes: self.grpc_routes.len(),
-            issue_count: self.issue_count,
+            issue_count,
+            workload_count_label: workload_count.to_string(),
+            services_label: services.to_string(),
+            pods_label: self.pod_count.to_string(),
+            issue_count_label: issue_count.to_string(),
             highest_severity: self.highest_severity,
             representative: self.representative,
             recent_issues: self.recent_issues,
@@ -985,6 +1005,7 @@ mod tests {
             source_label: "app.kubernetes.io/part-of".into(),
             cluster_scoped: true,
             namespaces: vec!["payments".into()],
+            namespaces_label: "payments".into(),
             deployments: 1,
             statefulsets: 0,
             daemonsets: 0,
@@ -996,6 +1017,10 @@ mod tests {
             http_routes: 0,
             grpc_routes: 0,
             issue_count: 0,
+            workload_count_label: "1".into(),
+            services_label: "1".into(),
+            pods_label: "2".into(),
+            issue_count_label: "0".into(),
             highest_severity: AlertSeverity::Info,
             representative: None,
             recent_issues: Vec::new(),
