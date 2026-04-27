@@ -65,13 +65,19 @@ impl ContextPicker {
         self.is_open = true;
         self.search_query.clear();
         self.search_cursor = 0;
-        let filtered = self.filtered_contexts();
+        let filtered = self.filtered_context_indices();
         self.selected_index = self
             .current_context
             .as_ref()
-            .and_then(|context| filtered.iter().position(|entry| entry == context))
+            .and_then(|context| {
+                filtered
+                    .iter()
+                    .position(|index| self.contexts[*index] == *context)
+            })
             .unwrap_or(0);
-        self.selection_anchor = filtered.get(self.selected_index).cloned();
+        self.selection_anchor = self
+            .selected_context_from_indices(&filtered)
+            .map(ToOwned::to_owned);
     }
 
     pub fn close(&mut self) {
@@ -87,7 +93,9 @@ impl ContextPicker {
     }
 
     pub fn set_contexts(&mut self, contexts: Vec<String>, current_context: Option<String>) {
-        let selected_context = self.filtered_contexts().get(self.selected_index).cloned();
+        let selected_context = self
+            .selected_context_from_indices(&self.filtered_context_indices())
+            .map(ToOwned::to_owned);
         self.contexts = contexts;
         self.current_context = current_context;
         self.restore_selected_context(selected_context.or_else(|| self.selection_anchor.clone()));
@@ -98,39 +106,40 @@ impl ContextPicker {
             return ContextPickerAction::None;
         }
 
+        let filtered = self.filtered_context_indices();
         let selected_context = self
-            .filtered_contexts()
-            .get(self.selected_index)
-            .cloned()
+            .selected_context_from_indices(&filtered)
+            .map(ToOwned::to_owned)
             .or_else(|| self.selection_anchor.clone());
 
         match key.code {
             KeyCode::Esc => ContextPickerAction::Close,
             KeyCode::Enter if plain_shortcut(key) => self
-                .filtered_contexts()
-                .get(self.selected_index)
-                .cloned()
+                .selected_context_from_indices(&filtered)
+                .map(ToOwned::to_owned)
                 .map(ContextPickerAction::Select)
                 .unwrap_or(ContextPickerAction::None),
             KeyCode::Down if plain_shortcut(key) => {
-                let len = self.filtered_contexts().len();
+                let len = filtered.len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
-                    self.selection_anchor =
-                        self.filtered_contexts().get(self.selected_index).cloned();
+                    self.selection_anchor = self
+                        .selected_context_from_indices(&filtered)
+                        .map(ToOwned::to_owned);
                 }
                 ContextPickerAction::None
             }
             KeyCode::Up if plain_shortcut(key) => {
-                let len = self.filtered_contexts().len();
+                let len = filtered.len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {
                         len - 1
                     } else {
                         self.selected_index - 1
                     };
-                    self.selection_anchor =
-                        self.filtered_contexts().get(self.selected_index).cloned();
+                    self.selection_anchor = self
+                        .selected_context_from_indices(&filtered)
+                        .map(ToOwned::to_owned);
                 }
                 ContextPickerAction::None
             }
@@ -193,25 +202,46 @@ impl ContextPicker {
     }
 
     fn restore_selected_context(&mut self, selected_context: Option<String>) {
-        let filtered = self.filtered_contexts();
-        let matched_index = selected_context
-            .as_ref()
-            .and_then(|selected| filtered.iter().position(|candidate| candidate == selected));
+        let filtered = self.filtered_context_indices();
+        let matched_index = selected_context.as_ref().and_then(|selected| {
+            filtered
+                .iter()
+                .position(|index| self.contexts[*index] == *selected)
+        });
         self.selected_index = matched_index.unwrap_or(0);
         self.selection_anchor = matched_index
-            .and_then(|index| filtered.get(index).cloned())
+            .and_then(|index| filtered.get(index))
+            .map(|index| self.contexts[*index].clone())
             .or(selected_context)
-            .or_else(|| filtered.get(self.selected_index).cloned());
+            .or_else(|| {
+                self.selected_context_from_indices(&filtered)
+                    .map(ToOwned::to_owned)
+            });
+    }
+
+    fn selected_context_from_indices<'a>(&'a self, indices: &[usize]) -> Option<&'a str> {
+        indices
+            .get(self.selected_index)
+            .and_then(|index| self.contexts.get(*index))
+            .map(String::as_str)
+    }
+
+    fn filtered_context_indices(&self) -> Vec<usize> {
+        if self.search_query.is_empty() {
+            return (0..self.contexts.len()).collect();
+        }
+
+        self.contexts
+            .iter()
+            .enumerate()
+            .filter_map(|(index, ctx)| contains_ci(ctx, &self.search_query).then_some(index))
+            .collect()
     }
 
     pub fn filtered_contexts(&self) -> Vec<String> {
-        if self.search_query.is_empty() {
-            return self.contexts.clone();
-        }
-        self.contexts
-            .iter()
-            .filter(|ctx| contains_ci(ctx, &self.search_query))
-            .cloned()
+        self.filtered_context_indices()
+            .into_iter()
+            .map(|index| self.contexts[index].clone())
             .collect()
     }
 
@@ -331,7 +361,7 @@ impl ContextPicker {
             chunks[1],
         );
 
-        let contexts = self.filtered_contexts();
+        let contexts = self.filtered_context_indices();
         let items: Vec<ListItem> = if contexts.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
                 "  No contexts match",
@@ -341,13 +371,14 @@ impl ContextPicker {
             contexts
                 .iter()
                 .enumerate()
-                .map(|(idx, ctx)| {
+                .map(|(idx, context_index)| {
+                    let ctx = &self.contexts[*context_index];
                     let is_current = self.current_context.as_deref() == Some(ctx.as_str());
                     if idx == self.selected_index {
                         ListItem::new(Line::from(vec![
                             Span::styled(" ▶ ", theme.title_style()),
                             Span::styled(
-                                ctx.clone(),
+                                ctx.as_str(),
                                 Style::default()
                                     .fg(theme.selection_fg)
                                     .bg(theme.selection_bg)
@@ -362,7 +393,7 @@ impl ContextPicker {
                     } else {
                         ListItem::new(Line::from(vec![
                             Span::styled("   ", theme.inactive_style()),
-                            Span::styled(ctx.clone(), Style::default().fg(theme.fg_dim)),
+                            Span::styled(ctx.as_str(), Style::default().fg(theme.fg_dim)),
                             if is_current {
                                 Span::styled("  ★", theme.badge_success_style())
                             } else {

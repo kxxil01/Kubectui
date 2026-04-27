@@ -154,13 +154,13 @@ fn render_project_table(
 
             Row::new(vec![
                 Cell::from(Span::styled(icon, icon_style.patch(theme.header_style()))),
-                Cell::from(project.name.clone()),
-                Cell::from(project.source_label.clone()),
-                Cell::from(project.namespaces.join(", ")),
-                Cell::from(project.workload_count().to_string()),
-                Cell::from(project.services.to_string()),
-                Cell::from(project.pods.to_string()),
-                Cell::from(project.issue_count.to_string()),
+                Cell::from(project.name.as_str()),
+                Cell::from(project.source_label.as_str()),
+                Cell::from(project.namespaces_label.as_str()),
+                Cell::from(project.workload_count_label.as_str()),
+                Cell::from(project.services_label.as_str()),
+                Cell::from(project.pods_label.as_str()),
+                Cell::from(project.issue_count_label.as_str()),
             ])
             .style(row_style)
         })
@@ -212,7 +212,7 @@ fn render_project_summary(
     ]));
     lines.push(Line::from(format!(
         "Namespaces: {}",
-        project.namespaces.join(", ")
+        project.namespaces_label
     )));
     lines.push(Line::from(format!(
         "Workloads: {} (deployments {}, stateful sets {}, daemon sets {}, jobs {}, cron jobs {})",

@@ -90,9 +90,8 @@ impl NamespacePicker {
 
     pub fn set_namespaces(&mut self, namespaces: Vec<String>) {
         let selected_namespace = self
-            .filtered_namespaces()
-            .get(self.selected_index)
-            .cloned()
+            .selected_namespace_from_indices(&self.filtered_namespace_indices())
+            .map(ToOwned::to_owned)
             .or_else(|| self.selection_anchor.clone());
         self.namespaces = namespaces;
         self.restore_selected_namespace(selected_namespace);
@@ -116,38 +115,39 @@ impl NamespacePicker {
         }
 
         let selected_namespace = self
-            .filtered_namespaces()
-            .get(self.selected_index)
-            .cloned()
+            .selected_namespace_from_indices(&self.filtered_namespace_indices())
+            .map(ToOwned::to_owned)
             .or_else(|| self.selection_anchor.clone());
+        let filtered = self.filtered_namespace_indices();
 
         match key.code {
             KeyCode::Esc => NamespacePickerAction::Close,
             KeyCode::Enter if plain_shortcut(key) => self
-                .filtered_namespaces()
-                .get(self.selected_index)
-                .cloned()
+                .selected_namespace_from_indices(&filtered)
+                .map(ToOwned::to_owned)
                 .map(NamespacePickerAction::Select)
                 .unwrap_or(NamespacePickerAction::None),
             KeyCode::Down if plain_shortcut(key) => {
-                let len = self.filtered_namespaces().len();
+                let len = filtered.len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
-                    self.selection_anchor =
-                        self.filtered_namespaces().get(self.selected_index).cloned();
+                    self.selection_anchor = self
+                        .selected_namespace_from_indices(&filtered)
+                        .map(ToOwned::to_owned);
                 }
                 NamespacePickerAction::None
             }
             KeyCode::Up if plain_shortcut(key) => {
-                let len = self.filtered_namespaces().len();
+                let len = filtered.len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {
                         len - 1
                     } else {
                         self.selected_index - 1
                     };
-                    self.selection_anchor =
-                        self.filtered_namespaces().get(self.selected_index).cloned();
+                    self.selection_anchor = self
+                        .selected_namespace_from_indices(&filtered)
+                        .map(ToOwned::to_owned);
                 }
                 NamespacePickerAction::None
             }
@@ -210,26 +210,46 @@ impl NamespacePicker {
     }
 
     fn restore_selected_namespace(&mut self, selected_namespace: Option<String>) {
-        let filtered = self.filtered_namespaces();
-        let matched_index = selected_namespace
-            .as_ref()
-            .and_then(|selected| filtered.iter().position(|candidate| candidate == selected));
+        let filtered = self.filtered_namespace_indices();
+        let matched_index = selected_namespace.as_ref().and_then(|selected| {
+            filtered
+                .iter()
+                .position(|index| self.namespaces[*index] == *selected)
+        });
         self.selected_index = matched_index.unwrap_or(0);
         self.selection_anchor = matched_index
-            .and_then(|index| filtered.get(index).cloned())
+            .and_then(|index| filtered.get(index))
+            .map(|index| self.namespaces[*index].clone())
             .or(selected_namespace)
-            .or_else(|| filtered.get(self.selected_index).cloned());
+            .or_else(|| {
+                self.selected_namespace_from_indices(&filtered)
+                    .map(ToOwned::to_owned)
+            });
     }
 
-    pub fn filtered_namespaces(&self) -> Vec<String> {
+    fn selected_namespace_from_indices<'a>(&'a self, indices: &[usize]) -> Option<&'a str> {
+        indices
+            .get(self.selected_index)
+            .and_then(|index| self.namespaces.get(*index))
+            .map(String::as_str)
+    }
+
+    fn filtered_namespace_indices(&self) -> Vec<usize> {
         if self.search_query.is_empty() {
-            return self.namespaces.clone();
+            return (0..self.namespaces.len()).collect();
         }
 
         self.namespaces
             .iter()
-            .filter(|ns| contains_ci(ns, &self.search_query))
-            .cloned()
+            .enumerate()
+            .filter_map(|(index, ns)| contains_ci(ns, &self.search_query).then_some(index))
+            .collect()
+    }
+
+    pub fn filtered_namespaces(&self) -> Vec<String> {
+        self.filtered_namespace_indices()
+            .into_iter()
+            .map(|index| self.namespaces[index].clone())
             .collect()
     }
 
@@ -342,7 +362,7 @@ impl NamespacePicker {
             chunks[1],
         );
 
-        let namespaces = self.filtered_namespaces();
+        let namespaces = self.filtered_namespace_indices();
         let items: Vec<ListItem> = if namespaces.is_empty() {
             vec![ListItem::new(Line::from(Span::styled(
                 "  No namespaces match",
@@ -352,12 +372,13 @@ impl NamespacePicker {
             namespaces
                 .iter()
                 .enumerate()
-                .map(|(idx, ns)| {
+                .map(|(idx, namespace_index)| {
+                    let ns = &self.namespaces[*namespace_index];
                     if idx == self.selected_index {
                         ListItem::new(Line::from(vec![
                             Span::styled(" ▶ ", theme.title_style()),
                             Span::styled(
-                                ns.clone(),
+                                ns.as_str(),
                                 Style::default()
                                     .fg(theme.selection_fg)
                                     .bg(theme.selection_bg)
@@ -367,7 +388,7 @@ impl NamespacePicker {
                     } else {
                         ListItem::new(Line::from(vec![
                             Span::styled("   ", theme.inactive_style()),
-                            Span::styled(ns.clone(), Style::default().fg(theme.fg_dim)),
+                            Span::styled(ns.as_str(), Style::default().fg(theme.fg_dim)),
                         ]))
                     }
                 })

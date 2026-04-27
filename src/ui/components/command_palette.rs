@@ -877,7 +877,7 @@ pub struct CommandPalette {
     selected_index: usize,
     selection_anchor: Option<PaletteEntry>,
     is_open: bool,
-    cached_filtered: RefCell<Option<Vec<PaletteEntry>>>,
+    cached_filtered: RefCell<Option<Arc<Vec<PaletteEntry>>>>,
     activity_entries: Vec<PaletteActivityEntry>,
     resource_entries: Arc<Vec<PaletteResourceEntry>>,
     resource_context: Option<ResourceActionContext>,
@@ -913,10 +913,11 @@ impl CommandPalette {
         self.extension_actions.clear();
         self.runbooks.clear();
         self.selection_anchor = None;
+        self.cached_filtered.borrow_mut().take();
     }
 
     fn selected_entry_snapshot(&self) -> Option<PaletteEntry> {
-        let filtered = self.filtered();
+        let filtered = self.filtered_entries();
         filtered.get(self.selected_index).cloned()
     }
 
@@ -928,7 +929,7 @@ impl CommandPalette {
 
     fn restore_selected_entry(&mut self, selected_entry: Option<PaletteEntry>) {
         self.cached_filtered.borrow_mut().take();
-        let filtered = self.filtered();
+        let filtered = self.filtered_entries();
         let matched_index = selected_entry
             .as_ref()
             .and_then(|entry| filtered.iter().position(|candidate| candidate == entry));
@@ -945,26 +946,39 @@ impl CommandPalette {
             .or_else(|| filtered.get(self.selected_index).cloned());
     }
 
+    fn update_loaded_entries(&mut self, selected_entry: Option<PaletteEntry>) {
+        if self.is_open {
+            self.restore_selected_entry(selected_entry);
+        } else {
+            self.cached_filtered.borrow_mut().take();
+            self.selection_anchor = None;
+        }
+    }
+
     pub fn set_activity_entries(&mut self, entries: Vec<PaletteActivityEntry>) {
-        let selected_entry = self.selected_entry_anchor();
+        let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
         self.activity_entries = entries;
-        self.restore_selected_entry(selected_entry);
+        self.update_loaded_entries(selected_entry);
     }
 
     pub fn set_resource_entries(&mut self, entries: impl Into<Arc<Vec<PaletteResourceEntry>>>) {
-        let selected_entry = self.selected_entry_anchor();
-        self.resource_entries = entries.into();
-        self.restore_selected_entry(selected_entry);
+        let entries = entries.into();
+        if Arc::ptr_eq(&self.resource_entries, &entries) {
+            return;
+        }
+        let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
+        self.resource_entries = entries;
+        self.update_loaded_entries(selected_entry);
     }
 
     pub fn set_columns_info(&mut self, info: Option<Vec<(String, String, bool)>>) {
-        let selected_entry = self.selected_entry_anchor();
+        let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
         self.columns_info = info;
-        self.restore_selected_entry(selected_entry);
+        self.update_loaded_entries(selected_entry);
     }
 
     pub fn set_extension_actions(&mut self, actions: Vec<LoadedExtensionAction>) {
-        let selected_entry = self.selected_entry_anchor();
+        let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
         self.extension_actions = actions
             .into_iter()
             .map(|action| {
@@ -978,11 +992,11 @@ impl CommandPalette {
                 }
             })
             .collect();
-        self.restore_selected_entry(selected_entry);
+        self.update_loaded_entries(selected_entry);
     }
 
     pub fn set_runbooks(&mut self, runbooks: Vec<LoadedRunbook>, resource: Option<ResourceRef>) {
-        let selected_entry = self.selected_entry_anchor();
+        let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
         self.runbooks = runbooks
             .into_iter()
             .map(|runbook| {
@@ -1001,7 +1015,7 @@ impl CommandPalette {
                 }
             })
             .collect();
-        self.restore_selected_entry(selected_entry);
+        self.update_loaded_entries(selected_entry);
     }
 
     pub fn set_workspace_info(
@@ -1009,10 +1023,10 @@ impl CommandPalette {
         saved_workspaces: Vec<String>,
         workspace_banks: Vec<(String, Option<String>)>,
     ) {
-        let selected_entry = self.selected_entry_anchor();
+        let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
         self.saved_workspaces = saved_workspaces;
         self.workspace_banks = workspace_banks;
-        self.restore_selected_entry(selected_entry);
+        self.update_loaded_entries(selected_entry);
     }
 
     pub fn is_open(&self) -> bool {
@@ -1031,7 +1045,7 @@ impl CommandPalette {
         match key.code {
             KeyCode::Esc => CommandPaletteAction::Close,
             KeyCode::Enter if plain_shortcut(key) => {
-                let entries = self.filtered();
+                let entries = self.filtered_entries();
                 if let Some(entry) = entries.get(self.selected_index) {
                     match entry {
                         PaletteEntry::Activity(entry) => match &entry.target {
@@ -1089,7 +1103,7 @@ impl CommandPalette {
                 }
             }
             KeyCode::Down if plain_shortcut(key) => {
-                let len = self.filtered().len();
+                let len = self.filtered_entries().len();
                 if len > 0 {
                     self.selected_index = (self.selected_index + 1) % len;
                     self.selection_anchor = self.selected_entry_snapshot();
@@ -1097,7 +1111,7 @@ impl CommandPalette {
                 CommandPaletteAction::None
             }
             KeyCode::Up if plain_shortcut(key) => {
-                let len = self.filtered().len();
+                let len = self.filtered_entries().len();
                 if len > 0 {
                     self.selected_index = if self.selected_index == 0 {
                         len - 1
@@ -1177,9 +1191,9 @@ impl CommandPalette {
 
     /// Returns palette entries whose aliases fuzzy-match the current query.
     /// Actions (if a resource context exists) come first, then navigation entries.
-    pub fn filtered(&self) -> Vec<PaletteEntry> {
+    fn filtered_entries(&self) -> Arc<Vec<PaletteEntry>> {
         if let Some(cached) = self.cached_filtered.borrow().as_ref() {
-            return cached.clone();
+            return Arc::clone(cached);
         }
 
         let mut result = Vec::new();
@@ -1359,8 +1373,15 @@ impl CommandPalette {
             }
         }
 
-        *self.cached_filtered.borrow_mut() = Some(result.clone());
+        let result = Arc::new(result);
+        *self.cached_filtered.borrow_mut() = Some(Arc::clone(&result));
         result
+    }
+
+    /// Returns palette entries whose aliases fuzzy-match the current query.
+    /// Actions (if a resource context exists) come first, then navigation entries.
+    pub fn filtered(&self) -> Vec<PaletteEntry> {
+        self.filtered_entries().as_ref().clone()
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect) {
@@ -1471,7 +1492,7 @@ impl CommandPalette {
             chunks[1],
         );
 
-        let matches = self.filtered();
+        let matches = self.filtered_entries();
         let mut items: Vec<ListItem> = Vec::new();
         let mut item_heights = Vec::with_capacity(matches.len());
 
@@ -1559,6 +1580,16 @@ mod tests {
             effective_logs_resource: None,
             effective_logs_authorization: None,
             action_authorizations: Default::default(),
+        }
+    }
+
+    fn palette_resource_entry(resource: ResourceRef) -> PaletteResourceEntry {
+        PaletteResourceEntry {
+            resource,
+            title: "api-0".into(),
+            subtitle: "Pod · prod".into(),
+            aliases: vec!["api-0".into(), "prod/api-0".into(), "pod".into()],
+            badge_label: "Pods".into(),
         }
     }
 
@@ -2378,6 +2409,44 @@ mod tests {
             PaletteEntry::Resource(resource)
                 if resource.resource == ResourceRef::Deployment("api".into(), "prod".into())
         )));
+    }
+
+    #[test]
+    fn same_resource_entries_arc_preserves_cached_filtered_entries() {
+        let mut palette = CommandPalette::default();
+        let entries = Arc::new(vec![palette_resource_entry(ResourceRef::Pod(
+            "api-0".into(),
+            "prod".into(),
+        ))]);
+        palette.set_resource_entries(Arc::clone(&entries));
+        palette.open();
+        for c in "api-0".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        let first = palette.filtered_entries();
+        palette.set_resource_entries(Arc::clone(&entries));
+        let second = palette.filtered_entries();
+
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn close_drops_cached_filtered_entries() {
+        let mut palette = CommandPalette::default();
+        palette.set_resource_entries(vec![palette_resource_entry(ResourceRef::Pod(
+            "api-0".into(),
+            "prod".into(),
+        ))]);
+        palette.open();
+        for c in "api-0".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        assert!(palette.cached_filtered.borrow().is_some());
+        palette.close();
+
+        assert!(palette.cached_filtered.borrow().is_none());
     }
 
     #[test]
