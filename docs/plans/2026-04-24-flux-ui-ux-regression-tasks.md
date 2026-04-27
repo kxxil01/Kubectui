@@ -31,6 +31,7 @@ Use this backlog one item at a time. Keep each patch small, tested, and tied to 
 - [x] Action-history resource jump preserves list/detail alignment.
 - [x] Palette and runbook detail actions load the targeted resource detail.
 - [x] Palette resource-only actions point detail state at the targeted resource.
+- [x] Command palette closes when watch fallback changes selected resource.
 
 ## Next Tasks
 
@@ -253,6 +254,15 @@ Done when:
 
 Done when:
 - Palette actions that only need resource identity cannot run against the previously open detail resource.
+
+### 24. Command Palette Watch Fallback Alignment
+
+- [x] Add regression: command palette stays open for pure reorder when selected resource identity is preserved.
+- [x] Add regression: command palette closes when watch fallback changes selected resource identity.
+- [x] Patch canonical selection-preservation fallback to close stale palette targets.
+
+Done when:
+- Command palette actions cannot keep targeting a deleted/hidden resource after watch fallback moves selection.
 
 ## Suggested Order
 

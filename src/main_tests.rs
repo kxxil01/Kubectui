@@ -1117,6 +1117,65 @@ fn flux_selection_identity_survives_watch_reorder_and_delete_updates() {
 }
 
 #[test]
+fn command_palette_closes_when_watch_update_changes_selected_resource() {
+    fn kustomization(name: &str) -> FluxResourceInfo {
+        FluxResourceInfo {
+            name: name.to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+            ..FluxResourceInfo::default()
+        }
+    }
+
+    fn snapshot(version: u64, names: &[&str]) -> ClusterSnapshot {
+        ClusterSnapshot {
+            snapshot_version: version,
+            flux_resources: names.iter().map(|name| kustomization(name)).collect(),
+            ..ClusterSnapshot::default()
+        }
+    }
+
+    let previous = snapshot(1, &["bootstrap", "apps", "platform"]);
+    let reordered = snapshot(2, &["apps", "bootstrap", "platform"]);
+    let mut app = AppState {
+        view: AppView::FluxCDKustomizations,
+        selected_idx: 1,
+        ..AppState::default()
+    };
+    app.command_palette.open();
+
+    assert!(preserve_selection_identity_after_snapshot_change(
+        &mut app, &previous, &reordered
+    ));
+    assert!(app.command_palette.is_open());
+
+    let previous = snapshot(3, &["bootstrap", "apps", "platform"]);
+    let selected_deleted = snapshot(4, &["bootstrap", "platform"]);
+    app.selected_idx = 1;
+
+    assert!(preserve_selection_identity_after_snapshot_change(
+        &mut app,
+        &previous,
+        &selected_deleted,
+    ));
+    assert!(!app.command_palette.is_open());
+    assert_eq!(
+        selected_resource(&app, &selected_deleted),
+        Some(ResourceRef::CustomResource {
+            name: "platform".to_string(),
+            namespace: Some("flux-system".to_string()),
+            group: "kustomize.toolkit.fluxcd.io".to_string(),
+            version: "v1".to_string(),
+            kind: "Kustomization".to_string(),
+            plural: "kustomizations".to_string(),
+        })
+    );
+}
+
+#[test]
 fn flux_detail_alignment_survives_watch_reorder_and_selected_delete() {
     fn kustomization(name: &str) -> FluxResourceInfo {
         FluxResourceInfo {

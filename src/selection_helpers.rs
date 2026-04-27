@@ -460,6 +460,7 @@ pub fn preserve_selection_identity_after_snapshot_change(
         app.selected_idx = clamped_idx;
         reset_content_detail_scroll_if_selection_changed(app, current, &selected);
         close_stale_detail_after_selection_change(app, current);
+        close_command_palette_if_selection_changed(app, current, &selected);
         return true;
     };
 
@@ -469,6 +470,23 @@ pub fn preserve_selection_identity_after_snapshot_change(
     let status_cleared = clear_selection_search_fallback_status(app);
     let detail_changed = close_stale_detail_after_selection_change(app, current);
     selection_changed || detail_changed || status_cleared
+}
+
+fn close_command_palette_if_selection_changed(
+    app: &mut AppState,
+    current: &ClusterSnapshot,
+    previous_selected: &ResourceRef,
+) -> bool {
+    if !app.command_palette.is_open() {
+        return false;
+    }
+
+    if selected_resource(app, current).as_ref() == Some(previous_selected) {
+        return false;
+    }
+
+    app.command_palette.close();
+    true
 }
 
 fn clear_selection_search_fallback_status(app: &mut AppState) -> bool {
