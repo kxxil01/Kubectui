@@ -1,12 +1,14 @@
 //! Scale dialog component for workload replica scaling.
 
+use std::borrow::Cow;
+
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     prelude::{Color, Frame, Line, Span, Style},
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
-use crate::ui::{truncate_message, wrapped_line_count};
+use crate::ui::{cursor_visible_input_line, truncate_message, wrapped_line_count};
 
 /// Field focus for keyboard navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -297,12 +299,6 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
     frame.render_widget(meta_widget, chunks[1]);
 
     // Input section with +/- buttons
-    let input_display = if state.input_buffer.is_empty() {
-        format!(" {} ", state.current_replicas)
-    } else {
-        format!(" {} ", state.input_buffer)
-    };
-
     let input_style = if state.error_message.is_some() {
         Style::default().fg(Color::Red)
     } else if state.warning_message.is_some() {
@@ -310,19 +306,11 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
     } else {
         Style::default().fg(Color::Cyan)
     };
-
-    let cursor = if state.focus_field == ScaleField::InputField {
-        "│"
-    } else {
-        " "
-    };
-    let input_box = format!("┌─{}─{}─┐", input_display, cursor);
-    let input_footer = "└─────────────────────┘";
+    let input_inner_width = usize::from(chunks[2].width.saturating_sub(2).max(1));
 
     let input_lines = vec![
         Line::from("New replica count (0-100):"),
-        Line::from(Span::styled(input_box, input_style)),
-        Line::from(Span::styled(input_footer, input_style)),
+        scale_input_line(state, input_style, input_inner_width),
     ];
 
     let input_widget =
@@ -371,6 +359,35 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
 
 fn use_compact_scale_dialog(popup: Rect) -> bool {
     popup.width < 44 || popup.height < 18
+}
+
+fn scale_input_value(state: &ScaleDialogState) -> Cow<'_, str> {
+    if state.input_buffer.is_empty() {
+        Cow::Owned(state.current_replicas.to_string())
+    } else {
+        Cow::Borrowed(state.input_buffer.as_str())
+    }
+}
+
+fn scale_input_line(state: &ScaleDialogState, style: Style, width: usize) -> Line<'static> {
+    let width = width.max(1);
+    let value = scale_input_value(state);
+    if width <= 2 {
+        return Line::from(Span::styled(
+            truncate_message(value.as_ref(), width).into_owned(),
+            style,
+        ));
+    }
+
+    cursor_visible_input_line(
+        &[Span::styled("[", style)],
+        value.as_ref(),
+        (state.focus_field == ScaleField::InputField).then_some(value.chars().count()),
+        style,
+        style,
+        &[Span::styled("]", style)],
+        width,
+    )
 }
 
 fn render_compact_scale_dialog(frame: &mut Frame, popup: Rect, state: &ScaleDialogState) {
@@ -651,6 +668,29 @@ mod tests {
         terminal
             .draw(|frame| render_scale_dialog(frame, frame.area(), &state))
             .expect("compact scale dialog should render");
+    }
+
+    #[test]
+    fn scale_input_line_keeps_cursor_visible_for_long_value() {
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
+        state.input_buffer = "12345678901234567890".to_string();
+        state.focus_field = ScaleField::InputField;
+
+        let line = scale_input_line(&state, Style::default(), 12);
+        let rendered = line.to_string();
+
+        assert!(rendered.chars().count() <= 12);
+        assert!(rendered.ends_with("█]"));
+    }
+
+    #[test]
+    fn scale_input_line_handles_tight_width_without_overflow() {
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 100);
+        state.input_buffer = "100".to_string();
+
+        let line = scale_input_line(&state, Style::default(), 2);
+
+        assert!(line.to_string().chars().count() <= 2);
     }
 
     #[test]
