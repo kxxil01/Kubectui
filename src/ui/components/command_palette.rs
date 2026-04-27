@@ -1559,7 +1559,7 @@ fn query_indicates_template_intent(query: &str) -> bool {
     !query.is_empty()
         && TEMPLATE_INTENT_ALIASES
             .iter()
-            .any(|alias| fuzzy_match(query, alias))
+            .any(|alias| fuzzy_match(query, alias) || fuzzy_match(alias, query))
 }
 
 #[cfg(test)]
@@ -2198,6 +2198,32 @@ mod tests {
 
         let entries = palette.filtered();
         assert!(entries.contains(&PaletteEntry::Template(ResourceTemplateKind::Deployment)));
+    }
+
+    #[test]
+    fn partial_template_intent_query_exposes_template_entries() {
+        let mut palette = CommandPalette::default();
+        palette.open();
+        for c in "templ".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        let entries = palette.filtered();
+        assert!(entries.contains(&PaletteEntry::Template(ResourceTemplateKind::Deployment)));
+        assert!(entries.contains(&PaletteEntry::Template(ResourceTemplateKind::ConfigMap)));
+    }
+
+    #[test]
+    fn partial_create_query_exposes_template_entries() {
+        let mut palette = CommandPalette::default();
+        palette.open();
+        for c in "cre".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        let entries = palette.filtered();
+        assert!(entries.contains(&PaletteEntry::Template(ResourceTemplateKind::Deployment)));
+        assert!(entries.contains(&PaletteEntry::Template(ResourceTemplateKind::ConfigMap)));
     }
 
     #[test]
