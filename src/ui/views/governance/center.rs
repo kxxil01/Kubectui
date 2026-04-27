@@ -158,15 +158,15 @@ fn render_governance_table(
             let (icon, icon_style) = severity_badge(summary.highest_severity);
             Row::new(vec![
                 Cell::from(Span::styled(icon, icon_style)),
-                Cell::from(summary.namespace.clone()),
-                Cell::from(summary.project_count_label.clone()),
-                Cell::from(summary.workload_count_label.clone()),
-                Cell::from(summary.total_issue_count_label.clone()),
-                Cell::from(summary.policy_surface_count_label.clone()),
-                Cell::from(summary.vulnerability_total_label.clone()),
-                Cell::from(summary.cpu_req_utilization_label.clone()),
-                Cell::from(summary.mem_req_utilization_label.clone()),
-                Cell::from(summary.idle_request_label.clone()),
+                Cell::from(summary.namespace.as_str()),
+                Cell::from(summary.project_count_label.as_str()),
+                Cell::from(summary.workload_count_label.as_str()),
+                Cell::from(summary.total_issue_count_label.as_str()),
+                Cell::from(summary.policy_surface_count_label.as_str()),
+                Cell::from(summary.vulnerability_total_label.as_str()),
+                Cell::from(summary.cpu_req_utilization_label.as_str()),
+                Cell::from(summary.mem_req_utilization_label.as_str()),
+                Cell::from(summary.idle_request_label.as_str()),
             ])
             .style(row_style)
         })
