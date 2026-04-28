@@ -114,10 +114,6 @@ impl NamespacePicker {
             return NamespacePickerAction::None;
         }
 
-        let selected_namespace = self
-            .selected_namespace_from_indices(&self.filtered_namespace_indices())
-            .map(ToOwned::to_owned)
-            .or_else(|| self.selection_anchor.clone());
         let filtered = self.filtered_namespace_indices();
 
         match key.code {
@@ -156,19 +152,27 @@ impl NamespacePicker {
                     && let Some((byte_idx, _)) =
                         self.search_query.char_indices().nth(self.search_cursor - 1)
                 {
+                    let selected_namespace = self
+                        .selected_namespace_from_indices(&filtered)
+                        .map(ToOwned::to_owned)
+                        .or_else(|| self.selection_anchor.clone());
                     self.search_query.remove(byte_idx);
                     self.search_cursor = self.search_cursor.saturating_sub(1);
+                    self.restore_selected_namespace(selected_namespace);
                 }
-                self.restore_selected_namespace(selected_namespace);
                 NamespacePickerAction::None
             }
             KeyCode::Delete => {
                 if let Some((byte_idx, _)) =
                     self.search_query.char_indices().nth(self.search_cursor)
                 {
+                    let selected_namespace = self
+                        .selected_namespace_from_indices(&filtered)
+                        .map(ToOwned::to_owned)
+                        .or_else(|| self.selection_anchor.clone());
                     self.search_query.remove(byte_idx);
+                    self.restore_selected_namespace(selected_namespace);
                 }
-                self.restore_selected_namespace(selected_namespace);
                 NamespacePickerAction::None
             }
             KeyCode::Left => {
@@ -189,12 +193,22 @@ impl NamespacePicker {
                 NamespacePickerAction::None
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.search_query.clear();
-                self.search_cursor = 0;
-                self.restore_selected_namespace(selected_namespace);
+                if !self.search_query.is_empty() {
+                    let selected_namespace = self
+                        .selected_namespace_from_indices(&filtered)
+                        .map(ToOwned::to_owned)
+                        .or_else(|| self.selection_anchor.clone());
+                    self.search_query.clear();
+                    self.search_cursor = 0;
+                    self.restore_selected_namespace(selected_namespace);
+                }
                 NamespacePickerAction::None
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let selected_namespace = self
+                    .selected_namespace_from_indices(&filtered)
+                    .map(ToOwned::to_owned)
+                    .or_else(|| self.selection_anchor.clone());
                 let byte_idx = self
                     .search_query
                     .char_indices()
@@ -593,6 +607,41 @@ mod tests {
 
         picker.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
 
+        assert_eq!(
+            picker.filtered_namespaces().get(picker.selected_index()),
+            Some(&"prod-east".to_string())
+        );
+    }
+
+    #[test]
+    fn namespace_picker_noop_search_edit_keys_keep_selection_and_query() {
+        let mut picker = NamespacePicker::new(vec![
+            "all".to_string(),
+            "prod-east".to_string(),
+            "prod-west".to_string(),
+        ]);
+        picker.open();
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
+        assert_eq!(
+            picker.filtered_namespaces().get(picker.selected_index()),
+            Some(&"prod-east".to_string())
+        );
+
+        picker.handle_key(KeyEvent::from(KeyCode::Backspace));
+        picker.handle_key(KeyEvent::from(KeyCode::Delete));
+        picker.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+        assert!(picker.search_query().is_empty());
+        assert_eq!(
+            picker.filtered_namespaces().get(picker.selected_index()),
+            Some(&"prod-east".to_string())
+        );
+
+        picker.handle_key(KeyEvent::from(KeyCode::Char('p')));
+        picker.handle_key(KeyEvent::from(KeyCode::End));
+        picker.handle_key(KeyEvent::from(KeyCode::Delete));
+
+        assert_eq!(picker.search_query(), "p");
         assert_eq!(
             picker.filtered_namespaces().get(picker.selected_index()),
             Some(&"prod-east".to_string())
