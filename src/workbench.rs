@@ -1417,11 +1417,20 @@ impl WorkloadLogsTabState {
     }
 
     pub fn current_filtered_line(&self) -> Option<&WorkloadLogLine> {
-        let filtered = self.filtered_indices();
-        let index = filtered
-            .get(self.scroll.min(filtered.len().saturating_sub(1)))
-            .copied()?;
-        self.lines.get(index)
+        let now = crate::time::now();
+        let mut last = None;
+        for (matched, line) in self
+            .lines
+            .iter()
+            .filter(|line| self.matches_filter_at(line, now))
+            .enumerate()
+        {
+            if matched == self.scroll {
+                return Some(line);
+            }
+            last = Some(line);
+        }
+        last
     }
 
     fn selected_filtered_line_anchor(&self) -> Option<WorkloadLogLine> {
@@ -4190,6 +4199,40 @@ mod tests {
             tab.filtered_line_anchor
                 .as_ref()
                 .map(|line| line.entry.raw()),
+            Some("ready second")
+        );
+    }
+
+    #[test]
+    fn workload_log_current_filtered_line_clamps_without_filtered_vector() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.lines = vec![
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready first"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("skip this"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready second"),
+                is_stderr: false,
+            },
+        ];
+        tab.text_filter = "ready".to_string();
+        tab.compiled_text_filter = compile_query("ready", LogQueryMode::Substring)
+            .expect("substring filter should compile");
+        tab.scroll = usize::MAX;
+
+        assert_eq!(
+            tab.current_filtered_line().map(|line| line.entry.raw()),
             Some("ready second")
         );
     }
