@@ -520,17 +520,10 @@ impl LogsViewerState {
             self.scroll_filtered_top();
             return Ok(None);
         }
-        let filtered = self.filtered_indices();
-        let cursor = self.filtered_cursor(&filtered);
-        let Some(index) = filtered.get(cursor).copied() else {
+        let Some(line) = self.current_visible_line() else {
             return Err("No visible log line is available for correlation.".to_string());
         };
-        let Some(request_id) = self
-            .lines
-            .get(index)
-            .and_then(LogEntry::request_id)
-            .map(str::to_string)
-        else {
+        let Some(request_id) = line.request_id().map(str::to_string) else {
             return Err("The current log line does not contain a request token.".to_string());
         };
         self.correlation_request_id = Some(request_id.clone());
