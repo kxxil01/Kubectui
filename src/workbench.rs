@@ -1444,25 +1444,41 @@ impl WorkloadLogsTabState {
     }
 
     fn restore_filtered_scroll(&mut self, preserved_line: Option<WorkloadLogLine>) {
-        let filtered = self.filtered_indices();
-        if filtered.is_empty() {
+        let now = crate::time::now();
+        let target_scroll = self.scroll;
+        let mut total = 0usize;
+        let mut anchor_at_target = None;
+        let mut last_anchor = None;
+
+        for line in &self.lines {
+            if !self.matches_filter_at(line, now) {
+                continue;
+            }
+
+            if preserved_line
+                .as_ref()
+                .is_some_and(|preserved| preserved == line)
+            {
+                self.scroll = total;
+                self.filtered_line_anchor = Some(line.clone());
+                return;
+            }
+
+            if total == target_scroll {
+                anchor_at_target = Some(line.clone());
+            }
+            last_anchor = Some(line.clone());
+            total += 1;
+        }
+
+        if total == 0 {
             self.scroll = 0;
             self.filtered_line_anchor = preserved_line;
             return;
         }
 
-        self.scroll = preserved_line
-            .as_ref()
-            .and_then(|line| {
-                filtered
-                    .iter()
-                    .position(|index| self.lines.get(*index) == Some(line))
-            })
-            .unwrap_or_else(|| self.scroll.min(filtered.len().saturating_sub(1)));
-        self.filtered_line_anchor = filtered
-            .get(self.scroll)
-            .and_then(|index| self.lines.get(*index))
-            .cloned();
+        self.scroll = target_scroll.min(total.saturating_sub(1));
+        self.filtered_line_anchor = anchor_at_target.or(last_anchor);
     }
 
     pub fn toggle_correlation_on_current_line(&mut self) -> Result<Option<String>, String> {
@@ -4195,6 +4211,85 @@ mod tests {
         tab.compiled_text_filter = compile_query("ready", LogQueryMode::Substring)
             .expect("substring filter should compile");
         tab.scroll = 1;
+
+        tab.restore_filtered_scroll(None);
+
+        assert_eq!(tab.scroll, 1);
+        assert_eq!(
+            tab.filtered_line_anchor
+                .as_ref()
+                .map(|line| line.entry.raw()),
+            Some("ready second")
+        );
+    }
+
+    #[test]
+    fn workload_log_restore_scroll_preserves_visible_line_identity() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        let selected = WorkloadLogLine {
+            pod_name: "pod-0".to_string(),
+            container_name: "main".to_string(),
+            entry: LogEntry::from_raw("ready selected"),
+            is_stderr: false,
+        };
+        tab.lines = vec![
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready first"),
+                is_stderr: false,
+            },
+            selected.clone(),
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready third"),
+                is_stderr: false,
+            },
+        ];
+        tab.text_filter = "ready".to_string();
+        tab.compiled_text_filter = compile_query("ready", LogQueryMode::Substring)
+            .expect("substring filter should compile");
+        tab.scroll = 0;
+
+        tab.restore_filtered_scroll(Some(selected));
+
+        assert_eq!(tab.scroll, 1);
+        assert_eq!(
+            tab.filtered_line_anchor
+                .as_ref()
+                .map(|line| line.entry.raw()),
+            Some("ready selected")
+        );
+    }
+
+    #[test]
+    fn workload_log_restore_scroll_clamps_to_last_visible_anchor() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.lines = vec![
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready first"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("skip this"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready second"),
+                is_stderr: false,
+            },
+        ];
+        tab.text_filter = "ready".to_string();
+        tab.compiled_text_filter = compile_query("ready", LogQueryMode::Substring)
+            .expect("substring filter should compile");
+        tab.scroll = usize::MAX;
 
         tab.restore_filtered_scroll(None);
 
