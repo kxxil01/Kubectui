@@ -1175,23 +1175,23 @@ impl CommandPalette {
                 CommandPaletteAction::None
             }
             KeyCode::Backspace => {
-                let selected_entry = self.selected_entry_anchor();
                 if self.query_cursor > 0
                     && let Some((byte_idx, _)) =
                         self.query.char_indices().nth(self.query_cursor - 1)
                 {
+                    let selected_entry = self.selected_entry_anchor();
                     self.query.remove(byte_idx);
                     self.query_cursor = self.query_cursor.saturating_sub(1);
+                    self.restore_selected_entry(selected_entry);
                 }
-                self.restore_selected_entry(selected_entry);
                 CommandPaletteAction::None
             }
             KeyCode::Delete => {
-                let selected_entry = self.selected_entry_anchor();
                 if let Some((byte_idx, _)) = self.query.char_indices().nth(self.query_cursor) {
+                    let selected_entry = self.selected_entry_anchor();
                     self.query.remove(byte_idx);
+                    self.restore_selected_entry(selected_entry);
                 }
-                self.restore_selected_entry(selected_entry);
                 CommandPaletteAction::None
             }
             KeyCode::Left => {
@@ -1215,10 +1215,12 @@ impl CommandPalette {
                     .modifiers
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
-                let selected_entry = self.selected_entry_anchor();
-                self.query.clear();
-                self.query_cursor = 0;
-                self.restore_selected_entry(selected_entry);
+                if !self.query.is_empty() {
+                    let selected_entry = self.selected_entry_anchor();
+                    self.query.clear();
+                    self.query_cursor = 0;
+                    self.restore_selected_entry(selected_entry);
+                }
                 CommandPaletteAction::None
             }
             KeyCode::Char(c)
@@ -2505,6 +2507,33 @@ mod tests {
         let second = palette.filtered_entries();
 
         assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn noop_query_edit_keys_preserve_cached_filtered_entries() {
+        let mut palette = CommandPalette::default();
+        palette.open();
+
+        let first = palette.filtered_entries();
+        palette.handle_key(KeyEvent::from(KeyCode::Backspace));
+        let after_empty_backspace = palette.filtered_entries();
+        palette.handle_key(KeyEvent::from(KeyCode::Delete));
+        let after_empty_delete = palette.filtered_entries();
+        palette.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+        let after_empty_ctrl_u = palette.filtered_entries();
+
+        assert!(Arc::ptr_eq(&first, &after_empty_backspace));
+        assert!(Arc::ptr_eq(&first, &after_empty_delete));
+        assert!(Arc::ptr_eq(&first, &after_empty_ctrl_u));
+
+        for c in "api".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+        let query_results = palette.filtered_entries();
+        palette.handle_key(KeyEvent::from(KeyCode::Delete));
+        let after_end_delete = palette.filtered_entries();
+
+        assert!(Arc::ptr_eq(&query_results, &after_end_delete));
     }
 
     #[test]
