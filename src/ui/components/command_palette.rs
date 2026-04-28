@@ -8,7 +8,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
 };
-use std::{cell::RefCell, collections::HashSet, sync::Arc};
+use std::{cell::RefCell, cmp::Ordering, collections::HashSet, sync::Arc};
 
 use crate::app::{AppState, AppView, RecentJumpTarget, ResourceRef};
 use crate::extensions::LoadedExtensionAction;
@@ -648,6 +648,58 @@ struct AliasScore<'a> {
     alias: &'a str,
 }
 
+fn push_ranked_match<'a, F>(
+    matches: &mut Vec<(AliasScore<'a>, usize)>,
+    candidate: (AliasScore<'a>, usize),
+    limit: usize,
+    mut compare: F,
+) where
+    F: FnMut(&(AliasScore<'a>, usize), &(AliasScore<'a>, usize)) -> Ordering,
+{
+    if limit == 0 {
+        return;
+    }
+    if matches.len() < limit {
+        matches.push(candidate);
+        return;
+    }
+
+    if let Some((worst_index, _)) = matches
+        .iter()
+        .enumerate()
+        .max_by(|(_, left), (_, right)| compare(left, right))
+        && compare(&candidate, &matches[worst_index]).is_lt()
+    {
+        matches[worst_index] = candidate;
+    }
+}
+
+fn compare_activity_match(
+    entries: &[PaletteActivityEntry],
+    left: &(AliasScore<'_>, usize),
+    right: &(AliasScore<'_>, usize),
+) -> Ordering {
+    let left_entry = &entries[left.1];
+    let right_entry = &entries[right.1];
+    left.0
+        .cmp(&right.0)
+        .then_with(|| left_entry.title.cmp(&right_entry.title))
+        .then_with(|| left_entry.subtitle.cmp(&right_entry.subtitle))
+}
+
+fn compare_resource_match(
+    entries: &[PaletteResourceEntry],
+    left: &(AliasScore<'_>, usize),
+    right: &(AliasScore<'_>, usize),
+) -> Ordering {
+    let left_entry = &entries[left.1];
+    let right_entry = &entries[right.1];
+    left.0
+        .cmp(&right.0)
+        .then_with(|| left_entry.title.cmp(&right_entry.title))
+        .then_with(|| left_entry.subtitle.cmp(&right_entry.subtitle))
+}
+
 fn ranked_alias_score<'a>(aliases: &'a [String], query: &str) -> Option<AliasScore<'a>> {
     let query = query.trim();
     if query.is_empty() {
@@ -1208,51 +1260,43 @@ impl CommandPalette {
                     .map(PaletteEntry::Activity),
             );
         } else {
-            let mut matched_activities: Vec<_> = self
-                .activity_entries
-                .iter()
-                .enumerate()
-                .filter_map(|(index, entry)| {
-                    ranked_alias_score(&entry.aliases, &q_lower).map(|score| (score, index))
-                })
-                .collect();
-            matched_activities.sort_by(|left, right| {
-                let left_entry = &self.activity_entries[left.1];
-                let right_entry = &self.activity_entries[right.1];
-                left.0
-                    .cmp(&right.0)
-                    .then_with(|| left_entry.title.cmp(&right_entry.title))
-                    .then_with(|| left_entry.subtitle.cmp(&right_entry.subtitle))
-            });
+            let mut matched_activities = Vec::with_capacity(MAX_ACTIVITY_RESULTS);
+            for (index, entry) in self.activity_entries.iter().enumerate() {
+                if let Some(score) = ranked_alias_score(&entry.aliases, &q_lower) {
+                    push_ranked_match(
+                        &mut matched_activities,
+                        (score, index),
+                        MAX_ACTIVITY_RESULTS,
+                        |left, right| compare_activity_match(&self.activity_entries, left, right),
+                    );
+                }
+            }
+            matched_activities
+                .sort_by(|left, right| compare_activity_match(&self.activity_entries, left, right));
             result.extend(
                 matched_activities
                     .into_iter()
-                    .take(MAX_ACTIVITY_RESULTS)
                     .map(|(_, index)| PaletteEntry::Activity(self.activity_entries[index].clone())),
             );
         }
 
         if !q_lower.is_empty() {
-            let mut matched_resources: Vec<_> = self
-                .resource_entries
-                .iter()
-                .enumerate()
-                .filter_map(|(index, entry)| {
-                    ranked_alias_score(&entry.aliases, &q_lower).map(|score| (score, index))
-                })
-                .collect();
-            matched_resources.sort_by(|left, right| {
-                let left_entry = &self.resource_entries[left.1];
-                let right_entry = &self.resource_entries[right.1];
-                left.0
-                    .cmp(&right.0)
-                    .then_with(|| left_entry.title.cmp(&right_entry.title))
-                    .then_with(|| left_entry.subtitle.cmp(&right_entry.subtitle))
-            });
+            let mut matched_resources = Vec::with_capacity(MAX_RESOURCE_RESULTS);
+            for (index, entry) in self.resource_entries.iter().enumerate() {
+                if let Some(score) = ranked_alias_score(&entry.aliases, &q_lower) {
+                    push_ranked_match(
+                        &mut matched_resources,
+                        (score, index),
+                        MAX_RESOURCE_RESULTS,
+                        |left, right| compare_resource_match(&self.resource_entries, left, right),
+                    );
+                }
+            }
+            matched_resources
+                .sort_by(|left, right| compare_resource_match(&self.resource_entries, left, right));
             result.extend(
                 matched_resources
                     .into_iter()
-                    .take(MAX_RESOURCE_RESULTS)
                     .map(|(_, index)| PaletteEntry::Resource(self.resource_entries[index].clone())),
             );
         }
