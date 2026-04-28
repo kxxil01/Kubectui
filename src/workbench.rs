@@ -1188,6 +1188,12 @@ impl WorkloadLogsTabState {
     }
 
     pub fn commit_text_filter(&mut self) {
+        if self.filter_input == self.text_filter {
+            self.editing_text_filter = false;
+            self.text_filter_error = None;
+            self.time_jump_error = None;
+            return;
+        }
         let preserved_line = self.selected_filtered_line_anchor();
         self.text_filter = self.filter_input.clone();
         self.text_filter_error = None;
@@ -4070,6 +4076,41 @@ mod tests {
             Some("beta line")
         );
         assert_eq!(tab.scroll, 1);
+    }
+
+    #[test]
+    fn workload_log_unchanged_filter_commit_keeps_scroll() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.lines = vec![
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready first"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready current"),
+                is_stderr: false,
+            },
+        ];
+        tab.text_filter = "ready".to_string();
+        tab.filter_input = "ready".to_string();
+        tab.compiled_text_filter = compile_query("ready", LogQueryMode::Substring)
+            .expect("substring filter should compile");
+        tab.scroll = 1;
+        tab.editing_text_filter = true;
+        tab.text_filter_error = Some("stale".to_string());
+        tab.time_jump_error = Some("stale jump".to_string());
+
+        tab.commit_text_filter();
+
+        assert_eq!(tab.text_filter, "ready");
+        assert_eq!(tab.scroll, 1);
+        assert!(!tab.editing_text_filter);
+        assert!(tab.text_filter_error.is_none());
+        assert!(tab.time_jump_error.is_none());
     }
 
     #[test]
