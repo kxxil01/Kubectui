@@ -107,10 +107,6 @@ impl ContextPicker {
         }
 
         let filtered = self.filtered_context_indices();
-        let selected_context = self
-            .selected_context_from_indices(&filtered)
-            .map(ToOwned::to_owned)
-            .or_else(|| self.selection_anchor.clone());
 
         match key.code {
             KeyCode::Esc => ContextPickerAction::Close,
@@ -148,19 +144,27 @@ impl ContextPicker {
                     && let Some((byte_idx, _)) =
                         self.search_query.char_indices().nth(self.search_cursor - 1)
                 {
+                    let selected_context = self
+                        .selected_context_from_indices(&filtered)
+                        .map(ToOwned::to_owned)
+                        .or_else(|| self.selection_anchor.clone());
                     self.search_query.remove(byte_idx);
                     self.search_cursor = self.search_cursor.saturating_sub(1);
+                    self.restore_selected_context(selected_context);
                 }
-                self.restore_selected_context(selected_context);
                 ContextPickerAction::None
             }
             KeyCode::Delete => {
                 if let Some((byte_idx, _)) =
                     self.search_query.char_indices().nth(self.search_cursor)
                 {
+                    let selected_context = self
+                        .selected_context_from_indices(&filtered)
+                        .map(ToOwned::to_owned)
+                        .or_else(|| self.selection_anchor.clone());
                     self.search_query.remove(byte_idx);
+                    self.restore_selected_context(selected_context);
                 }
-                self.restore_selected_context(selected_context);
                 ContextPickerAction::None
             }
             KeyCode::Left => {
@@ -181,12 +185,22 @@ impl ContextPicker {
                 ContextPickerAction::None
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.search_query.clear();
-                self.search_cursor = 0;
-                self.restore_selected_context(selected_context);
+                if !self.search_query.is_empty() {
+                    let selected_context = self
+                        .selected_context_from_indices(&filtered)
+                        .map(ToOwned::to_owned)
+                        .or_else(|| self.selection_anchor.clone());
+                    self.search_query.clear();
+                    self.search_cursor = 0;
+                    self.restore_selected_context(selected_context);
+                }
                 ContextPickerAction::None
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                let selected_context = self
+                    .selected_context_from_indices(&filtered)
+                    .map(ToOwned::to_owned)
+                    .or_else(|| self.selection_anchor.clone());
                 let byte_idx = self
                     .search_query
                     .char_indices()
@@ -652,6 +666,44 @@ mod tests {
 
         picker.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
 
+        assert_eq!(
+            picker.filtered_contexts().get(picker.selected_index),
+            Some(&"prod-east".to_string())
+        );
+    }
+
+    #[test]
+    fn context_picker_noop_search_edit_keys_keep_selection_and_query() {
+        let mut picker = ContextPicker::new(
+            vec![
+                "dev-east".to_string(),
+                "prod-east".to_string(),
+                "prod-west".to_string(),
+            ],
+            Some("dev-east".to_string()),
+        );
+        picker.open();
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
+        assert_eq!(
+            picker.filtered_contexts().get(picker.selected_index),
+            Some(&"prod-east".to_string())
+        );
+
+        picker.handle_key(KeyEvent::from(KeyCode::Backspace));
+        picker.handle_key(KeyEvent::from(KeyCode::Delete));
+        picker.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
+
+        assert!(picker.search_query.is_empty());
+        assert_eq!(
+            picker.filtered_contexts().get(picker.selected_index),
+            Some(&"prod-east".to_string())
+        );
+
+        picker.handle_key(KeyEvent::from(KeyCode::Char('p')));
+        picker.handle_key(KeyEvent::from(KeyCode::End));
+        picker.handle_key(KeyEvent::from(KeyCode::Delete));
+
+        assert_eq!(picker.search_query, "p");
         assert_eq!(
             picker.filtered_contexts().get(picker.selected_index),
             Some(&"prod-east".to_string())
