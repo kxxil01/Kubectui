@@ -2306,8 +2306,8 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
         return;
     }
 
-    let filtered = viewer.filtered_indices();
-    if filtered.is_empty() {
+    let log_window = viewer.filtered_window_indices(log_area.height.saturating_sub(1) as usize);
+    if log_window.total == 0 {
         let message = if viewer.correlation_request_id.is_some() {
             " No log lines match the current correlation/time window"
         } else {
@@ -2320,10 +2320,8 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
         return;
     }
 
-    let total = filtered.len();
-    let cursor = viewer.filtered_cursor(&filtered);
-    let window = scroll_window(total, cursor, log_area.height.saturating_sub(1) as usize);
-    let lines: Vec<Line> = filtered[window.start..window.end]
+    let lines: Vec<Line> = log_window
+        .indices
         .iter()
         .map(|index| &viewer.lines[*index])
         .map(|line| {
@@ -2342,7 +2340,7 @@ fn render_logs_tab(frame: &mut Frame, area: Rect, tab: &WorkbenchTab, _scroll: u
         })
         .collect();
     frame.render_widget(Paragraph::new(lines), log_area);
-    render_scrollbar(frame, log_area, total, cursor);
+    render_scrollbar(frame, log_area, log_window.total, log_window.cursor);
 }
 
 fn highlight_search<'a>(

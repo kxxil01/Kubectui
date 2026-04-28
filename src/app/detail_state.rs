@@ -55,6 +55,13 @@ pub enum ActiveComponent {
 /// Older lines are dropped when this limit is exceeded.
 pub const MAX_LOG_LINES: usize = 10_000;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FilteredLogWindow {
+    pub total: usize,
+    pub cursor: usize,
+    pub indices: Vec<usize>,
+}
+
 /// In-detail logs viewer state.
 #[derive(Debug, Clone)]
 pub struct LogsViewerState {
@@ -404,6 +411,55 @@ impl LogsViewerState {
             .iter()
             .position(|index| *index >= self.scroll_offset)
             .unwrap_or_else(|| filtered_indices.len().saturating_sub(1))
+    }
+
+    pub fn filtered_window_indices(&self, viewport_rows: usize) -> FilteredLogWindow {
+        let now = crate::time::now();
+        let mut total = 0usize;
+        let mut cursor = None;
+
+        for (index, line) in self.lines.iter().enumerate() {
+            if !self.matches_visible_filters_at(line, now) {
+                continue;
+            }
+
+            if cursor.is_none() && index >= self.scroll_offset {
+                cursor = Some(total);
+            }
+            total += 1;
+        }
+
+        if total == 0 {
+            return FilteredLogWindow::default();
+        }
+
+        let cursor = cursor.unwrap_or_else(|| total.saturating_sub(1));
+        let visible = viewport_rows.max(1).min(total);
+        let start = cursor.min(total.saturating_sub(visible));
+        let end = start + visible;
+        let mut indices = Vec::with_capacity(end - start);
+        let mut ordinal = 0usize;
+
+        for (index, line) in self.lines.iter().enumerate() {
+            if !self.matches_visible_filters_at(line, now) {
+                continue;
+            }
+
+            if ordinal >= start && ordinal < end {
+                indices.push(index);
+            }
+            ordinal += 1;
+
+            if ordinal >= end {
+                break;
+            }
+        }
+
+        FilteredLogWindow {
+            total,
+            cursor,
+            indices,
+        }
     }
 
     pub fn current_visible_line(&self) -> Option<&LogEntry> {
@@ -889,5 +945,47 @@ mod tests {
         viewer.scroll_offset = usize::MAX;
         viewer.scroll_filtered_up();
         assert_eq!(viewer.scroll_offset, 3);
+    }
+
+    #[test]
+    fn logs_viewer_filtered_window_collects_only_visible_filtered_rows() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("first line"),
+            LogEntry::from_raw("request_id=req-7 visible first"),
+            LogEntry::from_raw("middle line"),
+            LogEntry::from_raw("request_id=req-7 visible second"),
+            LogEntry::from_raw("request_id=req-7 visible third"),
+            LogEntry::from_raw("last line"),
+        ];
+        viewer.correlation_request_id = Some("req-7".to_string());
+        viewer.scroll_offset = 3;
+
+        let window = viewer.filtered_window_indices(2);
+
+        assert_eq!(window.total, 3);
+        assert_eq!(window.cursor, 1);
+        assert_eq!(window.indices, vec![3, 4]);
+    }
+
+    #[test]
+    fn logs_viewer_filtered_window_clamps_past_last_visible_row() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("first line"),
+            LogEntry::from_raw("request_id=req-7 visible first"),
+            LogEntry::from_raw("middle line"),
+            LogEntry::from_raw("request_id=req-7 visible second"),
+            LogEntry::from_raw("request_id=req-7 visible third"),
+            LogEntry::from_raw("last line"),
+        ];
+        viewer.correlation_request_id = Some("req-7".to_string());
+        viewer.scroll_offset = usize::MAX;
+
+        let window = viewer.filtered_window_indices(2);
+
+        assert_eq!(window.total, 3);
+        assert_eq!(window.cursor, 2);
+        assert_eq!(window.indices, vec![3, 4]);
     }
 }
