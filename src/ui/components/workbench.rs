@@ -3430,6 +3430,13 @@ mod tests {
     }
 
     #[test]
+    fn max_chars_three_omits_ellipsis() {
+        let result = truncate_message("hello world", 3);
+        assert_eq!(result.as_ref(), "hel");
+        assert_eq!(result.chars().count(), 3);
+    }
+
+    #[test]
     fn max_chars_three_uses_ellipsis() {
         let result = truncate_message("hello world", 4);
         assert_eq!(result.as_ref(), "h...");
