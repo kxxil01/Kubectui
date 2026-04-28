@@ -2711,7 +2711,7 @@ fn render_workload_logs_tab(
         });
         frame.render_widget(
             Paragraph::new(Span::styled(message, theme.inactive_style())),
-            sections[1],
+            content_area,
         );
         return;
     }
@@ -3904,6 +3904,32 @@ mod tests {
             .collect::<String>();
 
         assert!(rendered.contains("needle"));
+    }
+
+    #[test]
+    fn workload_logs_empty_state_does_not_overwrite_filter_input() {
+        let backend = TestBackend::new(100, 16);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab =
+            WorkloadLogsTabState::new(ResourceRef::Deployment("api".into(), "default".into()), 1);
+        tab.loading = false;
+        tab.editing_text_filter = true;
+        tab.filter_input = "needle".into();
+        tab.filter_input_cursor = tab.filter_input.len();
+
+        terminal
+            .draw(|frame| render_workload_logs_tab(frame, Rect::new(0, 0, 100, 16), &tab))
+            .expect("workload logs should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("needle"));
+        assert!(rendered.contains("No workload log lines match the current filters"));
     }
 
     #[test]
