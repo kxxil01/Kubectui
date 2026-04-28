@@ -116,14 +116,37 @@ fn mini_bar<'a>(pct: u64, theme: &Theme) -> Vec<Span<'a>> {
 }
 
 fn truncate_label(s: &str, max_chars: usize) -> Cow<'_, str> {
-    if s.chars().count() <= max_chars {
-        Cow::Borrowed(s)
-    } else if max_chars <= 3 {
-        Cow::Owned(".".repeat(max_chars))
-    } else {
-        let kept: String = s.chars().take(max_chars - 3).collect();
-        Cow::Owned(format!("{kept}..."))
+    if s.len() <= max_chars {
+        return Cow::Borrowed(s);
     }
+
+    let keep_chars = max_chars.saturating_sub(3);
+    let mut keep_end = None;
+    let mut exceeded = false;
+
+    for (char_index, (byte_index, _)) in s.char_indices().enumerate() {
+        if max_chars > 3 && char_index == keep_chars {
+            keep_end = Some(byte_index);
+        }
+        if char_index == max_chars {
+            exceeded = true;
+            break;
+        }
+    }
+
+    if !exceeded {
+        return Cow::Borrowed(s);
+    }
+
+    if max_chars <= 3 {
+        return Cow::Owned(".".repeat(max_chars));
+    }
+
+    let keep_end = keep_end.unwrap_or(0);
+    let mut truncated = String::with_capacity(keep_end + 3);
+    truncated.push_str(&s[..keep_end]);
+    truncated.push_str("...");
+    Cow::Owned(truncated)
 }
 
 fn use_narrow_dashboard_layout(area: Rect) -> bool {
@@ -1296,6 +1319,29 @@ mod tests {
         let total = wrapped_line_count(&lines, 20);
         let position = 999usize.min(total.saturating_sub(2));
         assert_eq!(position, 1);
+    }
+
+    #[test]
+    fn truncate_label_preserves_short_and_multibyte_labels() {
+        assert!(matches!(truncate_label("short", 20), Cow::Borrowed(_)));
+
+        let value = "\u{00e9}".repeat(5);
+        assert_eq!(truncate_label(&value, 6).as_ref(), value);
+    }
+
+    #[test]
+    fn truncate_label_uses_dot_fill_for_tiny_widths() {
+        assert_eq!(truncate_label("abcdef", 0).as_ref(), "");
+        assert_eq!(truncate_label("abcdef", 2).as_ref(), "..");
+        assert_eq!(truncate_label("abcdef", 3).as_ref(), "...");
+    }
+
+    #[test]
+    fn truncate_label_keeps_char_boundary_with_ellipsis() {
+        let value = "\u{00e9}".repeat(8);
+        let result = truncate_label(&value, 6);
+        assert_eq!(result.as_ref(), "\u{00e9}\u{00e9}\u{00e9}...");
+        assert_eq!(result.chars().count(), 6);
     }
 
     #[test]
