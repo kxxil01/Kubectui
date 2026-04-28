@@ -1211,21 +1211,24 @@ impl CommandPalette {
             let mut matched_activities: Vec<_> = self
                 .activity_entries
                 .iter()
-                .filter_map(|entry| {
-                    ranked_alias_score(&entry.aliases, &q_lower).map(|score| (score, entry.clone()))
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    ranked_alias_score(&entry.aliases, &q_lower).map(|score| (score, index))
                 })
                 .collect();
             matched_activities.sort_by(|left, right| {
+                let left_entry = &self.activity_entries[left.1];
+                let right_entry = &self.activity_entries[right.1];
                 left.0
                     .cmp(&right.0)
-                    .then_with(|| left.1.title.cmp(&right.1.title))
-                    .then_with(|| left.1.subtitle.cmp(&right.1.subtitle))
+                    .then_with(|| left_entry.title.cmp(&right_entry.title))
+                    .then_with(|| left_entry.subtitle.cmp(&right_entry.subtitle))
             });
             result.extend(
                 matched_activities
                     .into_iter()
                     .take(MAX_ACTIVITY_RESULTS)
-                    .map(|(_, entry)| PaletteEntry::Activity(entry)),
+                    .map(|(_, index)| PaletteEntry::Activity(self.activity_entries[index].clone())),
             );
         }
 
@@ -1233,21 +1236,24 @@ impl CommandPalette {
             let mut matched_resources: Vec<_> = self
                 .resource_entries
                 .iter()
-                .filter_map(|entry| {
-                    ranked_alias_score(&entry.aliases, &q_lower).map(|score| (score, entry.clone()))
+                .enumerate()
+                .filter_map(|(index, entry)| {
+                    ranked_alias_score(&entry.aliases, &q_lower).map(|score| (score, index))
                 })
                 .collect();
             matched_resources.sort_by(|left, right| {
+                let left_entry = &self.resource_entries[left.1];
+                let right_entry = &self.resource_entries[right.1];
                 left.0
                     .cmp(&right.0)
-                    .then_with(|| left.1.title.cmp(&right.1.title))
-                    .then_with(|| left.1.subtitle.cmp(&right.1.subtitle))
+                    .then_with(|| left_entry.title.cmp(&right_entry.title))
+                    .then_with(|| left_entry.subtitle.cmp(&right_entry.subtitle))
             });
             result.extend(
                 matched_resources
                     .into_iter()
                     .take(MAX_RESOURCE_RESULTS)
-                    .map(|(_, entry)| PaletteEntry::Resource(entry)),
+                    .map(|(_, index)| PaletteEntry::Resource(self.resource_entries[index].clone())),
             );
         }
 
