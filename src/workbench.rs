@@ -1408,6 +1408,14 @@ impl WorkloadLogsTabState {
             .collect()
     }
 
+    pub fn filtered_len(&self) -> usize {
+        let now = crate::time::now();
+        self.lines
+            .iter()
+            .filter(|line| self.matches_filter_at(line, now))
+            .count()
+    }
+
     pub fn current_filtered_line(&self) -> Option<&WorkloadLogLine> {
         let filtered = self.filtered_indices();
         let index = filtered
@@ -4111,6 +4119,37 @@ mod tests {
         assert!(!tab.editing_text_filter);
         assert!(tab.text_filter_error.is_none());
         assert!(tab.time_jump_error.is_none());
+    }
+
+    #[test]
+    fn workload_log_filtered_len_matches_filtered_indices() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.lines = vec![
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready first"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("skip this"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready second"),
+                is_stderr: false,
+            },
+        ];
+        tab.text_filter = "ready".to_string();
+        tab.compiled_text_filter = compile_query("ready", LogQueryMode::Substring)
+            .expect("substring filter should compile");
+
+        assert_eq!(tab.filtered_len(), tab.filtered_indices().len());
+        assert_eq!(tab.filtered_len(), 2);
     }
 
     #[test]

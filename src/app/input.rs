@@ -1199,14 +1199,10 @@ impl AppState {
                         _ => AppAction::None,
                     }
                 } else {
-                    let filtered_len = tab
-                        .lines
-                        .iter()
-                        .filter(|line| tab.matches_filter(line))
-                        .count();
                     match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
                         KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
+                            let filtered_len = tab.filtered_len();
                             if filtered_len <= 1 {
                                 if filtered_len == 0 {
                                     tab.scroll = 0;
@@ -1220,6 +1216,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char('k') | KeyCode::Up if plain_shortcut(key) => {
+                            let filtered_len = tab.filtered_len();
                             if filtered_len <= 1 {
                                 if filtered_len == 0 {
                                     tab.scroll = 0;
@@ -1238,6 +1235,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char('G') if plain_shortcut(key) => {
+                            let filtered_len = tab.filtered_len();
                             tab.scroll = if filtered_len <= 1 && filtered_len > 0 {
                                 usize::MAX
                             } else {
@@ -1247,6 +1245,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::PageDown => {
+                            let filtered_len = tab.filtered_len();
                             if filtered_len <= 1 {
                                 if filtered_len == 0 {
                                     tab.scroll = 0;
@@ -1267,6 +1266,7 @@ impl AppState {
                         KeyCode::Char('f') if plain_shortcut(key) => {
                             tab.follow_mode = !tab.follow_mode;
                             if tab.follow_mode {
+                                let filtered_len = tab.filtered_len();
                                 tab.scroll = filtered_len.saturating_sub(1);
                             }
                             AppAction::None
