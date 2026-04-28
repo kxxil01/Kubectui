@@ -2304,21 +2304,40 @@ pub(crate) fn format_age_from_timestamp(created_at: Option<AppTimestamp>, now_un
     }
 }
 
-/// Truncates a string to `max_chars` characters, appending "..." if truncated.
+/// Truncates a string to `max_chars` characters, appending "..." when it fits.
 /// Returns `Cow::Borrowed` when no truncation is needed to avoid allocation.
 pub(crate) fn truncate_message(msg: &str, max_chars: usize) -> Cow<'_, str> {
     if msg.len() <= max_chars {
         return Cow::Borrowed(msg);
     }
-    let char_count = msg.chars().count();
-    if char_count <= max_chars {
-        Cow::Borrowed(msg)
-    } else if max_chars < 4 {
-        Cow::Owned(msg.chars().take(max_chars).collect())
-    } else {
-        let truncated: String = msg.chars().take(max_chars - 3).collect();
-        Cow::Owned(format!("{truncated}..."))
+
+    let keep_chars = max_chars.saturating_sub(3);
+    let mut keep_end = None;
+    let mut max_end = None;
+
+    for (char_index, (byte_index, _)) in msg.char_indices().enumerate() {
+        if max_chars >= 4 && char_index == keep_chars {
+            keep_end = Some(byte_index);
+        }
+        if char_index == max_chars {
+            max_end = Some(byte_index);
+            break;
+        }
     }
+
+    let Some(max_end) = max_end else {
+        return Cow::Borrowed(msg);
+    };
+
+    if max_chars < 4 {
+        return Cow::Owned(msg[..max_end].to_string());
+    }
+
+    let keep_end = keep_end.unwrap_or(max_end);
+    let mut truncated = String::with_capacity(keep_end + 3);
+    truncated.push_str(&msg[..keep_end]);
+    truncated.push_str("...");
+    Cow::Owned(truncated)
 }
 
 pub(crate) fn truncate_line_content(line: &Line<'_>, width: usize) -> Line<'static> {
