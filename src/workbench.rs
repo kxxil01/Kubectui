@@ -1230,11 +1230,12 @@ impl WorkloadLogsTabState {
                 return;
             }
         };
-        let filtered = self.filtered_indices();
+        let now = crate::time::now();
         let Some(index) = nearest_timestamp_index(
-            filtered
-                .iter()
-                .filter_map(|index| self.lines.get(*index).map(|line| (*index, &line.entry))),
+            self.lines.iter().enumerate().filter_map(|(index, line)| {
+                self.matches_filter_at(line, now)
+                    .then_some((index, &line.entry))
+            }),
             target,
         ) else {
             self.time_jump_error = Some(
@@ -1243,9 +1244,12 @@ impl WorkloadLogsTabState {
             );
             return;
         };
-        self.scroll = filtered
+        self.scroll = self
+            .lines
             .iter()
-            .position(|candidate| *candidate == index)
+            .enumerate()
+            .filter(|(_, line)| self.matches_filter_at(line, now))
+            .position(|(candidate, _)| candidate == index)
             .unwrap_or(0);
         self.follow_mode = false;
         self.jumping_to_time = false;
@@ -4234,6 +4238,46 @@ mod tests {
         assert_eq!(
             tab.current_filtered_line().map(|line| line.entry.raw()),
             Some("ready second")
+        );
+    }
+
+    #[test]
+    fn workload_log_time_jump_uses_visible_filtered_ordinal() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.lines = vec![
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("2026-03-26T10:00:00Z ready first"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("2026-03-26T10:06:00Z hidden nearer"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("2026-03-26T10:08:00Z ready second"),
+                is_stderr: false,
+            },
+        ];
+        tab.text_filter = "ready".to_string();
+        tab.compiled_text_filter = compile_query("ready", LogQueryMode::Substring)
+            .expect("substring filter should compile");
+        tab.open_time_jump();
+        tab.time_jump_input = "2026-03-26T10:06:30Z".into();
+
+        tab.commit_time_jump();
+
+        assert_eq!(tab.scroll, 1);
+        assert!(!tab.jumping_to_time);
+        assert!(tab.time_jump_error.is_none());
+        assert_eq!(
+            tab.current_filtered_line().map(|line| line.entry.raw()),
+            Some("2026-03-26T10:08:00Z ready second")
         );
     }
 
