@@ -1231,10 +1231,16 @@ impl WorkloadLogsTabState {
             }
         };
         let now = crate::time::now();
+        let mut visible_ordinal = 0usize;
         let Some(index) = nearest_timestamp_index(
-            self.lines.iter().enumerate().filter_map(|(index, line)| {
-                self.matches_filter_at(line, now)
-                    .then_some((index, &line.entry))
+            self.lines.iter().filter_map(|line| {
+                if !self.matches_filter_at(line, now) {
+                    return None;
+                }
+
+                let index = visible_ordinal;
+                visible_ordinal += 1;
+                Some((index, &line.entry))
             }),
             target,
         ) else {
@@ -1244,13 +1250,7 @@ impl WorkloadLogsTabState {
             );
             return;
         };
-        self.scroll = self
-            .lines
-            .iter()
-            .enumerate()
-            .filter(|(_, line)| self.matches_filter_at(line, now))
-            .position(|(candidate, _)| candidate == index)
-            .unwrap_or(0);
+        self.scroll = index;
         self.follow_mode = false;
         self.jumping_to_time = false;
     }
