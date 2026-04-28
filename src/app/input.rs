@@ -1091,11 +1091,6 @@ impl AppState {
                 }
             }
             WorkbenchTabState::WorkloadLogs(tab) => {
-                let filtered_len = tab
-                    .lines
-                    .iter()
-                    .filter(|line| tab.matches_filter(line))
-                    .count();
                 if tab.editing_text_filter {
                     match key.code {
                         KeyCode::Esc => {
@@ -1204,6 +1199,11 @@ impl AppState {
                         _ => AppAction::None,
                     }
                 } else {
+                    let filtered_len = tab
+                        .lines
+                        .iter()
+                        .filter(|line| tab.matches_filter(line))
+                        .count();
                     match key.code {
                         KeyCode::Esc => AppAction::EscapePressed,
                         KeyCode::Char('j') | KeyCode::Down if plain_shortcut(key) => {
