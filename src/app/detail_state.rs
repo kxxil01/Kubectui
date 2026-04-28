@@ -448,20 +448,51 @@ impl LogsViewerState {
     }
 
     pub fn scroll_filtered_up(&mut self) {
-        let filtered = self.filtered_indices();
-        let cursor = self.filtered_cursor(&filtered);
-        if let Some(index) = filtered.get(cursor.saturating_sub(1)) {
-            self.scroll_offset = *index;
-        } else {
-            self.scroll_offset = 0;
+        let now = crate::time::now();
+        let mut previous_visible = None;
+        let mut current_visible = None;
+
+        for (index, line) in self.lines.iter().enumerate() {
+            if !self.matches_visible_filters_at(line, now) {
+                continue;
+            }
+
+            if index >= self.scroll_offset {
+                self.scroll_offset = current_visible.unwrap_or(index);
+                return;
+            }
+
+            previous_visible = current_visible;
+            current_visible = Some(index);
         }
+
+        self.scroll_offset = previous_visible.or(current_visible).unwrap_or(0);
     }
 
     pub fn scroll_filtered_down(&mut self) {
-        let filtered = self.filtered_indices();
-        let cursor = self.filtered_cursor(&filtered);
-        if let Some(index) = filtered.get((cursor + 1).min(filtered.len().saturating_sub(1))) {
-            self.scroll_offset = *index;
+        let now = crate::time::now();
+        let mut cursor_seen = false;
+        let mut last_visible = None;
+
+        for (index, line) in self.lines.iter().enumerate() {
+            if !self.matches_visible_filters_at(line, now) {
+                continue;
+            }
+
+            last_visible = Some(index);
+
+            if cursor_seen {
+                self.scroll_offset = index;
+                return;
+            }
+
+            if index >= self.scroll_offset {
+                cursor_seen = true;
+            }
+        }
+
+        if let Some(index) = last_visible {
+            self.scroll_offset = index;
         }
     }
 
@@ -811,6 +842,52 @@ mod tests {
         assert_eq!(viewer.scroll_offset, 1);
 
         viewer.scroll_filtered_bottom();
+        assert_eq!(viewer.scroll_offset, 3);
+    }
+
+    #[test]
+    fn logs_viewer_step_scroll_uses_visible_filtered_rows() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("first line"),
+            LogEntry::from_raw("request_id=req-7 visible first"),
+            LogEntry::from_raw("middle line"),
+            LogEntry::from_raw("request_id=req-7 visible second"),
+            LogEntry::from_raw("request_id=req-7 visible third"),
+            LogEntry::from_raw("last line"),
+        ];
+        viewer.correlation_request_id = Some("req-7".to_string());
+        viewer.scroll_offset = 1;
+
+        viewer.scroll_filtered_down();
+        assert_eq!(viewer.scroll_offset, 3);
+
+        viewer.scroll_filtered_down();
+        assert_eq!(viewer.scroll_offset, 4);
+
+        viewer.scroll_filtered_down();
+        assert_eq!(viewer.scroll_offset, 4);
+
+        viewer.scroll_filtered_up();
+        assert_eq!(viewer.scroll_offset, 3);
+
+        viewer.scroll_filtered_up();
+        assert_eq!(viewer.scroll_offset, 1);
+
+        viewer.scroll_offset = 0;
+        viewer.scroll_filtered_down();
+        assert_eq!(viewer.scroll_offset, 3);
+
+        viewer.scroll_offset = 0;
+        viewer.scroll_filtered_up();
+        assert_eq!(viewer.scroll_offset, 1);
+
+        viewer.scroll_offset = usize::MAX;
+        viewer.scroll_filtered_down();
+        assert_eq!(viewer.scroll_offset, 4);
+
+        viewer.scroll_offset = usize::MAX;
+        viewer.scroll_filtered_up();
         assert_eq!(viewer.scroll_offset, 3);
     }
 }
