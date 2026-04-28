@@ -406,9 +406,18 @@ impl LogsViewerState {
     }
 
     pub fn current_visible_line(&self) -> Option<&LogEntry> {
-        let filtered = self.filtered_indices();
-        let index = filtered.get(self.filtered_cursor(&filtered)).copied()?;
-        self.lines.get(index)
+        let now = crate::time::now();
+        let mut last = None;
+        for (index, line) in self.lines.iter().enumerate().filter(|(_, line)| {
+            entry_matches_time_window(line, self.time_window, now)
+                && entry_matches_correlation(line, self.correlation_request_id.as_deref())
+        }) {
+            if index >= self.scroll_offset {
+                return Some(line);
+            }
+            last = Some(line);
+        }
+        last
     }
 
     fn restore_filtered_scroll(&mut self, preserved_line: Option<LogEntry>) {
@@ -759,5 +768,21 @@ mod tests {
 
         assert_eq!(viewer.scroll_offset, 1);
         assert_eq!(viewer.search_query, "does-not-exist");
+    }
+
+    #[test]
+    fn logs_viewer_current_visible_line_clamps_without_filtered_vector() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("first line"),
+            LogEntry::from_raw("second line"),
+            LogEntry::from_raw("third line"),
+        ];
+        viewer.scroll_offset = usize::MAX;
+
+        assert_eq!(
+            viewer.current_visible_line().map(LogEntry::raw),
+            Some("third line")
+        );
     }
 }
