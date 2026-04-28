@@ -263,11 +263,12 @@ impl LogsViewerState {
                 return;
             }
         };
-        let filtered = self.filtered_indices();
+        let now = crate::time::now();
         let Some(index) = nearest_timestamp_index(
-            filtered
+            self.lines
                 .iter()
-                .filter_map(|index| self.lines.get(*index).map(|entry| (*index, entry))),
+                .enumerate()
+                .filter(|(_, entry)| self.matches_visible_filters_at(entry, now)),
             target,
         ) else {
             self.time_jump_error = Some(
@@ -480,27 +481,30 @@ impl LogsViewerState {
     }
 
     fn restore_filtered_scroll(&mut self, preserved_line: Option<LogEntry>) {
-        let filtered = self.filtered_indices();
-        if filtered.is_empty() {
-            self.scroll_offset = 0;
-            return;
+        let now = crate::time::now();
+        let target_scroll = self.scroll_offset;
+        let preserved_line = preserved_line.as_ref();
+        let mut target_visible = None;
+        let mut last_visible = None;
+
+        for (index, line) in self.lines.iter().enumerate() {
+            if !self.matches_visible_filters_at(line, now) {
+                continue;
+            }
+
+            if preserved_line.is_some_and(|preserved| line == preserved) {
+                self.scroll_offset = index;
+                return;
+            }
+
+            if target_visible.is_none() && index >= target_scroll {
+                target_visible = Some(index);
+            }
+
+            last_visible = Some(index);
         }
 
-        self.scroll_offset = preserved_line
-            .and_then(|line| {
-                filtered
-                    .iter()
-                    .copied()
-                    .find(|index| self.lines.get(*index).is_some_and(|entry| entry == &line))
-            })
-            .or_else(|| {
-                filtered
-                    .iter()
-                    .copied()
-                    .find(|index| *index >= self.scroll_offset)
-            })
-            .or_else(|| filtered.last().copied())
-            .unwrap_or(0);
+        self.scroll_offset = target_visible.or(last_visible).unwrap_or(0);
     }
 
     pub fn scroll_filtered_up(&mut self) {
@@ -864,6 +868,49 @@ mod tests {
 
         assert_eq!(viewer.scroll_offset, 1);
         assert_eq!(viewer.search_query, "does-not-exist");
+    }
+
+    #[test]
+    fn logs_viewer_restore_scroll_preserves_visible_line_identity() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("request_id=req-7 visible first"),
+            LogEntry::from_raw("middle line"),
+            LogEntry::from_raw("request_id=req-7 visible selected"),
+            LogEntry::from_raw("request_id=req-7 visible last"),
+        ];
+        viewer.correlation_request_id = Some("req-7".to_string());
+        viewer.scroll_offset = 0;
+        let selected = viewer.lines[2].clone();
+
+        viewer.restore_filtered_scroll(Some(selected));
+
+        assert_eq!(viewer.scroll_offset, 2);
+        assert_eq!(
+            viewer.current_visible_line().map(LogEntry::raw),
+            Some("request_id=req-7 visible selected")
+        );
+    }
+
+    #[test]
+    fn logs_viewer_restore_scroll_clamps_to_last_visible_line() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("first line"),
+            LogEntry::from_raw("request_id=req-7 visible first"),
+            LogEntry::from_raw("middle line"),
+            LogEntry::from_raw("request_id=req-7 visible last"),
+        ];
+        viewer.correlation_request_id = Some("req-7".to_string());
+        viewer.scroll_offset = usize::MAX;
+
+        viewer.restore_filtered_scroll(None);
+
+        assert_eq!(viewer.scroll_offset, 3);
+        assert_eq!(
+            viewer.current_visible_line().map(LogEntry::raw),
+            Some("request_id=req-7 visible last")
+        );
     }
 
     #[test]
