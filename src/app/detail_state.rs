@@ -204,8 +204,13 @@ impl LogsViewerState {
     }
 
     pub fn commit_search(&mut self) {
-        let preserved_line = self.current_visible_line().cloned();
         let previous_query = self.search_query.clone();
+        if self.search_input == previous_query {
+            self.search_error = None;
+            self.searching = false;
+            return;
+        }
+        let preserved_line = self.current_visible_line().cloned();
         let previous_compiled = self.compiled_search.clone();
         self.search_query = self.search_input.clone();
         self.search_error = None;
@@ -709,6 +714,29 @@ mod tests {
         assert_eq!(viewer.scroll_offset, 1);
         assert!(viewer.search_error.is_some());
         assert!(!viewer.searching);
+    }
+
+    #[test]
+    fn logs_viewer_unchanged_search_commit_keeps_scroll() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("ready first"),
+            LogEntry::from_raw("middle line"),
+            LogEntry::from_raw("ready current"),
+        ];
+        viewer.search_query = "ready".to_string();
+        viewer.search_input = "ready".to_string();
+        viewer.compiled_search = compile_query("ready", LogQueryMode::Substring)
+            .expect("substring query should compile");
+        viewer.scroll_offset = 2;
+        viewer.searching = true;
+
+        viewer.commit_search();
+
+        assert_eq!(viewer.search_query, "ready");
+        assert_eq!(viewer.scroll_offset, 2);
+        assert!(!viewer.searching);
+        assert!(viewer.search_error.is_none());
     }
 
     #[test]
