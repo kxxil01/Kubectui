@@ -390,12 +390,13 @@ impl LogsViewerState {
         self.lines
             .iter()
             .enumerate()
-            .filter_map(|(index, line)| {
-                (entry_matches_time_window(line, self.time_window, now)
-                    && entry_matches_correlation(line, self.correlation_request_id.as_deref()))
-                .then_some(index)
-            })
+            .filter_map(|(index, line)| self.matches_visible_filters_at(line, now).then_some(index))
             .collect()
+    }
+
+    fn matches_visible_filters_at(&self, line: &LogEntry, now: crate::time::AppTimestamp) -> bool {
+        entry_matches_time_window(line, self.time_window, now)
+            && entry_matches_correlation(line, self.correlation_request_id.as_deref())
     }
 
     pub fn filtered_cursor(&self, filtered_indices: &[usize]) -> usize {
@@ -408,10 +409,12 @@ impl LogsViewerState {
     pub fn current_visible_line(&self) -> Option<&LogEntry> {
         let now = crate::time::now();
         let mut last = None;
-        for (index, line) in self.lines.iter().enumerate().filter(|(_, line)| {
-            entry_matches_time_window(line, self.time_window, now)
-                && entry_matches_correlation(line, self.correlation_request_id.as_deref())
-        }) {
+        for (index, line) in self
+            .lines
+            .iter()
+            .enumerate()
+            .filter(|(_, line)| self.matches_visible_filters_at(line, now))
+        {
             if index >= self.scroll_offset {
                 return Some(line);
             }
@@ -463,11 +466,24 @@ impl LogsViewerState {
     }
 
     pub fn scroll_filtered_top(&mut self) {
-        self.scroll_offset = self.filtered_indices().first().copied().unwrap_or(0);
+        let now = crate::time::now();
+        self.scroll_offset = self
+            .lines
+            .iter()
+            .enumerate()
+            .find_map(|(index, line)| self.matches_visible_filters_at(line, now).then_some(index))
+            .unwrap_or(0);
     }
 
     pub fn scroll_filtered_bottom(&mut self) {
-        self.scroll_offset = self.filtered_indices().last().copied().unwrap_or(0);
+        let now = crate::time::now();
+        self.scroll_offset = self
+            .lines
+            .iter()
+            .enumerate()
+            .rev()
+            .find_map(|(index, line)| self.matches_visible_filters_at(line, now).then_some(index))
+            .unwrap_or(0);
     }
 
     pub fn preset_snapshot(&self) -> PodLogPreset {
@@ -777,5 +793,24 @@ mod tests {
             viewer.current_visible_line().map(LogEntry::raw),
             Some("third line")
         );
+    }
+
+    #[test]
+    fn logs_viewer_scroll_edges_use_visible_filtered_rows() {
+        let mut viewer = LogsViewerState::default();
+        viewer.lines = vec![
+            LogEntry::from_raw("first line"),
+            LogEntry::from_raw("request_id=req-7 visible first"),
+            LogEntry::from_raw("middle line"),
+            LogEntry::from_raw("request_id=req-7 visible last"),
+            LogEntry::from_raw("last line"),
+        ];
+        viewer.correlation_request_id = Some("req-7".to_string());
+
+        viewer.scroll_filtered_top();
+        assert_eq!(viewer.scroll_offset, 1);
+
+        viewer.scroll_filtered_bottom();
+        assert_eq!(viewer.scroll_offset, 3);
     }
 }
