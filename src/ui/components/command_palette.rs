@@ -2483,10 +2483,51 @@ mod tests {
         }
 
         assert!(palette.filtered().iter().any(|entry| matches!(
-            entry,
-            PaletteEntry::Resource(resource)
-                if resource.resource == ResourceRef::Deployment("api".into(), "prod".into())
+        entry,
+        PaletteEntry::Resource(resource)
+            if resource.resource == ResourceRef::Deployment("api".into(), "prod".into())
         )));
+    }
+
+    #[test]
+    fn resource_search_top_k_keeps_late_exact_match_before_early_fuzzy_matches() {
+        let mut entries = (0..80)
+            .map(|index| PaletteResourceEntry {
+                resource: ResourceRef::Pod(format!("fuzzy-{index:02}"), "prod".into()),
+                title: format!("fuzzy-{index:02}"),
+                subtitle: "Pod · prod".into(),
+                aliases: vec![format!("alpha platform item {index:02}")],
+                badge_label: "Pods".into(),
+            })
+            .collect::<Vec<_>>();
+        entries.push(PaletteResourceEntry {
+            resource: ResourceRef::Deployment("api".into(), "prod".into()),
+            title: "api".into(),
+            subtitle: "Deployment · prod".into(),
+            aliases: vec!["api".into()],
+            badge_label: "Deployments".into(),
+        });
+
+        let mut palette = CommandPalette::default();
+        palette.set_resource_entries(entries);
+        palette.open();
+        for c in "api".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        let first_resource = palette
+            .filtered()
+            .into_iter()
+            .find_map(|entry| match entry {
+                PaletteEntry::Resource(resource) => Some(resource),
+                _ => None,
+            })
+            .expect("resource match should exist");
+
+        assert_eq!(
+            first_resource.resource,
+            ResourceRef::Deployment("api".into(), "prod".into())
+        );
     }
 
     #[test]
