@@ -1446,7 +1446,10 @@ impl WorkloadLogsTabState {
                     .position(|index| self.lines.get(*index) == Some(line))
             })
             .unwrap_or_else(|| self.scroll.min(filtered.len().saturating_sub(1)));
-        self.filtered_line_anchor = self.current_filtered_line().cloned();
+        self.filtered_line_anchor = filtered
+            .get(self.scroll)
+            .and_then(|index| self.lines.get(*index))
+            .cloned();
     }
 
     pub fn toggle_correlation_on_current_line(&mut self) -> Result<Option<String>, String> {
@@ -4150,6 +4153,45 @@ mod tests {
 
         assert_eq!(tab.filtered_len(), tab.filtered_indices().len());
         assert_eq!(tab.filtered_len(), 2);
+    }
+
+    #[test]
+    fn workload_log_restore_scroll_updates_anchor_from_existing_filtered_pass() {
+        let mut tab = WorkloadLogsTabState::new(pod("pod-0"), 1);
+        tab.lines = vec![
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready first"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("skip this"),
+                is_stderr: false,
+            },
+            WorkloadLogLine {
+                pod_name: "pod-0".to_string(),
+                container_name: "main".to_string(),
+                entry: LogEntry::from_raw("ready second"),
+                is_stderr: false,
+            },
+        ];
+        tab.text_filter = "ready".to_string();
+        tab.compiled_text_filter = compile_query("ready", LogQueryMode::Substring)
+            .expect("substring filter should compile");
+        tab.scroll = 1;
+
+        tab.restore_filtered_scroll(None);
+
+        assert_eq!(tab.scroll, 1);
+        assert_eq!(
+            tab.filtered_line_anchor
+                .as_ref()
+                .map(|line| line.entry.raw()),
+            Some("ready second")
+        );
     }
 
     #[test]
