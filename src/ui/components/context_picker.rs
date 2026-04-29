@@ -1,9 +1,10 @@
 //! Context (kubeconfig) picker modal component.
 
 use crate::ui::{
-    components::render_vertical_scrollbar, contains_ci, cursor_visible_input_line,
-    delete_char_left_at_cursor, delete_char_right_at_cursor, insert_char_at_cursor, table_window,
-    wrap_span_groups, wrapped_line_count,
+    clear_input_at_cursor, components::render_vertical_scrollbar, contains_ci,
+    cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
+    insert_char_at_cursor, move_cursor_end, move_cursor_home, move_cursor_left, move_cursor_right,
+    table_window, wrap_span_groups, wrapped_line_count,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
@@ -64,8 +65,7 @@ impl ContextPicker {
 
     pub fn open(&mut self) {
         self.is_open = true;
-        self.search_query.clear();
-        self.search_cursor = 0;
+        clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
         let filtered = self.filtered_context_indices();
         self.selected_index = self
             .current_context
@@ -164,20 +164,19 @@ impl ContextPicker {
                 ContextPickerAction::None
             }
             KeyCode::Left => {
-                self.search_cursor = self.search_cursor.saturating_sub(1);
+                move_cursor_left(&mut self.search_cursor);
                 ContextPickerAction::None
             }
             KeyCode::Right => {
-                self.search_cursor =
-                    (self.search_cursor + 1).min(self.search_query.chars().count());
+                move_cursor_right(&mut self.search_cursor, &self.search_query);
                 ContextPickerAction::None
             }
             KeyCode::Home => {
-                self.search_cursor = 0;
+                move_cursor_home(&mut self.search_cursor);
                 ContextPickerAction::None
             }
             KeyCode::End => {
-                self.search_cursor = self.search_query.chars().count();
+                move_cursor_end(&mut self.search_cursor, &self.search_query);
                 ContextPickerAction::None
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -186,8 +185,7 @@ impl ContextPicker {
                         .selected_context_from_indices(&filtered)
                         .map(ToOwned::to_owned)
                         .or_else(|| self.selection_anchor.clone());
-                    self.search_query.clear();
-                    self.search_cursor = 0;
+                    clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
                     self.restore_selected_context(selected_context);
                 }
                 ContextPickerAction::None
