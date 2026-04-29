@@ -10,8 +10,9 @@ use ratatui::{
 
 use crate::resource_templates::{ResourceTemplateKind, ResourceTemplateValues};
 use crate::ui::{
-    cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
-    insert_char_at_cursor, table_window, truncate_message, wrapped_line_count,
+    clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
+    delete_char_right_at_cursor, insert_char_at_cursor, move_cursor_end, move_cursor_home,
+    move_cursor_left, move_cursor_right, table_window, truncate_message, wrapped_line_count,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,30 +133,29 @@ impl ResourceTemplateDialogState {
 
     pub fn clear_active(&mut self) {
         if let Some((field, cursor)) = self.active_buffer_and_cursor_mut() {
-            field.clear();
-            *cursor = 0;
+            clear_input_at_cursor(field, cursor);
             self.revalidate();
         }
     }
 
     pub fn cursor_left(&mut self) {
-        *self.active_cursor_mut() = self.active_cursor().saturating_sub(1);
+        move_cursor_left(self.active_cursor_mut());
     }
 
     pub fn cursor_right(&mut self) {
-        let next = self
-            .active_cursor()
-            .saturating_add(1)
-            .min(self.active_len());
-        *self.active_cursor_mut() = next;
+        if let Some((field, cursor)) = self.active_buffer_and_cursor_mut() {
+            move_cursor_right(cursor, field);
+        }
     }
 
     pub fn cursor_home(&mut self) {
-        *self.active_cursor_mut() = 0;
+        move_cursor_home(self.active_cursor_mut());
     }
 
     pub fn cursor_end(&mut self) {
-        *self.active_cursor_mut() = self.active_len();
+        if let Some((field, cursor)) = self.active_buffer_and_cursor_mut() {
+            move_cursor_end(cursor, field);
+        }
     }
 
     pub fn is_valid(&self) -> bool {
@@ -218,20 +218,6 @@ impl ResourceTemplateDialogState {
         }
     }
 
-    fn active_cursor(&self) -> usize {
-        match self.focus_field {
-            ResourceTemplateField::Name => self.name_cursor,
-            ResourceTemplateField::Namespace => self.namespace_cursor,
-            ResourceTemplateField::Image => self.image_cursor,
-            ResourceTemplateField::Replicas => self.replicas_cursor,
-            ResourceTemplateField::ContainerPort => self.container_port_cursor,
-            ResourceTemplateField::ServicePort => self.service_port_cursor,
-            ResourceTemplateField::ConfigKey => self.config_key_cursor,
-            ResourceTemplateField::ConfigValue => self.config_value_cursor,
-            ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => 0,
-        }
-    }
-
     fn active_cursor_mut(&mut self) -> &mut usize {
         match self.focus_field {
             ResourceTemplateField::Name => &mut self.name_cursor,
@@ -245,26 +231,6 @@ impl ResourceTemplateDialogState {
             ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => {
                 &mut self.name_cursor
             }
-        }
-    }
-
-    fn active_len(&self) -> usize {
-        self.active_buffer()
-            .map(|value| value.chars().count())
-            .unwrap_or(0)
-    }
-
-    fn active_buffer(&self) -> Option<&str> {
-        match self.focus_field {
-            ResourceTemplateField::Name => Some(self.values.name.as_str()),
-            ResourceTemplateField::Namespace => Some(self.values.namespace.as_str()),
-            ResourceTemplateField::Image => Some(self.values.image.as_str()),
-            ResourceTemplateField::Replicas => Some(self.values.replicas.as_str()),
-            ResourceTemplateField::ContainerPort => Some(self.values.container_port.as_str()),
-            ResourceTemplateField::ServicePort => Some(self.values.service_port.as_str()),
-            ResourceTemplateField::ConfigKey => Some(self.values.config_key.as_str()),
-            ResourceTemplateField::ConfigValue => Some(self.values.config_value.as_str()),
-            ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => None,
         }
     }
 

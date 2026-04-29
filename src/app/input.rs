@@ -12,7 +12,10 @@ use crate::{
     ui::components::{
         CommandPaletteAction, ContextPickerAction, NamespacePickerAction, scale_dialog::ScaleField,
     },
-    ui::{delete_char_left_at_cursor, delete_char_right_at_cursor, insert_char_at_cursor},
+    ui::{
+        clear_input_at_cursor, delete_char_left_at_cursor, delete_char_right_at_cursor,
+        insert_char_at_cursor, move_cursor_end, move_cursor_left, move_cursor_right,
+    },
     workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
 
@@ -23,23 +26,6 @@ fn plain_shortcut(key: KeyEvent) -> bool {
 
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
-}
-
-fn move_input_cursor_left(cursor: &mut usize) {
-    *cursor = cursor.saturating_sub(1);
-}
-
-fn move_input_cursor_right(cursor: &mut usize, value: &str) {
-    *cursor = (*cursor + 1).min(value.chars().count());
-}
-
-fn move_input_cursor_end(cursor: &mut usize, value: &str) {
-    *cursor = value.chars().count();
-}
-
-fn clear_input_with_cursor(value: &mut String, cursor: &mut usize) {
-    value.clear();
-    *cursor = 0;
 }
 
 impl AppState {
@@ -774,11 +760,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Left => {
-                            move_input_cursor_left(&mut tab.edit_cursor);
+                            move_cursor_left(&mut tab.edit_cursor);
                             AppAction::None
                         }
                         KeyCode::Right => {
-                            move_input_cursor_right(&mut tab.edit_cursor, &tab.edit_input);
+                            move_cursor_right(&mut tab.edit_cursor, &tab.edit_input);
                             AppAction::None
                         }
                         KeyCode::Home => {
@@ -786,11 +772,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::End => {
-                            move_input_cursor_end(&mut tab.edit_cursor, &tab.edit_input);
+                            move_cursor_end(&mut tab.edit_cursor, &tab.edit_input);
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            clear_input_with_cursor(&mut tab.edit_input, &mut tab.edit_cursor);
+                            clear_input_at_cursor(&mut tab.edit_input, &mut tab.edit_cursor);
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -891,11 +877,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Left => {
-                            move_input_cursor_left(&mut tab.viewer.search_cursor);
+                            move_cursor_left(&mut tab.viewer.search_cursor);
                             AppAction::None
                         }
                         KeyCode::Right => {
-                            move_input_cursor_right(
+                            move_cursor_right(
                                 &mut tab.viewer.search_cursor,
                                 &tab.viewer.search_input,
                             );
@@ -906,14 +892,14 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::End => {
-                            move_input_cursor_end(
+                            move_cursor_end(
                                 &mut tab.viewer.search_cursor,
                                 &tab.viewer.search_input,
                             );
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            clear_input_with_cursor(
+                            clear_input_at_cursor(
                                 &mut tab.viewer.search_input,
                                 &mut tab.viewer.search_cursor,
                             );
@@ -948,11 +934,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Left => {
-                            move_input_cursor_left(&mut tab.viewer.time_jump_cursor);
+                            move_cursor_left(&mut tab.viewer.time_jump_cursor);
                             AppAction::None
                         }
                         KeyCode::Right => {
-                            move_input_cursor_right(
+                            move_cursor_right(
                                 &mut tab.viewer.time_jump_cursor,
                                 &tab.viewer.time_jump_input,
                             );
@@ -963,14 +949,14 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::End => {
-                            move_input_cursor_end(
+                            move_cursor_end(
                                 &mut tab.viewer.time_jump_cursor,
                                 &tab.viewer.time_jump_input,
                             );
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            clear_input_with_cursor(
+                            clear_input_at_cursor(
                                 &mut tab.viewer.time_jump_input,
                                 &mut tab.viewer.time_jump_cursor,
                             );
@@ -1135,14 +1121,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Left => {
-                            move_input_cursor_left(&mut tab.filter_input_cursor);
+                            move_cursor_left(&mut tab.filter_input_cursor);
                             AppAction::None
                         }
                         KeyCode::Right => {
-                            move_input_cursor_right(
-                                &mut tab.filter_input_cursor,
-                                &tab.filter_input,
-                            );
+                            move_cursor_right(&mut tab.filter_input_cursor, &tab.filter_input);
                             AppAction::None
                         }
                         KeyCode::Home => {
@@ -1150,11 +1133,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::End => {
-                            move_input_cursor_end(&mut tab.filter_input_cursor, &tab.filter_input);
+                            move_cursor_end(&mut tab.filter_input_cursor, &tab.filter_input);
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            clear_input_with_cursor(
+                            clear_input_at_cursor(
                                 &mut tab.filter_input,
                                 &mut tab.filter_input_cursor,
                             );
@@ -1189,14 +1172,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Left => {
-                            move_input_cursor_left(&mut tab.time_jump_cursor);
+                            move_cursor_left(&mut tab.time_jump_cursor);
                             AppAction::None
                         }
                         KeyCode::Right => {
-                            move_input_cursor_right(
-                                &mut tab.time_jump_cursor,
-                                &tab.time_jump_input,
-                            );
+                            move_cursor_right(&mut tab.time_jump_cursor, &tab.time_jump_input);
                             AppAction::None
                         }
                         KeyCode::Home => {
@@ -1204,11 +1184,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::End => {
-                            move_input_cursor_end(&mut tab.time_jump_cursor, &tab.time_jump_input);
+                            move_cursor_end(&mut tab.time_jump_cursor, &tab.time_jump_input);
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            clear_input_with_cursor(
+                            clear_input_at_cursor(
                                 &mut tab.time_jump_input,
                                 &mut tab.time_jump_cursor,
                             );
@@ -1385,11 +1365,11 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Left => {
-                            move_input_cursor_left(&mut tab.input_cursor);
+                            move_cursor_left(&mut tab.input_cursor);
                             AppAction::None
                         }
                         KeyCode::Right => {
-                            move_input_cursor_right(&mut tab.input_cursor, &tab.input);
+                            move_cursor_right(&mut tab.input_cursor, &tab.input);
                             AppAction::None
                         }
                         KeyCode::Home => {
@@ -1397,7 +1377,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::End => {
-                            move_input_cursor_end(&mut tab.input_cursor, &tab.input);
+                            move_cursor_end(&mut tab.input_cursor, &tab.input);
                             AppAction::None
                         }
                         KeyCode::Up => {
@@ -1421,7 +1401,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            clear_input_with_cursor(&mut tab.input, &mut tab.input_cursor);
+                            clear_input_at_cursor(&mut tab.input, &mut tab.input_cursor);
                             AppAction::None
                         }
                         _ => AppAction::None,
