@@ -3050,7 +3050,7 @@ impl AppState {
 
         match key.code {
             KeyCode::Esc => {
-                clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
+                self.clear_search_query();
                 self.is_search_mode = false;
                 // Reset selection so the user doesn't land on a stale filtered index.
                 self.selected_idx = 0;
@@ -3079,7 +3079,7 @@ impl AppState {
                 move_cursor_end(&mut self.search_cursor, &self.search_query);
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
+                self.clear_search_query();
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 insert_char_at_cursor(&mut self.search_query, &mut self.search_cursor, c);

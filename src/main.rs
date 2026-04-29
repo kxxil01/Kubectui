@@ -327,8 +327,7 @@ struct WorkspaceRestoreRuntime<'a> {
 fn prepare_context_switch_ui(app: &mut kubectui::app::AppState) {
     app.selected_idx = 0;
     app.reset_content_secondary_pane_state();
-    app.search_query.clear();
-    app.search_cursor = 0;
+    app.clear_search_query();
     app.is_search_mode = false;
     app.clear_selection_search_status();
     app.detail_view = None;
