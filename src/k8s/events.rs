@@ -132,12 +132,13 @@ fn map_events(list: ObjectList<Event>) -> Vec<EventInfo> {
         .collect();
 
     mapped.sort_unstable_by(|a, b| {
-        a.reason
-            .cmp(&b.reason)
+        a.event_type
+            .cmp(&b.event_type)
+            .then_with(|| a.reason.cmp(&b.reason))
             .then_with(|| a.message.cmp(&b.message))
     });
     mapped.dedup_by(|b, a| {
-        if a.reason == b.reason && a.message == b.message {
+        if a.event_type == b.event_type && a.reason == b.reason && a.message == b.message {
             a.count = a.count.saturating_add(b.count);
             if b.last_timestamp > a.last_timestamp {
                 a.last_timestamp = b.last_timestamp;
@@ -150,7 +151,18 @@ fn map_events(list: ObjectList<Event>) -> Vec<EventInfo> {
             false
         }
     });
-    mapped.sort_unstable_by_key(|evt| evt.last_timestamp);
+    mapped.sort_unstable_by(|a, b| {
+        a.last_timestamp
+            .cmp(&b.last_timestamp)
+            .then_with(|| a.event_type.cmp(&b.event_type))
+            .then_with(|| {
+                a.reason
+                    .cmp(&b.reason)
+                    .then_with(|| a.message.cmp(&b.message))
+                    .then_with(|| a.first_timestamp.cmp(&b.first_timestamp))
+                    .then_with(|| a.count.cmp(&b.count))
+            })
+    });
     mapped
 }
 
@@ -193,6 +205,12 @@ mod tests {
         e
     }
 
+    fn event_with_type(event_type: &str, reason: &str, msg: &str, last_offset_sec: i64) -> Event {
+        let mut e = event(reason, msg, last_offset_sec);
+        e.type_ = Some(event_type.to_string());
+        e
+    }
+
     fn api_error(code: u16, reason: &str, message: &str) -> kube::Error {
         kube::Error::Api(Status::failure(message, reason).with_code(code).boxed())
     }
@@ -231,6 +249,26 @@ mod tests {
         assert_eq!(mapped.len(), 2);
         assert_eq!(mapped[0].reason, "Older");
         assert_eq!(mapped[1].reason, "Newer");
+    }
+
+    #[test]
+    fn map_events_keeps_distinct_event_types_for_same_reason_message() {
+        let normal = event_with_type("Normal", "Pulled", "image ready", 1);
+        let warning = event_with_type("Warning", "Pulled", "image ready", 1);
+
+        let list: ObjectList<Event> = ObjectList {
+            metadata: ListMeta::default(),
+            items: vec![warning, normal],
+            types: Default::default(),
+        };
+
+        let mapped = map_events(list);
+
+        assert_eq!(mapped.len(), 2);
+        assert_eq!(mapped[0].event_type, "Normal");
+        assert_eq!(mapped[1].event_type, "Warning");
+        assert_eq!(mapped[0].count, 2);
+        assert_eq!(mapped[1].count, 2);
     }
 
     /// Verifies forbidden error detection returns true only for 403 API responses.
