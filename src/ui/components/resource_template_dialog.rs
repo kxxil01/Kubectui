@@ -9,7 +9,10 @@ use ratatui::{
 };
 
 use crate::resource_templates::{ResourceTemplateKind, ResourceTemplateValues};
-use crate::ui::{cursor_visible_input_line, table_window, truncate_message, wrapped_line_count};
+use crate::ui::{
+    cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
+    insert_char_at_cursor, table_window, truncate_message, wrapped_line_count,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceTemplateField {
@@ -101,55 +104,36 @@ impl ResourceTemplateDialogState {
     }
 
     pub fn add_char(&mut self, c: char) {
-        let cursor = self.active_cursor();
-        if let Some(field) = self.active_buffer_mut() {
-            let byte_pos = field
-                .char_indices()
-                .nth(cursor)
-                .map_or(field.len(), |(idx, _)| idx);
-            field.insert(byte_pos, c);
-            *self.active_cursor_mut() = cursor.saturating_add(1);
+        if let Some((field, cursor)) = self.active_buffer_and_cursor_mut() {
+            insert_char_at_cursor(field, cursor, c);
             self.revalidate();
         }
     }
 
     pub fn backspace(&mut self) {
-        let cursor = self.active_cursor();
-        if cursor == 0 {
-            return;
-        }
-        if let Some(field) = self.active_buffer_mut() {
-            let byte_pos = field
-                .char_indices()
-                .nth(cursor - 1)
-                .map(|(idx, _)| idx)
-                .unwrap_or(0);
-            field.remove(byte_pos);
-            *self.active_cursor_mut() = cursor.saturating_sub(1);
-            self.revalidate();
+        if let Some((field, cursor)) = self.active_buffer_and_cursor_mut() {
+            let previous_len = field.len();
+            delete_char_left_at_cursor(field, cursor);
+            if field.len() != previous_len {
+                self.revalidate();
+            }
         }
     }
 
     pub fn delete_char(&mut self) {
-        let cursor = self.active_cursor();
-        if let Some(field) = self.active_buffer_mut() {
-            if cursor >= field.chars().count() {
-                return;
+        if let Some((field, cursor)) = self.active_buffer_and_cursor_mut() {
+            let previous_len = field.len();
+            delete_char_right_at_cursor(field, *cursor);
+            if field.len() != previous_len {
+                self.revalidate();
             }
-            let byte_pos = field
-                .char_indices()
-                .nth(cursor)
-                .map(|(idx, _)| idx)
-                .unwrap_or(field.len());
-            field.remove(byte_pos);
-            self.revalidate();
         }
     }
 
     pub fn clear_active(&mut self) {
-        if let Some(field) = self.active_buffer_mut() {
+        if let Some((field, cursor)) = self.active_buffer_and_cursor_mut() {
             field.clear();
-            *self.active_cursor_mut() = 0;
+            *cursor = 0;
             self.revalidate();
         }
     }
@@ -207,16 +191,29 @@ impl ResourceTemplateDialogState {
         fields
     }
 
-    fn active_buffer_mut(&mut self) -> Option<&mut String> {
+    fn active_buffer_and_cursor_mut(&mut self) -> Option<(&mut String, &mut usize)> {
         match self.focus_field {
-            ResourceTemplateField::Name => Some(&mut self.values.name),
-            ResourceTemplateField::Namespace => Some(&mut self.values.namespace),
-            ResourceTemplateField::Image => Some(&mut self.values.image),
-            ResourceTemplateField::Replicas => Some(&mut self.values.replicas),
-            ResourceTemplateField::ContainerPort => Some(&mut self.values.container_port),
-            ResourceTemplateField::ServicePort => Some(&mut self.values.service_port),
-            ResourceTemplateField::ConfigKey => Some(&mut self.values.config_key),
-            ResourceTemplateField::ConfigValue => Some(&mut self.values.config_value),
+            ResourceTemplateField::Name => Some((&mut self.values.name, &mut self.name_cursor)),
+            ResourceTemplateField::Namespace => {
+                Some((&mut self.values.namespace, &mut self.namespace_cursor))
+            }
+            ResourceTemplateField::Image => Some((&mut self.values.image, &mut self.image_cursor)),
+            ResourceTemplateField::Replicas => {
+                Some((&mut self.values.replicas, &mut self.replicas_cursor))
+            }
+            ResourceTemplateField::ContainerPort => Some((
+                &mut self.values.container_port,
+                &mut self.container_port_cursor,
+            )),
+            ResourceTemplateField::ServicePort => {
+                Some((&mut self.values.service_port, &mut self.service_port_cursor))
+            }
+            ResourceTemplateField::ConfigKey => {
+                Some((&mut self.values.config_key, &mut self.config_key_cursor))
+            }
+            ResourceTemplateField::ConfigValue => {
+                Some((&mut self.values.config_value, &mut self.config_value_cursor))
+            }
             ResourceTemplateField::CreateBtn | ResourceTemplateField::CancelBtn => None,
         }
     }
@@ -644,6 +641,22 @@ mod tests {
         state.add_char('X');
 
         assert_eq!(state.values.name, "sXample-app");
+    }
+
+    #[test]
+    fn template_dialog_edits_unicode_at_cursor_position() {
+        let mut state =
+            ResourceTemplateDialogState::new(ResourceTemplateKind::Deployment, "default");
+        state.focus_field = ResourceTemplateField::Image;
+        state.values.image = "aåb".to_string();
+        state.image_cursor = 1;
+
+        state.add_char('β');
+        state.delete_char();
+        state.backspace();
+
+        assert_eq!(state.values.image, "ab");
+        assert_eq!(state.cursor_for(ResourceTemplateField::Image), 1);
     }
 
     #[test]
