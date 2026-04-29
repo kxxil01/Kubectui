@@ -12,6 +12,7 @@ use crate::{
     ui::components::{
         CommandPaletteAction, ContextPickerAction, NamespacePickerAction, scale_dialog::ScaleField,
     },
+    ui::{delete_char_left_at_cursor, delete_char_right_at_cursor, insert_char_at_cursor},
     workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
 
@@ -3067,20 +3068,10 @@ impl AppState {
                 self.is_search_mode = false;
             }
             KeyCode::Backspace => {
-                if self.search_cursor > 0
-                    && let Some((byte_idx, _)) =
-                        self.search_query.char_indices().nth(self.search_cursor - 1)
-                {
-                    self.search_query.remove(byte_idx);
-                    self.search_cursor = self.search_cursor.saturating_sub(1);
-                }
+                delete_char_left_at_cursor(&mut self.search_query, &mut self.search_cursor);
             }
             KeyCode::Delete => {
-                if let Some((byte_idx, _)) =
-                    self.search_query.char_indices().nth(self.search_cursor)
-                {
-                    self.search_query.remove(byte_idx);
-                }
+                delete_char_right_at_cursor(&mut self.search_query, self.search_cursor);
             }
             KeyCode::Left => {
                 self.search_cursor = self.search_cursor.saturating_sub(1);
@@ -3100,13 +3091,7 @@ impl AppState {
                 self.search_cursor = 0;
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                let byte_idx = self
-                    .search_query
-                    .char_indices()
-                    .nth(self.search_cursor)
-                    .map_or(self.search_query.len(), |(idx, _)| idx);
-                self.search_query.insert(byte_idx, c);
-                self.search_cursor += 1;
+                insert_char_at_cursor(&mut self.search_query, &mut self.search_cursor, c);
             }
             _ => {}
         }
