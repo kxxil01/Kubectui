@@ -1,4 +1,5 @@
 use super::*;
+use crate::ui::move_cursor_end;
 
 impl AppState {
     pub(super) fn set_or_toggle_pod_sort(&mut self, column: PodSortColumn) {
@@ -499,7 +500,7 @@ impl AppState {
         self.detail_view = None;
         self.reset_content_secondary_pane_state();
         self.search_query = snapshot.search_query.clone().unwrap_or_default();
-        self.search_cursor = self.search_query.chars().count();
+        move_cursor_end(&mut self.search_cursor, &self.search_query);
         self.is_search_mode = false;
         self.clear_selection_search_status();
         self.selected_idx = 0;

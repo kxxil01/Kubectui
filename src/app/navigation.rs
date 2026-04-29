@@ -1,12 +1,12 @@
 use super::*;
+use crate::ui::clear_input_at_cursor;
 
 impl AppState {
     pub fn set_namespace(&mut self, ns: String) {
         self.current_namespace = ns;
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
-        self.search_query.clear();
-        self.search_cursor = 0;
+        clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
         self.is_search_mode = false;
         self.clear_selection_search_status();
         self.detail_view = None;
@@ -118,8 +118,7 @@ impl AppState {
         self.view = view;
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
-        self.search_query.clear();
-        self.search_cursor = 0;
+        clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
         self.is_search_mode = false;
         self.clear_selection_search_status();
         self.detail_view = None;

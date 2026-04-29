@@ -889,7 +889,7 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Home => {
-                            tab.viewer.search_cursor = 0;
+                            move_cursor_home(&mut tab.viewer.search_cursor);
                             AppAction::None
                         }
                         KeyCode::End => {
@@ -2858,7 +2858,7 @@ impl AppState {
             }
             KeyCode::Char('/') if plain_shortcut(key) => {
                 self.is_search_mode = true;
-                self.search_cursor = self.search_query.chars().count();
+                move_cursor_end(&mut self.search_cursor, &self.search_query);
                 AppAction::None
             }
             KeyCode::Char('~') if plain_shortcut(key) => AppAction::OpenNamespacePicker,
