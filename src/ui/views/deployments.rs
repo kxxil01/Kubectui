@@ -270,7 +270,16 @@ mod tests {
         let long = "registry.io/team/service:very-long-tag-1234567890";
         let out = format_image(Some(long), 34);
         assert!(out.ends_with("..."));
-        assert!(out.len() <= 37);
+        assert_eq!(out.chars().count(), 34);
+    }
+
+    /// Verifies image truncation handles multi-byte characters by visible width.
+    #[test]
+    fn format_image_truncates_unicode_to_visible_limit() {
+        let long = "registry.io/team/service:tag-åååååååååå";
+        let out = format_image(Some(long), 12);
+        assert!(out.ends_with("..."));
+        assert_eq!(out.chars().count(), 12);
     }
 
     /// Verifies missing image renders a dash placeholder.
