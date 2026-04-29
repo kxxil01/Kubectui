@@ -14,7 +14,8 @@ use crate::{
     },
     ui::{
         clear_input_at_cursor, delete_char_left_at_cursor, delete_char_right_at_cursor,
-        insert_char_at_cursor, move_cursor_end, move_cursor_left, move_cursor_right,
+        insert_char_at_cursor, move_cursor_end, move_cursor_home, move_cursor_left,
+        move_cursor_right,
     },
     workbench::{AccessReviewFocus, ConnectivityTabFocus, WorkbenchTabState},
 };
@@ -3049,8 +3050,7 @@ impl AppState {
 
         match key.code {
             KeyCode::Esc => {
-                self.search_query.clear();
-                self.search_cursor = 0;
+                clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
                 self.is_search_mode = false;
                 // Reset selection so the user doesn't land on a stale filtered index.
                 self.selected_idx = 0;
@@ -3067,21 +3067,19 @@ impl AppState {
                 delete_char_right_at_cursor(&mut self.search_query, self.search_cursor);
             }
             KeyCode::Left => {
-                self.search_cursor = self.search_cursor.saturating_sub(1);
+                move_cursor_left(&mut self.search_cursor);
             }
             KeyCode::Right => {
-                self.search_cursor =
-                    (self.search_cursor + 1).min(self.search_query.chars().count());
+                move_cursor_right(&mut self.search_cursor, &self.search_query);
             }
             KeyCode::Home => {
-                self.search_cursor = 0;
+                move_cursor_home(&mut self.search_cursor);
             }
             KeyCode::End => {
-                self.search_cursor = self.search_query.chars().count();
+                move_cursor_end(&mut self.search_cursor, &self.search_query);
             }
             KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.search_query.clear();
-                self.search_cursor = 0;
+                clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
             }
             KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 insert_char_at_cursor(&mut self.search_query, &mut self.search_cursor, c);
