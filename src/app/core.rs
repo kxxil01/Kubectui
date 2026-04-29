@@ -105,6 +105,10 @@ impl AppState {
         self.search_cursor
     }
 
+    pub fn clear_search_query(&mut self) {
+        crate::ui::clear_input_at_cursor(&mut self.search_query, &mut self.search_cursor);
+    }
+
     pub fn pod_sort(&self) -> Option<PodSortState> {
         self.pod_sort
     }
