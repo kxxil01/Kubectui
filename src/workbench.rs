@@ -27,7 +27,11 @@ use crate::{
     secret::DecodedSecretEntry,
     timeline::{TimelineEntry, build_timeline},
     traffic_debug::TrafficDebugAnalysis,
-    ui::components::{input_field::InputFieldWidget, port_forward_dialog::PortForwardDialog},
+    ui::{
+        clear_input_at_cursor,
+        components::{input_field::InputFieldWidget, port_forward_dialog::PortForwardDialog},
+        move_cursor_end,
+    },
 };
 
 pub const DEFAULT_WORKBENCH_HEIGHT: u16 = 12;
@@ -1051,10 +1055,9 @@ impl WorkloadLogsTabState {
         self.notice = None;
         self.correlation_request_id = None;
         self.filter_input = self.text_filter.clone();
-        self.filter_input_cursor = self.filter_input.chars().count();
+        move_cursor_end(&mut self.filter_input_cursor, &self.filter_input);
         self.editing_text_filter = false;
-        self.time_jump_input.clear();
-        self.time_jump_cursor = 0;
+        clear_input_at_cursor(&mut self.time_jump_input, &mut self.time_jump_cursor);
         self.jumping_to_time = false;
         self.time_jump_error = None;
         self.available_labels.clear();
@@ -1218,7 +1221,7 @@ impl WorkloadLogsTabState {
             .and_then(|line| line.entry.timestamp())
             .map(format_jump_target)
             .unwrap_or_default();
-        self.time_jump_cursor = self.time_jump_input.chars().count();
+        move_cursor_end(&mut self.time_jump_cursor, &self.time_jump_input);
     }
 
     pub fn commit_time_jump(&mut self) {
@@ -1355,9 +1358,8 @@ impl WorkloadLogsTabState {
         self.jumping_to_time = false;
         self.text_filter = preset.query.clone();
         self.filter_input = self.text_filter.clone();
-        self.filter_input_cursor = self.filter_input.chars().count();
-        self.time_jump_input.clear();
-        self.time_jump_cursor = 0;
+        move_cursor_end(&mut self.filter_input_cursor, &self.filter_input);
+        clear_input_at_cursor(&mut self.time_jump_input, &mut self.time_jump_cursor);
         self.time_jump_error = None;
         self.text_filter_mode = preset.mode;
         self.time_window = preset.time_window;
