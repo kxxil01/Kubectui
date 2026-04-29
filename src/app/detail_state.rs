@@ -13,9 +13,15 @@ use crate::{
         entry_matches_query, entry_matches_time_window, format_jump_target,
         nearest_timestamp_index, parse_jump_target,
     },
-    ui::components::{
-        debug_container_dialog::DebugContainerDialogState, node_debug_dialog::NodeDebugDialogState,
-        probe_panel::ProbePanelState as ProbePanelComponentState, scale_dialog::ScaleDialogState,
+    ui::{
+        clear_input_at_cursor,
+        components::{
+            debug_container_dialog::DebugContainerDialogState,
+            node_debug_dialog::NodeDebugDialogState,
+            probe_panel::ProbePanelState as ProbePanelComponentState,
+            scale_dialog::ScaleDialogState,
+        },
+        move_cursor_end,
     },
 };
 
@@ -154,10 +160,9 @@ impl LogsViewerState {
         self.error = None;
         self.correlation_request_id = None;
         self.search_input = self.search_query.clone();
-        self.search_cursor = self.search_input.chars().count();
+        move_cursor_end(&mut self.search_cursor, &self.search_input);
         self.searching = false;
-        self.time_jump_input.clear();
-        self.time_jump_cursor = 0;
+        clear_input_at_cursor(&mut self.time_jump_input, &mut self.time_jump_cursor);
         self.jumping_to_time = false;
         self.time_jump_error = None;
     }
@@ -207,7 +212,7 @@ impl LogsViewerState {
         self.jumping_to_time = false;
         self.time_jump_error = None;
         self.search_input = self.search_query.clone();
-        self.search_cursor = self.search_input.chars().count();
+        move_cursor_end(&mut self.search_cursor, &self.search_input);
     }
 
     pub fn commit_search(&mut self) {
@@ -239,7 +244,7 @@ impl LogsViewerState {
 
     pub fn cancel_search(&mut self) {
         self.search_input = self.search_query.clone();
-        self.search_cursor = self.search_input.chars().count();
+        move_cursor_end(&mut self.search_cursor, &self.search_input);
         self.searching = false;
     }
 
@@ -251,7 +256,7 @@ impl LogsViewerState {
             .and_then(LogEntry::timestamp)
             .map(format_jump_target)
             .unwrap_or_default();
-        self.time_jump_cursor = self.time_jump_input.chars().count();
+        move_cursor_end(&mut self.time_jump_cursor, &self.time_jump_input);
     }
 
     pub fn commit_time_jump(&mut self) {
@@ -593,9 +598,8 @@ impl LogsViewerState {
         self.jumping_to_time = false;
         self.search_query = preset.query.clone();
         self.search_input = self.search_query.clone();
-        self.search_cursor = self.search_input.chars().count();
-        self.time_jump_input.clear();
-        self.time_jump_cursor = 0;
+        move_cursor_end(&mut self.search_cursor, &self.search_input);
+        clear_input_at_cursor(&mut self.time_jump_input, &mut self.time_jump_cursor);
         self.time_jump_error = None;
         self.search_mode = preset.mode;
         self.time_window = preset.time_window;
