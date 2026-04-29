@@ -1,7 +1,8 @@
 //! Context (kubeconfig) picker modal component.
 
 use crate::ui::{
-    components::render_vertical_scrollbar, contains_ci, cursor_visible_input_line, table_window,
+    components::render_vertical_scrollbar, contains_ci, cursor_visible_input_line,
+    delete_char_left_at_cursor, delete_char_right_at_cursor, insert_char_at_cursor, table_window,
     wrap_span_groups, wrapped_line_count,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -140,29 +141,24 @@ impl ContextPicker {
                 ContextPickerAction::None
             }
             KeyCode::Backspace => {
-                if self.search_cursor > 0
-                    && let Some((byte_idx, _)) =
-                        self.search_query.char_indices().nth(self.search_cursor - 1)
-                {
+                if self.search_cursor > 0 {
                     let selected_context = self
                         .selected_context_from_indices(&filtered)
                         .map(ToOwned::to_owned)
                         .or_else(|| self.selection_anchor.clone());
-                    self.search_query.remove(byte_idx);
-                    self.search_cursor = self.search_cursor.saturating_sub(1);
+                    delete_char_left_at_cursor(&mut self.search_query, &mut self.search_cursor);
                     self.restore_selected_context(selected_context);
                 }
                 ContextPickerAction::None
             }
             KeyCode::Delete => {
-                if let Some((byte_idx, _)) =
-                    self.search_query.char_indices().nth(self.search_cursor)
-                {
+                let previous_len = self.search_query.len();
+                delete_char_right_at_cursor(&mut self.search_query, self.search_cursor);
+                if self.search_query.len() != previous_len {
                     let selected_context = self
                         .selected_context_from_indices(&filtered)
                         .map(ToOwned::to_owned)
                         .or_else(|| self.selection_anchor.clone());
-                    self.search_query.remove(byte_idx);
                     self.restore_selected_context(selected_context);
                 }
                 ContextPickerAction::None
@@ -201,13 +197,7 @@ impl ContextPicker {
                     .selected_context_from_indices(&filtered)
                     .map(ToOwned::to_owned)
                     .or_else(|| self.selection_anchor.clone());
-                let byte_idx = self
-                    .search_query
-                    .char_indices()
-                    .nth(self.search_cursor)
-                    .map_or(self.search_query.len(), |(idx, _)| idx);
-                self.search_query.insert(byte_idx, c);
-                self.search_cursor += 1;
+                insert_char_at_cursor(&mut self.search_query, &mut self.search_cursor, c);
                 self.restore_selected_context(selected_context);
                 ContextPickerAction::None
             }
@@ -573,6 +563,24 @@ mod tests {
         picker.handle_key(KeyEvent::from(KeyCode::Char('b')));
 
         assert_eq!(picker.search_query, "abc");
+    }
+
+    #[test]
+    fn context_picker_search_unicode_cursor_editing() {
+        let mut picker = ContextPicker::new(vec!["default".to_string()], None);
+        picker.open();
+
+        picker.handle_key(KeyEvent::from(KeyCode::Char('a')));
+        picker.handle_key(KeyEvent::from(KeyCode::Char('å')));
+        picker.handle_key(KeyEvent::from(KeyCode::Char('b')));
+        picker.handle_key(KeyEvent::from(KeyCode::Left));
+        picker.handle_key(KeyEvent::from(KeyCode::Left));
+        picker.handle_key(KeyEvent::from(KeyCode::Char('β')));
+        picker.handle_key(KeyEvent::from(KeyCode::Delete));
+        picker.handle_key(KeyEvent::from(KeyCode::Backspace));
+
+        assert_eq!(picker.search_query, "ab");
+        assert_eq!(picker.search_cursor, 1);
     }
 
     #[test]
