@@ -2369,8 +2369,7 @@ pub(crate) fn cursor_visible_input_line(
         .sum::<usize>();
     let cursor_width = usize::from(cursor_chars.is_some());
     let available = width.saturating_sub(prefix_width + suffix_width + cursor_width);
-    let chars = value.chars().collect::<Vec<_>>();
-    let char_count = chars.len();
+    let char_count = value.chars().count();
 
     let (start, end) = if available == 0 {
         (0, 0)
@@ -2386,24 +2385,25 @@ pub(crate) fn cursor_visible_input_line(
         (0, available.min(char_count))
     };
 
-    let mut visible = chars[start..end].to_vec();
     let show_ellipses = cursor_chars.is_none() || available > 6;
-    if start > 0 && available > 3 && show_ellipses {
-        visible.splice(0..3, ['.', '.', '.']);
-    }
-    if end < char_count && available > 3 && show_ellipses {
-        let tail_start = visible.len().saturating_sub(3);
-        visible.splice(tail_start..visible.len(), ['.', '.', '.']);
-    }
+    let visible_len = end.saturating_sub(start);
+    let leading_ellipses = start > 0 && available > 3 && show_ellipses;
+    let trailing_ellipses = end < char_count && available > 3 && show_ellipses;
 
     let mut spans = Vec::with_capacity(prefix.len() + suffix.len() + 3);
     spans.extend(prefix.iter().cloned());
 
     if let Some(cursor) = cursor_chars {
         let cursor = cursor.min(char_count);
-        let cursor_offset = cursor.saturating_sub(start).min(visible.len());
-        let before = visible[..cursor_offset].iter().collect::<String>();
-        let after = visible[cursor_offset..].iter().collect::<String>();
+        let cursor_offset = cursor.saturating_sub(start).min(visible_len);
+        let (before, after) = visible_input_segments(
+            value,
+            start,
+            visible_len,
+            cursor_offset,
+            leading_ellipses,
+            trailing_ellipses,
+        );
         if !before.is_empty() {
             spans.push(Span::styled(before, value_style));
         }
@@ -2411,14 +2411,67 @@ pub(crate) fn cursor_visible_input_line(
         if !after.is_empty() {
             spans.push(Span::styled(after, value_style));
         }
-    } else if !visible.is_empty() {
+    } else if visible_len > 0 {
         spans.push(Span::styled(
-            visible.iter().collect::<String>(),
+            visible_input_text(
+                value,
+                start,
+                visible_len,
+                leading_ellipses,
+                trailing_ellipses,
+            ),
             value_style,
         ));
     }
     spans.extend(suffix.iter().cloned());
     Line::from(spans)
+}
+
+fn visible_input_text(
+    value: &str,
+    start: usize,
+    visible_len: usize,
+    leading_ellipses: bool,
+    trailing_ellipses: bool,
+) -> String {
+    let mut visible = String::with_capacity(visible_len);
+    for (offset, ch) in value.chars().skip(start).take(visible_len).enumerate() {
+        if (leading_ellipses && offset < 3)
+            || (trailing_ellipses && offset >= visible_len.saturating_sub(3))
+        {
+            visible.push('.');
+        } else {
+            visible.push(ch);
+        }
+    }
+    visible
+}
+
+fn visible_input_segments(
+    value: &str,
+    start: usize,
+    visible_len: usize,
+    cursor_offset: usize,
+    leading_ellipses: bool,
+    trailing_ellipses: bool,
+) -> (String, String) {
+    let mut before = String::with_capacity(cursor_offset);
+    let mut after = String::with_capacity(visible_len.saturating_sub(cursor_offset));
+    for (offset, ch) in value.chars().skip(start).take(visible_len).enumerate() {
+        let visible_ch = if (leading_ellipses && offset < 3)
+            || (trailing_ellipses && offset >= visible_len.saturating_sub(3))
+        {
+            '.'
+        } else {
+            ch
+        };
+        if offset < cursor_offset {
+            before.push(visible_ch);
+        } else {
+            after.push(visible_ch);
+        }
+    }
+    (before, after)
 }
 
 pub(crate) fn insert_char_at_cursor(value: &mut String, cursor: &mut usize, ch: char) {
@@ -2571,6 +2624,45 @@ mod tests {
             .map(|span| span.content.as_ref())
             .collect::<String>();
         assert_eq!(text, " / bc█def");
+    }
+
+    #[test]
+    fn cursor_visible_input_line_truncates_without_cursor() {
+        let line = cursor_visible_input_line(
+            &[],
+            "abcdefghij",
+            None,
+            Style::default(),
+            Style::default(),
+            &[],
+            7,
+        );
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(text, "abcd...");
+    }
+
+    #[test]
+    fn cursor_visible_input_line_handles_unicode_without_overflow() {
+        let line = cursor_visible_input_line(
+            &[Span::raw(" / ")],
+            "åβcdefghijk",
+            Some(6),
+            Style::default(),
+            Style::default(),
+            &[],
+            10,
+        );
+        let text = line
+            .spans
+            .iter()
+            .map(|span| span.content.as_ref())
+            .collect::<String>();
+        assert_eq!(text.chars().count(), 10);
+        assert_eq!(text, " / def█ghi");
     }
 
     fn terminal_to_string(terminal: &Terminal<TestBackend>) -> String {
