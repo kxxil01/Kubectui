@@ -2450,11 +2450,7 @@ pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {
     let Some(image) = image else {
         return "-".to_string();
     };
-    if image.chars().count() <= max_len {
-        image.to_string()
-    } else {
-        format!("{}...", &image.chars().take(max_len).collect::<String>())
-    }
+    truncate_message(image, max_len).into_owned()
 }
 #[cfg(test)]
 mod tests {
