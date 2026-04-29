@@ -5,7 +5,10 @@ use ratatui::{
     text::{Line, Span},
 };
 
-use crate::ui::cursor_visible_input_line;
+use crate::ui::{
+    cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
+    insert_char_at_cursor,
+};
 
 /// Reusable text input widget state.
 #[derive(Debug, Clone)]
@@ -50,36 +53,24 @@ impl InputFieldWidget {
     /// Update character at cursor position.
     pub fn add_char(&mut self, c: char) {
         if self.value.chars().count() < self.max_length {
-            let byte_pos = self
-                .value
-                .char_indices()
-                .nth(self.cursor_pos)
-                .map_or(self.value.len(), |(i, _)| i);
-            self.value.insert(byte_pos, c);
-            self.cursor_pos += 1;
+            insert_char_at_cursor(&mut self.value, &mut self.cursor_pos, c);
             self.error = false;
         }
     }
 
     /// Delete character before cursor.
     pub fn backspace_char(&mut self) {
-        if self.cursor_pos > 0 {
-            let byte_pos = self
-                .value
-                .char_indices()
-                .nth(self.cursor_pos - 1)
-                .map(|(i, _)| i)
-                .unwrap_or(0);
-            self.value.remove(byte_pos);
-            self.cursor_pos -= 1;
+        if self.cursor_pos != 0 {
+            delete_char_left_at_cursor(&mut self.value, &mut self.cursor_pos);
             self.error = false;
         }
     }
 
     /// Delete character at cursor.
     pub fn delete_char(&mut self) {
-        if let Some((byte_pos, _)) = self.value.char_indices().nth(self.cursor_pos) {
-            self.value.remove(byte_pos);
+        let previous = self.value.len();
+        delete_char_right_at_cursor(&mut self.value, self.cursor_pos);
+        if self.value.len() != previous {
             self.error = false;
         }
     }
@@ -200,6 +191,23 @@ mod tests {
         field.cursor_pos = 1;
         field.delete_char();
         assert_eq!(field.value, "acd");
+        assert_eq!(field.cursor_pos, 1);
+    }
+
+    #[test]
+    fn unicode_cursor_editing_uses_character_positions() {
+        let mut field = InputFieldWidget::with_value("aåb", 10);
+        field.cursor_pos = 1;
+        field.add_char('β');
+        assert_eq!(field.value, "aβåb");
+        assert_eq!(field.cursor_pos, 2);
+
+        field.delete_char();
+        assert_eq!(field.value, "aβb");
+        assert_eq!(field.cursor_pos, 2);
+
+        field.backspace_char();
+        assert_eq!(field.value, "ab");
         assert_eq!(field.cursor_pos, 1);
     }
 
