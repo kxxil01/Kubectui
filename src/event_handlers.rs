@@ -826,7 +826,7 @@ pub(crate) fn queued_refresh_requires_two_phase(
 pub(crate) fn normalize_recent_events(
     mut events: Vec<kubectui::k8s::dtos::K8sEventInfo>,
 ) -> Vec<kubectui::k8s::dtos::K8sEventInfo> {
-    events.sort_unstable_by_key(|event| std::cmp::Reverse(event.last_seen));
+    kubectui::k8s::dtos::sort_recent_events(&mut events);
     events.truncate(MAX_RECENT_EVENTS_CACHE_ITEMS);
     events
 }

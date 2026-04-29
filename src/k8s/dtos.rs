@@ -1,6 +1,6 @@
 //! Shared DTOs exchanged between the Kubernetes client, state, and UI layers.
 
-use std::{collections::BTreeMap, time::Duration};
+use std::{cmp::Ordering, collections::BTreeMap, time::Duration};
 
 use crate::time::AppTimestamp;
 use serde::{Deserialize, Serialize};
@@ -898,6 +898,24 @@ pub struct K8sEventInfo {
     pub involved_object: String,
     pub last_seen: Option<AppTimestamp>,
     pub age: Option<Duration>,
+}
+
+/// Sorts recent events newest-first with stable content tiebreakers.
+pub fn sort_recent_events(events: &mut [K8sEventInfo]) {
+    events.sort_unstable_by(compare_recent_events);
+}
+
+fn compare_recent_events(left: &K8sEventInfo, right: &K8sEventInfo) -> Ordering {
+    right
+        .last_seen
+        .cmp(&left.last_seen)
+        .then_with(|| left.namespace.cmp(&right.namespace))
+        .then_with(|| left.involved_object.cmp(&right.involved_object))
+        .then_with(|| left.type_.cmp(&right.type_))
+        .then_with(|| left.reason.cmp(&right.reason))
+        .then_with(|| left.message.cmp(&right.message))
+        .then_with(|| left.name.cmp(&right.name))
+        .then_with(|| left.count.cmp(&right.count))
 }
 
 /// Lightweight NetworkPolicy view.
