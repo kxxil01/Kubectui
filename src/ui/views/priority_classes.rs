@@ -20,7 +20,7 @@ use crate::{
         ResourceTableConfig, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        format_small_int, render_resource_table, striped_row_style,
+        format_small_int, render_resource_table, striped_row_style, truncate_message,
         views::filtering::filtered_priority_class_indices,
     },
 };
@@ -90,7 +90,7 @@ fn cached_priority_class_derived(
                 let pc = &snapshot.priority_classes[pc_idx];
                 PriorityClassDerivedCell {
                     value: format_small_int(i64::from(pc.value)).into_owned(),
-                    description_truncated: pc.description.chars().take(60).collect(),
+                    description_truncated: truncate_message(&pc.description, 60).into_owned(),
                 }
             })
             .collect::<Vec<_>>(),
@@ -174,7 +174,9 @@ pub fn render_priority_classes(
                         } else {
                             (
                                 format_small_int(i64::from(priority_class.value)),
-                                Cow::Owned(priority_class.description.chars().take(60).collect()),
+                                Cow::Owned(
+                                    truncate_message(&priority_class.description, 60).into_owned(),
+                                ),
                             )
                         };
                     Row::new(vec![
@@ -206,6 +208,7 @@ pub fn render_priority_classes(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{k8s::dtos::PriorityClassInfo, state::ClusterSnapshot};
 
     #[test]
     fn priority_class_widths_switch_to_compact_profile() {
@@ -220,5 +223,23 @@ mod tests {
         let widths = priority_class_widths(Rect::new(0, 0, 120, 20));
         assert_eq!(widths[0], Constraint::Percentage(30));
         assert_eq!(widths[3], Constraint::Percentage(45));
+    }
+
+    #[test]
+    fn priority_class_derived_description_uses_canonical_truncation() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 23,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.priority_classes = vec![PriorityClassInfo {
+            description: "x".repeat(80),
+            value: 10,
+            ..PriorityClassInfo::default()
+        }];
+
+        let derived = cached_priority_class_derived(&snapshot, "", &[0]);
+
+        assert_eq!(derived[0].description_truncated.len(), 60);
+        assert!(derived[0].description_truncated.ends_with("..."));
     }
 }
