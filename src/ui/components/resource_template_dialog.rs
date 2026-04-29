@@ -249,14 +249,14 @@ impl ResourceTemplateDialogState {
     }
 
     fn sync_cursors_to_values(&mut self) {
-        self.name_cursor = self.values.name.chars().count();
-        self.namespace_cursor = self.values.namespace.chars().count();
-        self.image_cursor = self.values.image.chars().count();
-        self.replicas_cursor = self.values.replicas.chars().count();
-        self.container_port_cursor = self.values.container_port.chars().count();
-        self.service_port_cursor = self.values.service_port.chars().count();
-        self.config_key_cursor = self.values.config_key.chars().count();
-        self.config_value_cursor = self.values.config_value.chars().count();
+        move_cursor_end(&mut self.name_cursor, &self.values.name);
+        move_cursor_end(&mut self.namespace_cursor, &self.values.namespace);
+        move_cursor_end(&mut self.image_cursor, &self.values.image);
+        move_cursor_end(&mut self.replicas_cursor, &self.values.replicas);
+        move_cursor_end(&mut self.container_port_cursor, &self.values.container_port);
+        move_cursor_end(&mut self.service_port_cursor, &self.values.service_port);
+        move_cursor_end(&mut self.config_key_cursor, &self.values.config_key);
+        move_cursor_end(&mut self.config_value_cursor, &self.values.config_value);
     }
 
     fn revalidate(&mut self) {
