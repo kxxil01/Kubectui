@@ -22,7 +22,7 @@ use crate::{
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, render_centered_message, render_table_frame, responsive_table_widths,
-        table_viewport_rows, table_window,
+        table_viewport_rows, table_window, truncate_message,
         views::filtering::filtered_event_indices,
     },
 };
@@ -96,7 +96,7 @@ fn cached_event_derived(
                 let ev = &snapshot.events[ev_idx];
                 EventDerivedCell {
                     count: format_small_int(i64::from(ev.count)).into_owned(),
-                    message_truncated: ev.message.chars().take(60).collect(),
+                    message_truncated: truncate_message(&ev.message, 60).into_owned(),
                 }
             })
             .collect::<Vec<_>>(),
@@ -199,7 +199,7 @@ pub fn render_events(
             } else {
                 (
                     format_small_int(i64::from(ev.count)),
-                    Cow::Owned(ev.message.chars().take(60).collect()),
+                    Cow::Owned(truncate_message(&ev.message, 60).into_owned()),
                 )
             };
             Row::new(vec![
@@ -254,6 +254,7 @@ pub fn render_events(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{k8s::dtos::K8sEventInfo, state::ClusterSnapshot};
 
     #[test]
     fn event_widths_switch_to_compact_profile() {
@@ -271,5 +272,23 @@ mod tests {
         assert_eq!(widths[1], Constraint::Length(16));
         assert_eq!(widths[2], Constraint::Length(24));
         assert_eq!(widths[5], Constraint::Min(20));
+    }
+
+    #[test]
+    fn event_derived_message_uses_canonical_truncation() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 17,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.events = vec![K8sEventInfo {
+            message: "x".repeat(80),
+            count: 7,
+            ..K8sEventInfo::default()
+        }];
+
+        let derived = cached_event_derived(&snapshot, "", &[0]);
+
+        assert_eq!(derived[0].message_truncated.len(), 60);
+        assert!(derived[0].message_truncated.ends_with("..."));
     }
 }
