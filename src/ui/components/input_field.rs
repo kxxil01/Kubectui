@@ -7,7 +7,7 @@ use ratatui::{
 
 use crate::ui::{
     cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
-    insert_char_at_cursor,
+    insert_char_at_cursor, move_cursor_end, move_cursor_home, move_cursor_left, move_cursor_right,
 };
 
 /// Reusable text input widget state.
@@ -145,22 +145,22 @@ impl InputFieldWidget {
 
     /// Move cursor left.
     pub fn cursor_left(&mut self) {
-        self.cursor_pos = self.cursor_pos.saturating_sub(1);
+        move_cursor_left(&mut self.cursor_pos);
     }
 
     /// Move cursor right.
     pub fn cursor_right(&mut self) {
-        self.cursor_pos = (self.cursor_pos + 1).min(self.value.chars().count());
+        move_cursor_right(&mut self.cursor_pos, &self.value);
     }
 
     /// Move cursor to start.
     pub fn cursor_home(&mut self) {
-        self.cursor_pos = 0;
+        move_cursor_home(&mut self.cursor_pos);
     }
 
     /// Move cursor to end.
     pub fn cursor_end(&mut self) {
-        self.cursor_pos = self.value.chars().count();
+        move_cursor_end(&mut self.cursor_pos, &self.value);
     }
 }
 

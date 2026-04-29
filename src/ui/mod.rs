@@ -2499,6 +2499,27 @@ pub(crate) fn delete_char_right_at_cursor(value: &mut String, cursor: usize) {
     }
 }
 
+pub(crate) fn move_cursor_left(cursor: &mut usize) {
+    *cursor = cursor.saturating_sub(1);
+}
+
+pub(crate) fn move_cursor_right(cursor: &mut usize, value: &str) {
+    *cursor = (*cursor + 1).min(value.chars().count());
+}
+
+pub(crate) fn move_cursor_home(cursor: &mut usize) {
+    *cursor = 0;
+}
+
+pub(crate) fn move_cursor_end(cursor: &mut usize, value: &str) {
+    *cursor = value.chars().count();
+}
+
+pub(crate) fn clear_input_at_cursor(value: &mut String, cursor: &mut usize) {
+    value.clear();
+    *cursor = 0;
+}
+
 pub(crate) fn format_image(image: Option<&str>, max_len: usize) -> String {
     let Some(image) = image else {
         return "-".to_string();
