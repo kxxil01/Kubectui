@@ -10,8 +10,9 @@ use ratatui::{
 use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
 use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::{
-    cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
-    insert_char_at_cursor, truncate_line_content, truncate_message, wrap_span_groups,
+    clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
+    delete_char_right_at_cursor, insert_char_at_cursor, move_cursor_end, move_cursor_home,
+    move_cursor_left, move_cursor_right, truncate_line_content, truncate_message, wrap_span_groups,
     wrapped_line_count,
 };
 
@@ -158,25 +159,23 @@ impl DebugContainerDialogState {
                     return DebugContainerDialogEvent::None;
                 }
                 KeyCode::Left => {
-                    self.custom_image_cursor = self.custom_image_cursor.saturating_sub(1);
+                    move_cursor_left(&mut self.custom_image_cursor);
                     return DebugContainerDialogEvent::None;
                 }
                 KeyCode::Right => {
-                    self.custom_image_cursor =
-                        (self.custom_image_cursor + 1).min(self.custom_image.chars().count());
+                    move_cursor_right(&mut self.custom_image_cursor, &self.custom_image);
                     return DebugContainerDialogEvent::None;
                 }
                 KeyCode::Home => {
-                    self.custom_image_cursor = 0;
+                    move_cursor_home(&mut self.custom_image_cursor);
                     return DebugContainerDialogEvent::None;
                 }
                 KeyCode::End => {
-                    self.custom_image_cursor = self.custom_image.chars().count();
+                    move_cursor_end(&mut self.custom_image_cursor, &self.custom_image);
                     return DebugContainerDialogEvent::None;
                 }
                 KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    self.custom_image.clear();
-                    self.custom_image_cursor = 0;
+                    clear_input_at_cursor(&mut self.custom_image, &mut self.custom_image_cursor);
                     self.error_message = None;
                     return DebugContainerDialogEvent::None;
                 }
