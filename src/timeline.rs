@@ -1,6 +1,6 @@
 //! Unified timeline merging K8s events with action history for a resource.
 
-use std::collections::VecDeque;
+use std::{cmp::Ordering, collections::VecDeque};
 
 use jiff::ToSpan;
 
@@ -80,15 +80,11 @@ pub fn build_timeline(
     }
 
     // 3. Sort by timestamp ascending (oldest first = natural timeline reading).
-    //    Tiebreaker: Actions sort before Events at the same timestamp so that the
-    //    forward-scan correlation pass always sees same-timestamp events after their action.
-    timeline.sort_unstable_by_key(|e| {
-        let order = match e {
-            TimelineEntry::Action { .. } => 0u8,
-            TimelineEntry::Event { .. } => 1u8,
-        };
-        (e.sort_timestamp(), order)
-    });
+    //    Actions sort before Events at the same timestamp so that the forward-scan
+    //    correlation pass always sees same-timestamp events after their action.
+    //    Same-timestamp events also need content tiebreakers; Kubernetes watch/list
+    //    order is not a UI ordering contract.
+    timeline.sort_by(compare_timeline_entries);
 
     // 4. Correlation pass: for each Action, mark subsequent Events within the
     //    correlation window as related.
@@ -126,6 +122,61 @@ pub fn build_timeline(
     }
 
     timeline
+}
+
+fn compare_timeline_entries(left: &TimelineEntry, right: &TimelineEntry) -> Ordering {
+    left.sort_timestamp()
+        .cmp(&right.sort_timestamp())
+        .then_with(|| entry_kind_rank(left).cmp(&entry_kind_rank(right)))
+        .then_with(|| compare_same_kind_timeline_entries(left, right))
+}
+
+fn entry_kind_rank(entry: &TimelineEntry) -> u8 {
+    match entry {
+        TimelineEntry::Action { .. } => 0,
+        TimelineEntry::Event { .. } => 1,
+    }
+}
+
+fn compare_same_kind_timeline_entries(left: &TimelineEntry, right: &TimelineEntry) -> Ordering {
+    match (left, right) {
+        (
+            TimelineEntry::Event {
+                event: left_event, ..
+            },
+            TimelineEntry::Event {
+                event: right_event, ..
+            },
+        ) => left_event
+            .event_type
+            .cmp(&right_event.event_type)
+            .then_with(|| left_event.reason.cmp(&right_event.reason))
+            .then_with(|| left_event.message.cmp(&right_event.message))
+            .then_with(|| left_event.first_timestamp.cmp(&right_event.first_timestamp))
+            .then_with(|| left_event.count.cmp(&right_event.count)),
+        (
+            TimelineEntry::Action {
+                kind: left_kind,
+                status: left_status,
+                message: left_message,
+                finished_at: left_finished_at,
+                ..
+            },
+            TimelineEntry::Action {
+                kind: right_kind,
+                status: right_status,
+                message: right_message,
+                finished_at: right_finished_at,
+                ..
+            },
+        ) => left_kind
+            .label()
+            .cmp(right_kind.label())
+            .then_with(|| left_status.label().cmp(right_status.label()))
+            .then_with(|| left_message.cmp(right_message))
+            .then_with(|| left_finished_at.cmp(right_finished_at)),
+        _ => Ordering::Equal,
+    }
 }
 
 #[cfg(test)]
@@ -226,6 +277,36 @@ mod tests {
             TimelineEntry::Event { event, .. } => assert_eq!(event.reason, "Started"),
             _ => panic!("expected Event"),
         }
+    }
+
+    #[test]
+    fn same_timestamp_events_have_stable_content_order() {
+        let first_input = vec![
+            make_event("Started", 10),
+            make_event("Pulled", 10),
+            make_event("Created", 10),
+        ];
+        let second_input = vec![
+            make_event("Created", 10),
+            make_event("Started", 10),
+            make_event("Pulled", 10),
+        ];
+
+        let first = build_timeline(&first_input, &VecDeque::new(), &pod_ref());
+        let second = build_timeline(&second_input, &VecDeque::new(), &pod_ref());
+
+        let reasons = |entries: &[TimelineEntry]| {
+            entries
+                .iter()
+                .map(|entry| match entry {
+                    TimelineEntry::Event { event, .. } => event.reason.clone(),
+                    TimelineEntry::Action { .. } => panic!("expected Event"),
+                })
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(reasons(&first), vec!["Created", "Pulled", "Started"]);
+        assert_eq!(reasons(&second), reasons(&first));
     }
 
     #[test]
