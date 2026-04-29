@@ -160,6 +160,7 @@ pub fn encode_secret_yaml(yaml: &str, entries: &[DecodedSecretEntry]) -> Result<
         );
     }
     root.insert(data_key, Value::Mapping(data));
+    root.remove(Value::String("stringData".to_string()));
 
     serde_yaml::to_string(&parsed).context("failed to serialize Secret YAML")
 }
@@ -233,5 +234,18 @@ mod tests {
 
         let encoded = encode_secret_yaml(yaml, &entries).expect("encoded yaml");
         assert!(encoded.contains("Zml4ZWQ="));
+    }
+
+    #[test]
+    fn encode_secret_yaml_removes_stale_string_data() {
+        let yaml = "apiVersion: v1\nkind: Secret\ndata:\n  token: b2xk\nstringData:\n  token: stale\n  other: stale\n";
+        let mut entries = decode_secret_yaml(yaml).expect("decoded entries");
+        assert!(entries[0].commit_edit("updated".to_string()));
+
+        let encoded = encode_secret_yaml(yaml, &entries).expect("encoded yaml");
+
+        assert!(!encoded.contains("stringData"));
+        assert!(!encoded.contains("stale"));
+        assert!(encoded.contains("dXBkYXRlZA=="));
     }
 }

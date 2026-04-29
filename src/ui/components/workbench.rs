@@ -1917,19 +1917,29 @@ fn render_decoded_secret_tab(
                 }
                 DecodedSecretValue::Binary {
                     byte_len, preview, ..
-                } => Span::styled(
-                    format!("[binary {byte_len} bytes] {preview}"),
-                    theme.muted_style(),
-                ),
+                } => {
+                    let label = if tab_state.masked {
+                        format!("[binary {byte_len} bytes] ****")
+                    } else {
+                        format!("[binary {byte_len} bytes] {preview}")
+                    };
+                    Span::styled(label, theme.muted_style())
+                }
                 DecodedSecretValue::InvalidBase64 {
                     error, replacement, ..
-                } => Span::styled(
-                    replacement
+                } => {
+                    let label = replacement
                         .as_ref()
-                        .map(|value| format!("[repaired] {value}"))
-                        .unwrap_or_else(|| format!("[invalid base64] {error}")),
-                    theme.badge_error_style(),
-                ),
+                        .map(|value| {
+                            if tab_state.masked {
+                                "[repaired] ****".to_string()
+                            } else {
+                                format!("[repaired] {value}")
+                            }
+                        })
+                        .unwrap_or_else(|| format!("[invalid base64] {error}"));
+                    Span::styled(label, theme.badge_error_style())
+                }
             };
 
             Line::from(vec![
@@ -3348,8 +3358,9 @@ fn scroll_window_scrollbar_position(
 mod tests {
     use super::{
         VisibleWindow, access_review_lines, centered_window, render_connectivity_tab,
-        render_events_tab, render_extension_output_tab, render_helm_values_diff, render_logs_tab,
-        render_workload_logs_tab, scroll_window, scroll_window_scrollbar_position,
+        render_decoded_secret_tab, render_events_tab, render_extension_output_tab,
+        render_helm_values_diff, render_logs_tab, render_workload_logs_tab, scroll_window,
+        scroll_window_scrollbar_position,
     };
     use crate::{
         action_history::{ActionKind, ActionStatus},
@@ -3937,6 +3948,96 @@ mod tests {
 
         assert!(rendered.contains("needle"));
         assert!(rendered.contains("No workload log lines match the current filters"));
+    }
+
+    #[test]
+    fn decoded_secret_masked_mode_hides_binary_preview_and_repaired_text() {
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = crate::workbench::DecodedSecretTabState::new(ResourceRef::Secret(
+            "app-secret".into(),
+            "default".into(),
+        ));
+        tab.loading = false;
+        tab.masked = true;
+        tab.entries = vec![
+            crate::secret::DecodedSecretEntry {
+                key: "blob".into(),
+                value: crate::secret::DecodedSecretValue::Binary {
+                    raw_base64: "//79AA==".into(),
+                    byte_len: 4,
+                    preview: "ff fe fd 00".into(),
+                },
+            },
+            crate::secret::DecodedSecretEntry {
+                key: "broken".into(),
+                value: crate::secret::DecodedSecretValue::InvalidBase64 {
+                    raw_base64: "not-base64%%".into(),
+                    error: "Invalid byte".into(),
+                    replacement: Some("literal-secret".into()),
+                },
+            },
+        ];
+
+        terminal
+            .draw(|frame| render_decoded_secret_tab(frame, Rect::new(0, 0, 100, 12), &tab))
+            .expect("decoded secret tab should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("[binary 4 bytes] ****"));
+        assert!(rendered.contains("[repaired] ****"));
+        assert!(!rendered.contains("ff fe fd 00"));
+        assert!(!rendered.contains("literal-secret"));
+    }
+
+    #[test]
+    fn decoded_secret_visible_mode_shows_binary_preview_and_repaired_text() {
+        let backend = TestBackend::new(100, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = crate::workbench::DecodedSecretTabState::new(ResourceRef::Secret(
+            "app-secret".into(),
+            "default".into(),
+        ));
+        tab.loading = false;
+        tab.masked = false;
+        tab.entries = vec![
+            crate::secret::DecodedSecretEntry {
+                key: "blob".into(),
+                value: crate::secret::DecodedSecretValue::Binary {
+                    raw_base64: "//79AA==".into(),
+                    byte_len: 4,
+                    preview: "ff fe fd 00".into(),
+                },
+            },
+            crate::secret::DecodedSecretEntry {
+                key: "broken".into(),
+                value: crate::secret::DecodedSecretValue::InvalidBase64 {
+                    raw_base64: "not-base64%%".into(),
+                    error: "Invalid byte".into(),
+                    replacement: Some("literal-secret".into()),
+                },
+            },
+        ];
+
+        terminal
+            .draw(|frame| render_decoded_secret_tab(frame, Rect::new(0, 0, 100, 12), &tab))
+            .expect("decoded secret tab should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("ff fe fd 00"));
+        assert!(rendered.contains("literal-secret"));
     }
 
     #[test]
