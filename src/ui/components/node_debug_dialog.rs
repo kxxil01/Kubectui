@@ -13,7 +13,8 @@ use crate::k8s::{
 };
 use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::{
-    cursor_visible_input_line, truncate_line_content, truncate_message, wrap_span_groups,
+    cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
+    insert_char_at_cursor, truncate_line_content, truncate_message, wrap_span_groups,
     wrapped_line_count,
 };
 
@@ -186,13 +187,7 @@ impl NodeDebugDialogState {
                     return NodeDebugDialogEvent::None;
                 }
                 KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    let byte_idx = self
-                        .custom_image
-                        .char_indices()
-                        .nth(self.custom_image_cursor)
-                        .map_or(self.custom_image.len(), |(idx, _)| idx);
-                    self.custom_image.insert(byte_idx, c);
-                    self.custom_image_cursor += 1;
+                    insert_char_at_cursor(&mut self.custom_image, &mut self.custom_image_cursor, c);
                     self.error_message = None;
                     return NodeDebugDialogEvent::None;
                 }
@@ -337,27 +332,11 @@ impl NodeDebugDialogState {
     }
 
     fn delete_custom_image_left(&mut self) {
-        if self.custom_image_cursor == 0 {
-            return;
-        }
-        if let Some((byte_idx, _)) = self
-            .custom_image
-            .char_indices()
-            .nth(self.custom_image_cursor - 1)
-        {
-            self.custom_image.remove(byte_idx);
-            self.custom_image_cursor = self.custom_image_cursor.saturating_sub(1);
-        }
+        delete_char_left_at_cursor(&mut self.custom_image, &mut self.custom_image_cursor);
     }
 
     fn delete_custom_image_right(&mut self) {
-        if let Some((byte_idx, _)) = self
-            .custom_image
-            .char_indices()
-            .nth(self.custom_image_cursor)
-        {
-            self.custom_image.remove(byte_idx);
-        }
+        delete_char_right_at_cursor(&mut self.custom_image, self.custom_image_cursor);
     }
 }
 
@@ -978,6 +957,22 @@ mod tests {
         state.handle_key(KeyEvent::new(KeyCode::Char('X'), KeyModifiers::SHIFT));
 
         assert_eq!(state.custom_image, "busyXbox");
+    }
+
+    #[test]
+    fn custom_image_editor_supports_unicode_cursor_editing() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+        state.selected_preset = DebugImagePreset::Custom;
+        state.focus_field = NodeDebugField::CustomImage;
+        state.custom_image = "aåb".to_string();
+        state.custom_image_cursor = 1;
+
+        state.handle_key(KeyEvent::from(KeyCode::Char('β')));
+        state.handle_key(KeyEvent::from(KeyCode::Delete));
+        state.handle_key(KeyEvent::from(KeyCode::Backspace));
+
+        assert_eq!(state.custom_image, "ab");
+        assert_eq!(state.custom_image_cursor, 1);
     }
 
     #[test]
