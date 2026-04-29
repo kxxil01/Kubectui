@@ -951,8 +951,7 @@ impl CommandPalette {
     }
 
     pub fn open_with_context(&mut self, resource: Option<ResourceActionContext>) {
-        self.query.clear();
-        self.query_cursor = 0;
+        clear_input_at_cursor(&mut self.query, &mut self.query_cursor);
         self.selected_index = 0;
         self.selection_anchor = None;
         self.is_open = true;
