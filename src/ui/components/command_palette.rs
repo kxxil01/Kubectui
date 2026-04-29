@@ -18,7 +18,10 @@ use crate::resource_templates::ResourceTemplateKind;
 use crate::runbooks::LoadedRunbook;
 use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::theme::Theme;
-use crate::ui::{cursor_visible_input_line, wrap_span_groups, wrapped_line_count};
+use crate::ui::{
+    cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
+    insert_char_at_cursor, wrap_span_groups, wrapped_line_count,
+};
 use crate::workbench::WorkbenchTabKey;
 use crate::workspaces::display_hotkey;
 
@@ -1175,21 +1178,18 @@ impl CommandPalette {
                 CommandPaletteAction::None
             }
             KeyCode::Backspace => {
-                if self.query_cursor > 0
-                    && let Some((byte_idx, _)) =
-                        self.query.char_indices().nth(self.query_cursor - 1)
-                {
+                if self.query_cursor > 0 {
                     let selected_entry = self.selected_entry_anchor();
-                    self.query.remove(byte_idx);
-                    self.query_cursor = self.query_cursor.saturating_sub(1);
+                    delete_char_left_at_cursor(&mut self.query, &mut self.query_cursor);
                     self.restore_selected_entry(selected_entry);
                 }
                 CommandPaletteAction::None
             }
             KeyCode::Delete => {
-                if let Some((byte_idx, _)) = self.query.char_indices().nth(self.query_cursor) {
-                    let selected_entry = self.selected_entry_anchor();
-                    self.query.remove(byte_idx);
+                let previous_len = self.query.len();
+                let selected_entry = self.selected_entry_anchor();
+                delete_char_right_at_cursor(&mut self.query, self.query_cursor);
+                if self.query.len() != previous_len {
                     self.restore_selected_entry(selected_entry);
                 }
                 CommandPaletteAction::None
@@ -1229,13 +1229,7 @@ impl CommandPalette {
                     .contains(crossterm::event::KeyModifiers::CONTROL) =>
             {
                 let selected_entry = self.selected_entry_anchor();
-                let byte_idx = self
-                    .query
-                    .char_indices()
-                    .nth(self.query_cursor)
-                    .map_or(self.query.len(), |(idx, _)| idx);
-                self.query.insert(byte_idx, c);
-                self.query_cursor += 1;
+                insert_char_at_cursor(&mut self.query, &mut self.query_cursor, c);
                 self.restore_selected_entry(selected_entry);
                 CommandPaletteAction::None
             }
@@ -1804,6 +1798,23 @@ mod tests {
         p.handle_key(KeyEvent::from(KeyCode::Char('b')));
 
         assert_eq!(p.query, "abc");
+    }
+
+    #[test]
+    fn query_supports_unicode_cursor_editing() {
+        let mut p = CommandPalette::default();
+        p.open();
+        p.handle_key(KeyEvent::from(KeyCode::Char('a')));
+        p.handle_key(KeyEvent::from(KeyCode::Char('å')));
+        p.handle_key(KeyEvent::from(KeyCode::Char('b')));
+        p.handle_key(KeyEvent::from(KeyCode::Left));
+        p.handle_key(KeyEvent::from(KeyCode::Left));
+        p.handle_key(KeyEvent::from(KeyCode::Char('β')));
+        p.handle_key(KeyEvent::from(KeyCode::Delete));
+        p.handle_key(KeyEvent::from(KeyCode::Backspace));
+
+        assert_eq!(p.query, "ab");
+        assert_eq!(p.query_cursor, 1);
     }
 
     #[test]
