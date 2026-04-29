@@ -352,6 +352,23 @@ fn search_query_supports_cursor_editing() {
     assert_eq!(app.search_query(), "abc");
 }
 
+#[test]
+fn search_query_supports_unicode_cursor_editing() {
+    let mut app = AppState::default();
+
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('/')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('a')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('å')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('b')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Left));
+    app.handle_key_event(KeyEvent::from(KeyCode::Left));
+    app.handle_key_event(KeyEvent::from(KeyCode::Char('β')));
+    app.handle_key_event(KeyEvent::from(KeyCode::Delete));
+    app.handle_key_event(KeyEvent::from(KeyCode::Backspace));
+
+    assert_eq!(app.search_query(), "ab");
+}
+
 /// Verifies pressing Esc in search mode exits mode and clears query.
 #[test]
 fn search_mode_esc_clears_and_exits() {
