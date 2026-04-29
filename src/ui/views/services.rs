@@ -21,7 +21,7 @@ use crate::{
             cached_filter_indices_with_variant, data_fingerprint,
         },
         format_age, name_cell_with_bookmark, render_resource_table, sort_header_cell,
-        striped_row_style,
+        striped_row_style, truncate_message,
         views::filtering::filtered_service_indices,
         workload_sort_suffix,
     },
@@ -228,12 +228,7 @@ fn format_ports(ports: &[String]) -> String {
     let joined = ports.join(", ");
     const MAX_LEN: usize = 28;
 
-    if joined.chars().count() <= MAX_LEN {
-        return joined;
-    }
-
-    let head = ports.first().cloned().unwrap_or_else(|| joined.clone());
-    format!("{head}, ...")
+    truncate_message(&joined, MAX_LEN).into_owned()
 }
 
 #[cfg(test)]
@@ -253,7 +248,7 @@ mod tests {
         assert_eq!(format_ports(&ports), "80/TCP, 443/TCP");
     }
 
-    /// Verifies long port lists are truncated using head-plus-ellipsis format.
+    /// Verifies long port lists are truncated to the table cell budget.
     #[test]
     fn format_ports_long_list_truncates() {
         let ports = vec![
@@ -266,7 +261,21 @@ mod tests {
 
         let out = format_ports(&ports);
         assert!(out.starts_with("80/TCP"));
-        assert!(out.ends_with(", ..."));
+        assert!(out.ends_with("..."));
+        assert_eq!(out.chars().count(), 28);
+    }
+
+    /// Verifies a single pathological port cannot overflow the table cell.
+    #[test]
+    fn format_ports_long_first_port_fits_budget() {
+        let ports = vec![
+            "123456789012345678901234567890/TCP".to_string(),
+            "443/TCP".to_string(),
+        ];
+
+        let out = format_ports(&ports);
+        assert!(out.ends_with("..."));
+        assert_eq!(out.chars().count(), 28);
     }
 
     /// Verifies service type style helper maps known types.
