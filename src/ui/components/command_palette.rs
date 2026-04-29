@@ -19,8 +19,9 @@ use crate::runbooks::LoadedRunbook;
 use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::theme::Theme;
 use crate::ui::{
-    cursor_visible_input_line, delete_char_left_at_cursor, delete_char_right_at_cursor,
-    insert_char_at_cursor, wrap_span_groups, wrapped_line_count,
+    clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
+    delete_char_right_at_cursor, insert_char_at_cursor, move_cursor_end, move_cursor_home,
+    move_cursor_left, move_cursor_right, wrap_span_groups, wrapped_line_count,
 };
 use crate::workbench::WorkbenchTabKey;
 use crate::workspaces::display_hotkey;
@@ -1195,19 +1196,19 @@ impl CommandPalette {
                 CommandPaletteAction::None
             }
             KeyCode::Left => {
-                self.query_cursor = self.query_cursor.saturating_sub(1);
+                move_cursor_left(&mut self.query_cursor);
                 CommandPaletteAction::None
             }
             KeyCode::Right => {
-                self.query_cursor = (self.query_cursor + 1).min(self.query.chars().count());
+                move_cursor_right(&mut self.query_cursor, &self.query);
                 CommandPaletteAction::None
             }
             KeyCode::Home => {
-                self.query_cursor = 0;
+                move_cursor_home(&mut self.query_cursor);
                 CommandPaletteAction::None
             }
             KeyCode::End => {
-                self.query_cursor = self.query.chars().count();
+                move_cursor_end(&mut self.query_cursor, &self.query);
                 CommandPaletteAction::None
             }
             KeyCode::Char('u')
@@ -1217,8 +1218,7 @@ impl CommandPalette {
             {
                 if !self.query.is_empty() {
                     let selected_entry = self.selected_entry_anchor();
-                    self.query.clear();
-                    self.query_cursor = 0;
+                    clear_input_at_cursor(&mut self.query, &mut self.query_cursor);
                     self.restore_selected_entry(selected_entry);
                 }
                 CommandPaletteAction::None
