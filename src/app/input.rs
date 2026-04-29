@@ -766,26 +766,19 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::Backspace => {
-                            crate::ui::delete_char_left_at_cursor(
-                                &mut tab.edit_input,
-                                &mut tab.edit_cursor,
-                            );
+                            delete_char_left_at_cursor(&mut tab.edit_input, &mut tab.edit_cursor);
                             AppAction::None
                         }
                         KeyCode::Delete => {
-                            crate::ui::delete_char_right_at_cursor(
-                                &mut tab.edit_input,
-                                tab.edit_cursor,
-                            );
+                            delete_char_right_at_cursor(&mut tab.edit_input, tab.edit_cursor);
                             AppAction::None
                         }
                         KeyCode::Left => {
-                            tab.edit_cursor = tab.edit_cursor.saturating_sub(1);
+                            move_input_cursor_left(&mut tab.edit_cursor);
                             AppAction::None
                         }
                         KeyCode::Right => {
-                            tab.edit_cursor =
-                                (tab.edit_cursor + 1).min(tab.edit_input.chars().count());
+                            move_input_cursor_right(&mut tab.edit_cursor, &tab.edit_input);
                             AppAction::None
                         }
                         KeyCode::Home => {
@@ -793,20 +786,15 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::End => {
-                            tab.edit_cursor = tab.edit_input.chars().count();
+                            move_input_cursor_end(&mut tab.edit_cursor, &tab.edit_input);
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            tab.edit_input.clear();
-                            tab.edit_cursor = 0;
+                            clear_input_with_cursor(&mut tab.edit_input, &mut tab.edit_cursor);
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            crate::ui::insert_char_at_cursor(
-                                &mut tab.edit_input,
-                                &mut tab.edit_cursor,
-                                c,
-                            );
+                            insert_char_at_cursor(&mut tab.edit_input, &mut tab.edit_cursor, c);
                             AppAction::None
                         }
                         _ => AppAction::None,
@@ -946,27 +934,28 @@ impl AppState {
                         KeyCode::Esc => AppAction::CancelLogTimeJump,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ApplyLogTimeJump,
                         KeyCode::Backspace => {
-                            crate::ui::delete_char_left_at_cursor(
+                            delete_char_left_at_cursor(
                                 &mut tab.viewer.time_jump_input,
                                 &mut tab.viewer.time_jump_cursor,
                             );
                             AppAction::None
                         }
                         KeyCode::Delete => {
-                            crate::ui::delete_char_right_at_cursor(
+                            delete_char_right_at_cursor(
                                 &mut tab.viewer.time_jump_input,
                                 tab.viewer.time_jump_cursor,
                             );
                             AppAction::None
                         }
                         KeyCode::Left => {
-                            tab.viewer.time_jump_cursor =
-                                tab.viewer.time_jump_cursor.saturating_sub(1);
+                            move_input_cursor_left(&mut tab.viewer.time_jump_cursor);
                             AppAction::None
                         }
                         KeyCode::Right => {
-                            tab.viewer.time_jump_cursor = (tab.viewer.time_jump_cursor + 1)
-                                .min(tab.viewer.time_jump_input.chars().count());
+                            move_input_cursor_right(
+                                &mut tab.viewer.time_jump_cursor,
+                                &tab.viewer.time_jump_input,
+                            );
                             AppAction::None
                         }
                         KeyCode::Home => {
@@ -974,17 +963,21 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::End => {
-                            tab.viewer.time_jump_cursor =
-                                tab.viewer.time_jump_input.chars().count();
+                            move_input_cursor_end(
+                                &mut tab.viewer.time_jump_cursor,
+                                &tab.viewer.time_jump_input,
+                            );
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            tab.viewer.time_jump_input.clear();
-                            tab.viewer.time_jump_cursor = 0;
+                            clear_input_with_cursor(
+                                &mut tab.viewer.time_jump_input,
+                                &mut tab.viewer.time_jump_cursor,
+                            );
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            crate::ui::insert_char_at_cursor(
+                            insert_char_at_cursor(
                                 &mut tab.viewer.time_jump_input,
                                 &mut tab.viewer.time_jump_cursor,
                                 c,
@@ -1182,26 +1175,28 @@ impl AppState {
                         KeyCode::Esc => AppAction::CancelLogTimeJump,
                         KeyCode::Enter if plain_shortcut(key) => AppAction::ApplyLogTimeJump,
                         KeyCode::Backspace => {
-                            crate::ui::delete_char_left_at_cursor(
+                            delete_char_left_at_cursor(
                                 &mut tab.time_jump_input,
                                 &mut tab.time_jump_cursor,
                             );
                             AppAction::None
                         }
                         KeyCode::Delete => {
-                            crate::ui::delete_char_right_at_cursor(
+                            delete_char_right_at_cursor(
                                 &mut tab.time_jump_input,
                                 tab.time_jump_cursor,
                             );
                             AppAction::None
                         }
                         KeyCode::Left => {
-                            tab.time_jump_cursor = tab.time_jump_cursor.saturating_sub(1);
+                            move_input_cursor_left(&mut tab.time_jump_cursor);
                             AppAction::None
                         }
                         KeyCode::Right => {
-                            tab.time_jump_cursor =
-                                (tab.time_jump_cursor + 1).min(tab.time_jump_input.chars().count());
+                            move_input_cursor_right(
+                                &mut tab.time_jump_cursor,
+                                &tab.time_jump_input,
+                            );
                             AppAction::None
                         }
                         KeyCode::Home => {
@@ -1209,16 +1204,18 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::End => {
-                            tab.time_jump_cursor = tab.time_jump_input.chars().count();
+                            move_input_cursor_end(&mut tab.time_jump_cursor, &tab.time_jump_input);
                             AppAction::None
                         }
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            tab.time_jump_input.clear();
-                            tab.time_jump_cursor = 0;
+                            clear_input_with_cursor(
+                                &mut tab.time_jump_input,
+                                &mut tab.time_jump_cursor,
+                            );
                             AppAction::None
                         }
                         KeyCode::Char(c) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            crate::ui::insert_char_at_cursor(
+                            insert_char_at_cursor(
                                 &mut tab.time_jump_input,
                                 &mut tab.time_jump_cursor,
                                 c,
