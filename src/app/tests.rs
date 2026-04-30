@@ -4540,6 +4540,41 @@ fn reopen_helm_history_tab_error_clears_stale_payload() {
 }
 
 #[test]
+fn reopen_helm_history_tab_refresh_clears_stale_confirm_and_diff() {
+    use crate::k8s::dtos::HelmReleaseRevisionInfo;
+    use crate::workbench::{HelmHistoryTabState, HelmValuesDiffState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::HelmRelease("release".into(), "prod".into());
+    let mut tab = HelmHistoryTabState::new(resource.clone());
+    tab.revisions = vec![HelmReleaseRevisionInfo {
+        revision: 3,
+        ..HelmReleaseRevisionInfo::default()
+    }];
+    tab.current_revision = Some(3);
+    tab.loading = false;
+    tab.scroll = 7;
+    tab.confirm_rollback_revision = Some(2);
+    tab.diff = Some(HelmValuesDiffState::new(3, 2, 40));
+    app.workbench.open_tab(WorkbenchTabState::HelmHistory(tab));
+
+    app.open_helm_history_tab(resource, None, None, Some(88));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing helm tab");
+    };
+    let WorkbenchTabState::HelmHistory(tab) = &tab.state else {
+        panic!("expected helm tab");
+    };
+    assert!(tab.loading);
+    assert_eq!(tab.pending_history_request_id, Some(88));
+    assert!(tab.confirm_rollback_revision.is_none());
+    assert!(tab.diff.is_none());
+    assert_eq!(tab.scroll, 0);
+}
+
+#[test]
 fn reopen_network_policy_tab_error_clears_stale_payload() {
     use crate::workbench::{NetworkPolicyTabState, WorkbenchTabState};
 

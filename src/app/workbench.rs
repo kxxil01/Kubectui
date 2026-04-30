@@ -254,10 +254,15 @@ impl AppState {
                 tab.apply_history(history);
             } else if let Some(error) = error {
                 tab.set_history_error(error);
+            } else if let Some(request_id) = pending_request_id {
+                tab.refresh(request_id);
             } else {
                 tab.loading = true;
                 tab.error = None;
-                tab.pending_history_request_id = pending_request_id;
+                tab.pending_history_request_id = None;
+                tab.scroll = 0;
+                tab.confirm_rollback_revision = None;
+                tab.diff = None;
             }
             self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
