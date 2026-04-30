@@ -4527,6 +4527,42 @@ fn reopen_resource_diff_tab_error_clears_stale_payload() {
 }
 
 #[test]
+fn reopen_resource_diff_tab_refresh_clears_stale_payload() {
+    use crate::resource_diff::{ResourceDiffBaselineKind, ResourceDiffLine, ResourceDiffLineKind};
+    use crate::workbench::{ResourceDiffTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Pod("api".into(), "prod".into());
+    let mut tab = ResourceDiffTabState::new(resource.clone());
+    tab.baseline_kind = Some(ResourceDiffBaselineKind::LastAppliedAnnotation);
+    tab.summary = Some("stale drift".into());
+    tab.lines = vec![ResourceDiffLine {
+        kind: ResourceDiffLineKind::Context,
+        content: "old".into(),
+    }];
+    tab.scroll = 7;
+    tab.loading = false;
+    app.workbench.open_tab(WorkbenchTabState::ResourceDiff(tab));
+
+    app.open_resource_diff_tab(resource, None, None, Some(42));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing diff tab");
+    };
+    let WorkbenchTabState::ResourceDiff(tab) = &tab.state else {
+        panic!("expected diff tab");
+    };
+    assert!(tab.baseline_kind.is_none());
+    assert!(tab.summary.is_none());
+    assert!(tab.lines.is_empty());
+    assert_eq!(tab.scroll, 0);
+    assert!(tab.loading);
+    assert_eq!(tab.pending_request_id, Some(42));
+    assert!(tab.error.is_none());
+}
+
+#[test]
 fn reopen_helm_history_tab_error_clears_stale_payload() {
     use crate::k8s::dtos::HelmReleaseRevisionInfo;
     use crate::workbench::{HelmHistoryTabState, WorkbenchTabState};

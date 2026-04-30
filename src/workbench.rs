@@ -792,6 +792,16 @@ impl ResourceDiffTabState {
         self.error = Some(error);
         self.pending_request_id = None;
     }
+
+    pub fn refresh(&mut self, request_id: Option<u64>) {
+        self.baseline_kind = None;
+        self.summary = None;
+        self.lines.clear();
+        self.scroll = 0;
+        self.loading = true;
+        self.error = None;
+        self.pending_request_id = request_id;
+    }
 }
 
 #[derive(Debug, Clone)]
