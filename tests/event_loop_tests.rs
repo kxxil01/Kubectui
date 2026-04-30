@@ -267,6 +267,7 @@ fn test_decoded_secret_editor_keeps_r_as_text() {
                 current: "hello".to_string(),
             },
         }];
+        secret_tab.masked = false;
         secret_tab.editing = true;
         secret_tab.edit_input.clear();
     }
@@ -279,6 +280,57 @@ fn test_decoded_secret_editor_keeps_r_as_text() {
     {
         assert_eq!(secret_tab.edit_input, "r");
         assert!(secret_tab.editing);
+    } else {
+        panic!("expected active decoded secret tab");
+    }
+}
+
+#[test]
+fn test_decoded_secret_editor_requires_reveal_before_editing() {
+    let mut app = AppState::default();
+    app.open_decoded_secret_tab(
+        ResourceRef::Secret("app-secret".to_string(), "default".to_string()),
+        Some("apiVersion: v1\nkind: Secret\ndata:\n  token: aGVsbG8=\n".to_string()),
+        None,
+        None,
+    );
+
+    if let Some(tab) = app.workbench_mut().active_tab_mut()
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
+    {
+        secret_tab.entries = vec![DecodedSecretEntry {
+            key: "token".to_string(),
+            value: DecodedSecretValue::Text {
+                original: "hello".to_string(),
+                current: "hello".to_string(),
+            },
+        }];
+    }
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('e')), &mut app);
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench().active_tab()
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &tab.state
+    {
+        assert!(secret_tab.masked);
+        assert!(!secret_tab.editing);
+        assert!(secret_tab.edit_input.is_empty());
+    } else {
+        panic!("expected active decoded secret tab");
+    }
+
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('m')), &mut app);
+    assert_eq!(action, AppAction::None);
+    let action = route_keyboard_input(KeyEvent::from(KeyCode::Char('e')), &mut app);
+    assert_eq!(action, AppAction::None);
+
+    if let Some(tab) = app.workbench().active_tab()
+        && let WorkbenchTabState::DecodedSecret(secret_tab) = &tab.state
+    {
+        assert!(!secret_tab.masked);
+        assert!(secret_tab.editing);
+        assert_eq!(secret_tab.edit_input, "hello");
     } else {
         panic!("expected active decoded secret tab");
     }
