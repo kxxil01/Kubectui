@@ -1804,8 +1804,11 @@ fn render_decoded_secret_tab(
     } else {
         ""
     };
-    let hint = if tab_state.editing {
+    let editing_visible_value = tab_state.editing && !tab_state.masked;
+    let hint = if editing_visible_value {
         "[Enter] apply field  [Esc] cancel  [Ctrl+U] clear"
+    } else if tab_state.masked {
+        "[m] reveal values  [s] save  [Esc] back"
     } else {
         "[e] edit  [m] mask  [s] save  [Esc] back"
     };
@@ -1858,7 +1861,7 @@ fn render_decoded_secret_tab(
         return;
     }
 
-    let content_area = if tab_state.editing {
+    let content_area = if editing_visible_value {
         let split = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(0), Constraint::Length(2)])
@@ -3960,6 +3963,9 @@ mod tests {
         ));
         tab.loading = false;
         tab.masked = true;
+        tab.editing = true;
+        tab.edit_input = "literal-secret".into();
+        tab.edit_cursor = tab.edit_input.len();
         tab.entries = vec![
             crate::secret::DecodedSecretEntry {
                 key: "blob".into(),
