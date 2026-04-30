@@ -1542,6 +1542,7 @@ impl AppState {
                     }
                     AppAction::None
                 }
+                KeyCode::Esc => AppAction::EscapePressed,
                 _ => AppAction::None,
             },
             WorkbenchTabState::NetworkPolicy(tab) => match key.code {
