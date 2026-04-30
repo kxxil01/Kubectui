@@ -1100,6 +1100,44 @@ fn workbench_focus_supports_tab_resize_and_close_shortcuts() {
 }
 
 #[test]
+fn ctrl_alt_workbench_control_shortcuts_do_not_fire() {
+    use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.workbench.open_tab(WorkbenchTabState::ActionHistory(
+        ActionHistoryTabState::default(),
+    ));
+    app.workbench
+        .ensure_background_tab(WorkbenchTabState::ActionHistory(
+            ActionHistoryTabState::default(),
+        ));
+    app.focus = Focus::Workbench;
+    let active_before = app.workbench.active_tab;
+    let height_before = app.workbench.height;
+
+    for code in [
+        KeyCode::Tab,
+        KeyCode::BackTab,
+        KeyCode::Char('w'),
+        KeyCode::Up,
+        KeyCode::Down,
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                code,
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            )),
+            AppAction::None,
+            "{code:?}"
+        );
+    }
+
+    assert_eq!(app.workbench.active_tab, active_before);
+    assert_eq!(app.workbench.height, height_before);
+    assert!(app.workbench.open);
+}
+
+#[test]
 fn workbench_local_editor_blocks_global_tab_shortcuts() {
     use crate::workbench::{PodLogsTabState, WorkbenchTabState};
 
