@@ -910,6 +910,17 @@ fn content_selected_resource_shortcuts_ignore_non_resource_views() {
         app.handle_key_event(KeyEvent::from(KeyCode::Char('B'))),
         AppAction::ToggleBookmark
     );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL)),
+        AppAction::CopyResourceName
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('Y'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )),
+        AppAction::CopyResourceName
+    );
 
     for view in [
         AppView::Dashboard,
@@ -934,6 +945,17 @@ fn content_selected_resource_shortcuts_ignore_non_resource_views() {
             app.handle_key_event(KeyEvent::from(KeyCode::Char('B'))),
             AppAction::None
         );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL)),
+            AppAction::None
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                KeyCode::Char('Y'),
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )),
+            AppAction::None
+        );
     }
 
     app.view = AppView::Extensions;
@@ -953,6 +975,17 @@ fn content_selected_resource_shortcuts_ignore_non_resource_views() {
     assert_eq!(
         app.handle_key_event(KeyEvent::from(KeyCode::Char('B'))),
         AppAction::ToggleBookmark
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL)),
+        AppAction::CopyResourceName
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::new(
+            KeyCode::Char('Y'),
+            KeyModifiers::CONTROL | KeyModifiers::SHIFT
+        )),
+        AppAction::CopyResourceName
     );
 }
 
@@ -2809,6 +2842,21 @@ fn resource_ref_helpers_work_for_each_variant() {
 fn ctrl_y_returns_copy_resource_name() {
     let mut app = AppState::default();
     app.view = AppView::Pods;
+    app.focus = Focus::Content;
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
+    assert_eq!(action, AppAction::CopyResourceName);
+}
+
+#[test]
+fn ctrl_y_returns_copy_resource_name_from_detail() {
+    let mut app = AppState {
+        detail_view: Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("api".to_string(), "default".to_string())),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
     let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('y'), KeyModifiers::CONTROL));
     assert_eq!(action, AppAction::CopyResourceName);
 }

@@ -37,6 +37,16 @@ fn view_supports_selected_resource_shortcut(view: AppView, extension_in_instance
     }
 }
 
+fn app_supports_copy_resource_name_shortcut(app: &AppState) -> bool {
+    app.detail_view
+        .as_ref()
+        .and_then(|detail| detail.resource.as_ref())
+        .is_some()
+        || (app.detail_view.is_none()
+            && app.focus == Focus::Content
+            && view_supports_selected_resource_shortcut(app.view, app.extension_in_instances))
+}
+
 fn view_supports_resource_events_shortcut(view: AppView) -> bool {
     matches!(
         view,
@@ -2285,7 +2295,8 @@ impl AppState {
                 AppAction::LogsViewerOpen
             }
             KeyCode::Char('y') | KeyCode::Char('Y')
-                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if key.modifiers.contains(KeyModifiers::CONTROL)
+                    && app_supports_copy_resource_name_shortcut(self) =>
             {
                 AppAction::CopyResourceName
             }
