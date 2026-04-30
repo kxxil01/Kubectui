@@ -54,6 +54,8 @@ pub(crate) fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
                             && viewer.container_name == container_name
                         {
                             viewer.push_line(line.clone());
+                            viewer.loading = false;
+                            viewer.error = None;
                             if viewer.follow_mode {
                                 viewer.scroll_offset = viewer.lines.len().saturating_sub(1);
                             }
@@ -108,9 +110,13 @@ pub(crate) fn apply_coordinator_msg(msg: UpdateMessage, app: &mut AppState) {
                                     viewer.loading = false;
                                 }
                                 LogStreamStatus::Ended | LogStreamStatus::Cancelled => {
+                                    viewer.loading = false;
                                     viewer.follow_mode = false;
                                 }
-                                LogStreamStatus::Started => {}
+                                LogStreamStatus::Started => {
+                                    viewer.error = None;
+                                    viewer.loading = false;
+                                }
                             }
                         }
                     }
@@ -915,8 +921,77 @@ mod tests {
     use super::*;
     use kubectui::{
         secret::{DecodedSecretEntry, DecodedSecretValue},
-        workbench::DecodedSecretTabState,
+        workbench::{DecodedSecretTabState, PodLogsTabState},
     };
+
+    #[test]
+    fn pod_log_stream_started_clears_loading_state() {
+        let mut app = AppState::default();
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        let mut tab = PodLogsTabState::new(resource);
+        tab.viewer.pod_name = "api-0".into();
+        tab.viewer.pod_namespace = "prod".into();
+        tab.viewer.container_name = "app".into();
+        tab.viewer.loading = true;
+        tab.viewer.error = Some("previous stream failed".into());
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(tab));
+
+        apply_coordinator_msg(
+            UpdateMessage::LogStreamStatus {
+                pod_name: "api-0".into(),
+                namespace: "prod".into(),
+                container_name: "app".into(),
+                status: LogStreamStatus::Started,
+            },
+            &mut app,
+        );
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing pod logs tab");
+        };
+        let WorkbenchTabState::PodLogs(tab) = &tab.state else {
+            panic!("expected pod logs tab");
+        };
+        assert!(!tab.viewer.loading);
+        assert!(tab.viewer.error.is_none());
+    }
+
+    #[test]
+    fn pod_log_update_clears_loading_state() {
+        let mut app = AppState::default();
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        let mut tab = PodLogsTabState::new(resource);
+        tab.viewer.pod_name = "api-0".into();
+        tab.viewer.pod_namespace = "prod".into();
+        tab.viewer.container_name = "app".into();
+        tab.viewer.loading = true;
+        tab.viewer.error = Some("previous stream failed".into());
+        tab.viewer.follow_mode = true;
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::PodLogs(tab));
+
+        apply_coordinator_msg(
+            UpdateMessage::LogUpdate {
+                pod_name: "api-0".into(),
+                namespace: "prod".into(),
+                container_name: "app".into(),
+                line: "server ready".into(),
+            },
+            &mut app,
+        );
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing pod logs tab");
+        };
+        let WorkbenchTabState::PodLogs(tab) = &tab.state else {
+            panic!("expected pod logs tab");
+        };
+        assert!(!tab.viewer.loading);
+        assert!(tab.viewer.error.is_none());
+        assert_eq!(tab.viewer.lines.len(), 1);
+        assert_eq!(tab.viewer.scroll_offset, 0);
+    }
 
     #[test]
     fn decoded_secret_async_result_preserves_local_edits() {
