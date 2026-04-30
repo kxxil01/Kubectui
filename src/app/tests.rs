@@ -2871,6 +2871,20 @@ fn shift_y_returns_copy_full_name() {
 }
 
 #[test]
+fn shift_y_returns_copy_full_name_from_detail() {
+    let mut app = AppState {
+        detail_view: Some(DetailViewState {
+            resource: Some(ResourceRef::Pod("api".to_string(), "default".to_string())),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+
+    let action = app.handle_key_event(KeyEvent::new(KeyCode::Char('Y'), KeyModifiers::SHIFT));
+    assert_eq!(action, AppAction::CopyResourceFullName);
+}
+
+#[test]
 fn ctrl_shift_y_uses_copy_resource_name_not_full_name() {
     let mut app = AppState::default();
     app.view = AppView::Pods;
