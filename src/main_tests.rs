@@ -47,7 +47,10 @@ use kubectui::{
     ui::components::{
         debug_container_dialog::DebugContainerDialogState, node_debug_dialog::NodeDebugDialogState,
     },
-    workbench::{PodLogsTabState, ResourceYamlTabState, RolloutTabState, WorkbenchTabState},
+    workbench::{
+        DecodedSecretTabState, PodLogsTabState, ResourceYamlTabState, RolloutTabState,
+        WorkbenchTabState,
+    },
 };
 use std::time::{Duration, Instant};
 
@@ -76,6 +79,39 @@ fn root_enter_shortcut_rejects_control_alt_modifiers() {
     assert!(!super::should_handle_root_enter(
         KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE),
         &app
+    ));
+}
+
+#[test]
+fn detail_result_gate_includes_decoded_secret_tabs() {
+    let resource = ResourceRef::Secret("app-secret".into(), "default".into());
+    let mut app = AppState::default();
+    let mut tab = DecodedSecretTabState::new(resource.clone());
+    tab.loading = true;
+    tab.pending_request_id = Some(42);
+    app.workbench
+        .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+    assert!(super::workbench_waiting_for_detail_result(
+        &app, &resource, 42
+    ));
+    assert!(!super::workbench_waiting_for_detail_result(
+        &app, &resource, 41
+    ));
+}
+
+#[test]
+fn detail_result_gate_still_includes_yaml_and_events_tabs() {
+    let resource = ResourceRef::Pod("api".into(), "default".into());
+    let mut app = AppState::default();
+    app.open_resource_yaml_tab(resource.clone(), None, None, Some(7));
+    app.open_resource_events_tab(resource.clone(), Vec::new(), true, None, Some(8));
+
+    assert!(super::workbench_waiting_for_detail_result(
+        &app, &resource, 7
+    ));
+    assert!(super::workbench_waiting_for_detail_result(
+        &app, &resource, 8
     ));
 }
 
