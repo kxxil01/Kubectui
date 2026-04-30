@@ -1100,6 +1100,23 @@ fn workbench_focus_supports_tab_resize_and_close_shortcuts() {
 }
 
 #[test]
+fn relations_workbench_tab_escape_returns_from_workbench() {
+    use crate::workbench::{RelationsTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.workbench
+        .open_tab(WorkbenchTabState::Relations(RelationsTabState::new(
+            ResourceRef::Pod("api".into(), "prod".into()),
+        )));
+    app.focus = Focus::Workbench;
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Esc)),
+        AppAction::EscapePressed
+    );
+}
+
+#[test]
 fn ctrl_alt_workbench_control_shortcuts_do_not_fire() {
     use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
 
