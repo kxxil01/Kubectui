@@ -486,27 +486,19 @@ impl AppState {
             },
             WorkbenchTabState::Runbook(tab) => match key.code {
                 KeyCode::Esc => AppAction::EscapePressed,
-                KeyCode::Char('j') | KeyCode::Down
-                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
+                KeyCode::Char('j') | KeyCode::Down if ctrl_shortcut(key) => {
                     tab.scroll_detail_down(1);
                     AppAction::None
                 }
-                KeyCode::Char('k') | KeyCode::Up
-                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
+                KeyCode::Char('k') | KeyCode::Up if ctrl_shortcut(key) => {
                     tab.scroll_detail_up(1);
                     AppAction::None
                 }
-                KeyCode::Char('d') | KeyCode::Char('D')
-                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
+                KeyCode::Char('d') | KeyCode::Char('D') if ctrl_shortcut(key) => {
                     tab.scroll_detail_down(10);
                     AppAction::None
                 }
-                KeyCode::Char('u') | KeyCode::Char('U')
-                    if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                {
+                KeyCode::Char('u') | KeyCode::Char('U') if ctrl_shortcut(key) => {
                     tab.scroll_detail_up(10);
                     AppAction::None
                 }
@@ -555,13 +547,13 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if ctrl_shortcut(key) =>
                         {
                             tab.scroll = tab.scroll.saturating_add(10);
                             AppAction::None
                         }
                         KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if ctrl_shortcut(key) =>
                         {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
@@ -586,13 +578,13 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if ctrl_shortcut(key) =>
                         {
                             tab.scroll = tab.scroll.saturating_add(10);
                             AppAction::None
                         }
                         KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if ctrl_shortcut(key) =>
                         {
                             tab.scroll = tab.scroll.saturating_sub(10);
                             AppAction::None
@@ -701,13 +693,13 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if ctrl_shortcut(key) =>
                         {
                             tab.detail_scroll = tab.detail_scroll.saturating_add(10);
                             AppAction::None
                         }
                         KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if ctrl_shortcut(key) =>
                         {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
                             AppAction::None
@@ -731,13 +723,13 @@ impl AppState {
                             AppAction::None
                         }
                         KeyCode::PageDown | KeyCode::Char('d') | KeyCode::Char('D')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if ctrl_shortcut(key) =>
                         {
                             tab.detail_scroll = tab.detail_scroll.saturating_add(10);
                             AppAction::None
                         }
                         KeyCode::PageUp | KeyCode::Char('u') | KeyCode::Char('U')
-                            if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            if ctrl_shortcut(key) =>
                         {
                             tab.detail_scroll = tab.detail_scroll.saturating_sub(10);
                             AppAction::None
@@ -2483,7 +2475,7 @@ impl AppState {
             KeyCode::Char('f') | KeyCode::Char('F')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && ctrl_shortcut(key)
                     && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
@@ -2623,7 +2615,7 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| !detail.has_confirmation_dialog())
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && ctrl_shortcut(key) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.scroll_top_panels_down(1);
@@ -2633,7 +2625,7 @@ impl AppState {
             KeyCode::Char('j') | KeyCode::Char('J') | KeyCode::Down
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && ctrl_shortcut(key)
                     && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_add(1);
@@ -2644,7 +2636,7 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| !detail.has_confirmation_dialog())
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && ctrl_shortcut(key) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.scroll_top_panels_up(1);
@@ -2654,7 +2646,7 @@ impl AppState {
             KeyCode::Char('k') | KeyCode::Char('K') | KeyCode::Up
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && ctrl_shortcut(key)
                     && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_sub(1);
@@ -2665,7 +2657,7 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| !detail.has_confirmation_dialog())
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && ctrl_shortcut(key) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.scroll_top_panels_down(10);
@@ -2675,7 +2667,7 @@ impl AppState {
             KeyCode::Char('d') | KeyCode::Char('D')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && ctrl_shortcut(key)
                     && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_add(10);
@@ -2686,7 +2678,7 @@ impl AppState {
                     .detail_view
                     .as_ref()
                     .is_some_and(|detail| !detail.has_confirmation_dialog())
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                    && ctrl_shortcut(key) =>
             {
                 if let Some(detail) = &mut self.detail_view {
                     detail.scroll_top_panels_up(10);
@@ -2696,7 +2688,7 @@ impl AppState {
             KeyCode::Char('u') | KeyCode::Char('U')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && ctrl_shortcut(key)
                     && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
@@ -2705,7 +2697,7 @@ impl AppState {
             KeyCode::Char('b') | KeyCode::Char('B')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && ctrl_shortcut(key)
                     && view_supports_content_detail_scroll(self.view) =>
             {
                 self.content_detail_scroll = self.content_detail_scroll.saturating_sub(10);
