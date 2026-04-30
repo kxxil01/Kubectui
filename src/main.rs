@@ -2881,6 +2881,7 @@ pub(crate) async fn run_app_inner(
                         && let WorkbenchTabState::Exec(exec_tab) = &mut tab.state
                         && exec_tab.session_id == result.session_id
                     {
+                        needs_redraw = true;
                         match result.result {
                             Ok(containers) => {
                                 exec_tab.set_containers(containers.clone());
