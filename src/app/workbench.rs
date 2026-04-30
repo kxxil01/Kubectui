@@ -180,10 +180,10 @@ impl AppState {
                 tab.apply_result(diff);
             } else if let Some(error) = error {
                 tab.set_error(error);
+            } else if let Some(request_id) = pending_request_id {
+                tab.refresh(Some(request_id));
             } else {
-                tab.loading = true;
-                tab.error = None;
-                tab.pending_request_id = pending_request_id;
+                tab.refresh(None);
             }
             self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
