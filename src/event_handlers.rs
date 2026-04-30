@@ -184,6 +184,11 @@ pub(crate) fn apply_detail_state_to_workbench(
         && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
         && secret_tab.pending_request_id == Some(request_id)
     {
+        if secret_tab.has_local_edit_state() {
+            secret_tab.loading = false;
+            secret_tab.pending_request_id = None;
+            return;
+        }
         secret_tab.source_yaml = state.yaml.clone();
         secret_tab.loading = false;
         secret_tab.pending_request_id = None;
@@ -898,4 +903,56 @@ pub(crate) fn request_events_refresh(
         request_id,
         context_generation,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use kubectui::{
+        secret::{DecodedSecretEntry, DecodedSecretValue},
+        workbench::DecodedSecretTabState,
+    };
+
+    #[test]
+    fn decoded_secret_async_result_preserves_local_edits() {
+        let resource = ResourceRef::Secret("app-secret".into(), "prod".into());
+        let mut app = AppState::default();
+        let mut tab = DecodedSecretTabState::new(resource.clone());
+        tab.loading = true;
+        tab.pending_request_id = Some(7);
+        tab.source_yaml = Some("kind: Secret\ndata:\n  TOKEN: b2xkLXZhbHVl\n".into());
+        tab.entries = vec![DecodedSecretEntry {
+            key: "TOKEN".into(),
+            value: DecodedSecretValue::Text {
+                current: "local-edit".into(),
+                original: "old-value".into(),
+            },
+        }];
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+        let state = DetailViewState {
+            resource: Some(resource),
+            yaml: Some("kind: Secret\ndata:\n  TOKEN: cmVtb3RlLXZhbHVl\n".into()),
+            ..DetailViewState::default()
+        };
+        apply_detail_state_to_workbench(&mut app, 7, &state);
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing decoded secret tab");
+        };
+        let WorkbenchTabState::DecodedSecret(tab) = &tab.state else {
+            panic!("expected decoded secret tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert_eq!(
+            tab.selected_entry().and_then(|entry| entry.editable_text()),
+            Some("local-edit")
+        );
+        assert_eq!(
+            tab.source_yaml.as_deref(),
+            Some("kind: Secret\ndata:\n  TOKEN: b2xkLXZhbHVl\n")
+        );
+    }
 }

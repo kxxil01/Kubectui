@@ -279,7 +279,20 @@ impl AppState {
         pending_request_id: Option<u64>,
     ) {
         let key = WorkbenchTabKey::DecodedSecret(resource.clone());
-        if self.workbench.activate_tab(&key) {
+        if let Some(tab) = self.workbench.find_tab_mut(&key)
+            && let WorkbenchTabState::DecodedSecret(tab) = &mut tab.state
+        {
+            if !tab.has_local_edit_state() {
+                tab.source_yaml = source_yaml;
+                tab.loading = tab.source_yaml.is_none() && error.is_none();
+                tab.error = error;
+                tab.pending_request_id = pending_request_id;
+                if tab.source_yaml.is_none() && tab.error.is_some() {
+                    tab.entries.clear();
+                    tab.clamp_selected();
+                }
+            }
+            self.workbench.activate_tab(&key);
             self.focus = Focus::Workbench;
             return;
         }

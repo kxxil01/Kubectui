@@ -4274,6 +4274,40 @@ fn reopen_decoded_secret_tab_preserves_unsaved_edit_state() {
 }
 
 #[test]
+fn reopen_clean_decoded_secret_tab_tracks_new_pending_fetch() {
+    use crate::secret::{DecodedSecretEntry, DecodedSecretValue};
+    use crate::workbench::{DecodedSecretTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Secret("app-secret".into(), "prod".into());
+    let mut tab = DecodedSecretTabState::new(resource.clone());
+    tab.loading = false;
+    tab.error = Some("previous load failed".into());
+    tab.entries = vec![DecodedSecretEntry {
+        key: "TOKEN".into(),
+        value: DecodedSecretValue::Text {
+            current: "old-value".into(),
+            original: "old-value".into(),
+        },
+    }];
+    app.workbench
+        .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+    app.open_decoded_secret_tab(resource, None, None, Some(99));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing decoded secret tab");
+    };
+    let WorkbenchTabState::DecodedSecret(tab) = &tab.state else {
+        panic!("expected decoded secret tab");
+    };
+    assert!(tab.loading);
+    assert_eq!(tab.pending_request_id, Some(99));
+    assert!(tab.error.is_none());
+}
+
+#[test]
 fn reopen_resource_yaml_tab_preserves_scroll_while_refreshing_payload() {
     use crate::workbench::{ResourceYamlTabState, WorkbenchTabState};
 

@@ -834,6 +834,10 @@ impl DecodedSecretTabState {
         self.entries.iter().any(DecodedSecretEntry::is_dirty)
     }
 
+    pub fn has_local_edit_state(&self) -> bool {
+        self.editing || self.has_unsaved_changes()
+    }
+
     pub fn selected_index(&self) -> usize {
         if self.entries.is_empty() {
             return 0;
