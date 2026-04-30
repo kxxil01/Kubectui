@@ -145,6 +145,34 @@ fn should_preserve_current_flux_after_refresh(
         || start_flux_target_fingerprints != current_flux_target_fingerprints
 }
 
+fn workbench_waiting_for_detail_result(
+    app: &AppState,
+    requested_resource: &ResourceRef,
+    request_id: u64,
+) -> bool {
+    app.workbench.tabs.iter().any(|tab| {
+        matches!(
+            &tab.state,
+            WorkbenchTabState::ResourceYaml(yaml_tab)
+                if yaml_tab.resource == *requested_resource
+                    && yaml_tab.loading
+                    && yaml_tab.pending_request_id == Some(request_id)
+        ) || matches!(
+            &tab.state,
+            WorkbenchTabState::ResourceEvents(events_tab)
+                if events_tab.resource == *requested_resource
+                    && events_tab.loading
+                    && events_tab.pending_request_id == Some(request_id)
+        ) || matches!(
+            &tab.state,
+            WorkbenchTabState::DecodedSecret(secret_tab)
+                if secret_tab.resource == *requested_resource
+                    && secret_tab.loading
+                    && secret_tab.pending_request_id == Some(request_id)
+        )
+    })
+}
+
 #[derive(Clone)]
 struct NodeDebugSessionRuntime {
     client: K8sClient,
@@ -1632,21 +1660,8 @@ pub(crate) async fn run_app_inner(
                             detail.resource.as_ref() == Some(&requested_resource)
                                 && detail.pending_request_id == Some(request_id)
                         });
-                    let workbench_waiting_for_this = app.workbench.tabs.iter().any(|tab| {
-                        matches!(
-                            &tab.state,
-                            WorkbenchTabState::ResourceYaml(yaml_tab)
-                                if yaml_tab.resource == requested_resource
-                                    && yaml_tab.loading
-                                    && yaml_tab.pending_request_id == Some(request_id)
-                        ) || matches!(
-                            &tab.state,
-                            WorkbenchTabState::ResourceEvents(events_tab)
-                                if events_tab.resource == requested_resource
-                                    && events_tab.loading
-                                    && events_tab.pending_request_id == Some(request_id)
-                        )
-                    });
+                    let workbench_waiting_for_this =
+                        workbench_waiting_for_detail_result(&app, &requested_resource, request_id);
                     if !detail_still_waiting_for_this && !workbench_waiting_for_this {
                         continue;
                     }
