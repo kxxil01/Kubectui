@@ -2383,6 +2383,9 @@ impl RelationsTabState {
         self.expanded = expanded;
         self.tree = tree;
         self.cursor = cursor;
+        self.pending_request_id = None;
+        self.loading = false;
+        self.error = None;
     }
 
     pub fn set_error(&mut self, error: String) {
@@ -3753,6 +3756,29 @@ mod tests {
 
         let flat = crate::k8s::relationships::flatten_tree(&tab.tree, &tab.expanded);
         assert_eq!(flat[tab.cursor].resource, Some(pod("pod-b")));
+    }
+
+    #[test]
+    fn relations_tab_set_tree_clears_loading_and_stale_error() {
+        let mut tab = RelationsTabState::new(pod("pod-0"));
+        tab.pending_request_id = Some(42);
+        tab.loading = true;
+        tab.error = Some("previous relationship fetch failed".to_string());
+
+        tab.set_tree(vec![crate::k8s::relationships::RelationNode {
+            resource: Some(pod("pod-a")),
+            label: "Pod pod-a".to_string(),
+            status: None,
+            namespace: Some("default".to_string()),
+            relation: crate::k8s::relationships::RelationKind::Owned,
+            not_found: false,
+            children: Vec::new(),
+        }]);
+
+        assert!(tab.pending_request_id.is_none());
+        assert!(!tab.loading);
+        assert!(tab.error.is_none());
+        assert_eq!(tab.tree.len(), 1);
     }
 
     #[test]
