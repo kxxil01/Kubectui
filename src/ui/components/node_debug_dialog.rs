@@ -24,6 +24,10 @@ fn plain_shortcut(key: KeyEvent) -> bool {
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 
+fn ctrl_shortcut(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeDebugField {
     Preset,
@@ -197,7 +201,7 @@ impl NodeDebugDialogState {
             }
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
+        if ctrl_shortcut(key) {
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
                     self.notes_scroll = self.notes_scroll.saturating_add(1);
@@ -865,6 +869,32 @@ mod tests {
         assert_eq!(state.notes_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.notes_scroll, 0);
+    }
+
+    #[test]
+    fn ctrl_alt_scroll_shortcuts_do_not_update_notes_scroll() {
+        let mut state = NodeDebugDialogState::new("node-0", "default", vec!["default".to_string()]);
+
+        for code in [
+            KeyCode::Char('j'),
+            KeyCode::Char('k'),
+            KeyCode::Char('d'),
+            KeyCode::Char('u'),
+            KeyCode::Down,
+            KeyCode::Up,
+            KeyCode::PageDown,
+            KeyCode::PageUp,
+        ] {
+            assert_eq!(
+                state.handle_key(KeyEvent::new(
+                    code,
+                    KeyModifiers::CONTROL | KeyModifiers::ALT
+                )),
+                NodeDebugDialogEvent::None,
+                "{code:?}"
+            );
+            assert_eq!(state.notes_scroll, 0, "{code:?}");
+        }
     }
 
     #[test]
