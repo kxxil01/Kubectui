@@ -4413,6 +4413,33 @@ fn reopen_rollout_tab_preserves_revision_selection_and_detail_scroll() {
 }
 
 #[test]
+fn reopen_rollout_tab_refresh_clears_stale_undo_confirmation() {
+    use crate::workbench::{RolloutTabState, WorkbenchTabState};
+
+    let mut app = AppState::default();
+    app.focus = Focus::Workbench;
+    let resource = ResourceRef::Deployment("api".into(), "prod".into());
+    let mut tab = RolloutTabState::new(resource.clone());
+    tab.confirm_undo_revision = Some(3);
+    tab.detail_scroll = 4;
+    tab.loading = false;
+    app.workbench.open_tab(WorkbenchTabState::Rollout(tab));
+
+    app.open_rollout_tab(resource, None, None, Some(91));
+
+    let Some(tab) = app.workbench.active_tab() else {
+        panic!("missing rollout tab");
+    };
+    let WorkbenchTabState::Rollout(tab) = &tab.state else {
+        panic!("expected rollout tab");
+    };
+    assert!(tab.loading);
+    assert_eq!(tab.pending_request_id, Some(91));
+    assert!(tab.confirm_undo_revision.is_none());
+    assert_eq!(tab.detail_scroll, 0);
+}
+
+#[test]
 fn reopen_rollout_tab_error_clears_stale_payload() {
     use crate::workbench::{RolloutTabState, WorkbenchTabState};
 
