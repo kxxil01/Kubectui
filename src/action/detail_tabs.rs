@@ -270,6 +270,14 @@ pub async fn handle_open_resource_events(
         app.set_error("No resource selected for event inspection.".to_string());
         return true;
     };
+    if !resource.supports_events_tab() {
+        app.set_error(format!(
+            "Events are not available for {} '{}'.",
+            resource.kind(),
+            resource.name()
+        ));
+        return true;
+    }
     if redirect_blocked_detail_action_to_access_review(
         app,
         client,
@@ -801,14 +809,49 @@ pub fn handle_toggle_bookmark(app: &mut AppState, snapshot: &ClusterSnapshot) ->
 
 #[cfg(test)]
 mod tests {
-    use super::handle_apply_access_review_subject;
+    use super::{handle_apply_access_review_subject, handle_open_resource_events};
     use kubectui::{
-        app::{AppState, ResourceRef},
-        k8s::dtos::{ClusterRoleBindingInfo, RoleBindingSubject},
+        app::{AppState, AppView, ResourceRef},
+        k8s::{
+            client::K8sClient,
+            dtos::{ClusterRoleBindingInfo, K8sEventInfo, RoleBindingSubject},
+        },
         rbac_subjects::{AccessReviewSubject, resolve_subject_access_review},
         state::ClusterSnapshot,
         workbench::{AccessReviewTabState, WorkbenchTabState},
     };
+
+    #[tokio::test]
+    async fn open_resource_events_rejects_unsupported_event_rows() {
+        let client = K8sClient::dummy();
+        let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel(1);
+        let mut app = AppState {
+            view: AppView::Events,
+            ..AppState::default()
+        };
+        let snapshot = ClusterSnapshot {
+            events: vec![K8sEventInfo {
+                name: "event-1".to_string(),
+                namespace: "default".to_string(),
+                ..K8sEventInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        };
+        let mut request_seq = 0;
+
+        let handled =
+            handle_open_resource_events(&mut app, &client, &snapshot, &detail_tx, &mut request_seq)
+                .await;
+
+        assert!(handled);
+        assert_eq!(
+            app.error_message(),
+            Some("Events are not available for Event 'event-1'.")
+        );
+        assert!(app.workbench.tabs.is_empty());
+        assert_eq!(request_seq, 0);
+        assert!(detail_rx.try_recv().is_err());
+    }
 
     #[test]
     fn apply_access_review_subject_updates_subject_review() {
