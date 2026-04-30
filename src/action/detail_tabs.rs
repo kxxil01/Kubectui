@@ -230,6 +230,7 @@ pub async fn handle_open_decoded_secret(
         .find_tab_mut(&WorkbenchTabKey::DecodedSecret(resource.clone()))
         && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
         && let Some(yaml) = cached_yaml.as_deref()
+        && !secret_tab.has_local_edit_state()
     {
         match decode_secret_yaml(yaml) {
             Ok(entries) => {
