@@ -21,6 +21,10 @@ fn plain_shortcut(key: KeyEvent) -> bool {
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 
+fn ctrl_shortcut(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DebugContainerField {
     Preset,
@@ -191,7 +195,7 @@ impl DebugContainerDialogState {
             }
         }
 
-        if key.modifiers.contains(KeyModifiers::CONTROL) {
+        if ctrl_shortcut(key) {
             match key.code {
                 KeyCode::Char('j') | KeyCode::Down => {
                     self.body_scroll = self.body_scroll.saturating_add(1);
@@ -890,6 +894,32 @@ mod tests {
         assert_eq!(state.body_scroll, 1);
         state.handle_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL));
         assert_eq!(state.body_scroll, 0);
+    }
+
+    #[test]
+    fn ctrl_alt_scroll_shortcuts_do_not_update_body_scroll() {
+        let mut state = DebugContainerDialogState::new("api-0", "default");
+
+        for code in [
+            KeyCode::Char('j'),
+            KeyCode::Char('k'),
+            KeyCode::Char('d'),
+            KeyCode::Char('u'),
+            KeyCode::Down,
+            KeyCode::Up,
+            KeyCode::PageDown,
+            KeyCode::PageUp,
+        ] {
+            assert_eq!(
+                state.handle_key(KeyEvent::new(
+                    code,
+                    KeyModifiers::CONTROL | KeyModifiers::ALT
+                )),
+                DebugContainerDialogEvent::None,
+                "{code:?}"
+            );
+            assert_eq!(state.body_scroll, 0, "{code:?}");
+        }
     }
 
     #[test]
