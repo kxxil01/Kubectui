@@ -887,6 +887,76 @@ fn content_logs_shortcut_only_routes_supported_views() {
 }
 
 #[test]
+fn content_selected_resource_shortcuts_ignore_non_resource_views() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('y'))),
+        AppAction::OpenResourceYaml
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('A'))),
+        AppAction::OpenAccessReview
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('Y'))),
+        AppAction::CopyResourceFullName
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('B'))),
+        AppAction::ToggleBookmark
+    );
+
+    for view in [
+        AppView::Dashboard,
+        AppView::HelmCharts,
+        AppView::PortForwarding,
+        AppView::Extensions,
+    ] {
+        app.view = view;
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('y'))),
+            AppAction::None
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('A'))),
+            AppAction::None
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('Y'))),
+            AppAction::None
+        );
+        assert_eq!(
+            app.handle_key_event(KeyEvent::from(KeyCode::Char('B'))),
+            AppAction::None
+        );
+    }
+
+    app.view = AppView::Extensions;
+    app.extension_in_instances = true;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('y'))),
+        AppAction::OpenResourceYaml
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('A'))),
+        AppAction::OpenAccessReview
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('Y'))),
+        AppAction::CopyResourceFullName
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('B'))),
+        AppAction::ToggleBookmark
+    );
+}
+
+#[test]
 fn content_pod_only_shortcuts_ignore_non_pod_views() {
     let mut app = AppState {
         focus: Focus::Content,

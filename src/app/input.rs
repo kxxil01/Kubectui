@@ -29,6 +29,14 @@ fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
 }
 
+fn view_supports_selected_resource_shortcut(view: AppView, extension_in_instances: bool) -> bool {
+    match view {
+        AppView::Dashboard | AppView::HelmCharts | AppView::PortForwarding => false,
+        AppView::Extensions => extension_in_instances,
+        _ => true,
+    }
+}
+
 fn view_supports_resource_events_shortcut(view: AppView) -> bool {
     matches!(
         view,
@@ -2286,7 +2294,12 @@ impl AppState {
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewYaml)
                             && !detail.has_confirmation_dialog()
-                    }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
+                    }) || (self.detail_view.is_none()
+                        && self.focus == Focus::Content
+                        && view_supports_selected_resource_shortcut(
+                            self.view,
+                            self.extension_in_instances,
+                        ))) =>
             {
                 AppAction::OpenResourceYaml
             }
@@ -2324,7 +2337,12 @@ impl AppState {
                 if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewAccessReview)
-                    }) || (self.detail_view.is_none() && self.focus == Focus::Content))
+                    }) || (self.detail_view.is_none()
+                        && self.focus == Focus::Content
+                        && view_supports_selected_resource_shortcut(
+                            self.view,
+                            self.extension_in_instances,
+                        )))
                     && !self
                         .detail_view
                         .as_ref()
@@ -2395,12 +2413,9 @@ impl AppState {
                         .is_some()
                         || (self.detail_view.is_none()
                             && self.focus == Focus::Content
-                            && !matches!(
+                            && view_supports_selected_resource_shortcut(
                                 self.view,
-                                AppView::Dashboard
-                                    | AppView::HelmCharts
-                                    | AppView::PortForwarding
-                                    | AppView::Extensions
+                                self.extension_in_instances,
                             ))) =>
             {
                 AppAction::ToggleBookmark
@@ -2408,6 +2423,10 @@ impl AppState {
             KeyCode::Char('Y')
                 if self.detail_view.is_none()
                     && self.focus == Focus::Content
+                    && view_supports_selected_resource_shortcut(
+                        self.view,
+                        self.extension_in_instances,
+                    )
                     && plain_shortcut(key) =>
             {
                 AppAction::CopyResourceFullName
