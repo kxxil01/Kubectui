@@ -1938,6 +1938,34 @@ fn content_detail_page_keys_scroll_secondary_panes_without_moving_selection() {
 }
 
 #[test]
+fn ctrl_alt_content_detail_scroll_shortcuts_do_not_scroll() {
+    let mut app = AppState::default();
+    app.view = AppView::Governance;
+    app.focus = Focus::Content;
+    app.selected_idx = 3;
+
+    for code in [
+        KeyCode::Char('f'),
+        KeyCode::Char('b'),
+        KeyCode::Char('d'),
+        KeyCode::Char('u'),
+        KeyCode::Char('j'),
+        KeyCode::Char('k'),
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                code,
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            )),
+            AppAction::None,
+            "{code:?}"
+        );
+        assert_eq!(app.content_detail_scroll, 0, "{code:?}");
+        assert_eq!(app.selected_idx, 3, "{code:?}");
+    }
+}
+
+#[test]
 fn secondary_pane_focus_routes_plain_navigation_to_scrollable_detail_pane() {
     let mut app = AppState::default();
     app.view = AppView::Governance;
@@ -3230,6 +3258,33 @@ fn ctrl_shift_d_scrolls_detail_panels_instead_of_opening_diff_for_pod_detail() {
     ));
     assert_eq!(action, AppAction::None);
     assert_eq!(app.detail_view.as_ref().unwrap().top_panel_scroll, 10);
+}
+
+#[test]
+fn ctrl_alt_detail_panel_scroll_shortcuts_do_not_scroll() {
+    let mut app = AppState::default();
+    app.detail_view = Some(DetailViewState {
+        resource: Some(ResourceRef::Pod("pod-0".to_string(), "ns".to_string())),
+        yaml: Some("kind: Pod".to_string()),
+        ..DetailViewState::default()
+    });
+
+    for code in [
+        KeyCode::Char('j'),
+        KeyCode::Char('k'),
+        KeyCode::Char('d'),
+        KeyCode::Char('u'),
+    ] {
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(
+                code,
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            )),
+            AppAction::None,
+            "{code:?}"
+        );
+        assert_eq!(app.detail_view.as_ref().unwrap().top_panel_scroll, 0);
+    }
 }
 
 #[test]
