@@ -25,6 +25,10 @@ fn plain_shortcut(key: KeyEvent) -> bool {
         .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
 }
 
+fn copy_resource_name_shortcut(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
+}
+
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
 }
@@ -2295,7 +2299,7 @@ impl AppState {
                 AppAction::LogsViewerOpen
             }
             KeyCode::Char('y') | KeyCode::Char('Y')
-                if key.modifiers.contains(KeyModifiers::CONTROL)
+                if copy_resource_name_shortcut(key)
                     && app_supports_selected_resource_action_shortcut(self) =>
             {
                 AppAction::CopyResourceName
