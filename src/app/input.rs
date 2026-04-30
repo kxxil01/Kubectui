@@ -790,6 +790,12 @@ impl AppState {
                 }
             }
             WorkbenchTabState::DecodedSecret(tab) => {
+                if tab.editing && tab.masked {
+                    tab.editing = false;
+                    tab.edit_input.clear();
+                    tab.edit_cursor = 0;
+                }
+
                 if tab.editing {
                     match key.code {
                         KeyCode::Esc => {
@@ -867,7 +873,9 @@ impl AppState {
                             tab.masked = !tab.masked;
                             AppAction::None
                         }
-                        KeyCode::Char('e') | KeyCode::Enter if plain_shortcut(key) => {
+                        KeyCode::Char('e') | KeyCode::Enter
+                            if !tab.masked && plain_shortcut(key) =>
+                        {
                             if let Some(entry) = tab.selected_entry()
                                 && let Some(value) = entry.editable_text()
                             {

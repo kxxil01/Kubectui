@@ -4249,6 +4249,7 @@ fn reopen_decoded_secret_tab_preserves_unsaved_edit_state() {
         },
     }];
     tab.selected = 0;
+    tab.masked = false;
     tab.editing = true;
     tab.edit_input = "new-value".into();
     tab.edit_cursor = tab.edit_input.len();
