@@ -2899,6 +2899,20 @@ fn ctrl_shift_y_uses_copy_resource_name_not_full_name() {
 }
 
 #[test]
+fn ctrl_alt_y_does_not_copy_resource_name() {
+    let mut app = AppState::default();
+    app.view = AppView::Pods;
+    app.focus = Focus::Content;
+
+    let action = app.handle_key_event(KeyEvent::new(
+        KeyCode::Char('y'),
+        KeyModifiers::CONTROL | KeyModifiers::ALT,
+    ));
+
+    assert_eq!(action, AppAction::None);
+}
+
+#[test]
 fn c_key_returns_cordon_in_node_detail() {
     let mut app = AppState::default();
     app.detail_view = Some(DetailViewState {
