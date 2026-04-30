@@ -247,6 +247,11 @@ pub(crate) fn apply_detail_error_to_workbench(
         && let WorkbenchTabState::DecodedSecret(secret_tab) = &mut tab.state
         && secret_tab.pending_request_id == Some(request_id)
     {
+        if secret_tab.has_local_edit_state() {
+            secret_tab.loading = false;
+            secret_tab.pending_request_id = None;
+            return;
+        }
         secret_tab.loading = false;
         secret_tab.error = Some(error.to_string());
         secret_tab.pending_request_id = None;
@@ -953,6 +958,41 @@ mod tests {
         assert_eq!(
             tab.source_yaml.as_deref(),
             Some("kind: Secret\ndata:\n  TOKEN: b2xkLXZhbHVl\n")
+        );
+    }
+
+    #[test]
+    fn decoded_secret_async_error_preserves_local_edits() {
+        let resource = ResourceRef::Secret("app-secret".into(), "prod".into());
+        let mut app = AppState::default();
+        let mut tab = DecodedSecretTabState::new(resource.clone());
+        tab.loading = true;
+        tab.pending_request_id = Some(8);
+        tab.source_yaml = Some("kind: Secret\ndata:\n  TOKEN: b2xkLXZhbHVl\n".into());
+        tab.entries = vec![DecodedSecretEntry {
+            key: "TOKEN".into(),
+            value: DecodedSecretValue::Text {
+                current: "local-edit".into(),
+                original: "old-value".into(),
+            },
+        }];
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::DecodedSecret(tab));
+
+        apply_detail_error_to_workbench(&mut app, 8, &resource, "remote read failed");
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing decoded secret tab");
+        };
+        let WorkbenchTabState::DecodedSecret(tab) = &tab.state else {
+            panic!("expected decoded secret tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert!(tab.error.is_none());
+        assert_eq!(
+            tab.selected_entry().and_then(|entry| entry.editable_text()),
+            Some("local-edit")
         );
     }
 }
