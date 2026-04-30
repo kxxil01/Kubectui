@@ -861,6 +861,32 @@ fn content_events_shortcut_only_routes_supported_views() {
 }
 
 #[test]
+fn content_logs_shortcut_only_routes_supported_views() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('l'))),
+        AppAction::LogsViewerOpen
+    );
+
+    app.view = AppView::Deployments;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('L'))),
+        AppAction::LogsViewerOpen
+    );
+
+    app.view = AppView::ConfigMaps;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('l'))),
+        AppAction::None
+    );
+}
+
+#[test]
 fn content_pod_only_shortcuts_ignore_non_pod_views() {
     let mut app = AppState {
         focus: Focus::Content,

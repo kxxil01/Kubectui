@@ -47,6 +47,19 @@ fn view_supports_resource_events_shortcut(view: AppView) -> bool {
     )
 }
 
+fn view_supports_logs_shortcut(view: AppView) -> bool {
+    matches!(
+        view,
+        AppView::Pods
+            | AppView::Deployments
+            | AppView::StatefulSets
+            | AppView::DaemonSets
+            | AppView::ReplicaSets
+            | AppView::ReplicationControllers
+            | AppView::Jobs
+    )
+}
+
 fn view_supports_pod_only_shortcut(view: AppView) -> bool {
     matches!(view, AppView::Pods)
 }
@@ -2257,7 +2270,9 @@ impl AppState {
                         .detail_view
                         .as_ref()
                         .is_some_and(|detail| detail.supports_action(DetailAction::Logs))
-                        || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
+                        || (self.detail_view.is_none()
+                            && self.focus == Focus::Content
+                            && view_supports_logs_shortcut(self.view))) =>
             {
                 AppAction::LogsViewerOpen
             }
