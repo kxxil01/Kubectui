@@ -1,6 +1,6 @@
 use std::{
     collections::BTreeMap,
-    sync::{Arc, LazyLock, Mutex},
+    sync::{Arc, LazyLock, Mutex, Weak},
 };
 
 use crate::{
@@ -23,8 +23,8 @@ type GlobalSearchCacheValue = Arc<Vec<GlobalResourceSearchEntry>>;
 
 #[allow(clippy::type_complexity)]
 static GLOBAL_SEARCH_CACHE: LazyLock<
-    Mutex<Option<(GlobalSearchCacheKey, GlobalSearchCacheValue)>>,
-> = LazyLock::new(|| Mutex::new(None));
+    Mutex<BTreeMap<GlobalSearchCacheKey, Weak<Vec<GlobalResourceSearchEntry>>>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 pub fn collect_global_resource_search_entries(
     snapshot: &ClusterSnapshot,
@@ -34,13 +34,12 @@ pub fn collect_global_resource_search_entries(
         std::ptr::from_ref(snapshot) as usize,
     );
     {
-        let guard = GLOBAL_SEARCH_CACHE
+        let mut guard = GLOBAL_SEARCH_CACHE
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        if let Some((cached_key, entries)) = guard.as_ref()
-            && *cached_key == key
-        {
-            return Arc::clone(entries);
+        guard.retain(|_, entries| entries.strong_count() > 0);
+        if let Some(entries) = guard.get(&key).and_then(Weak::upgrade) {
+            return entries;
         }
     }
 
@@ -49,7 +48,11 @@ pub fn collect_global_resource_search_entries(
         let mut guard = GLOBAL_SEARCH_CACHE
             .lock()
             .unwrap_or_else(|error| error.into_inner());
-        *guard = Some((key, Arc::clone(&entries)));
+        guard.retain(|_, entries| entries.strong_count() > 0);
+        if let Some(cached_entries) = guard.get(&key).and_then(Weak::upgrade) {
+            return cached_entries;
+        }
+        guard.insert(key, Arc::downgrade(&entries));
     }
     entries
 }
