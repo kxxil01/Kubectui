@@ -2882,6 +2882,49 @@ fn normalize_recent_events_sorts_and_truncates() {
 }
 
 #[test]
+fn normalize_recent_events_uses_stable_tiebreakers() {
+    let now = now();
+    let base = K8sEventInfo {
+        last_seen: Some(now),
+        count: 1,
+        ..K8sEventInfo::default()
+    };
+    let first = vec![
+        K8sEventInfo {
+            name: "event-b".into(),
+            namespace: "prod".into(),
+            involved_object: "pod/api".into(),
+            type_: "Warning".into(),
+            reason: "BackOff".into(),
+            message: "retry".into(),
+            ..base.clone()
+        },
+        K8sEventInfo {
+            name: "event-a".into(),
+            namespace: "prod".into(),
+            involved_object: "pod/api".into(),
+            type_: "Normal".into(),
+            reason: "Started".into(),
+            message: "started".into(),
+            ..base.clone()
+        },
+    ];
+    let second = first.iter().cloned().rev().collect::<Vec<_>>();
+
+    let normalized_first = normalize_recent_events(first);
+    let normalized_second = normalize_recent_events(second);
+    let names = |events: &[K8sEventInfo]| {
+        events
+            .iter()
+            .map(|event| event.name.clone())
+            .collect::<Vec<_>>()
+    };
+
+    assert_eq!(names(&normalized_first), vec!["event-a", "event-b"]);
+    assert_eq!(names(&normalized_second), names(&normalized_first));
+}
+
+#[test]
 fn events_view_uses_fast_refresh_profile() {
     let options = refresh_options_for_view(AppView::Events, false, false);
     assert_eq!(options.primary_scope, RefreshScope::NONE);
