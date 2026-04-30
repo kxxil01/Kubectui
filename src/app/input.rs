@@ -29,6 +29,28 @@ fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
 }
 
+fn view_supports_resource_events_shortcut(view: AppView) -> bool {
+    matches!(
+        view,
+        AppView::Pods
+            | AppView::Deployments
+            | AppView::StatefulSets
+            | AppView::DaemonSets
+            | AppView::ReplicaSets
+            | AppView::Jobs
+            | AppView::CronJobs
+            | AppView::Services
+            | AppView::Ingresses
+            | AppView::ConfigMaps
+            | AppView::PersistentVolumeClaims
+            | AppView::HelmReleases
+    )
+}
+
+fn view_supports_pod_only_shortcut(view: AppView) -> bool {
+    matches!(view, AppView::Pods)
+}
+
 impl AppState {
     fn handle_detail_confirmation_key(&mut self, key: KeyEvent) -> Option<AppAction> {
         let detail = self.detail_view.as_mut()?;
@@ -2379,7 +2401,9 @@ impl AppState {
                 if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::ViewEvents)
-                    }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
+                    }) || (self.detail_view.is_none()
+                        && self.focus == Focus::Content
+                        && view_supports_resource_events_shortcut(self.view))) =>
             {
                 AppAction::OpenResourceEvents
             }
@@ -2398,7 +2422,9 @@ impl AppState {
                         .detail_view
                         .as_ref()
                         .is_some_and(|detail| detail.supports_action(DetailAction::Exec))
-                        || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
+                        || (self.detail_view.is_none()
+                            && self.focus == Focus::Content
+                            && view_supports_pod_only_shortcut(self.view))) =>
             {
                 AppAction::OpenExec
             }
@@ -2432,7 +2458,9 @@ impl AppState {
                 if plain_shortcut(key)
                     && (self.detail_view.as_ref().is_some_and(|detail| {
                         detail.supports_action(DetailAction::PortForward)
-                    }) || (self.detail_view.is_none() && self.focus == Focus::Content)) =>
+                    }) || (self.detail_view.is_none()
+                        && self.focus == Focus::Content
+                        && view_supports_pod_only_shortcut(self.view))) =>
             {
                 AppAction::PortForwardOpen
             }

@@ -835,6 +835,60 @@ fn workbench_keybindings_emit_expected_actions() {
 }
 
 #[test]
+fn content_events_shortcut_only_routes_supported_views() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('v'))),
+        AppAction::OpenResourceEvents
+    );
+
+    app.view = AppView::Events;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('v'))),
+        AppAction::None
+    );
+
+    app.view = AppView::Nodes;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('v'))),
+        AppAction::None
+    );
+}
+
+#[test]
+fn content_pod_only_shortcuts_ignore_non_pod_views() {
+    let mut app = AppState {
+        focus: Focus::Content,
+        view: AppView::Pods,
+        ..AppState::default()
+    };
+
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x'))),
+        AppAction::OpenExec
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('f'))),
+        AppAction::PortForwardOpen
+    );
+
+    app.view = AppView::Deployments;
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('x'))),
+        AppAction::None
+    );
+    assert_eq!(
+        app.handle_key_event(KeyEvent::from(KeyCode::Char('f'))),
+        AppAction::None
+    );
+}
+
+#[test]
 fn workbench_b_key_toggles_from_workbench_focus() {
     use crate::workbench::{ActionHistoryTabState, WorkbenchTabState};
 
