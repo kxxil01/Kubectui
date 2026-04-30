@@ -37,7 +37,7 @@ fn view_supports_selected_resource_shortcut(view: AppView, extension_in_instance
     }
 }
 
-fn app_supports_copy_resource_name_shortcut(app: &AppState) -> bool {
+fn app_supports_selected_resource_action_shortcut(app: &AppState) -> bool {
     app.detail_view
         .as_ref()
         .and_then(|detail| detail.resource.as_ref())
@@ -2296,7 +2296,7 @@ impl AppState {
             }
             KeyCode::Char('y') | KeyCode::Char('Y')
                 if key.modifiers.contains(KeyModifiers::CONTROL)
-                    && app_supports_copy_resource_name_shortcut(self) =>
+                    && app_supports_selected_resource_action_shortcut(self) =>
             {
                 AppAction::CopyResourceName
             }
@@ -2416,29 +2416,12 @@ impl AppState {
                 AppAction::OpenDecodedSecret
             }
             KeyCode::Char('B')
-                if plain_shortcut(key)
-                    && (self
-                        .detail_view
-                        .as_ref()
-                        .and_then(|detail| detail.resource.as_ref())
-                        .is_some()
-                        || (self.detail_view.is_none()
-                            && self.focus == Focus::Content
-                            && view_supports_selected_resource_shortcut(
-                                self.view,
-                                self.extension_in_instances,
-                            ))) =>
+                if plain_shortcut(key) && app_supports_selected_resource_action_shortcut(self) =>
             {
                 AppAction::ToggleBookmark
             }
             KeyCode::Char('Y')
-                if self.detail_view.is_none()
-                    && self.focus == Focus::Content
-                    && view_supports_selected_resource_shortcut(
-                        self.view,
-                        self.extension_in_instances,
-                    )
-                    && plain_shortcut(key) =>
+                if plain_shortcut(key) && app_supports_selected_resource_action_shortcut(self) =>
             {
                 AppAction::CopyResourceFullName
             }
