@@ -29,6 +29,14 @@ fn copy_resource_name_shortcut(key: KeyEvent) -> bool {
     key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
 }
 
+fn ctrl_shortcut(key: KeyEvent) -> bool {
+    key.modifiers.contains(KeyModifiers::CONTROL) && !key.modifiers.contains(KeyModifiers::ALT)
+}
+
+fn ctrl_shift_shortcut(key: KeyEvent) -> bool {
+    ctrl_shortcut(key) && key.modifiers.contains(KeyModifiers::SHIFT)
+}
+
 fn view_supports_content_detail_scroll(view: AppView) -> bool {
     view.supports_secondary_pane_scroll()
 }
@@ -194,16 +202,13 @@ impl AppState {
                 KeyCode::Char('b') if plain_shortcut(key) => {
                     return AppAction::ToggleWorkbench;
                 }
-                KeyCode::Tab
-                    if key.modifiers.contains(KeyModifiers::CONTROL)
-                        && key.modifiers.contains(KeyModifiers::SHIFT) =>
-                {
+                KeyCode::Tab if ctrl_shift_shortcut(key) => {
                     return AppAction::WorkbenchPreviousTab;
                 }
-                KeyCode::BackTab if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::BackTab if ctrl_shortcut(key) => {
                     return AppAction::WorkbenchPreviousTab;
                 }
-                KeyCode::Tab if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Tab if ctrl_shortcut(key) => {
                     return AppAction::WorkbenchNextTab;
                 }
                 KeyCode::Char('[') if plain_shortcut(key) && !reserve_bracket_shortcuts => {
@@ -212,13 +217,13 @@ impl AppState {
                 KeyCode::Char(']') if plain_shortcut(key) && !reserve_bracket_shortcuts => {
                     return AppAction::WorkbenchNextTab;
                 }
-                KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Char('w') if ctrl_shortcut(key) => {
                     return AppAction::WorkbenchCloseActiveTab;
                 }
-                KeyCode::Up if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Up if ctrl_shortcut(key) => {
                     return AppAction::WorkbenchIncreaseHeight;
                 }
-                KeyCode::Down if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                KeyCode::Down if ctrl_shortcut(key) => {
                     return AppAction::WorkbenchDecreaseHeight;
                 }
                 _ => {}
@@ -1911,9 +1916,7 @@ impl AppState {
             KeyCode::Char('r') if allow_plain_r && plain_shortcut(key) => {
                 Some(AppAction::RefreshData)
             }
-            KeyCode::Char('R')
-                if key.modifiers.contains(KeyModifiers::CONTROL) && allow_plain_r =>
-            {
+            KeyCode::Char('R') if ctrl_shortcut(key) && allow_plain_r => {
                 Some(AppAction::RefreshData)
             }
             _ => None,
@@ -2937,22 +2940,17 @@ impl AppState {
             KeyCode::Tab
                 if self.detail_view.is_none()
                     && self.workbench.open
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
-                    && key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    && ctrl_shift_shortcut(key) =>
             {
                 AppAction::WorkbenchPreviousTab
             }
             KeyCode::BackTab
-                if self.detail_view.is_none()
-                    && self.workbench.open
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
             {
                 AppAction::WorkbenchPreviousTab
             }
             KeyCode::Tab
-                if self.detail_view.is_none()
-                    && self.workbench.open
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
             {
                 AppAction::WorkbenchNextTab
             }
@@ -2967,23 +2965,17 @@ impl AppState {
                 AppAction::WorkbenchNextTab
             }
             KeyCode::Char('w')
-                if self.detail_view.is_none()
-                    && self.workbench.open
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
             {
                 AppAction::WorkbenchCloseActiveTab
             }
             KeyCode::Up
-                if self.detail_view.is_none()
-                    && self.workbench.open
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
             {
                 AppAction::WorkbenchIncreaseHeight
             }
             KeyCode::Down
-                if self.detail_view.is_none()
-                    && self.workbench.open
-                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+                if self.detail_view.is_none() && self.workbench.open && ctrl_shortcut(key) =>
             {
                 AppAction::WorkbenchDecreaseHeight
             }
@@ -3018,7 +3010,7 @@ impl AppState {
                 AppAction::RefreshData
             }
             KeyCode::Char('R')
-                if key.modifiers.contains(KeyModifiers::CONTROL)
+                if ctrl_shortcut(key)
                     && !self
                         .detail_view
                         .as_ref()
