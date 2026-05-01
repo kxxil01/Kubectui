@@ -633,12 +633,10 @@ pub async fn handle_open_network_policies(
         return true;
     }
 
+    app.detail_view = None;
     match network_policy_analysis::analyze_resource(&resource, snapshot) {
-        Ok(analysis) => {
-            app.detail_view = None;
-            app.open_network_policy_tab(resource, Some(analysis), None);
-        }
-        Err(err) => app.set_error(err),
+        Ok(analysis) => app.open_network_policy_tab(resource, Some(analysis), None),
+        Err(err) => app.open_network_policy_tab(resource, None, Some(err)),
     }
     false
 }
@@ -749,12 +747,10 @@ pub async fn handle_open_traffic_debug(
         return true;
     }
 
+    app.detail_view = None;
     match traffic_debug::analyze_resource(&resource, snapshot, &app.tunnel_registry) {
-        Ok(analysis) => {
-            app.detail_view = None;
-            app.open_traffic_debug_tab(resource, Some(analysis), None);
-        }
-        Err(err) => app.set_error(err),
+        Ok(analysis) => app.open_traffic_debug_tab(resource, Some(analysis), None),
+        Err(err) => app.open_traffic_debug_tab(resource, None, Some(err)),
     }
     false
 }
@@ -810,16 +806,22 @@ pub fn handle_toggle_bookmark(app: &mut AppState, snapshot: &ClusterSnapshot) ->
 
 #[cfg(test)]
 mod tests {
-    use super::{handle_apply_access_review_subject, handle_open_resource_events};
+    use super::{
+        handle_apply_access_review_subject, handle_open_network_policies,
+        handle_open_resource_events, handle_open_traffic_debug,
+    };
     use kubectui::{
-        app::{AppState, AppView, ResourceRef},
+        app::{AppState, AppView, DetailViewState, ResourceRef},
         k8s::{
             client::K8sClient,
             dtos::{ClusterRoleBindingInfo, K8sEventInfo, RoleBindingSubject},
+            relationships::{RelationKind, RelationNode},
         },
         rbac_subjects::{AccessReviewSubject, resolve_subject_access_review},
         state::ClusterSnapshot,
-        workbench::{AccessReviewTabState, WorkbenchTabState},
+        workbench::{
+            AccessReviewTabState, NetworkPolicyTabState, TrafficDebugTabState, WorkbenchTabState,
+        },
     };
 
     #[tokio::test]
@@ -852,6 +854,94 @@ mod tests {
         assert!(app.workbench.tabs.is_empty());
         assert_eq!(request_seq, 0);
         assert!(detail_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn open_network_policy_error_replaces_stale_tab_payload() {
+        let client = K8sClient::dummy();
+        let resource = ResourceRef::Pod("api".into(), "prod".into());
+        let mut app = AppState {
+            detail_view: Some(DetailViewState {
+                resource: Some(resource.clone()),
+                ..DetailViewState::default()
+            }),
+            ..AppState::default()
+        };
+        let mut stale_tab = NetworkPolicyTabState::new(resource.clone());
+        stale_tab.summary_lines = vec!["stale allow".into()];
+        stale_tab.tree = vec![RelationNode {
+            resource: None,
+            label: "Stale Policy".into(),
+            status: None,
+            namespace: None,
+            relation: RelationKind::SectionHeader,
+            not_found: false,
+            children: Vec::new(),
+        }];
+        app.workbench
+            .open_tab(WorkbenchTabState::NetworkPolicy(stale_tab));
+
+        let handled =
+            handle_open_network_policies(&mut app, &client, &ClusterSnapshot::default()).await;
+
+        assert!(!handled);
+        assert!(app.detail_view.is_none());
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing network policy tab");
+        };
+        let WorkbenchTabState::NetworkPolicy(tab) = &tab.state else {
+            panic!("expected network policy tab");
+        };
+        assert!(tab.summary_lines.is_empty());
+        assert!(tab.tree.is_empty());
+        assert_eq!(
+            tab.error.as_deref(),
+            Some("Pod 'prod/api' is no longer in the snapshot.")
+        );
+    }
+
+    #[tokio::test]
+    async fn open_traffic_debug_error_replaces_stale_tab_payload() {
+        let client = K8sClient::dummy();
+        let resource = ResourceRef::Pod("api".into(), "prod".into());
+        let mut app = AppState {
+            detail_view: Some(DetailViewState {
+                resource: Some(resource.clone()),
+                ..DetailViewState::default()
+            }),
+            ..AppState::default()
+        };
+        let mut stale_tab = TrafficDebugTabState::new(resource.clone());
+        stale_tab.summary_lines = vec!["stale route".into()];
+        stale_tab.tree = vec![RelationNode {
+            resource: None,
+            label: "Stale Traffic".into(),
+            status: None,
+            namespace: None,
+            relation: RelationKind::SectionHeader,
+            not_found: false,
+            children: Vec::new(),
+        }];
+        app.workbench
+            .open_tab(WorkbenchTabState::TrafficDebug(stale_tab));
+
+        let handled =
+            handle_open_traffic_debug(&mut app, &client, &ClusterSnapshot::default()).await;
+
+        assert!(!handled);
+        assert!(app.detail_view.is_none());
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing traffic debug tab");
+        };
+        let WorkbenchTabState::TrafficDebug(tab) = &tab.state else {
+            panic!("expected traffic debug tab");
+        };
+        assert!(tab.summary_lines.is_empty());
+        assert!(tab.tree.is_empty());
+        assert_eq!(
+            tab.error.as_deref(),
+            Some("Pod 'prod/api' is no longer in the snapshot.")
+        );
     }
 
     #[test]
