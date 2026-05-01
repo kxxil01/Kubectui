@@ -2154,12 +2154,7 @@ impl ConnectivityTabState {
             selected_target: 0,
             selected_target_resource: None,
             current_target: None,
-            summary_lines: vec![
-                "Select a target pod, then press [Enter] to evaluate whether any traffic is allowed by policy intent."
-                    .to_string(),
-                "Result shows intent only; CNI enforcement/runtime packet filters may still differ."
-                    .to_string(),
-            ],
+            summary_lines: default_connectivity_summary(),
             tree: Vec::new(),
             tree_cursor: 0,
             expanded: std::collections::HashSet::new(),
@@ -2182,12 +2177,14 @@ impl ConnectivityTabState {
             .is_some_and(|target| !self.targets.iter().any(|entry| entry.resource == *target))
         {
             self.current_target = None;
-            self.summary_lines = vec![
-                "Select a target pod, then press [Enter] to evaluate whether any traffic is allowed by policy intent."
-                    .to_string(),
-                "Result shows intent only; CNI enforcement/runtime packet filters may still differ."
-                    .to_string(),
-            ];
+            self.summary_lines = default_connectivity_summary();
+            self.tree.clear();
+            self.tree_cursor = 0;
+            self.expanded.clear();
+            self.error = None;
+            self.focus = ConnectivityTabFocus::Targets;
+        } else if self.current_target.is_none() && self.error.is_some() {
+            self.summary_lines = default_connectivity_summary();
             self.tree.clear();
             self.tree_cursor = 0;
             self.expanded.clear();
@@ -2312,6 +2309,15 @@ impl ConnectivityTabState {
         self.expanded.clear();
         self.focus = ConnectivityTabFocus::Targets;
     }
+}
+
+fn default_connectivity_summary() -> Vec<String> {
+    vec![
+        "Select a target pod, then press [Enter] to evaluate whether any traffic is allowed by policy intent."
+            .to_string(),
+        "Result shows intent only; CNI enforcement/runtime packet filters may still differ."
+            .to_string(),
+    ]
 }
 
 #[derive(Debug, Clone)]
@@ -4489,6 +4495,33 @@ mod tests {
                 .map(|target| target.resource.clone()),
             Some(ResourceRef::Pod("api-1".into(), "default".into()))
         );
+    }
+
+    #[test]
+    fn connectivity_target_refresh_clears_stale_error_without_result() {
+        let mut tab = ConnectivityTabState::new(
+            ResourceRef::Pod("source".into(), "default".into()),
+            vec![ConnectivityTargetOption {
+                resource: ResourceRef::Pod("api-0".into(), "default".into()),
+                display: "api-0".into(),
+                status: "ready".into(),
+                pod_ip: Some("10.0.0.2".into()),
+            }],
+        );
+        tab.set_error("previous query failed".into());
+
+        tab.apply_targets(vec![ConnectivityTargetOption {
+            resource: ResourceRef::Pod("api-0".into(), "default".into()),
+            display: "api-0".into(),
+            status: "ready".into(),
+            pod_ip: Some("10.0.0.2".into()),
+        }]);
+
+        assert!(tab.error.is_none());
+        assert!(tab.current_target.is_none());
+        assert!(tab.tree.is_empty());
+        assert_eq!(tab.summary_lines, default_connectivity_summary());
+        assert_eq!(tab.focus, ConnectivityTabFocus::Targets);
     }
 
     #[test]
