@@ -18,7 +18,7 @@ use super::{
     strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
     workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
-use crate::ai::AiAnalysisResult;
+use crate::ai::{AiAnalysisContext, AiAnalysisResult};
 use crate::async_types::{
     AiAnalysisAsyncResult, QueuedRefresh, RefreshDispatch, RefreshRuntimeState,
 };
@@ -553,6 +553,63 @@ fn ai_context_includes_recent_event_counts_and_timestamps() {
 }
 
 #[test]
+fn ai_context_summary_reports_sent_context_counts() {
+    let context = AiAnalysisContext {
+        resource: ResourceRef::Pod("api-0".to_string(), "prod".to_string()),
+        cluster_context: Some("kind-prod".to_string()),
+        resource_state_lines: vec!["status: Running".to_string(), "restarts: 0".to_string()],
+        metadata_lines: Vec::new(),
+        workflow_title: None,
+        workflow_lines: Vec::new(),
+        issue_lines: Vec::new(),
+        event_lines: vec![
+            "Warning BackOff count=2 last_seen=now: restart".to_string(),
+            "Normal Pulled count=1 last_seen=old: pulled".to_string(),
+        ],
+        probe_lines: Vec::new(),
+        log_lines: vec!["api-0 main: ready".to_string()],
+        yaml_excerpt: Some("spec:\n  token: <redacted>".to_string()),
+    };
+
+    let summary = super::summarize_ai_context_for_tab(&context).join("\n");
+
+    assert!(summary.contains("Resource state 2"), "{summary}");
+    assert!(summary.contains("Events 2"), "{summary}");
+    assert!(summary.contains("Logs 1"), "{summary}");
+    assert!(summary.contains("YAML redacted"), "{summary}");
+}
+
+#[test]
+fn ai_context_summary_marks_unavailable_context_gaps() {
+    let context = AiAnalysisContext {
+        resource: ResourceRef::Pod("api-0".to_string(), "prod".to_string()),
+        cluster_context: None,
+        resource_state_lines: Vec::new(),
+        metadata_lines: Vec::new(),
+        workflow_title: None,
+        workflow_lines: Vec::new(),
+        issue_lines: Vec::new(),
+        event_lines: vec![
+            "Warning EventsUnavailable count=1: Events unavailable (RBAC)".to_string(),
+        ],
+        probe_lines: Vec::new(),
+        log_lines: vec![
+            "current logs unavailable for pod api-0 container main: request timed out".to_string(),
+        ],
+        yaml_excerpt: None,
+    };
+
+    let summary = super::summarize_ai_context_for_tab(&context).join("\n");
+
+    assert!(summary.contains("Resource state unavailable"), "{summary}");
+    assert!(summary.contains("Events 1"), "{summary}");
+    assert!(summary.contains("Logs 1"), "{summary}");
+    assert!(summary.contains("YAML unavailable"), "{summary}");
+    assert!(summary.contains("event gaps noted"), "{summary}");
+    assert!(summary.contains("log gaps noted"), "{summary}");
+}
+
+#[test]
 fn stale_ai_analysis_results_are_ignored_after_scope_change() {
     let mut refresh_state = RefreshRuntimeState::default();
     refresh_state.context_generation = 3;
@@ -562,6 +619,7 @@ fn stale_ai_analysis_results_are_ignored_after_scope_change() {
         resource: ResourceRef::Pod("api-0".to_string(), "prod".to_string()),
         execution_id: 1,
         title: "Explain Failure".to_string(),
+        context_summary: Vec::new(),
         result: Err("late result".to_string()),
     };
 
@@ -604,6 +662,9 @@ fn ai_analysis_success_completes_history_when_tab_was_closed() {
             resource,
             execution_id: 99,
             title: "Explain Failure".to_string(),
+            context_summary: vec![
+                "Resource state 1 • Events unavailable • Logs 2 • YAML redacted".to_string(),
+            ],
             result: Ok(AiAnalysisResult {
                 provider_label: "Codex CLI".to_string(),
                 model: "codex-cli".to_string(),
@@ -654,6 +715,10 @@ fn ai_analysis_failure_completes_history_when_tab_was_closed() {
             resource,
             execution_id: 99,
             title: "Explain Failure".to_string(),
+            context_summary: vec![
+                "Resource state unavailable • Events unavailable • Logs unavailable • YAML unavailable"
+                    .to_string(),
+            ],
             result: Err("provider failed".to_string()),
         },
         &mut status_message_clear_at,

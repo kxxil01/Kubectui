@@ -242,6 +242,7 @@ pub struct AiAnalysisAsyncResult {
     pub resource: ResourceRef,
     pub execution_id: u64,
     pub title: String,
+    pub context_summary: Vec<String>,
     pub result: Result<AiAnalysisResult, String>,
 }
 

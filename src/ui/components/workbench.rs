@@ -3219,6 +3219,12 @@ fn render_ai_analysis_tab(
         "[Esc] back",
         theme.keybind_desc_style(),
     )));
+    for summary in &tab.context_summary {
+        lines.push(Line::from(vec![
+            Span::styled("context ", theme.keybind_desc_style()),
+            Span::styled(summary.clone(), theme.inactive_style()),
+        ]));
+    }
     lines.push(Line::default());
 
     if tab.loading {
