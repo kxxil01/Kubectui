@@ -212,6 +212,20 @@ spec:
       env:
         - name: API_TOKEN
           value: literal-secret
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: database-credentials
+              key: password
+        - name: APP_MODE
+          valueFrom:
+            configMapKeyRef:
+              name: api-config
+              key: mode
+  imagePullSecrets:
+    - name: registry-credentials
+  tls:
+    - secretName: ingress-tls
   stringData:
     password: hidden
 "#,
@@ -220,8 +234,18 @@ spec:
 
     assert!(excerpt.contains("token: <redacted>"));
     assert!(excerpt.contains("stringData: <redacted>"));
+    assert!(excerpt.contains("secretKeyRef:"));
+    assert!(excerpt.contains("name: <redacted>"));
+    assert!(excerpt.contains("key: <redacted>"));
+    assert!(excerpt.contains("secretName: <redacted>"));
+    assert!(excerpt.contains("configMapKeyRef:"));
+    assert!(excerpt.contains("name: api-config"));
+    assert!(excerpt.contains("key: mode"));
     assert!(!excerpt.contains("super-secret"));
     assert!(!excerpt.contains("literal-secret"));
+    assert!(!excerpt.contains("database-credentials"));
+    assert!(!excerpt.contains("registry-credentials"));
+    assert!(!excerpt.contains("ingress-tls"));
 }
 
 #[test]

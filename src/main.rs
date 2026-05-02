@@ -1029,6 +1029,50 @@ fn redact_ai_inline_assignment(token: &str) -> Option<String> {
     Some(format!("{}<redacted>{suffix}", &token[..value_start]))
 }
 
+fn ai_yaml_key_is_secret_reference(key: &str) -> bool {
+    matches!(
+        normalize_ai_key(key).as_str(),
+        "secretkeyref" | "secretref" | "imagepullsecrets"
+    )
+}
+
+fn ai_yaml_key_is_secret_reference_identity(key: &str) -> bool {
+    matches!(
+        normalize_ai_key(key).as_str(),
+        "name" | "key" | "secretname" | "secretkey"
+    )
+}
+
+fn ai_yaml_key_is_direct_secret_identity(key: &str) -> bool {
+    matches!(normalize_ai_key(key).as_str(), "secretname" | "secretkey")
+}
+
+fn redact_ai_yaml_secret_reference(value: &mut serde_yaml::Value) {
+    match value {
+        serde_yaml::Value::Mapping(map) => {
+            for (key, nested) in map.iter_mut() {
+                if key
+                    .as_str()
+                    .is_some_and(ai_yaml_key_is_secret_reference_identity)
+                {
+                    *nested = serde_yaml::Value::String("<redacted>".to_string());
+                } else {
+                    redact_ai_yaml_secret_reference(nested);
+                }
+            }
+        }
+        serde_yaml::Value::Sequence(items) => {
+            for item in items {
+                redact_ai_yaml_secret_reference(item);
+            }
+        }
+        serde_yaml::Value::String(_) => {
+            *value = serde_yaml::Value::String("<redacted>".to_string());
+        }
+        _ => {}
+    }
+}
+
 fn redact_ai_yaml_value(value: &mut serde_yaml::Value) {
     match value {
         serde_yaml::Value::Mapping(map) => {
@@ -1042,7 +1086,11 @@ fn redact_ai_yaml_value(value: &mut serde_yaml::Value) {
                 *entry = serde_yaml::Value::String("<redacted>".to_string());
             }
             for (key, nested) in map.iter_mut() {
-                if key.as_str().is_some_and(ai_key_is_sensitive) {
+                if key.as_str().is_some_and(ai_yaml_key_is_secret_reference) {
+                    redact_ai_yaml_secret_reference(nested);
+                } else if key.as_str().is_some_and(|key| {
+                    ai_yaml_key_is_direct_secret_identity(key) || ai_key_is_sensitive(key)
+                }) {
                     *nested = serde_yaml::Value::String("<redacted>".to_string());
                 } else {
                     redact_ai_yaml_value(nested);
