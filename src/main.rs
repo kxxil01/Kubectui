@@ -910,7 +910,7 @@ const AI_PROBE_MAX_LINES: usize = 12;
 const AI_PROBE_MAX_CHARS: usize = 1_800;
 const AI_LOG_MAX_LINES: usize = 20;
 const AI_LOG_MAX_CHARS: usize = 2_800;
-const AI_LIVE_LOG_CONTAINER_LIMIT: usize = 3;
+const AI_LIVE_LOG_STREAM_LIMIT: usize = 3;
 const AI_LIVE_LOG_TAIL_LINES: i64 = 20;
 const AI_LIVE_LOG_TIMEOUT_SECS: u64 = 6;
 const AI_YAML_MAX_CHARS: usize = 2_000;
@@ -1442,66 +1442,100 @@ fn format_ai_snapshot_event(event: &kubectui::k8s::dtos::K8sEventInfo) -> String
     )
 }
 
+async fn ai_live_log_targets(
+    client: &K8sClient,
+    resource: &ResourceRef,
+) -> anyhow::Result<Vec<WorkloadLogTarget>> {
+    match resource {
+        ResourceRef::Pod(_, _)
+        | ResourceRef::Deployment(_, _)
+        | ResourceRef::StatefulSet(_, _)
+        | ResourceRef::DaemonSet(_, _)
+        | ResourceRef::ReplicaSet(_, _)
+        | ResourceRef::ReplicationController(_, _)
+        | ResourceRef::Job(_, _) => {
+            resolve_workload_log_targets(client.get_client(), resource).await
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
 async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut AiAnalysisContext) {
     if !context.log_lines.is_empty() {
         return;
     }
-    let ResourceRef::Pod(pod_name, namespace) = &context.resource else {
-        return;
-    };
 
     let fetch = async {
-        let containers = fetch_pod_containers(client, pod_name, namespace).await?;
+        let targets = ai_live_log_targets(client, &context.resource).await?;
         let logs_client = LogsClient::new(client.get_client());
-        let pod_ref = PodRef::new(pod_name.clone(), namespace.clone());
         let mut lines = Vec::new();
+        let mut streams_seen = 0usize;
+        let mut streams_skipped = 0usize;
 
-        for container in containers.iter().take(AI_LIVE_LOG_CONTAINER_LIMIT) {
-            match logs_client
-                .tail_logs(
-                    &pod_ref,
-                    Some(AI_LIVE_LOG_TAIL_LINES),
-                    Some(container.as_str()),
-                )
-                .await
-            {
-                Ok(current) if !current.is_empty() => {
-                    lines.push(format!("container {container} current logs:"));
-                    lines.extend(
-                        current
-                            .into_iter()
-                            .map(|line| truncate_ai_block(&format!("{container}: {line}"), 180)),
-                    );
+        for target in targets {
+            let pod_ref = PodRef::new(target.pod_name.clone(), target.namespace.clone());
+            for container in target.containers {
+                streams_seen += 1;
+                if streams_seen > AI_LIVE_LOG_STREAM_LIMIT {
+                    streams_skipped += 1;
+                    continue;
                 }
-                Ok(_) => {}
-                Err(err) => lines.push(format!(
-                    "container {container} current logs unavailable: {err}"
-                )),
-            }
+                match logs_client
+                    .tail_logs(
+                        &pod_ref,
+                        Some(AI_LIVE_LOG_TAIL_LINES),
+                        Some(container.as_str()),
+                    )
+                    .await
+                {
+                    Ok(current) if !current.is_empty() => {
+                        lines.push(format!(
+                            "pod {} container {container} current logs:",
+                            target.pod_name
+                        ));
+                        lines.extend(current.into_iter().map(|line| {
+                            truncate_ai_block(
+                                &format!("{} {container}: {line}", target.pod_name),
+                                180,
+                            )
+                        }));
+                    }
+                    Ok(_) => {}
+                    Err(err) => lines.push(format!(
+                        "pod {} container {container} current logs unavailable: {err}",
+                        target.pod_name
+                    )),
+                }
 
-            match logs_client
-                .tail_previous_logs(
-                    &pod_ref,
-                    Some(AI_LIVE_LOG_TAIL_LINES),
-                    Some(container.as_str()),
-                )
-                .await
-            {
-                Ok(previous) if !previous.is_empty() => {
-                    lines.push(format!("container {container} previous logs:"));
-                    lines.extend(previous.into_iter().map(|line| {
-                        truncate_ai_block(&format!("{container} previous: {line}"), 180)
-                    }));
+                match logs_client
+                    .tail_previous_logs(
+                        &pod_ref,
+                        Some(AI_LIVE_LOG_TAIL_LINES),
+                        Some(container.as_str()),
+                    )
+                    .await
+                {
+                    Ok(previous) if !previous.is_empty() => {
+                        lines.push(format!(
+                            "pod {} container {container} previous logs:",
+                            target.pod_name
+                        ));
+                        lines.extend(previous.into_iter().map(|line| {
+                            truncate_ai_block(
+                                &format!("{} {container} previous: {line}", target.pod_name),
+                                180,
+                            )
+                        }));
+                    }
+                    Ok(_) => {}
+                    Err(_) => {}
                 }
-                Ok(_) => {}
-                Err(_) => {}
             }
         }
 
-        if containers.len() > AI_LIVE_LOG_CONTAINER_LIMIT {
+        if streams_skipped > 0 {
             lines.push(format!(
-                "log fetch skipped {} additional container(s)",
-                containers.len() - AI_LIVE_LOG_CONTAINER_LIMIT
+                "log fetch skipped {streams_skipped} additional pod/container stream(s)"
             ));
         }
 
@@ -1663,6 +1697,110 @@ fn build_ai_workflow_context(
     (title, cap_ai_lines(lines, 12, 1_600))
 }
 
+fn owner_ref_matches(owner: &kubectui::k8s::dtos::OwnerRefInfo, kind: &str, name: &str) -> bool {
+    owner.kind.eq_ignore_ascii_case(kind) && owner.name == name
+}
+
+fn pod_owned_by_ai_resource(
+    snapshot: &kubectui::state::ClusterSnapshot,
+    pod_name: &str,
+    namespace: &str,
+    resource: &ResourceRef,
+) -> bool {
+    let Some(pod) = snapshot
+        .pods
+        .iter()
+        .find(|pod| pod.name == pod_name && pod.namespace == namespace)
+    else {
+        return false;
+    };
+
+    match resource {
+        ResourceRef::Deployment(name, target_namespace) if target_namespace == namespace => {
+            pod.owner_references.iter().any(|owner| {
+                owner_ref_matches(owner, "Deployment", name)
+                    || (owner.kind.eq_ignore_ascii_case("ReplicaSet")
+                        && snapshot.replicasets.iter().any(|replicaset| {
+                            replicaset.name == owner.name
+                                && replicaset.namespace == namespace
+                                && replicaset
+                                    .owner_references
+                                    .iter()
+                                    .any(|rs_owner| owner_ref_matches(rs_owner, "Deployment", name))
+                        }))
+            })
+        }
+        ResourceRef::StatefulSet(name, target_namespace) if target_namespace == namespace => pod
+            .owner_references
+            .iter()
+            .any(|owner| owner_ref_matches(owner, "StatefulSet", name)),
+        ResourceRef::DaemonSet(name, target_namespace) if target_namespace == namespace => pod
+            .owner_references
+            .iter()
+            .any(|owner| owner_ref_matches(owner, "DaemonSet", name)),
+        ResourceRef::Job(name, target_namespace) if target_namespace == namespace => pod
+            .owner_references
+            .iter()
+            .any(|owner| owner_ref_matches(owner, "Job", name)),
+        ResourceRef::ReplicaSet(name, target_namespace) if target_namespace == namespace => pod
+            .owner_references
+            .iter()
+            .any(|owner| owner_ref_matches(owner, "ReplicaSet", name)),
+        ResourceRef::ReplicationController(name, target_namespace)
+            if target_namespace == namespace =>
+        {
+            pod.owner_references
+                .iter()
+                .any(|owner| owner_ref_matches(owner, "ReplicationController", name))
+        }
+        _ => false,
+    }
+}
+
+fn pod_logs_tab_matches_ai_resource(
+    snapshot: &kubectui::state::ClusterSnapshot,
+    logs_resource: &ResourceRef,
+    resource: &ResourceRef,
+) -> bool {
+    if logs_resource == resource {
+        return true;
+    }
+    let ResourceRef::Pod(pod_name, namespace) = logs_resource else {
+        return false;
+    };
+    pod_owned_by_ai_resource(snapshot, pod_name, namespace, resource)
+}
+
+fn append_ai_workload_log_lines(
+    log_lines: &mut Vec<String>,
+    logs_tab: &kubectui::workbench::WorkloadLogsTabState,
+) {
+    let remaining = AI_LOG_MAX_LINES.saturating_sub(log_lines.len());
+    if remaining == 0 {
+        return;
+    }
+    let mut collected = Vec::with_capacity(remaining);
+    for line in logs_tab.lines.iter().rev() {
+        if collected.len() >= remaining {
+            break;
+        }
+        if !logs_tab.matches_filter(line) {
+            continue;
+        }
+        collected.push(truncate_ai_block(
+            &format!(
+                "{} {} {}",
+                line.pod_name,
+                line.container_name,
+                line.entry.display_text(logs_tab.structured_view)
+            ),
+            180,
+        ));
+    }
+    collected.reverse();
+    log_lines.extend(collected);
+}
+
 #[cold]
 #[inline(never)]
 fn build_ai_analysis_context(
@@ -1802,7 +1940,9 @@ fn build_ai_analysis_context(
     let mut log_lines = Vec::new();
     for tab in &app.workbench().tabs {
         match &tab.state {
-            WorkbenchTabState::PodLogs(logs_tab) if &logs_tab.resource == resource => {
+            WorkbenchTabState::PodLogs(logs_tab)
+                if pod_logs_tab_matches_ai_resource(snapshot, &logs_tab.resource, resource) =>
+            {
                 let indices = logs_tab.viewer.filtered_indices();
                 log_lines.extend(
                     indices
@@ -1820,24 +1960,7 @@ fn build_ai_analysis_context(
                 );
             }
             WorkbenchTabState::WorkloadLogs(logs_tab) if &logs_tab.resource == resource => {
-                let filtered = logs_tab
-                    .lines
-                    .iter()
-                    .filter(|line| logs_tab.matches_filter(line))
-                    .collect::<Vec<_>>();
-                log_lines.extend(filtered.into_iter().rev().take(AI_LOG_MAX_LINES).rev().map(
-                    |line| {
-                        truncate_ai_block(
-                            &format!(
-                                "{} {} {}",
-                                line.pod_name,
-                                line.container_name,
-                                line.entry.display_text(logs_tab.structured_view)
-                            ),
-                            180,
-                        )
-                    },
-                ));
+                append_ai_workload_log_lines(&mut log_lines, logs_tab);
             }
             _ => {}
         }
