@@ -1883,7 +1883,13 @@ fn start_ai_analysis(
     *runtime.next_execution_id = (*runtime.next_execution_id).wrapping_add(1).max(1);
     let context = build_ai_analysis_context(app, snapshot, resource, action.workflow);
     app.detail_view = None;
-    app.open_ai_analysis_tab(execution_id, action.title.clone(), resource.clone());
+    app.open_ai_analysis_tab(
+        execution_id,
+        action.title.clone(),
+        resource.clone(),
+        action.provider.provider.label(),
+        action.provider.model.clone(),
+    );
     let tx = runtime.tx.clone();
     let title = action.title.clone();
     let provider = action.provider.clone();
