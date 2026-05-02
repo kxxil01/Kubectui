@@ -34,8 +34,8 @@ pub enum AiProviderKind {
 impl AiProviderKind {
     pub const fn label(self) -> &'static str {
         match self {
-            Self::OpenAi => "AI",
-            Self::Anthropic => "Claude",
+            Self::OpenAi => "OpenAI",
+            Self::Anthropic => "Anthropic",
             Self::ClaudeCli => "Claude CLI",
             Self::CodexCli => "Codex CLI",
         }
@@ -237,7 +237,7 @@ impl LoadedAiAction {
     }
 
     pub fn badge_label(&self) -> String {
-        self.provider.provider.label().to_string()
+        provider_display_label(&self.provider)
     }
 }
 
@@ -412,7 +412,7 @@ fn build_default_ai_workflow_action(
         description: Some(format!(
             "{} with {}",
             workflow.default_title(),
-            normalized_ai.provider.label()
+            provider_display_label(&normalized_ai)
         )),
         aliases,
         resource_kinds: workflow.default_resource_kinds(),
@@ -441,7 +441,7 @@ fn action_id(
 
 fn action_title(base: &str, provider: &AiProviderConfig, namespaced: bool) -> String {
     if namespaced {
-        format!("{base} ({})", provider.provider.label())
+        format!("{base} ({})", provider_display_label(provider))
     } else {
         base.to_string()
     }
@@ -453,15 +453,41 @@ fn provider_suffix(provider: &AiProviderConfig, provider_idx: usize) -> String {
 
 fn add_provider_aliases(aliases: &mut Vec<String>, provider: &AiProviderConfig) {
     let label = provider.provider.label().to_ascii_lowercase();
+    let display_label = provider_display_label(provider).to_ascii_lowercase();
     let slug = provider.provider.slug().replace('_', " ");
     aliases.extend([
         label.clone(),
+        display_label.clone(),
         slug.clone(),
         format!("{} {label}", DEFAULT_AI_ACTION_TITLE.to_ascii_lowercase()),
+        format!(
+            "{} {display_label}",
+            DEFAULT_AI_ACTION_TITLE.to_ascii_lowercase()
+        ),
         format!("{} {slug}", DEFAULT_AI_ACTION_TITLE.to_ascii_lowercase()),
     ]);
     aliases.sort();
     aliases.dedup();
+}
+
+fn provider_display_label(provider: &AiProviderConfig) -> String {
+    match provider.provider {
+        AiProviderKind::OpenAi | AiProviderKind::Anthropic => {
+            let model = provider.model.trim();
+            if model.is_empty() {
+                provider.provider.label().to_string()
+            } else {
+                format!("{} {model}", provider.provider.label())
+            }
+        }
+        AiProviderKind::ClaudeCli | AiProviderKind::CodexCli => provider
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .map(|command| format!("{} ({command})", provider.provider.label()))
+            .unwrap_or_else(|| provider.provider.label().to_string()),
+    }
 }
 
 fn ai_provider_warning(ai: &AiProviderConfig) -> Option<String> {
@@ -540,6 +566,21 @@ mod tests {
         }
     }
 
+    fn openai_provider(model: &str) -> AiProviderConfig {
+        AiProviderConfig {
+            provider: AiProviderKind::OpenAi,
+            model: model.into(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            endpoint: None,
+            timeout_secs: 15,
+            max_output_tokens: 512,
+            temperature: Some(0.1),
+            command: None,
+            args: Vec::new(),
+            action: None,
+        }
+    }
+
     #[test]
     fn validate_native_ai_actions_registers_default_workflows() {
         let result = validate_ai_actions(Some(AiConfig::single(cli_provider(
@@ -574,7 +615,7 @@ mod tests {
         assert!(result.registry.actions().is_empty());
         assert_eq!(
             result.warnings,
-            vec!["AI provider skipped: skipping AI actions with empty model"]
+            vec!["OpenAI provider skipped: skipping AI actions with empty model"]
         );
     }
 
@@ -600,6 +641,52 @@ mod tests {
     }
 
     #[test]
+    fn repeated_ai_providers_have_distinct_picker_labels() {
+        let mut codex_alt = cli_provider(AiProviderKind::CodexCli);
+        codex_alt.command = Some("codex-dev".into());
+        let result = validate_ai_actions(Some(AiConfig {
+            providers: vec![
+                openai_provider("gpt-4.1"),
+                openai_provider("gpt-4.1-mini"),
+                cli_provider(AiProviderKind::CodexCli),
+                codex_alt,
+            ],
+        }));
+
+        assert!(result.warnings.is_empty());
+        let titles = result
+            .registry
+            .actions()
+            .iter()
+            .take(4)
+            .map(|action| action.title.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            titles,
+            vec![
+                "Ask AI (OpenAI gpt-4.1)",
+                "Explain Failure (OpenAI gpt-4.1)",
+                "Summarize Rollout Risk (OpenAI gpt-4.1)",
+                "Explain Network Verdict (OpenAI gpt-4.1)",
+            ]
+        );
+        assert!(
+            result
+                .registry
+                .actions()
+                .iter()
+                .any(|action| action.title == "Ask AI (OpenAI gpt-4.1-mini)")
+        );
+        assert!(
+            result
+                .registry
+                .actions()
+                .iter()
+                .any(|action| action.title == "Ask AI (Codex CLI (codex-dev))")
+        );
+    }
+
+    #[test]
     fn skipped_ai_providers_do_not_force_picker_ids_for_single_valid_provider() {
         let result = validate_ai_actions(Some(AiConfig {
             providers: vec![
@@ -621,7 +708,7 @@ mod tests {
 
         assert_eq!(
             result.warnings,
-            vec!["AI provider skipped: skipping AI actions with empty model"]
+            vec!["OpenAI provider skipped: skipping AI actions with empty model"]
         );
         assert_eq!(result.registry.actions().len(), 5);
         assert_eq!(result.registry.actions()[0].id, "ask_ai");
