@@ -504,7 +504,7 @@ impl AppState {
         self.is_search_mode = false;
         self.clear_selection_search_status();
         self.selected_idx = 0;
-        self.extension_in_instances = false;
+        self.clear_extension_state();
         self.current_namespace = snapshot.namespace.clone();
         if self.view != snapshot.view {
             self.record_recent_view_jump(snapshot.view);
