@@ -400,30 +400,68 @@ fn parse_structured_response(raw: &str) -> Result<StructuredAiResponse> {
     if trimmed.is_empty() {
         bail!("AI provider returned an empty response");
     }
-    parse_structured_response_value(trimmed)
-        .or_else(|_| extract_json_object(trimmed).and_then(parse_structured_response_value))
-        .map_err(|err| anyhow!("AI response was not valid structured JSON: {err}"))
-        .and_then(normalize_structured_response)
-        .and_then(validate_structured_response)
+    let mut last_error = None;
+    for candidate in std::iter::once(trimmed).chain(json_object_candidates(trimmed)) {
+        match parse_structured_response_value(candidate)
+            .and_then(normalize_structured_response)
+            .and_then(validate_structured_response)
+        {
+            Ok(response) => return Ok(response),
+            Err(err) => last_error = Some(err),
+        }
+    }
+    Err(anyhow!(
+        "AI response was not valid structured JSON: {}",
+        last_error
+            .map(|err| err.to_string())
+            .unwrap_or_else(|| "AI response did not include a JSON object".to_string())
+    ))
 }
 
 fn parse_structured_response_value(raw: &str) -> Result<Value> {
     serde_json::from_str::<Value>(raw).map_err(Into::into)
 }
 
-#[cold]
-#[inline(never)]
-fn extract_json_object(raw: &str) -> Result<&str> {
-    let start = raw
-        .find('{')
-        .ok_or_else(|| anyhow!("AI response did not include a JSON object"))?;
-    let end = raw
-        .rfind('}')
-        .ok_or_else(|| anyhow!("AI response did not include a JSON object"))?;
-    if end <= start {
-        bail!("AI response did not include a valid JSON object");
+fn json_object_candidates(raw: &str) -> Vec<&str> {
+    raw.char_indices()
+        .filter_map(|(start, ch)| {
+            if ch == '{' {
+                json_object_end(raw, start).map(|end| &raw[start..=end])
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+fn json_object_end(raw: &str, start: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in raw[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth = depth.saturating_add(1),
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(start + offset);
+                }
+            }
+            _ => {}
+        }
     }
-    Ok(&raw[start..=end])
+    None
 }
 
 fn normalize_structured_response(value: Value) -> Result<StructuredAiResponse> {
@@ -526,6 +564,28 @@ mod tests {
 
         assert_eq!(parsed.summary, "ok");
         assert_eq!(parsed.likely_causes, vec!["a"]);
+    }
+
+    #[test]
+    fn parse_structured_response_skips_noisy_braces_before_valid_json() {
+        let parsed = parse_structured_response(
+            r#"debug: ignored {not json}
+```json
+{
+  "summary": "ok {still text}",
+  "likely_causes": ["a"],
+  "next_steps": ["b"],
+  "uncertainty": ["c"]
+}
+```
+trailing note {also ignored}"#,
+        )
+        .expect("valid structured json is extracted after noisy braces");
+
+        assert_eq!(parsed.summary, "ok {still text}");
+        assert_eq!(parsed.likely_causes, vec!["a"]);
+        assert_eq!(parsed.next_steps, vec!["b"]);
+        assert_eq!(parsed.uncertainty, vec!["c"]);
     }
 
     #[test]
