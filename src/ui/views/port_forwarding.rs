@@ -13,7 +13,7 @@ use crate::{
     k8s::portforward::TunnelState,
     state::port_forward::TunnelRegistry,
     ui::{
-        TableFrame, components::default_theme, contains_ci, render_table_frame, striped_row_style,
+        TableFrame, components::default_theme, render_table_frame, striped_row_style,
         table_viewport_rows, table_window,
     },
 };
@@ -50,15 +50,7 @@ pub fn render_port_forwarding(
 ) {
     let theme = default_theme();
     let tunnels = registry.ordered_tunnels();
-
-    let items: Vec<_> = tunnels
-        .iter()
-        .filter(|t| {
-            search.is_empty()
-                || contains_ci(&t.target.pod_name, search)
-                || contains_ci(&t.target.namespace, search)
-        })
-        .collect();
+    let items = registry.ordered_tunnels_matching(search);
 
     let clamped_selected = if items.is_empty() {
         0
