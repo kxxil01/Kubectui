@@ -726,12 +726,9 @@ fn refresh_palette_extensions(
     snapshot: &kubectui::state::ClusterSnapshot,
     registry: &ExtensionRegistry,
 ) {
-    let selected = selected_resource(app, snapshot);
-    let actions = app
-        .detail_view
+    let resource = palette_action_resource(app, snapshot);
+    let actions = resource
         .as_ref()
-        .and_then(|detail| detail.resource.as_ref())
-        .or(selected.as_ref())
         .map(|resource| registry.palette_actions_for(resource))
         .unwrap_or_default();
     app.command_palette.set_extension_actions(actions);
@@ -742,12 +739,9 @@ fn refresh_palette_ai_actions(
     snapshot: &kubectui::state::ClusterSnapshot,
     registry: &AiActionRegistry,
 ) {
-    let selected = selected_resource(app, snapshot);
-    let actions = app
-        .detail_view
+    let resource = palette_action_resource(app, snapshot);
+    let actions = resource
         .as_ref()
-        .and_then(|detail| detail.resource.as_ref())
-        .or(selected.as_ref())
         .map(|resource| registry.palette_actions_for(resource))
         .unwrap_or_default();
     app.command_palette.set_ai_actions(actions);
@@ -758,14 +752,24 @@ fn refresh_palette_runbooks(
     snapshot: &kubectui::state::ClusterSnapshot,
     registry: &RunbookRegistry,
 ) {
-    let selected = app
-        .detail_view
-        .as_ref()
-        .and_then(|detail| detail.resource.as_ref())
-        .cloned()
-        .or_else(|| selected_resource(app, snapshot));
+    let selected = palette_action_resource(app, snapshot);
     let runbooks = registry.palette_runbooks_for(selected.as_ref());
     app.command_palette.set_runbooks(runbooks, selected);
+}
+
+fn palette_action_resource(
+    app: &kubectui::app::AppState,
+    snapshot: &kubectui::state::ClusterSnapshot,
+) -> Option<ResourceRef> {
+    app.command_palette
+        .resource_context_resource()
+        .cloned()
+        .or_else(|| {
+            app.detail_view
+                .as_ref()
+                .and_then(|detail| detail.resource.clone())
+        })
+        .or_else(|| selected_resource(app, snapshot))
 }
 
 fn refresh_palette_resources(

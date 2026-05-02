@@ -1024,6 +1024,12 @@ impl CommandPalette {
         self.cached_filtered.borrow_mut().take();
     }
 
+    pub fn resource_context_resource(&self) -> Option<&ResourceRef> {
+        self.resource_context
+            .as_ref()
+            .map(|context| &context.resource)
+    }
+
     fn selected_entry_snapshot(&self) -> Option<PaletteEntry> {
         let filtered = self.filtered_entries();
         filtered.get(self.selected_index).cloned()
