@@ -28,7 +28,7 @@ Create native types:
 - `AiActionConfig`: optional custom `Ask AI` action metadata
 - `LoadedAiAction`: native palette/runtime action
 - `AiActionRegistry`: lookup and resource filtering
-- `validate_ai_actions()`: one configured `Ask AI` plus four default workflows
+- `validate_ai_actions()`: one configured `Ask AI` plus four default workflows per native provider
 
 Run:
 ```bash
