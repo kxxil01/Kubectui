@@ -179,7 +179,7 @@ pub(crate) fn apply_detail_state_to_workbench(
     {
         events_tab.events = state.events.clone();
         events_tab.loading = false;
-        events_tab.error = state.error.clone();
+        events_tab.error = state.events_error.clone().or_else(|| state.error.clone());
         events_tab.pending_request_id = None;
         events_tab.rebuild_timeline(&app.action_history);
     }
@@ -1064,6 +1064,35 @@ mod tests {
         assert_eq!(tab.pending_request_id, None);
         assert!(tab.yaml.is_none());
         assert_eq!(tab.error.as_deref(), Some("failed to read live YAML"));
+    }
+
+    #[test]
+    fn resource_events_async_result_surfaces_event_error() {
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        let mut app = AppState::default();
+        let mut tab = kubectui::workbench::ResourceEventsTabState::new(resource.clone());
+        tab.loading = true;
+        tab.pending_request_id = Some(10);
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::ResourceEvents(tab));
+
+        let state = DetailViewState {
+            resource: Some(resource),
+            events_error: Some("failed to read live events".into()),
+            ..DetailViewState::default()
+        };
+        apply_detail_state_to_workbench(&mut app, 10, &state);
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing events tab");
+        };
+        let WorkbenchTabState::ResourceEvents(tab) = &tab.state else {
+            panic!("expected events tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert!(tab.events.is_empty());
+        assert_eq!(tab.error.as_deref(), Some("failed to read live events"));
     }
 
     #[test]
