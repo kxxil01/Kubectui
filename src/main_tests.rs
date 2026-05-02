@@ -2780,6 +2780,29 @@ fn stale_extension_fetch_results_are_ignored() {
 }
 
 #[test]
+fn namespace_switch_ignores_previous_extension_fetch_result() {
+    let mut app = AppState::default();
+    app.begin_extension_instances_load("widgets.demo.io".to_string());
+    app.set_namespace("prod".to_string());
+
+    apply_extension_fetch_result(
+        &mut app,
+        ExtensionFetchResult {
+            crd_name: "widgets.demo.io".to_string(),
+            result: Ok(vec![CustomResourceInfo {
+                name: "stale-widget".to_string(),
+                namespace: Some("default".to_string()),
+                ..CustomResourceInfo::default()
+            }]),
+        },
+    );
+
+    assert!(app.extension_selected_crd.is_none());
+    assert!(app.extension_instances.is_empty());
+    assert!(app.extension_error.is_none());
+}
+
+#[test]
 fn refresh_palette_resources_merges_extension_instances_without_duplicates() {
     let mut app = AppState::default();
     app.extension_selected_crd = Some("helmreleases.helm.toolkit.fluxcd.io".to_string());
