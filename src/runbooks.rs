@@ -1,4 +1,4 @@
-//! Guided runbooks and incident packs built on top of existing workspace, extension, and AI paths.
+//! Guided runbooks and incident packs built on workspace, command extension, and native AI paths.
 
 use std::{
     collections::BTreeSet,

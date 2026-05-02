@@ -59,17 +59,10 @@ pub struct ExtensionActionConfig {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ExtensionsConfig {
     #[serde(default)]
     pub actions: Vec<ExtensionActionConfig>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum LoadedExtensionActionKind {
-    Command {
-        mode: ExtensionExecutionMode,
-        command: ExtensionCommandConfig,
-    },
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -80,7 +73,8 @@ pub struct LoadedExtensionAction {
     pub aliases: Vec<String>,
     pub resource_kinds: Vec<String>,
     pub shortcut: Option<String>,
-    pub kind: LoadedExtensionActionKind,
+    pub mode: ExtensionExecutionMode,
+    pub command: ExtensionCommandConfig,
 }
 
 impl LoadedExtensionAction {
@@ -93,9 +87,7 @@ impl LoadedExtensionAction {
     }
 
     pub fn badge_label(&self) -> String {
-        match &self.kind {
-            LoadedExtensionActionKind::Command { mode, .. } => mode.label().to_string(),
-        }
+        self.mode.label().to_string()
     }
 }
 
@@ -334,14 +326,12 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
             aliases,
             resource_kinds,
             shortcut: action.shortcut.filter(|value| !value.trim().is_empty()),
-            kind: LoadedExtensionActionKind::Command {
-                mode: action.mode,
-                command: ExtensionCommandConfig {
-                    program: program.to_string(),
-                    args: action.command.args,
-                    cwd: action.command.cwd.filter(|value| !value.trim().is_empty()),
-                    env: action.command.env,
-                },
+            mode: action.mode,
+            command: ExtensionCommandConfig {
+                program: program.to_string(),
+                args: action.command.args,
+                cwd: action.command.cwd.filter(|value| !value.trim().is_empty()),
+                env: action.command.env,
             },
         });
     }
@@ -450,14 +440,12 @@ mod tests {
             aliases: vec!["grafana".into()],
             resource_kinds: vec!["deployment".into(), "StatefulSet".into()],
             shortcut: None,
-            kind: LoadedExtensionActionKind::Command {
-                mode: ExtensionExecutionMode::Foreground,
-                command: ExtensionCommandConfig {
-                    program: "open".into(),
-                    args: Vec::new(),
-                    cwd: None,
-                    env: BTreeMap::new(),
-                },
+            mode: ExtensionExecutionMode::Foreground,
+            command: ExtensionCommandConfig {
+                program: "open".into(),
+                args: Vec::new(),
+                cwd: None,
+                env: BTreeMap::new(),
             },
         };
 
@@ -475,26 +463,23 @@ mod tests {
             aliases: vec!["describe".into()],
             resource_kinds: vec!["Pod".into()],
             shortcut: None,
-            kind: LoadedExtensionActionKind::Command {
-                mode: ExtensionExecutionMode::Background,
-                command: ExtensionCommandConfig {
-                    program: "kubectl".into(),
-                    args: vec![
-                        "describe".into(),
-                        "$KIND/$NAME".into(),
-                        "-n".into(),
-                        "$NAMESPACE".into(),
-                        "--labels=$LABELS".into(),
-                    ],
-                    cwd: Some("/tmp/$CONTEXT".into()),
-                    env: BTreeMap::from([("CTX".into(), "$CONTEXT".into())]),
-                },
+            mode: ExtensionExecutionMode::Background,
+            command: ExtensionCommandConfig {
+                program: "kubectl".into(),
+                args: vec![
+                    "describe".into(),
+                    "$KIND/$NAME".into(),
+                    "-n".into(),
+                    "$NAMESPACE".into(),
+                    "--labels=$LABELS".into(),
+                ],
+                cwd: Some("/tmp/$CONTEXT".into()),
+                env: BTreeMap::from([("CTX".into(), "$CONTEXT".into())]),
             },
         };
-        let LoadedExtensionActionKind::Command { command, .. } = &action.kind;
         let prepared = prepare_command(
             &action.title,
-            command,
+            &action.command,
             &ExtensionSubstitutionContext::from_resource(
                 &ResourceRef::Pod("api-0".into(), "prod".into()),
                 Some("staging"),
@@ -517,8 +502,8 @@ mod tests {
         let result = validate_extensions(
             ExtensionsConfig {
                 actions: vec![ExtensionActionConfig {
-                    id: "ask_ai".into(),
-                    title: "Custom Ask AI".into(),
+                    id: "kubectl_describe".into(),
+                    title: "Kubectl Describe".into(),
                     description: None,
                     aliases: Vec::new(),
                     resource_kinds: vec!["Pod".into()],
@@ -537,8 +522,21 @@ mod tests {
 
         assert!(result.warnings.is_empty());
         assert_eq!(result.registry.actions().len(), 1);
-        assert_eq!(result.registry.actions()[0].id, "ask_ai");
+        assert_eq!(result.registry.actions()[0].id, "kubectl_describe");
         assert_eq!(result.registry.actions()[0].badge_label(), "BG");
+    }
+
+    #[test]
+    fn extensions_config_rejects_legacy_ai_top_level() {
+        let err = serde_yaml::from_str::<ExtensionsConfig>(
+            r#"
+ai:
+  provider: claude_cli
+"#,
+        )
+        .expect_err("legacy ai config should not parse as an extension config");
+
+        assert!(err.to_string().contains("unknown field `ai`"));
     }
 
     #[test]

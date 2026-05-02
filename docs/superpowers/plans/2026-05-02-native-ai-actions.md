@@ -57,7 +57,7 @@ Expected: existing extension tests pass.
 
 - [x] **Step 1: Add native AI palette section source**
 
-Palette keeps rendering as extension-like action entries for now, but source becomes native AI registry plus command extension registry.
+Palette renders AI actions from the native AI registry and command actions from the command extension registry.
 
 Run:
 ```bash
