@@ -10,6 +10,7 @@ use ratatui::{
 };
 use std::{cell::RefCell, cmp::Ordering, collections::HashSet, sync::Arc};
 
+use crate::ai_actions::LoadedAiAction;
 use crate::app::{AppState, AppView, RecentJumpTarget, ResourceRef};
 use crate::extensions::LoadedExtensionAction;
 use crate::global_search::GlobalResourceSearchEntry;
@@ -57,6 +58,7 @@ enum PaletteSection {
     Activity,
     Resource,
     Action,
+    Ai,
     Extension,
     Runbook,
     Workspace,
@@ -72,6 +74,7 @@ impl PaletteSection {
             Self::Activity => " ── Recent Activity ──",
             Self::Resource => " ── Resources ──",
             Self::Action => " ── Actions ──",
+            Self::Ai => " ── AI ──",
             Self::Extension => " ── Extensions ──",
             Self::Runbook => " ── Runbooks ──",
             Self::Workspace => " ── Workspaces ──",
@@ -91,6 +94,7 @@ pub enum CommandPaletteAction {
     JumpToResource(ResourceRef),
     ActivateWorkbenchTab(WorkbenchTabKey),
     Execute(DetailAction, ResourceRef),
+    ExecuteAi(String, ResourceRef),
     ExecuteExtension(String, ResourceRef),
     OpenRunbook(String, Option<ResourceRef>),
     ToggleColumn(String),
@@ -107,6 +111,7 @@ pub enum PaletteEntry {
     Resource(PaletteResourceEntry),
     Navigate(AppView),
     Action(DetailAction),
+    AiAction(PaletteAiAction),
     ExtensionAction(PaletteExtensionAction),
     Runbook(PaletteRunbookAction),
     SaveWorkspace,
@@ -140,6 +145,15 @@ pub struct PaletteActivityEntry {
 }
 
 pub type PaletteResourceEntry = GlobalResourceSearchEntry;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PaletteAiAction {
+    pub id: String,
+    pub title: String,
+    pub aliases: Vec<String>,
+    pub shortcut: Option<String>,
+    pub badge_label: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PaletteExtensionAction {
@@ -754,6 +768,7 @@ fn palette_entry_section(entry: &PaletteEntry) -> PaletteSection {
         PaletteEntry::Activity(_) => PaletteSection::Activity,
         PaletteEntry::Resource(_) => PaletteSection::Resource,
         PaletteEntry::Action(_) => PaletteSection::Action,
+        PaletteEntry::AiAction(_) => PaletteSection::Ai,
         PaletteEntry::ExtensionAction(_) => PaletteSection::Extension,
         PaletteEntry::Runbook(_) => PaletteSection::Runbook,
         PaletteEntry::SaveWorkspace | PaletteEntry::Workspace(_) => PaletteSection::Workspace,
@@ -819,6 +834,15 @@ fn palette_item_lines(
         PaletteEntry::Action(action) => (
             action.label().to_string(),
             action.key_hint().to_string(),
+            None,
+        ),
+        PaletteEntry::AiAction(action) => (
+            action.title.clone(),
+            action
+                .shortcut
+                .as_deref()
+                .map(display_hotkey)
+                .unwrap_or_else(|| action.badge_label.clone()),
             None,
         ),
         PaletteEntry::ExtensionAction(action) => (
@@ -940,6 +964,7 @@ pub struct CommandPalette {
     /// Column toggle info for current view: (id, label, currently_visible).
     columns_info: Option<Vec<(String, String, bool)>>,
     extension_actions: Vec<PaletteExtensionAction>,
+    ai_actions: Vec<PaletteAiAction>,
     runbooks: Vec<PaletteRunbookAction>,
     saved_workspaces: Vec<String>,
     workspace_banks: Vec<(String, Option<String>)>,
@@ -966,6 +991,7 @@ impl CommandPalette {
         self.activity_entries.clear();
         self.resource_entries = Arc::default();
         self.extension_actions.clear();
+        self.ai_actions.clear();
         self.runbooks.clear();
         self.selection_anchor = None;
         self.cached_filtered.borrow_mut().take();
@@ -1050,6 +1076,24 @@ impl CommandPalette {
         self.update_loaded_entries(selected_entry);
     }
 
+    pub fn set_ai_actions(&mut self, actions: Vec<LoadedAiAction>) {
+        let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
+        self.ai_actions = actions
+            .into_iter()
+            .map(|action| {
+                let badge_label = action.badge_label();
+                PaletteAiAction {
+                    id: action.id,
+                    title: action.title,
+                    aliases: action.aliases,
+                    shortcut: action.shortcut,
+                    badge_label,
+                }
+            })
+            .collect();
+        self.update_loaded_entries(selected_entry);
+    }
+
     pub fn set_runbooks(&mut self, runbooks: Vec<LoadedRunbook>, resource: Option<ResourceRef>) {
         let selected_entry = self.is_open.then(|| self.selected_entry_anchor()).flatten();
         self.runbooks = runbooks
@@ -1121,6 +1165,16 @@ impl CommandPalette {
                         PaletteEntry::Action(action) => {
                             if let Some(resource) = &self.resource_context {
                                 CommandPaletteAction::Execute(*action, resource.resource.clone())
+                            } else {
+                                CommandPaletteAction::None
+                            }
+                        }
+                        PaletteEntry::AiAction(action) => {
+                            if let Some(resource) = &self.resource_context {
+                                CommandPaletteAction::ExecuteAi(
+                                    action.id.clone(),
+                                    resource.resource.clone(),
+                                )
                             } else {
                                 CommandPaletteAction::None
                             }
@@ -1317,6 +1371,16 @@ impl CommandPalette {
                         .any(|alias| fuzzy_match(alias, &self.query))
                 {
                     result.push(PaletteEntry::ExtensionAction(action.clone()));
+                }
+            }
+            for action in &self.ai_actions {
+                if self.query.is_empty()
+                    || action
+                        .aliases
+                        .iter()
+                        .any(|alias| fuzzy_match(alias, &self.query))
+                {
+                    result.push(PaletteEntry::AiAction(action.clone()));
                 }
             }
             for runbook in &self.runbooks {
@@ -2389,6 +2453,43 @@ mod tests {
         assert_eq!(
             palette.handle_key(KeyEvent::from(KeyCode::Enter)),
             CommandPaletteAction::ExecuteExtension("describe".into(), resource)
+        );
+    }
+
+    #[test]
+    fn palette_enter_can_execute_native_ai_action() {
+        let resource = ResourceRef::Pod("api".into(), "default".into());
+        let mut palette = CommandPalette::default();
+        palette.open_with_context(Some(ctx(resource.clone(), None)));
+        palette.set_ai_actions(vec![LoadedAiAction {
+            id: "ai_explain_failure".into(),
+            title: "Explain Failure".into(),
+            description: None,
+            aliases: vec!["explain failure".into(), "why failing".into()],
+            resource_kinds: vec!["Pod".into()],
+            shortcut: None,
+            provider: crate::ai_actions::AiProviderConfig {
+                provider: crate::ai_actions::AiProviderKind::ClaudeCli,
+                model: "claude-cli".into(),
+                api_key_env: String::new(),
+                endpoint: None,
+                timeout_secs: 15,
+                max_output_tokens: 512,
+                temperature: Some(0.1),
+                command: None,
+                args: Vec::new(),
+                action: None,
+            },
+            workflow: crate::ai_actions::AiWorkflowKind::ExplainFailure,
+            system_prompt: None,
+        }]);
+        for c in "explain failure".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(c)));
+        }
+
+        assert_eq!(
+            palette.handle_key(KeyEvent::from(KeyCode::Enter)),
+            CommandPaletteAction::ExecuteAi("ai_explain_failure".into(), resource)
         );
     }
 

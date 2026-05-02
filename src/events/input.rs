@@ -699,7 +699,7 @@ pub fn apply_action(action: AppAction, app_state: &mut AppState) -> bool {
                 true
             }
         },
-        AppAction::ExecuteExtension { .. } => {
+        AppAction::ExecuteAi { .. } | AppAction::ExecuteExtension { .. } => {
             app_state.command_palette.close();
             true
         }

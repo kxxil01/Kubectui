@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{AppState, views::NavGroup};
 use crate::{
+    ai_actions::AiProviderConfig,
     preferences::{ClusterPreferences, UserPreferences},
     workbench::DEFAULT_WORKBENCH_HEIGHT,
 };
@@ -32,6 +33,8 @@ pub(super) struct AppConfig {
     preferences: Option<UserPreferences>,
     #[serde(default)]
     clusters: Option<HashMap<String, ClusterPreferences>>,
+    #[serde(default)]
+    ai: Option<AiProviderConfig>,
 }
 
 fn default_refresh_interval() -> u64 {
@@ -96,6 +99,7 @@ pub fn load_config_from_path(path: &Path) -> AppState {
         }
         app.preferences = cfg.preferences;
         app.cluster_preferences = cfg.clusters;
+        app.ai_config = cfg.ai;
     }
 
     app.current_context_name = kube::config::Kubeconfig::read()
@@ -121,6 +125,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
         collapsed_nav_groups: Some(collapsed_nav_groups),
         preferences: app.preferences.clone(),
         clusters: app.cluster_preferences.clone(),
+        ai: app.ai_config.clone(),
     };
 
     if let Some(parent) = path.parent()
@@ -184,8 +189,9 @@ pub fn save_config(app: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::default_config_path;
-    use std::path::PathBuf;
+    use super::{default_config_path, load_config_from_path};
+    use crate::ai_actions::AiProviderKind;
+    use std::{fs, path::PathBuf};
 
     #[test]
     fn default_config_path_uses_absolute_home_only() {
@@ -194,5 +200,23 @@ mod tests {
             Some(PathBuf::from("/Users/tester/.kube/kubectui-config.json"))
         );
         assert_eq!(default_config_path(None), None);
+    }
+
+    #[test]
+    fn load_config_reads_native_ai_config() {
+        let path =
+            std::env::temp_dir().join(format!("kubectui-ai-config-{}.json", std::process::id()));
+        fs::write(
+            &path,
+            r#"{"namespace":"all","ai":{"provider":"claude_cli","command":"claude"}}"#,
+        )
+        .expect("write config");
+
+        let app = load_config_from_path(&path);
+        let ai = app.ai_config.expect("ai config");
+        assert_eq!(ai.provider, AiProviderKind::ClaudeCli);
+        assert_eq!(ai.command.as_deref(), Some("claude"));
+
+        let _ = fs::remove_file(path);
     }
 }

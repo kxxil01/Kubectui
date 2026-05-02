@@ -1,0 +1,457 @@
+//! Native AI action configuration and palette registry.
+
+use serde::{Deserialize, Serialize};
+
+use crate::app::ResourceRef;
+
+const DEFAULT_AI_TIMEOUT_SECS: u64 = 30;
+const DEFAULT_AI_MAX_OUTPUT_TOKENS: u32 = 800;
+const DEFAULT_AI_ACTION_ID: &str = "ask_ai";
+const DEFAULT_AI_ACTION_TITLE: &str = "Ask AI";
+const DEFAULT_AI_RESOURCE_KINDS: &[&str] = &[
+    "Pod",
+    "Node",
+    "Deployment",
+    "StatefulSet",
+    "DaemonSet",
+    "Job",
+    "CronJob",
+    "Service",
+    "Ingress",
+    "NetworkPolicy",
+    "HelmRelease",
+];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiProviderKind {
+    OpenAi,
+    Anthropic,
+    ClaudeCli,
+    CodexCli,
+}
+
+impl AiProviderKind {
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::OpenAi => "AI",
+            Self::Anthropic => "Claude",
+            Self::ClaudeCli => "Claude CLI",
+            Self::CodexCli => "Codex CLI",
+        }
+    }
+
+    const fn default_model(self) -> &'static str {
+        match self {
+            Self::OpenAi => "",
+            Self::Anthropic => "",
+            Self::ClaudeCli => "claude-cli",
+            Self::CodexCli => "codex-cli",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AiWorkflowKind {
+    ResourceAnalysis,
+    ExplainFailure,
+    RolloutRisk,
+    NetworkVerdict,
+    TriageFindings,
+}
+
+impl AiWorkflowKind {
+    pub const fn default_id(self) -> &'static str {
+        match self {
+            Self::ResourceAnalysis => DEFAULT_AI_ACTION_ID,
+            Self::ExplainFailure => "ai_explain_failure",
+            Self::RolloutRisk => "ai_rollout_risk",
+            Self::NetworkVerdict => "ai_network_verdict",
+            Self::TriageFindings => "ai_triage_findings",
+        }
+    }
+
+    pub const fn default_title(self) -> &'static str {
+        match self {
+            Self::ResourceAnalysis => DEFAULT_AI_ACTION_TITLE,
+            Self::ExplainFailure => "Explain Failure",
+            Self::RolloutRisk => "Summarize Rollout Risk",
+            Self::NetworkVerdict => "Explain Network Verdict",
+            Self::TriageFindings => "Triage Findings",
+        }
+    }
+
+    pub fn default_aliases(self) -> Vec<String> {
+        match self {
+            Self::ResourceAnalysis => vec!["ask ai".into(), "ai".into(), "diagnose".into()],
+            Self::ExplainFailure => vec![
+                "explain failure".into(),
+                "why failing".into(),
+                "failure diagnosis".into(),
+            ],
+            Self::RolloutRisk => vec![
+                "rollout risk".into(),
+                "release risk".into(),
+                "deployment risk".into(),
+            ],
+            Self::NetworkVerdict => vec![
+                "network verdict".into(),
+                "explain connectivity".into(),
+                "policy verdict".into(),
+            ],
+            Self::TriageFindings => vec![
+                "triage findings".into(),
+                "triage issues".into(),
+                "prioritize issues".into(),
+            ],
+        }
+    }
+
+    pub fn default_resource_kinds(self) -> Vec<String> {
+        match self {
+            Self::ResourceAnalysis | Self::TriageFindings => DEFAULT_AI_RESOURCE_KINDS
+                .iter()
+                .map(|kind| (*kind).to_string())
+                .collect(),
+            Self::ExplainFailure => vec!["Pod".into(), "Job".into(), "CronJob".into()],
+            Self::RolloutRisk => vec![
+                "Deployment".into(),
+                "StatefulSet".into(),
+                "DaemonSet".into(),
+                "HelmRelease".into(),
+            ],
+            Self::NetworkVerdict => vec![
+                "Pod".into(),
+                "Service".into(),
+                "Ingress".into(),
+                "NetworkPolicy".into(),
+            ],
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiActionConfig {
+    #[serde(default = "default_ai_action_id")]
+    pub id: String,
+    #[serde(default = "default_ai_action_title")]
+    pub title: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub resource_kinds: Vec<String>,
+    #[serde(default)]
+    pub shortcut: Option<String>,
+    #[serde(default)]
+    pub system_prompt: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AiProviderConfig {
+    pub provider: AiProviderKind,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub api_key_env: String,
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    #[serde(default = "default_ai_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_ai_max_output_tokens")]
+    pub max_output_tokens: u32,
+    #[serde(default)]
+    pub temperature: Option<f32>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub action: Option<AiActionConfig>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoadedAiAction {
+    pub id: String,
+    pub title: String,
+    pub description: Option<String>,
+    pub aliases: Vec<String>,
+    pub resource_kinds: Vec<String>,
+    pub shortcut: Option<String>,
+    pub provider: AiProviderConfig,
+    pub workflow: AiWorkflowKind,
+    pub system_prompt: Option<String>,
+}
+
+impl LoadedAiAction {
+    pub fn matches_resource(&self, resource: &ResourceRef) -> bool {
+        self.resource_kinds.is_empty()
+            || self
+                .resource_kinds
+                .iter()
+                .any(|kind| kind == "*" || kind.eq_ignore_ascii_case(resource.kind()))
+    }
+
+    pub fn badge_label(&self) -> String {
+        self.provider.provider.label().to_string()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AiActionRegistry {
+    actions: Vec<LoadedAiAction>,
+}
+
+impl AiActionRegistry {
+    pub fn actions(&self) -> &[LoadedAiAction] {
+        &self.actions
+    }
+
+    pub fn get(&self, id: &str) -> Option<&LoadedAiAction> {
+        self.actions.iter().find(|action| action.id == id)
+    }
+
+    pub fn palette_actions_for(&self, resource: &ResourceRef) -> Vec<LoadedAiAction> {
+        self.actions
+            .iter()
+            .filter(|action| action.matches_resource(resource))
+            .cloned()
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct AiActionLoadResult {
+    pub registry: AiActionRegistry,
+    pub warnings: Vec<String>,
+}
+
+pub fn validate_ai_actions(config: Option<AiProviderConfig>) -> AiActionLoadResult {
+    let Some(ai) = config else {
+        return AiActionLoadResult::default();
+    };
+    let mut actions = Vec::new();
+    let mut warnings = Vec::new();
+    if let Some(warning) = ai_provider_warning(&ai) {
+        warnings.push(warning);
+        return AiActionLoadResult {
+            registry: AiActionRegistry::default(),
+            warnings,
+        };
+    }
+
+    match build_custom_ai_action(ai.clone()) {
+        Ok(action) => actions.push(action),
+        Err(warning) => warnings.push(warning),
+    }
+    for workflow in [
+        AiWorkflowKind::ExplainFailure,
+        AiWorkflowKind::RolloutRisk,
+        AiWorkflowKind::NetworkVerdict,
+        AiWorkflowKind::TriageFindings,
+    ] {
+        actions.push(build_default_ai_workflow_action(ai.clone(), workflow));
+    }
+
+    AiActionLoadResult {
+        registry: AiActionRegistry { actions },
+        warnings,
+    }
+}
+
+fn build_custom_ai_action(ai: AiProviderConfig) -> Result<LoadedAiAction, String> {
+    let action = ai.action.clone().unwrap_or(AiActionConfig {
+        id: default_ai_action_id(),
+        title: default_ai_action_title(),
+        description: Some("Ask configured AI provider to analyze this resource".into()),
+        aliases: vec!["ask ai".into(), "ai".into(), "diagnose".into()],
+        resource_kinds: DEFAULT_AI_RESOURCE_KINDS
+            .iter()
+            .map(|kind| (*kind).to_string())
+            .collect(),
+        shortcut: None,
+        system_prompt: None,
+    });
+    let id = action.id.trim();
+    let title = action.title.trim();
+    if id.is_empty() {
+        return Err("skipping AI action with empty id".to_string());
+    }
+    if title.is_empty() {
+        return Err(format!("skipping AI action '{id}' with empty title"));
+    }
+    let mut aliases = action
+        .aliases
+        .into_iter()
+        .map(|alias| alias.trim().to_ascii_lowercase())
+        .filter(|alias| !alias.is_empty())
+        .collect::<Vec<_>>();
+    if !aliases
+        .iter()
+        .any(|alias| alias == &title.to_ascii_lowercase())
+    {
+        aliases.push(title.to_ascii_lowercase());
+    }
+    aliases.sort();
+    aliases.dedup();
+    let mut resource_kinds = action
+        .resource_kinds
+        .into_iter()
+        .map(|kind| kind.trim().to_string())
+        .filter(|kind| !kind.is_empty())
+        .collect::<Vec<_>>();
+    if resource_kinds.is_empty() {
+        resource_kinds.extend(
+            DEFAULT_AI_RESOURCE_KINDS
+                .iter()
+                .map(|kind| (*kind).to_string()),
+        );
+    }
+    resource_kinds.sort();
+    resource_kinds.dedup();
+
+    Ok(LoadedAiAction {
+        id: id.to_string(),
+        title: title.to_string(),
+        description: action.description.filter(|value| !value.trim().is_empty()),
+        aliases,
+        resource_kinds,
+        shortcut: action.shortcut.filter(|value| !value.trim().is_empty()),
+        provider: normalize_ai_provider(ai),
+        workflow: AiWorkflowKind::ResourceAnalysis,
+        system_prompt: action
+            .system_prompt
+            .filter(|value| !value.trim().is_empty()),
+    })
+}
+
+fn build_default_ai_workflow_action(
+    ai: AiProviderConfig,
+    workflow: AiWorkflowKind,
+) -> LoadedAiAction {
+    LoadedAiAction {
+        id: workflow.default_id().to_string(),
+        title: workflow.default_title().to_string(),
+        description: Some(format!(
+            "{} with configured AI provider",
+            workflow.default_title()
+        )),
+        aliases: workflow.default_aliases(),
+        resource_kinds: workflow.default_resource_kinds(),
+        shortcut: None,
+        provider: normalize_ai_provider(ai),
+        workflow,
+        system_prompt: None,
+    }
+}
+
+fn ai_provider_warning(ai: &AiProviderConfig) -> Option<String> {
+    match ai.provider {
+        AiProviderKind::OpenAi | AiProviderKind::Anthropic => {
+            if ai.model.trim().is_empty() {
+                return Some("skipping AI actions with empty model".to_string());
+            }
+            if ai.api_key_env.trim().is_empty() {
+                return Some("skipping AI actions with empty api_key_env".to_string());
+            }
+        }
+        AiProviderKind::ClaudeCli | AiProviderKind::CodexCli => {}
+    }
+    None
+}
+
+fn normalize_ai_provider(mut ai: AiProviderConfig) -> AiProviderConfig {
+    ai.model = ai.model.trim().to_string();
+    if ai.model.is_empty() {
+        ai.model = ai.provider.default_model().to_string();
+    }
+    ai.api_key_env = ai.api_key_env.trim().to_string();
+    ai.endpoint = trim_optional(ai.endpoint);
+    ai.command = trim_optional(ai.command);
+    ai.args = ai
+        .args
+        .into_iter()
+        .map(|arg| arg.trim().to_string())
+        .filter(|arg| !arg.is_empty())
+        .collect();
+    ai.timeout_secs = ai.timeout_secs.max(1);
+    ai.max_output_tokens = ai.max_output_tokens.max(64);
+    ai.action = None;
+    ai
+}
+
+fn default_ai_timeout_secs() -> u64 {
+    DEFAULT_AI_TIMEOUT_SECS
+}
+
+fn default_ai_max_output_tokens() -> u32 {
+    DEFAULT_AI_MAX_OUTPUT_TOKENS
+}
+
+fn default_ai_action_id() -> String {
+    DEFAULT_AI_ACTION_ID.to_string()
+}
+
+fn default_ai_action_title() -> String {
+    DEFAULT_AI_ACTION_TITLE.to_string()
+}
+
+fn trim_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn validate_native_ai_actions_registers_default_workflows() {
+        let result = validate_ai_actions(Some(AiProviderConfig {
+            provider: AiProviderKind::ClaudeCli,
+            model: String::new(),
+            api_key_env: String::new(),
+            endpoint: None,
+            timeout_secs: 15,
+            max_output_tokens: 512,
+            temperature: Some(0.1),
+            command: None,
+            args: Vec::new(),
+            action: None,
+        }));
+
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.registry.actions().len(), 5);
+        assert_eq!(result.registry.actions()[0].id, "ask_ai");
+        assert_eq!(result.registry.actions()[0].badge_label(), "Claude CLI");
+        assert!(result.registry.get("ai_explain_failure").is_some());
+        assert!(result.registry.get("ai_rollout_risk").is_some());
+        assert!(result.registry.get("ai_network_verdict").is_some());
+        assert!(result.registry.get("ai_triage_findings").is_some());
+    }
+
+    #[test]
+    fn http_ai_requires_model_and_api_key_env() {
+        let result = validate_ai_actions(Some(AiProviderConfig {
+            provider: AiProviderKind::OpenAi,
+            model: String::new(),
+            api_key_env: "OPENAI_API_KEY".into(),
+            endpoint: None,
+            timeout_secs: 15,
+            max_output_tokens: 512,
+            temperature: Some(0.1),
+            command: None,
+            args: Vec::new(),
+            action: None,
+        }));
+
+        assert!(result.registry.actions().is_empty());
+        assert_eq!(
+            result.warnings,
+            vec!["skipping AI actions with empty model"]
+        );
+    }
+}

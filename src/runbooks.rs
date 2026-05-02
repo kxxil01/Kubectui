@@ -8,7 +8,7 @@ use std::{
 
 use serde::{Deserialize, Serialize};
 
-use crate::{app::ResourceRef, extensions::AiWorkflowKind, policy::DetailAction};
+use crate::{ai_actions::AiWorkflowKind, app::ResourceRef, policy::DetailAction};
 
 const RUNBOOKS_FILE_NAME: &str = "runbooks.yaml";
 
