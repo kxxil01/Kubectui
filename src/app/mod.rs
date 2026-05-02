@@ -12,7 +12,10 @@ pub mod sort;
 pub mod views;
 mod workbench;
 
-pub use config_io::{load_config, load_config_from_path, save_config, save_config_to_path};
+pub use config_io::{
+    config_path, load_ai_config_from_path, load_config, load_config_from_path, save_config,
+    save_config_to_path,
+};
 pub use core::{SELECTION_SEARCH_FALLBACK_STATUS, SELECTION_SEARCH_NO_VISIBLE_RESULTS_STATUS};
 pub use detail_state::*;
 pub use resource_ref::ResourceRef;
