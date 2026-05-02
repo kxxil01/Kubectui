@@ -158,6 +158,8 @@ pub fn run_ai_analysis(
         }
     };
     let structured = parse_structured_response(&raw_json)?;
+    let raw_json =
+        serde_json::to_string(&structured).context("failed to encode sanitized AI response")?;
 
     Ok(AiAnalysisResult {
         provider_label: provider.provider.label().to_string(),
@@ -520,22 +522,30 @@ fn validate_structured_response(response: StructuredAiResponse) -> Result<Struct
         bail!("AI response omitted summary");
     }
     Ok(StructuredAiResponse {
-        summary: response.summary.trim().to_string(),
-        likely_causes: trim_lines(response.likely_causes),
-        next_steps: trim_lines(response.next_steps),
-        uncertainty: trim_lines(response.uncertainty),
+        summary: sanitize_ai_model_output(response.summary.trim()),
+        likely_causes: trim_ai_output_lines(response.likely_causes),
+        next_steps: trim_ai_output_lines(response.next_steps),
+        uncertainty: trim_ai_output_lines(response.uncertainty),
     })
 }
 
 #[cold]
 #[inline(never)]
-fn trim_lines(lines: Vec<String>) -> Vec<String> {
+fn trim_ai_output_lines(lines: Vec<String>) -> Vec<String> {
     lines
         .into_iter()
-        .map(|line| line.trim().to_string())
+        .map(|line| sanitize_ai_model_output(line.trim()))
         .filter(|line| !line.is_empty())
         .take(8)
         .collect()
+}
+
+fn sanitize_ai_model_output(value: &str) -> String {
+    value
+        .lines()
+        .map(sanitize_provider_error_line)
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cold]
@@ -805,6 +815,40 @@ trailing note {also ignored}"#,
         assert_eq!(parsed.likely_causes, vec!["404", "true"]);
         assert_eq!(parsed.next_steps, vec!["check events"]);
         assert!(parsed.uncertainty.is_empty());
+    }
+
+    #[test]
+    fn parse_structured_response_redacts_model_output_secrets() {
+        let parsed = parse_structured_response(
+            r#"{
+                "summary": "database password : hunter2 leaked",
+                "likely_causes": [
+                    "client logged Authorization: Bearer live-token",
+                    "dsn=postgres://user:pass@db:5432/app"
+                ],
+                "next_steps": ["rotate api_key=sk-live"],
+                "uncertainty": ["secret: literal-value"]
+            }"#,
+        )
+        .expect("structured response parses");
+
+        let rendered = format!(
+            "{}\n{}\n{}\n{}",
+            parsed.summary,
+            parsed.likely_causes.join("\n"),
+            parsed.next_steps.join("\n"),
+            parsed.uncertainty.join("\n")
+        );
+        assert!(rendered.contains("password : [redacted]"), "{rendered}");
+        assert!(rendered.contains("Authorization: [redacted]"), "{rendered}");
+        assert!(rendered.contains("[redacted-uri]"), "{rendered}");
+        assert!(rendered.contains("api_key=<redacted>"), "{rendered}");
+        assert!(rendered.contains("secret: [redacted]"), "{rendered}");
+        assert!(!rendered.contains("hunter2"), "{rendered}");
+        assert!(!rendered.contains("live-token"), "{rendered}");
+        assert!(!rendered.contains("user:pass"), "{rendered}");
+        assert!(!rendered.contains("sk-live"), "{rendered}");
+        assert!(!rendered.contains("literal-value"), "{rendered}");
     }
 
     #[test]
