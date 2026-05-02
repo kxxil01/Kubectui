@@ -43,7 +43,10 @@ use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
     ai_actions::{AiActionRegistry, AiWorkflowKind, LoadedAiAction, validate_ai_actions},
-    app::{AppAction, AppState, AppView, DetailViewState, ResourceRef, load_config, save_config},
+    app::{
+        AppAction, AppState, AppView, DetailViewState, ResourceRef, config_path,
+        load_ai_config_from_path, load_config, save_config,
+    },
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
     extensions::{
@@ -2689,8 +2692,21 @@ pub(crate) async fn run_app_inner(
     let mut extension_registry = initial_extension_load.registry;
     notify_extension_load_warnings(&mut app, &initial_extension_load.warnings);
     let initial_ai_load = validate_ai_actions(app.ai_config.clone());
-    let ai_registry = initial_ai_load.registry;
+    let mut ai_registry = initial_ai_load.registry;
     notify_ai_load_warnings(&mut app, &initial_ai_load.warnings);
+    let app_config_path = config_path();
+    let app_config_watch_setup = app_config_path
+        .as_ref()
+        .map(|path| create_config_watcher(path, "app"))
+        .transpose();
+    let (_app_config_watcher, app_config_watch_rx) = match app_config_watch_setup {
+        Ok(Some((watcher, rx))) => (Some(watcher), Some(rx)),
+        Ok(None) => (None, None),
+        Err(err) => {
+            app.push_toast(format!("App config watcher disabled: {err:#}"), true);
+            (None, None)
+        }
+    };
     let extension_config_path = initial_extension_load.path;
     let extension_watch_setup = create_config_watcher(&extension_config_path, "extensions");
     let (_extension_watcher, extension_watch_rx) = match extension_watch_setup {
@@ -2794,6 +2810,55 @@ pub(crate) async fn run_app_inner(
     let mut event_stream = EventStream::new();
 
     loop {
+        if let (Some(rx), Some(path)) = (&app_config_watch_rx, app_config_path.as_ref()) {
+            let mut reload_requested = false;
+            loop {
+                match rx.try_recv() {
+                    Ok(Ok(event)) => {
+                        if config_watch_matches_path(&event, path) {
+                            reload_requested = true;
+                        }
+                    }
+                    Ok(Err(err)) => {
+                        app.push_toast(format!("App config watch error: {err}"), true);
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                }
+            }
+            if reload_requested {
+                match load_ai_config_from_path(path) {
+                    Ok(ai_config) if ai_config != app.ai_config => {
+                        app.ai_config = ai_config;
+                        let reload = validate_ai_actions(app.ai_config.clone());
+                        ai_registry = reload.registry;
+                        notify_ai_load_warnings(&mut app, &reload.warnings);
+                        if app.command_palette.is_open() {
+                            refresh_palette_ai_actions(&mut app, &cached_snapshot, &ai_registry);
+                        }
+                        app.push_toast(
+                            format!(
+                                "Reloaded AI config ({} action{})",
+                                ai_registry.actions().len(),
+                                if ai_registry.actions().len() == 1 {
+                                    ""
+                                } else {
+                                    "s"
+                                }
+                            ),
+                            false,
+                        );
+                        needs_redraw = true;
+                    }
+                    Ok(_) => {}
+                    Err(err) => {
+                        app.push_toast(format!("AI config reload skipped: {err}"), true);
+                        needs_redraw = true;
+                    }
+                }
+            }
+        }
+
         if let Some(rx) = &extension_watch_rx {
             let mut reload_requested = false;
             loop {

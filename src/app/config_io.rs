@@ -49,6 +49,10 @@ fn default_config_path(base_dir: Option<PathBuf>) -> Option<PathBuf> {
     base_dir.map(|base| base.join(".kube").join("kubectui-config.json"))
 }
 
+pub fn config_path() -> Option<PathBuf> {
+    default_config_path(dirs::home_dir())
+}
+
 fn nav_group_from_config(name: &str) -> Option<NavGroup> {
     match name {
         "Overview" => Some(NavGroup::Overview),
@@ -109,6 +113,14 @@ pub fn load_config_from_path(path: &Path) -> AppState {
     app
 }
 
+pub fn load_ai_config_from_path(path: &Path) -> Result<Option<AiConfig>, String> {
+    let content = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read app config '{}': {err}", path.display()))?;
+    let cfg = serde_json::from_str::<AppConfig>(&content)
+        .map_err(|err| format!("failed to parse app config '{}': {err}", path.display()))?;
+    Ok(cfg.ai)
+}
+
 /// Saves app namespace config to a given path.
 pub fn save_config_to_path(app: &AppState, path: &Path) {
     let theme_name = crate::ui::theme::active_theme().name;
@@ -165,7 +177,7 @@ pub fn save_config_to_path(app: &AppState, path: &Path) {
 
 /// Loads app config from ~/.kube/kubectui-config.json.
 pub fn load_config() -> AppState {
-    match default_config_path(dirs::home_dir()) {
+    match config_path() {
         Some(path) => load_config_from_path(&path),
         None => {
             log::warn!("home directory is unavailable; skipping app config load");
@@ -181,7 +193,7 @@ pub fn load_config() -> AppState {
 
 /// Saves app config to ~/.kube/kubectui-config.json.
 pub fn save_config(app: &AppState) {
-    match default_config_path(dirs::home_dir()) {
+    match config_path() {
         Some(path) => save_config_to_path(app, &path),
         None => log::warn!("home directory is unavailable; skipping app config save"),
     }
@@ -189,7 +201,7 @@ pub fn save_config(app: &AppState) {
 
 #[cfg(test)]
 mod tests {
-    use super::{default_config_path, load_config_from_path};
+    use super::{default_config_path, load_ai_config_from_path, load_config_from_path};
     use crate::ai_actions::AiProviderKind;
     use std::{fs, path::PathBuf};
 
@@ -239,6 +251,27 @@ mod tests {
         assert_eq!(ai.providers.len(), 2);
         assert_eq!(ai.providers[0].provider, AiProviderKind::CodexCli);
         assert_eq!(ai.providers[1].provider, AiProviderKind::ClaudeCli);
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_ai_config_from_path_reads_only_native_ai_block() {
+        let path = std::env::temp_dir().join(format!(
+            "kubectui-ai-config-reload-{}.json",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"{"namespace":"prod","refresh_interval_secs":15,"ai":{"providers":[{"provider":"codex_cli"}]}}"#,
+        )
+        .expect("write config");
+
+        let ai = load_ai_config_from_path(&path)
+            .expect("config parses")
+            .expect("ai config");
+        assert_eq!(ai.providers.len(), 1);
+        assert_eq!(ai.providers[0].provider, AiProviderKind::CodexCli);
 
         let _ = fs::remove_file(path);
     }
