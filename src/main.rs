@@ -828,6 +828,31 @@ fn ai_analysis_result_is_current(
     result.context_generation == refresh_state.context_generation
 }
 
+fn discard_stale_ai_analysis_result(
+    app: &mut kubectui::app::AppState,
+    result: AiAnalysisAsyncResult,
+) {
+    let resource_label = format!(
+        "{} on {} '{}'",
+        result.title,
+        result.resource.kind(),
+        result.resource.name(),
+    );
+    if let Some(tab) = app
+        .workbench_mut()
+        .find_tab_mut(&WorkbenchTabKey::AiAnalysis(result.execution_id))
+        && let WorkbenchTabState::AiAnalysis(tab_state) = &mut tab.state
+    {
+        tab_state.apply_error("AI result ignored after context changed.".to_string());
+    }
+    app.complete_action_history(
+        result.action_history_id,
+        ActionStatus::Failed,
+        format!("{resource_label} ignored after context changed."),
+        false,
+    );
+}
+
 fn apply_ai_analysis_result(
     app: &mut kubectui::app::AppState,
     result: AiAnalysisAsyncResult,
@@ -4634,6 +4659,8 @@ pub(crate) async fn run_app_inner(
             result = ai_analysis_rx.recv() => {
                 if let Some(result) = result {
                     if !ai_analysis_result_is_current(&result, &refresh_state) {
+                        discard_stale_ai_analysis_result(&mut app, result);
+                        needs_redraw = true;
                         continue;
                     }
                     apply_ai_analysis_result(&mut app, result, &mut status_message_clear_at);
