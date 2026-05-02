@@ -407,6 +407,24 @@ impl LogsViewerState {
             .collect()
     }
 
+    pub fn recent_visible_lines(&self, limit: usize) -> Vec<&LogEntry> {
+        if limit == 0 {
+            return Vec::new();
+        }
+        let now = crate::time::now();
+        let mut collected = Vec::with_capacity(limit);
+        for line in self.lines.iter().rev() {
+            if collected.len() >= limit {
+                break;
+            }
+            if self.matches_visible_filters_at(line, now) {
+                collected.push(line);
+            }
+        }
+        collected.reverse();
+        collected
+    }
+
     fn matches_visible_filters_at(&self, line: &LogEntry, now: crate::time::AppTimestamp) -> bool {
         entry_matches_time_window(line, self.time_window, now)
             && entry_matches_correlation(line, self.correlation_request_id.as_deref())
