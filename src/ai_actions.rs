@@ -49,6 +49,15 @@ impl AiProviderKind {
             Self::CodexCli => "codex-cli",
         }
     }
+
+    const fn slug(self) -> &'static str {
+        match self {
+            Self::OpenAi => "open_ai",
+            Self::Anthropic => "anthropic",
+            Self::ClaudeCli => "claude_cli",
+            Self::CodexCli => "codex_cli",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +181,39 @@ pub struct AiProviderConfig {
     pub action: Option<AiActionConfig>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct AiConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub providers: Vec<AiProviderConfig>,
+}
+
+impl AiConfig {
+    pub fn single(provider: AiProviderConfig) -> Self {
+        Self {
+            providers: vec![provider],
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AiConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum AiConfigRepr {
+            Multi { providers: Vec<AiProviderConfig> },
+            Single(Box<AiProviderConfig>),
+        }
+
+        match AiConfigRepr::deserialize(deserializer)? {
+            AiConfigRepr::Multi { providers } => Ok(Self { providers }),
+            AiConfigRepr::Single(provider) => Ok(Self::single(*provider)),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadedAiAction {
     pub id: String,
@@ -228,31 +270,40 @@ pub struct AiActionLoadResult {
     pub warnings: Vec<String>,
 }
 
-pub fn validate_ai_actions(config: Option<AiProviderConfig>) -> AiActionLoadResult {
-    let Some(ai) = config else {
+pub fn validate_ai_actions(config: Option<AiConfig>) -> AiActionLoadResult {
+    let Some(config) = config else {
         return AiActionLoadResult::default();
     };
     let mut actions = Vec::new();
     let mut warnings = Vec::new();
-    if let Some(warning) = ai_provider_warning(&ai) {
-        warnings.push(warning);
-        return AiActionLoadResult {
-            registry: AiActionRegistry::default(),
-            warnings,
-        };
-    }
+    let provider_count = config.providers.len();
+    for (provider_idx, ai) in config.providers.into_iter().enumerate() {
+        if let Some(warning) = ai_provider_warning(&ai) {
+            warnings.push(format!(
+                "{} provider skipped: {warning}",
+                ai.provider.label()
+            ));
+            continue;
+        }
 
-    match build_custom_ai_action(ai.clone()) {
-        Ok(action) => actions.push(action),
-        Err(warning) => warnings.push(warning),
-    }
-    for workflow in [
-        AiWorkflowKind::ExplainFailure,
-        AiWorkflowKind::RolloutRisk,
-        AiWorkflowKind::NetworkVerdict,
-        AiWorkflowKind::TriageFindings,
-    ] {
-        actions.push(build_default_ai_workflow_action(ai.clone(), workflow));
+        let namespaced = provider_count > 1;
+        match build_custom_ai_action(ai.clone(), provider_idx, namespaced) {
+            Ok(action) => actions.push(action),
+            Err(warning) => warnings.push(warning),
+        }
+        for workflow in [
+            AiWorkflowKind::ExplainFailure,
+            AiWorkflowKind::RolloutRisk,
+            AiWorkflowKind::NetworkVerdict,
+            AiWorkflowKind::TriageFindings,
+        ] {
+            actions.push(build_default_ai_workflow_action(
+                ai.clone(),
+                workflow,
+                provider_idx,
+                namespaced,
+            ));
+        }
     }
 
     AiActionLoadResult {
@@ -261,7 +312,11 @@ pub fn validate_ai_actions(config: Option<AiProviderConfig>) -> AiActionLoadResu
     }
 }
 
-fn build_custom_ai_action(ai: AiProviderConfig) -> Result<LoadedAiAction, String> {
+fn build_custom_ai_action(
+    ai: AiProviderConfig,
+    provider_idx: usize,
+    namespaced: bool,
+) -> Result<LoadedAiAction, String> {
     let action = ai.action.clone().unwrap_or(AiActionConfig {
         id: default_ai_action_id(),
         title: default_ai_action_title(),
@@ -282,6 +337,7 @@ fn build_custom_ai_action(ai: AiProviderConfig) -> Result<LoadedAiAction, String
     if title.is_empty() {
         return Err(format!("skipping AI action '{id}' with empty title"));
     }
+    let normalized_ai = normalize_ai_provider(ai);
     let mut aliases = action
         .aliases
         .into_iter()
@@ -296,6 +352,9 @@ fn build_custom_ai_action(ai: AiProviderConfig) -> Result<LoadedAiAction, String
     }
     aliases.sort();
     aliases.dedup();
+    if namespaced {
+        add_provider_aliases(&mut aliases, &normalized_ai);
+    }
     let mut resource_kinds = action
         .resource_kinds
         .into_iter()
@@ -313,13 +372,13 @@ fn build_custom_ai_action(ai: AiProviderConfig) -> Result<LoadedAiAction, String
     resource_kinds.dedup();
 
     Ok(LoadedAiAction {
-        id: id.to_string(),
-        title: title.to_string(),
+        id: action_id(id, &normalized_ai, provider_idx, namespaced),
+        title: action_title(title, &normalized_ai, namespaced),
         description: action.description.filter(|value| !value.trim().is_empty()),
         aliases,
         resource_kinds,
         shortcut: action.shortcut.filter(|value| !value.trim().is_empty()),
-        provider: normalize_ai_provider(ai),
+        provider: normalized_ai,
         workflow: AiWorkflowKind::ResourceAnalysis,
         system_prompt: action
             .system_prompt
@@ -330,21 +389,75 @@ fn build_custom_ai_action(ai: AiProviderConfig) -> Result<LoadedAiAction, String
 fn build_default_ai_workflow_action(
     ai: AiProviderConfig,
     workflow: AiWorkflowKind,
+    provider_idx: usize,
+    namespaced: bool,
 ) -> LoadedAiAction {
+    let normalized_ai = normalize_ai_provider(ai);
+    let mut aliases = workflow.default_aliases();
+    if namespaced {
+        add_provider_aliases(&mut aliases, &normalized_ai);
+    }
     LoadedAiAction {
-        id: workflow.default_id().to_string(),
-        title: workflow.default_title().to_string(),
+        id: action_id(
+            workflow.default_id(),
+            &normalized_ai,
+            provider_idx,
+            namespaced,
+        ),
+        title: action_title(workflow.default_title(), &normalized_ai, namespaced),
         description: Some(format!(
-            "{} with configured AI provider",
-            workflow.default_title()
+            "{} with {}",
+            workflow.default_title(),
+            normalized_ai.provider.label()
         )),
-        aliases: workflow.default_aliases(),
+        aliases,
         resource_kinds: workflow.default_resource_kinds(),
         shortcut: None,
-        provider: normalize_ai_provider(ai),
+        provider: normalized_ai,
         workflow,
         system_prompt: None,
     }
+}
+
+fn action_id(
+    base: &str,
+    provider: &AiProviderConfig,
+    provider_idx: usize,
+    namespaced: bool,
+) -> String {
+    if !namespaced {
+        return base.to_string();
+    }
+    if provider_idx == 0 {
+        base.to_string()
+    } else {
+        format!("{}_{}", base, provider_suffix(provider, provider_idx))
+    }
+}
+
+fn action_title(base: &str, provider: &AiProviderConfig, namespaced: bool) -> String {
+    if namespaced {
+        format!("{base} ({})", provider.provider.label())
+    } else {
+        base.to_string()
+    }
+}
+
+fn provider_suffix(provider: &AiProviderConfig, provider_idx: usize) -> String {
+    format!("{}_{provider_idx}", provider.provider.slug())
+}
+
+fn add_provider_aliases(aliases: &mut Vec<String>, provider: &AiProviderConfig) {
+    let label = provider.provider.label().to_ascii_lowercase();
+    let slug = provider.provider.slug().replace('_', " ");
+    aliases.extend([
+        label.clone(),
+        slug.clone(),
+        format!("{} {label}", DEFAULT_AI_ACTION_TITLE.to_ascii_lowercase()),
+        format!("{} {slug}", DEFAULT_AI_ACTION_TITLE.to_ascii_lowercase()),
+    ]);
+    aliases.sort();
+    aliases.dedup();
 }
 
 fn ai_provider_warning(ai: &AiProviderConfig) -> Option<String> {
@@ -410,7 +523,7 @@ mod tests {
 
     #[test]
     fn validate_native_ai_actions_registers_default_workflows() {
-        let result = validate_ai_actions(Some(AiProviderConfig {
+        let result = validate_ai_actions(Some(AiConfig::single(AiProviderConfig {
             provider: AiProviderKind::ClaudeCli,
             model: String::new(),
             api_key_env: String::new(),
@@ -421,7 +534,7 @@ mod tests {
             command: None,
             args: Vec::new(),
             action: None,
-        }));
+        })));
 
         assert!(result.warnings.is_empty());
         assert_eq!(result.registry.actions().len(), 5);
@@ -435,7 +548,7 @@ mod tests {
 
     #[test]
     fn http_ai_requires_model_and_api_key_env() {
-        let result = validate_ai_actions(Some(AiProviderConfig {
+        let result = validate_ai_actions(Some(AiConfig::single(AiProviderConfig {
             provider: AiProviderKind::OpenAi,
             model: String::new(),
             api_key_env: "OPENAI_API_KEY".into(),
@@ -446,12 +559,55 @@ mod tests {
             command: None,
             args: Vec::new(),
             action: None,
-        }));
+        })));
 
         assert!(result.registry.actions().is_empty());
         assert_eq!(
             result.warnings,
-            vec!["skipping AI actions with empty model"]
+            vec!["AI provider skipped: skipping AI actions with empty model"]
+        );
+    }
+
+    #[test]
+    fn multiple_ai_providers_register_picker_actions() {
+        let result = validate_ai_actions(Some(AiConfig {
+            providers: vec![
+                AiProviderConfig {
+                    provider: AiProviderKind::CodexCli,
+                    model: String::new(),
+                    api_key_env: String::new(),
+                    endpoint: None,
+                    timeout_secs: 15,
+                    max_output_tokens: 512,
+                    temperature: Some(0.1),
+                    command: None,
+                    args: Vec::new(),
+                    action: None,
+                },
+                AiProviderConfig {
+                    provider: AiProviderKind::ClaudeCli,
+                    model: String::new(),
+                    api_key_env: String::new(),
+                    endpoint: None,
+                    timeout_secs: 15,
+                    max_output_tokens: 512,
+                    temperature: Some(0.1),
+                    command: None,
+                    args: Vec::new(),
+                    action: None,
+                },
+            ],
+        }));
+
+        assert!(result.warnings.is_empty());
+        assert_eq!(result.registry.actions().len(), 10);
+        assert_eq!(result.registry.actions()[0].id, "ask_ai");
+        assert_eq!(result.registry.actions()[0].title, "Ask AI (Codex CLI)");
+        assert!(
+            result
+                .registry
+                .get("ai_explain_failure_claude_cli_1")
+                .is_some()
         );
     }
 }

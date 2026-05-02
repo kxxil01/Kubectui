@@ -58,12 +58,16 @@ Native AI actions load from `~/.kube/kubectui-config.json`:
 {
   "namespace": "all",
   "ai": {
-    "provider": "claude_cli"
+    "providers": [
+      { "provider": "codex_cli" },
+      { "provider": "claude_cli" }
+    ]
   }
 }
 ```
 
 Supported AI providers: `open_ai`, `anthropic`, `claude_cli`, and `codex_cli`.
+When multiple providers are configured, the action palette is the picker: choose entries like `Explain Failure (Codex CLI)` or `Explain Failure (Claude CLI)`.
 Legacy `ai:` blocks in `extensions.yaml` are not supported.
 
 ## What it does
