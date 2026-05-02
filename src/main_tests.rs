@@ -18,7 +18,9 @@ use super::{
     strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
     workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
-use crate::async_types::{QueuedRefresh, RefreshDispatch, RefreshRuntimeState};
+use crate::async_types::{
+    AiAnalysisAsyncResult, QueuedRefresh, RefreshDispatch, RefreshRuntimeState,
+};
 use kubectui::ui::components::command_palette::PaletteEntry;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
@@ -343,6 +345,34 @@ fn ai_context_includes_recent_event_counts_and_timestamps() {
     assert!(context.event_lines[0].contains("Warning BackOff count=4"));
     assert!(context.event_lines[0].contains("last_seen="));
     assert!(context.event_lines[1].contains("Normal Pulled count=1"));
+}
+
+#[test]
+fn stale_ai_analysis_results_are_ignored_after_scope_change() {
+    let mut refresh_state = RefreshRuntimeState::default();
+    refresh_state.context_generation = 3;
+    let result = AiAnalysisAsyncResult {
+        context_generation: 2,
+        action_history_id: 1,
+        resource: ResourceRef::Pod("api-0".to_string(), "prod".to_string()),
+        execution_id: 1,
+        title: "Explain Failure".to_string(),
+        result: Err("late result".to_string()),
+    };
+
+    assert!(!super::ai_analysis_result_is_current(
+        &result,
+        &refresh_state
+    ));
+
+    let current = AiAnalysisAsyncResult {
+        context_generation: 3,
+        ..result
+    };
+    assert!(super::ai_analysis_result_is_current(
+        &current,
+        &refresh_state
+    ));
 }
 
 #[test]

@@ -821,6 +821,13 @@ fn refresh_palette_activity(app: &mut kubectui::app::AppState) {
     );
 }
 
+fn ai_analysis_result_is_current(
+    result: &AiAnalysisAsyncResult,
+    refresh_state: &RefreshRuntimeState,
+) -> bool {
+    result.context_generation == refresh_state.context_generation
+}
+
 fn truncate_ai_block(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -1753,6 +1760,7 @@ fn build_ai_analysis_context(
 
 struct AiAnalysisRuntime<'a> {
     client: &'a K8sClient,
+    context_generation: u64,
     next_execution_id: &'a mut u64,
     tx: &'a tokio::sync::mpsc::Sender<AiAnalysisAsyncResult>,
 }
@@ -1780,6 +1788,7 @@ fn start_ai_analysis(
         .unwrap_or_else(|| default_system_prompt_for_workflow(workflow).to_string());
     let mut context = context.clone();
     let client = runtime.client.clone();
+    let context_generation = runtime.context_generation;
     let resource = resource.clone();
     let resource_label = format!(
         "{} on {} '{}'",
@@ -1801,6 +1810,7 @@ fn start_ai_analysis(
         };
         let _ = tx
             .send(AiAnalysisAsyncResult {
+                context_generation,
                 action_history_id,
                 resource,
                 execution_id,
@@ -4042,6 +4052,9 @@ pub(crate) async fn run_app_inner(
 
             result = ai_analysis_rx.recv() => {
                 if let Some(result) = result {
+                    if !ai_analysis_result_is_current(&result, &refresh_state) {
+                        continue;
+                    }
                     let resource_label = format!(
                         "{} on {} '{}'",
                         result.title,
@@ -4851,6 +4864,7 @@ pub(crate) async fn run_app_inner(
                     );
                     let mut ai_runtime = AiAnalysisRuntime {
                         client: &client,
+                        context_generation: refresh_state.context_generation,
                         next_execution_id: &mut next_ai_execution_id,
                         tx: &ai_analysis_tx,
                     };

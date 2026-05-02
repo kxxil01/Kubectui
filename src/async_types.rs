@@ -237,6 +237,7 @@ pub struct ExtensionCommandAsyncResult {
 
 #[derive(Debug)]
 pub struct AiAnalysisAsyncResult {
+    pub context_generation: u64,
     pub action_history_id: u64,
     pub resource: ResourceRef,
     pub execution_id: u64,
