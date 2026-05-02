@@ -30,12 +30,16 @@ debug/
 
 # Serena (local cache, overlays, and ad-hoc memories)
 .serena/cache/
+.serena/project.yml
 .serena/project.local.yml
 .serena/memories/**
 !.serena/memories/completion_checklist.md
 !.serena/memories/project_overview.md
 !.serena/memories/style_and_conventions.md
 !.serena/memories/suggested_commands.md
+
+# Local agent instructions
+AGENTS.md
 
 # OS
 Thumbs.db
