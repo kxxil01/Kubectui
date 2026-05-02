@@ -260,6 +260,48 @@ fn ai_context_redacts_sensitive_pod_log_values() {
 }
 
 #[test]
+fn explain_failure_ai_context_includes_high_signal_pod_state() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let context = super::build_ai_analysis_context(
+        &AppState::default(),
+        &ClusterSnapshot {
+            pods: vec![PodInfo {
+                name: "api-0".to_string(),
+                namespace: "prod".to_string(),
+                status: "CrashLoopBackOff".to_string(),
+                node: Some("node-a".to_string()),
+                pod_ip: Some("10.0.0.12".to_string()),
+                restarts: 7,
+                waiting_reasons: vec!["CrashLoopBackOff".to_string()],
+                container_images: vec!["registry.example.com/api:v42".to_string()],
+                missing_liveness_probes: 1,
+                referenced_config_maps: vec!["api-config".to_string()],
+                referenced_secrets: vec!["database-password".to_string()],
+                ..PodInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        },
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+    let rendered = context.render_prompt();
+
+    assert!(rendered.contains("Resource State"), "{rendered}");
+    assert!(rendered.contains("status: CrashLoopBackOff"), "{rendered}");
+    assert!(rendered.contains("restarts: 7"), "{rendered}");
+    assert!(
+        rendered.contains("waiting_reasons: CrashLoopBackOff"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("missing_probes: liveness=1 readiness=0"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("sensitive_refs: 1"), "{rendered}");
+    assert!(!rendered.contains("database-password"), "{rendered}");
+}
+
+#[test]
 fn rollout_ai_context_uses_rollout_summary_when_available() {
     let resource = ResourceRef::Deployment("api".to_string(), "prod".to_string());
     let mut app = AppState::default();
