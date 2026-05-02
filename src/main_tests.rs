@@ -626,6 +626,57 @@ fn ai_context_redacts_secret_names_from_event_messages() {
 }
 
 #[test]
+fn ai_context_reports_snapshot_events_rbac_unavailable() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let context = super::build_ai_analysis_context(
+        &AppState::default(),
+        &ClusterSnapshot {
+            events: vec![K8sEventInfo {
+                name: "events-unavailable".to_string(),
+                namespace: "prod".to_string(),
+                involved_object: String::new(),
+                type_: "Info".to_string(),
+                reason: "RBAC".to_string(),
+                message: "Events unavailable (RBAC)".to_string(),
+                count: 1,
+                last_seen: Some(now()),
+                ..K8sEventInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        },
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+    let rendered = context.render_prompt();
+
+    assert!(rendered.contains("Info RBAC count=1"), "{rendered}");
+    assert!(rendered.contains("Events unavailable (RBAC)"), "{rendered}");
+}
+
+#[test]
+fn ai_context_reports_events_refresh_error_before_empty_events() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let context = super::build_ai_analysis_context(
+        &AppState::default(),
+        &ClusterSnapshot {
+            events_last_error: Some(
+                "failed fetching events across all namespaces: forbidden".to_string(),
+            ),
+            ..ClusterSnapshot::default()
+        },
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+    let rendered = context.render_prompt();
+
+    assert!(
+        rendered.contains("Events unavailable: failed fetching events across all namespaces"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("forbidden"), "{rendered}");
+}
+
+#[test]
 fn ai_context_summary_reports_sent_context_counts() {
     let context = AiAnalysisContext {
         resource: ResourceRef::Pod("api-0".to_string(), "prod".to_string()),

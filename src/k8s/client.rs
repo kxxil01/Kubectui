@@ -624,14 +624,24 @@ impl K8sClient {
             None => Api::all(self.client.clone()),
         };
         let lp = ListParams::default().limit(MAX_EVENTS_LIST_LIMIT);
-        let list = list_items_or_empty(&api, &lp, || {
-            if let Some(ns) = namespace {
-                format!("failed fetching events in namespace '{ns}'")
-            } else {
-                "failed fetching events across all namespaces".to_string()
+        let list = match api.list(&lp).await {
+            Ok(list) => list.items,
+            Err(err) if is_forbidden_error(&err) => {
+                return Ok(vec![events_unavailable_info(
+                    namespace,
+                    "Events unavailable (RBAC)",
+                )]);
             }
-        })
-        .await?;
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    if let Some(ns) = namespace {
+                        format!("failed fetching events in namespace '{ns}'")
+                    } else {
+                        "failed fetching events across all namespaces".to_string()
+                    }
+                });
+            }
+        };
         let mut events: Vec<K8sEventInfo> = list
             .into_iter()
             .map(crate::k8s::conversions::event_to_info)
@@ -1709,6 +1719,20 @@ fn choose_crd_request_version(versions: &[CustomResourceDefinitionVersion]) -> S
         .or_else(|| versions.first())
         .map(|version| version.name.clone())
         .unwrap_or_else(|| "v1".to_string())
+}
+
+fn events_unavailable_info(namespace: Option<&str>, message: &str) -> K8sEventInfo {
+    K8sEventInfo {
+        name: "events-unavailable".to_string(),
+        namespace: namespace.unwrap_or("*").to_string(),
+        reason: "RBAC".to_string(),
+        message: message.to_string(),
+        type_: "Info".to_string(),
+        count: 1,
+        involved_object: String::new(),
+        last_seen: Some(now()),
+        age: None,
+    }
 }
 
 async fn list_items_or_empty<K, C>(api: &Api<K>, params: &ListParams, context: C) -> Result<Vec<K>>
@@ -2967,6 +2991,18 @@ mod tests {
 
         assert!(is_forbidden_error(&forbidden));
         assert!(!is_forbidden_error(&timeout));
+    }
+
+    #[test]
+    fn events_unavailable_info_keeps_rbac_as_snapshot_signal() {
+        let event = events_unavailable_info(Some("prod"), "Events unavailable (RBAC)");
+
+        assert_eq!(event.name, "events-unavailable");
+        assert_eq!(event.namespace, "prod");
+        assert_eq!(event.reason, "RBAC");
+        assert_eq!(event.message, "Events unavailable (RBAC)");
+        assert!(event.involved_object.is_empty());
+        assert!(event.last_seen.is_some());
     }
 
     #[test]

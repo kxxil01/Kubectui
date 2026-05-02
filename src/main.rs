@@ -2245,7 +2245,7 @@ fn build_ai_analysis_context(
     let (workflow_title, workflow_lines) =
         build_ai_workflow_context(app, snapshot, resource, workflow, &issue_lines);
     let event_match = format!("{}/{}", resource.kind(), resource.name());
-    let event_lines = cap_ai_lines(
+    let mut event_lines = cap_ai_lines(
         if let Some(detail) = detail {
             let mut events = detail.events.clone();
             events.sort_by(|left, right| {
@@ -2281,6 +2281,15 @@ fn build_ai_analysis_context(
         AI_EVENT_MAX_LINES,
         AI_EVENT_MAX_CHARS,
     );
+    if detail.is_none()
+        && let Some(line) = ai_snapshot_events_unavailable_line(snapshot)
+        && !event_lines
+            .iter()
+            .any(|existing| existing.contains("Events unavailable"))
+    {
+        event_lines.insert(0, line);
+        event_lines = cap_ai_lines(event_lines, AI_EVENT_MAX_LINES, AI_EVENT_MAX_CHARS);
+    }
     let probe_lines = cap_ai_lines(
         detail
             .and_then(|detail| detail.probe_panel.as_ref())
@@ -2350,6 +2359,29 @@ fn build_ai_analysis_context(
             .and_then(|detail| detail.yaml.clone())
             .and_then(|yaml| sanitize_ai_yaml_excerpt(resource, &yaml)),
     }
+}
+
+fn ai_snapshot_events_unavailable_line(snapshot: &ClusterSnapshot) -> Option<String> {
+    snapshot
+        .events_last_error
+        .as_deref()
+        .map(|error| {
+            truncate_ai_block(
+                &format!("Events unavailable: {}", redact_ai_inline_secrets(error)),
+                220,
+            )
+        })
+        .or_else(|| {
+            snapshot
+                .events
+                .iter()
+                .find(|event| {
+                    event.involved_object.is_empty()
+                        && (event.reason.eq_ignore_ascii_case("rbac")
+                            || ai_context_line_has_availability_gap(&event.message))
+                })
+                .map(format_ai_snapshot_event)
+        })
 }
 
 fn ai_context_count_label(label: &str, count: usize) -> String {
