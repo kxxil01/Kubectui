@@ -111,14 +111,20 @@ pub async fn handle_open_resource_yaml(
             (detail.resource.as_ref() == Some(&resource)).then(|| detail.yaml.clone())
         })
         .flatten();
-    let pending_request_id = cached_yaml
-        .is_none()
+    let cached_yaml_error = app
+        .detail_view
+        .as_ref()
+        .and_then(|detail| {
+            (detail.resource.as_ref() == Some(&resource)).then(|| detail.yaml_error.clone())
+        })
+        .flatten();
+    let pending_request_id = (cached_yaml.is_none() && cached_yaml_error.is_none())
         .then(|| next_request_id(detail_request_seq));
     app.detail_view = None;
     app.open_resource_yaml_tab(
         resource.clone(),
         cached_yaml.clone(),
-        None,
+        cached_yaml_error,
         pending_request_id,
     );
     if let Some(request_id) = pending_request_id {
@@ -808,15 +814,17 @@ pub fn handle_toggle_bookmark(app: &mut AppState, snapshot: &ClusterSnapshot) ->
 mod tests {
     use super::{
         handle_apply_access_review_subject, handle_open_network_policies,
-        handle_open_resource_events, handle_open_traffic_debug,
+        handle_open_resource_events, handle_open_resource_yaml, handle_open_traffic_debug,
     };
     use kubectui::{
         app::{AppState, AppView, DetailViewState, ResourceRef},
+        authorization::DetailActionAuthorization,
         k8s::{
             client::K8sClient,
             dtos::{ClusterRoleBindingInfo, K8sEventInfo, RoleBindingSubject},
             relationships::{RelationKind, RelationNode},
         },
+        policy::DetailAction,
         rbac_subjects::{AccessReviewSubject, resolve_subject_access_review},
         state::ClusterSnapshot,
         workbench::{
@@ -854,6 +862,51 @@ mod tests {
         assert!(app.workbench.tabs.is_empty());
         assert_eq!(request_seq, 0);
         assert!(detail_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn open_resource_yaml_uses_cached_yaml_error_without_refetch() {
+        let client = K8sClient::dummy();
+        let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel(1);
+        let resource = ResourceRef::Pod("api".into(), "prod".into());
+        let mut detail = DetailViewState {
+            resource: Some(resource.clone()),
+            yaml: None,
+            yaml_error: Some("live YAML unavailable".into()),
+            ..DetailViewState::default()
+        };
+        detail
+            .metadata
+            .action_authorizations
+            .insert(DetailAction::ViewYaml, DetailActionAuthorization::Allowed);
+        let mut app = AppState {
+            detail_view: Some(detail),
+            ..AppState::default()
+        };
+        let mut request_seq = 41;
+
+        let handled = handle_open_resource_yaml(
+            &mut app,
+            &client,
+            &ClusterSnapshot::default(),
+            &detail_tx,
+            &mut request_seq,
+        )
+        .await;
+
+        assert!(!handled);
+        assert_eq!(request_seq, 41);
+        assert!(detail_rx.try_recv().is_err());
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing yaml tab");
+        };
+        let WorkbenchTabState::ResourceYaml(tab) = &tab.state else {
+            panic!("expected yaml tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert!(tab.yaml.is_none());
+        assert_eq!(tab.error.as_deref(), Some("live YAML unavailable"));
     }
 
     #[tokio::test]

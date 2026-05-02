@@ -167,7 +167,7 @@ pub(crate) fn apply_detail_state_to_workbench(
     {
         yaml_tab.yaml = state.yaml.clone();
         yaml_tab.loading = false;
-        yaml_tab.error = state.error.clone();
+        yaml_tab.error = state.yaml_error.clone().or_else(|| state.error.clone());
         yaml_tab.pending_request_id = None;
     }
 
@@ -921,7 +921,7 @@ mod tests {
     use super::*;
     use kubectui::{
         secret::{DecodedSecretEntry, DecodedSecretValue},
-        workbench::{DecodedSecretTabState, PodLogsTabState},
+        workbench::{DecodedSecretTabState, PodLogsTabState, ResourceYamlTabState},
     };
 
     #[test]
@@ -1034,6 +1034,36 @@ mod tests {
             tab.source_yaml.as_deref(),
             Some("kind: Secret\ndata:\n  TOKEN: b2xkLXZhbHVl\n")
         );
+    }
+
+    #[test]
+    fn resource_yaml_async_result_surfaces_yaml_error() {
+        let resource = ResourceRef::Pod("api-0".into(), "prod".into());
+        let mut app = AppState::default();
+        let mut tab = ResourceYamlTabState::new(resource.clone());
+        tab.loading = true;
+        tab.pending_request_id = Some(9);
+        app.workbench_mut()
+            .open_tab(WorkbenchTabState::ResourceYaml(tab));
+
+        let state = DetailViewState {
+            resource: Some(resource),
+            yaml: None,
+            yaml_error: Some("failed to read live YAML".into()),
+            ..DetailViewState::default()
+        };
+        apply_detail_state_to_workbench(&mut app, 9, &state);
+
+        let Some(tab) = app.workbench().active_tab() else {
+            panic!("missing yaml tab");
+        };
+        let WorkbenchTabState::ResourceYaml(tab) = &tab.state else {
+            panic!("expected yaml tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert!(tab.yaml.is_none());
+        assert_eq!(tab.error.as_deref(), Some("failed to read live YAML"));
     }
 
     #[test]
