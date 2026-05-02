@@ -36,9 +36,9 @@ use kubectui::{
         client::FluxWatchTarget,
         dtos::{
             ConfigMapInfo, CustomResourceDefinitionInfo, CustomResourceInfo, DeploymentInfo,
-            FluxResourceInfo, JobInfo, K8sEventInfo, NamespaceInfo, NodeInfo, OwnerRefInfo,
-            PodInfo, ReplicaSetInfo, ServiceInfo, VulnerabilityReportInfo,
-            VulnerabilitySummaryCounts,
+            EndpointInfo, FluxResourceInfo, JobInfo, K8sEventInfo, NamespaceInfo, NodeInfo,
+            OwnerRefInfo, PodInfo, PvInfo, PvcInfo, ReplicaSetInfo, SecretInfo, ServiceInfo,
+            VulnerabilityReportInfo, VulnerabilitySummaryCounts,
         },
     },
     log_investigation::LogEntry,
@@ -57,7 +57,10 @@ use kubectui::{
         WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState,
     },
 };
-use std::time::{Duration, Instant};
+use std::{
+    collections::BTreeMap,
+    time::{Duration, Instant},
+};
 
 #[test]
 fn root_enter_shortcut_rejects_control_alt_modifiers() {
@@ -406,6 +409,103 @@ fn explain_failure_ai_context_includes_high_signal_pod_state() {
     );
     assert!(rendered.contains("sensitive_refs: 1"), "{rendered}");
     assert!(!rendered.contains("database-password"), "{rendered}");
+}
+
+#[test]
+fn deployment_ai_context_includes_related_resource_counts() {
+    let resource = ResourceRef::Deployment("api".to_string(), "prod".to_string());
+    let context = super::build_ai_analysis_context(
+        &AppState::default(),
+        &ClusterSnapshot {
+            deployments: vec![DeploymentInfo {
+                name: "api".to_string(),
+                namespace: "prod".to_string(),
+                desired_replicas: 3,
+                ready_replicas: 1,
+                pod_template_labels: BTreeMap::from([("app".to_string(), "api".to_string())]),
+                referenced_config_maps: vec![
+                    "api-config".to_string(),
+                    "missing-config".to_string(),
+                ],
+                referenced_secrets: vec!["database-password".to_string()],
+                ..DeploymentInfo::default()
+            }],
+            services: vec![ServiceInfo {
+                name: "api".to_string(),
+                namespace: "prod".to_string(),
+                selector: BTreeMap::from([("app".to_string(), "api".to_string())]),
+                ..ServiceInfo::default()
+            }],
+            endpoints: vec![EndpointInfo {
+                name: "api".to_string(),
+                namespace: "prod".to_string(),
+                addresses: vec!["10.0.0.1".to_string(), "10.0.0.2".to_string()],
+                ..EndpointInfo::default()
+            }],
+            config_maps: vec![ConfigMapInfo {
+                name: "api-config".to_string(),
+                namespace: "prod".to_string(),
+                ..ConfigMapInfo::default()
+            }],
+            secrets: vec![SecretInfo {
+                name: "database-password".to_string(),
+                namespace: "prod".to_string(),
+                ..SecretInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        },
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+    let rendered = context.render_prompt();
+
+    assert!(
+        rendered.contains("matching_services: 1 endpoint_addresses: 2"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("config_maps: 2 refs (1 present, 1 missing)"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("sensitive_refs: 1 refs (1 present, 0 missing)"),
+        "{rendered}"
+    );
+    assert!(!rendered.contains("database-password"), "{rendered}");
+}
+
+#[test]
+fn pvc_ai_context_includes_bound_pv_state() {
+    let resource = ResourceRef::Pvc("data".to_string(), "prod".to_string());
+    let context = super::build_ai_analysis_context(
+        &AppState::default(),
+        &ClusterSnapshot {
+            pvcs: vec![PvcInfo {
+                name: "data".to_string(),
+                namespace: "prod".to_string(),
+                status: "Bound".to_string(),
+                volume: Some("pv-data".to_string()),
+                capacity: Some("10Gi".to_string()),
+                storage_class: Some("fast".to_string()),
+                ..PvcInfo::default()
+            }],
+            pvs: vec![PvInfo {
+                name: "pv-data".to_string(),
+                status: "Bound".to_string(),
+                reclaim_policy: "Retain".to_string(),
+                ..PvInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        },
+        &resource,
+        AiWorkflowKind::ResourceAnalysis,
+    );
+    let rendered = context.render_prompt();
+
+    assert!(rendered.contains("status: Bound"), "{rendered}");
+    assert!(rendered.contains("volume: pv-data"), "{rendered}");
+    assert!(rendered.contains("pv_status: Bound"), "{rendered}");
+    assert!(rendered.contains("pv_reclaim_policy: Retain"), "{rendered}");
 }
 
 #[test]

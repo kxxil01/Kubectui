@@ -1203,6 +1203,130 @@ fn ai_join_map(map: &BTreeMap<String, String>, max: usize) -> String {
     items.join(", ")
 }
 
+fn ai_refs_presence_line(label: &str, refs: &[String], existing_count: usize) -> Option<String> {
+    if refs.is_empty() {
+        return None;
+    }
+    let missing = refs.len().saturating_sub(existing_count);
+    Some(format!(
+        "{label}: {} refs ({} present, {} missing)",
+        refs.len(),
+        existing_count,
+        missing
+    ))
+}
+
+fn ai_config_map_presence_line(
+    snapshot: &kubectui::state::ClusterSnapshot,
+    namespace: &str,
+    refs: &[String],
+) -> Option<String> {
+    let existing_count = refs
+        .iter()
+        .filter(|name| {
+            snapshot
+                .config_maps
+                .iter()
+                .any(|config| config.namespace == namespace && config.name == **name)
+        })
+        .count();
+    ai_refs_presence_line("config_maps", refs, existing_count)
+}
+
+fn ai_secret_presence_line(
+    snapshot: &kubectui::state::ClusterSnapshot,
+    namespace: &str,
+    refs: &[String],
+) -> Option<String> {
+    let existing_count = refs
+        .iter()
+        .filter(|name| {
+            snapshot
+                .secrets
+                .iter()
+                .any(|secret| secret.namespace == namespace && secret.name == **name)
+        })
+        .count();
+    ai_refs_presence_line("sensitive_refs", refs, existing_count)
+}
+
+fn ai_owner_chain_line(
+    snapshot: &kubectui::state::ClusterSnapshot,
+    owners: &[kubectui::k8s::dtos::OwnerRefInfo],
+    namespace: &str,
+) -> Option<String> {
+    let owner = owners.first()?;
+    if owner.kind.eq_ignore_ascii_case("ReplicaSet")
+        && let Some(replicaset) = snapshot
+            .replicasets
+            .iter()
+            .find(|replicaset| replicaset.namespace == namespace && replicaset.name == owner.name)
+        && let Some(deployment_owner) = replicaset
+            .owner_references
+            .iter()
+            .find(|owner| owner.kind.eq_ignore_ascii_case("Deployment"))
+    {
+        return Some(format!(
+            "owner_chain: ReplicaSet/{} -> Deployment/{}",
+            owner.name, deployment_owner.name
+        ));
+    }
+    Some(format!("owner_chain: {}/{}", owner.kind, owner.name))
+}
+
+fn ai_labels_map(labels: &[(String, String)]) -> BTreeMap<String, String> {
+    labels
+        .iter()
+        .map(|(key, value)| (key.clone(), value.clone()))
+        .collect()
+}
+
+fn ai_matching_service_line(
+    snapshot: &kubectui::state::ClusterSnapshot,
+    namespace: &str,
+    labels: &BTreeMap<String, String>,
+) -> Option<String> {
+    if labels.is_empty() {
+        return None;
+    }
+    let mut service_count = 0usize;
+    let mut endpoint_addresses = 0usize;
+    for service in snapshot.services.iter().filter(|service| {
+        service.namespace == namespace
+            && !service.selector.is_empty()
+            && service
+                .selector
+                .iter()
+                .all(|(key, expected)| labels.get(key).is_some_and(|actual| actual == expected))
+    }) {
+        service_count += 1;
+        endpoint_addresses += snapshot
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.namespace == namespace && endpoint.name == service.name)
+            .map(|endpoint| endpoint.addresses.len())
+            .unwrap_or(0);
+    }
+    (service_count > 0).then(|| {
+        format!("matching_services: {service_count} endpoint_addresses: {endpoint_addresses}")
+    })
+}
+
+fn ai_push_reference_presence_lines(
+    lines: &mut Vec<String>,
+    snapshot: &kubectui::state::ClusterSnapshot,
+    namespace: &str,
+    config_maps: &[String],
+    secrets: &[String],
+) {
+    if let Some(line) = ai_config_map_presence_line(snapshot, namespace, config_maps) {
+        lines.push(line);
+    }
+    if let Some(line) = ai_secret_presence_line(snapshot, namespace, secrets) {
+        lines.push(line);
+    }
+}
+
 fn build_ai_resource_state_lines(
     snapshot: &kubectui::state::ClusterSnapshot,
     resource: &ResourceRef,
@@ -1243,15 +1367,22 @@ fn build_ai_resource_state_lines(
                         pod.host_network, pod.host_pid, pod.host_ipc
                     ));
                 }
-                if !pod.referenced_config_maps.is_empty() {
-                    lines.push(format!(
-                        "config_maps: {}",
-                        ai_join_values(&pod.referenced_config_maps, 6)
-                    ));
+                if let Some(line) = ai_owner_chain_line(snapshot, &pod.owner_references, namespace)
+                {
+                    lines.push(line);
                 }
-                if !pod.referenced_secrets.is_empty() {
-                    lines.push(format!("sensitive_refs: {}", pod.referenced_secrets.len()));
+                if let Some(line) =
+                    ai_matching_service_line(snapshot, namespace, &ai_labels_map(&pod.labels))
+                {
+                    lines.push(line);
                 }
+                ai_push_reference_presence_lines(
+                    &mut lines,
+                    snapshot,
+                    namespace,
+                    &pod.referenced_config_maps,
+                    &pod.referenced_secrets,
+                );
                 lines
             })
             .unwrap_or_default(),
@@ -1276,19 +1407,98 @@ fn build_ai_resource_state_lines(
                         "pod_template_labels: {}",
                         ai_join_map(&deployment.pod_template_labels, 6)
                     ));
+                    if let Some(line) = ai_matching_service_line(
+                        snapshot,
+                        namespace,
+                        &deployment.pod_template_labels,
+                    ) {
+                        lines.push(line);
+                    }
                 }
-                if !deployment.referenced_config_maps.is_empty() {
+                ai_push_reference_presence_lines(
+                    &mut lines,
+                    snapshot,
+                    namespace,
+                    &deployment.referenced_config_maps,
+                    &deployment.referenced_secrets,
+                );
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::StatefulSet(name, namespace) => snapshot
+            .statefulsets
+            .iter()
+            .find(|statefulset| &statefulset.name == name && &statefulset.namespace == namespace)
+            .map(|statefulset| {
+                let mut lines = vec![
+                    format!("desired_replicas: {}", statefulset.desired_replicas),
+                    format!("ready_replicas: {}", statefulset.ready_replicas),
+                    format!("service_name: {}", statefulset.service_name),
+                    format!(
+                        "pod_management_policy: {}",
+                        statefulset.pod_management_policy
+                    ),
+                ];
+                if let Some(image) = statefulset.image.as_ref() {
+                    lines.push(format!("image: {image}"));
+                }
+                if !statefulset.pod_template_labels.is_empty() {
                     lines.push(format!(
-                        "config_maps: {}",
-                        ai_join_values(&deployment.referenced_config_maps, 6)
+                        "pod_template_labels: {}",
+                        ai_join_map(&statefulset.pod_template_labels, 6)
                     ));
+                    if let Some(line) = ai_matching_service_line(
+                        snapshot,
+                        namespace,
+                        &statefulset.pod_template_labels,
+                    ) {
+                        lines.push(line);
+                    }
                 }
-                if !deployment.referenced_secrets.is_empty() {
+                ai_push_reference_presence_lines(
+                    &mut lines,
+                    snapshot,
+                    namespace,
+                    &statefulset.referenced_config_maps,
+                    &statefulset.referenced_secrets,
+                );
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::DaemonSet(name, namespace) => snapshot
+            .daemonsets
+            .iter()
+            .find(|daemonset| &daemonset.name == name && &daemonset.namespace == namespace)
+            .map(|daemonset| {
+                let mut lines = vec![
+                    format!("desired_count: {}", daemonset.desired_count),
+                    format!("ready_count: {}", daemonset.ready_count),
+                    format!("unavailable_count: {}", daemonset.unavailable_count),
+                    format!("update_strategy: {}", daemonset.update_strategy),
+                ];
+                if let Some(image) = daemonset.image.as_ref() {
+                    lines.push(format!("image: {image}"));
+                }
+                if !daemonset.pod_template_labels.is_empty() {
                     lines.push(format!(
-                        "sensitive_refs: {}",
-                        deployment.referenced_secrets.len()
+                        "pod_template_labels: {}",
+                        ai_join_map(&daemonset.pod_template_labels, 6)
                     ));
+                    if let Some(line) = ai_matching_service_line(
+                        snapshot,
+                        namespace,
+                        &daemonset.pod_template_labels,
+                    ) {
+                        lines.push(line);
+                    }
                 }
+                ai_push_reference_presence_lines(
+                    &mut lines,
+                    snapshot,
+                    namespace,
+                    &daemonset.referenced_config_maps,
+                    &daemonset.referenced_secrets,
+                );
                 lines
             })
             .unwrap_or_default(),
@@ -1323,7 +1533,7 @@ fn build_ai_resource_state_lines(
             .iter()
             .find(|job| &job.name == name && &job.namespace == namespace)
             .map(|job| {
-                vec![
+                let mut lines = vec![
                     format!("status: {}", job.status),
                     format!("completions: {}", job.completions),
                     format!("desired_completions: {}", job.desired_completions),
@@ -1331,7 +1541,25 @@ fn build_ai_resource_state_lines(
                     format!("failed_pods: {}", job.failed_pods),
                     format!("active_pods: {}", job.active_pods),
                     format!("parallelism: {}", job.parallelism),
-                ]
+                ];
+                if !job.pod_template_labels.is_empty() {
+                    lines.push(format!(
+                        "pod_template_labels: {}",
+                        ai_join_map(&job.pod_template_labels, 6)
+                    ));
+                }
+                if let Some(line) = ai_owner_chain_line(snapshot, &job.owner_references, namespace)
+                {
+                    lines.push(line);
+                }
+                ai_push_reference_presence_lines(
+                    &mut lines,
+                    snapshot,
+                    namespace,
+                    &job.referenced_config_maps,
+                    &job.referenced_secrets,
+                );
+                lines
             })
             .unwrap_or_default(),
         ResourceRef::CronJob(name, namespace) => snapshot
@@ -1406,6 +1634,58 @@ fn build_ai_resource_state_lines(
                     format!("app_version: {}", release.app_version),
                     format!("revision: {}", release.revision),
                 ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::Pvc(name, namespace) => snapshot
+            .pvcs
+            .iter()
+            .find(|pvc| &pvc.name == name && &pvc.namespace == namespace)
+            .map(|pvc| {
+                let mut lines = vec![
+                    format!("status: {}", pvc.status),
+                    format!("capacity: {}", pvc.capacity.as_deref().unwrap_or("-")),
+                    format!(
+                        "storage_class: {}",
+                        pvc.storage_class.as_deref().unwrap_or("-")
+                    ),
+                    format!("volume: {}", pvc.volume.as_deref().unwrap_or("-")),
+                ];
+                if let Some(volume) = pvc.volume.as_ref()
+                    && let Some(pv) = snapshot.pvs.iter().find(|pv| &pv.name == volume)
+                {
+                    lines.push(format!("pv_status: {}", pv.status));
+                    lines.push(format!("pv_reclaim_policy: {}", pv.reclaim_policy));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::Pv(name) => snapshot
+            .pvs
+            .iter()
+            .find(|pv| &pv.name == name)
+            .map(|pv| {
+                let mut lines = vec![
+                    format!("status: {}", pv.status),
+                    format!("capacity: {}", pv.capacity.as_deref().unwrap_or("-")),
+                    format!(
+                        "storage_class: {}",
+                        pv.storage_class.as_deref().unwrap_or("-")
+                    ),
+                    format!("reclaim_policy: {}", pv.reclaim_policy),
+                    format!("claim: {}", pv.claim.as_deref().unwrap_or("-")),
+                ];
+                if let Some(claim) = pv.claim.as_ref() {
+                    let mut parts = claim.splitn(2, '/');
+                    if let (Some(namespace), Some(name)) = (parts.next(), parts.next())
+                        && let Some(pvc) = snapshot
+                            .pvcs
+                            .iter()
+                            .find(|pvc| pvc.namespace == namespace && pvc.name == name)
+                    {
+                        lines.push(format!("pvc_status: {}", pvc.status));
+                    }
+                }
+                lines
             })
             .unwrap_or_default(),
         _ => kubectui::detail_sections::sections_for_resource(snapshot, resource),
