@@ -3,6 +3,7 @@
 #![cfg_attr(test, allow(clippy::field_reassign_with_default))]
 
 pub mod action_history;
+pub mod ai_actions;
 pub mod app;
 pub mod authorization;
 pub mod bookmarks;

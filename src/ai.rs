@@ -1,14 +1,18 @@
 //! Provider-backed AI analysis for selected resources.
 
-use std::time::Duration;
+use std::{
+    process::{Command, Stdio},
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use kubectui::{
+    ai_actions::{AiProviderConfig, AiProviderKind, AiWorkflowKind},
     app::ResourceRef,
-    extensions::{AiProviderConfig, AiProviderKind, AiWorkflowKind},
 };
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
@@ -122,8 +126,6 @@ pub fn run_ai_analysis(
     if system_prompt.is_empty() {
         bail!("AI system prompt must not be empty");
     }
-    let api_key = std::env::var(&provider.api_key_env)
-        .with_context(|| format!("AI API key env var '{}' is not set", provider.api_key_env))?;
     let agent_config = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(provider.timeout_secs)))
         .http_status_as_error(false)
@@ -133,10 +135,19 @@ pub fn run_ai_analysis(
     let user_prompt = context.render_prompt();
     let raw_json = match provider.provider {
         AiProviderKind::OpenAi => {
+            let api_key = std::env::var(&provider.api_key_env).with_context(|| {
+                format!("AI API key env var '{}' is not set", provider.api_key_env)
+            })?;
             call_openai(&agent, provider, &api_key, system_prompt, &user_prompt)?
         }
         AiProviderKind::Anthropic => {
+            let api_key = std::env::var(&provider.api_key_env).with_context(|| {
+                format!("AI API key env var '{}' is not set", provider.api_key_env)
+            })?;
             call_anthropic(&agent, provider, &api_key, system_prompt, &user_prompt)?
+        }
+        AiProviderKind::ClaudeCli | AiProviderKind::CodexCli => {
+            call_ai_cli(provider, system_prompt, &user_prompt)?
         }
     };
     let structured = parse_structured_response(&raw_json)?;
@@ -296,6 +307,89 @@ fn call_anthropic(
 
 #[cold]
 #[inline(never)]
+fn call_ai_cli(
+    provider: &AiProviderConfig,
+    system_prompt: &str,
+    user_prompt: &str,
+) -> Result<String> {
+    let command = ai_cli_command(provider);
+    let args = ai_cli_args(provider, system_prompt, user_prompt);
+    let mut child = Command::new(&command)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("failed to launch AI CLI '{command}'"))?;
+    let started = Instant::now();
+    loop {
+        if child
+            .try_wait()
+            .with_context(|| format!("failed to poll AI CLI '{command}'"))?
+            .is_some()
+        {
+            let output = child
+                .wait_with_output()
+                .with_context(|| format!("failed to read AI CLI '{command}' output"))?;
+            if output.status.success() {
+                return String::from_utf8(output.stdout)
+                    .context("AI CLI returned non-UTF-8 stdout");
+            }
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let message = stderr.trim();
+            if message.is_empty() {
+                bail!("AI CLI '{command}' failed with status {}", output.status);
+            }
+            bail!("AI CLI '{command}' failed: {message}");
+        }
+        if started.elapsed() >= Duration::from_secs(provider.timeout_secs) {
+            let _ = child.kill();
+            let _ = child.wait();
+            bail!(
+                "AI CLI '{}' timed out after {}s",
+                command,
+                provider.timeout_secs
+            );
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn ai_cli_command(provider: &AiProviderConfig) -> String {
+    provider
+        .command
+        .clone()
+        .unwrap_or_else(|| match provider.provider {
+            AiProviderKind::ClaudeCli => "claude".to_string(),
+            AiProviderKind::CodexCli => "codex".to_string(),
+            AiProviderKind::OpenAi | AiProviderKind::Anthropic => {
+                unreachable!("not a CLI provider")
+            }
+        })
+}
+
+fn ai_cli_args(provider: &AiProviderConfig, system_prompt: &str, user_prompt: &str) -> Vec<String> {
+    let prompt = format!("{system_prompt}\n\n{user_prompt}");
+    let default_args = match provider.provider {
+        AiProviderKind::ClaudeCli => vec!["-p".to_string(), "$PROMPT".to_string()],
+        AiProviderKind::CodexCli => vec!["exec".to_string(), "$PROMPT".to_string()],
+        AiProviderKind::OpenAi | AiProviderKind::Anthropic => Vec::new(),
+    };
+    let args = if provider.args.is_empty() {
+        default_args
+    } else {
+        provider.args.clone()
+    };
+    args.into_iter()
+        .map(|arg| {
+            arg.replace("$SYSTEM_PROMPT", system_prompt)
+                .replace("$PROMPT", &prompt)
+        })
+        .collect()
+}
+
+#[cold]
+#[inline(never)]
 fn parse_structured_response(raw: &str) -> Result<StructuredAiResponse> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
@@ -413,6 +507,50 @@ mod tests {
     }
 
     #[test]
+    fn ai_cli_defaults_use_prompt_argument() {
+        let provider = AiProviderConfig {
+            provider: AiProviderKind::ClaudeCli,
+            model: String::new(),
+            api_key_env: String::new(),
+            endpoint: None,
+            timeout_secs: 5,
+            max_output_tokens: 128,
+            temperature: Some(0.1),
+            command: None,
+            args: Vec::new(),
+            action: None,
+        };
+
+        assert_eq!(ai_cli_command(&provider), "claude");
+        let args = ai_cli_args(&provider, "system", "user");
+        assert_eq!(args[0], "-p");
+        assert!(args[1].contains("system"));
+        assert!(args[1].contains("user"));
+    }
+
+    #[test]
+    fn codex_cli_defaults_to_exec() {
+        let provider = AiProviderConfig {
+            provider: AiProviderKind::CodexCli,
+            model: String::new(),
+            api_key_env: String::new(),
+            endpoint: None,
+            timeout_secs: 5,
+            max_output_tokens: 128,
+            temperature: Some(0.1),
+            command: None,
+            args: Vec::new(),
+            action: None,
+        };
+
+        assert_eq!(ai_cli_command(&provider), "codex");
+        let args = ai_cli_args(&provider, "system", "user");
+        assert_eq!(args[0], "exec");
+        assert!(args[1].contains("system"));
+        assert!(args[1].contains("user"));
+    }
+
+    #[test]
     fn empty_system_prompt_is_rejected() {
         let provider = AiProviderConfig {
             provider: AiProviderKind::OpenAi,
@@ -422,6 +560,8 @@ mod tests {
             timeout_secs: 5,
             max_output_tokens: 128,
             temperature: Some(0.1),
+            command: None,
+            args: Vec::new(),
             action: None,
         };
         let context = AiAnalysisContext {

@@ -2006,6 +2006,9 @@ impl AppState {
                 CommandPaletteAction::Execute(action, resource) => {
                     AppAction::PaletteAction { action, resource }
                 }
+                CommandPaletteAction::ExecuteAi(id, resource) => {
+                    AppAction::ExecuteAi { id, resource }
+                }
                 CommandPaletteAction::ExecuteExtension(id, resource) => {
                     AppAction::ExecuteExtension { id, resource }
                 }

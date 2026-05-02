@@ -27,6 +27,7 @@ use std::{collections::HashMap, collections::HashSet, collections::VecDeque, tim
 
 use crate::{
     action_history::{ActionHistoryState, ActionHistoryTarget, ActionKind, ActionStatus},
+    ai_actions::AiProviderConfig,
     bookmarks::{BookmarkEntry, BookmarkToggleResult, selected_bookmark_resource, toggle_bookmark},
     k8s::{client::EventInfo, dtos::CustomResourceInfo},
     preferences::{ClusterPreferences, UserPreferences},
@@ -178,6 +179,10 @@ pub enum AppAction {
     SubmitResourceTemplateDialog,
     ToggleBookmark,
     SaveDecodedSecret,
+    ExecuteAi {
+        id: String,
+        resource: ResourceRef,
+    },
     ExecuteExtension {
         id: String,
         resource: ResourceRef,
@@ -336,6 +341,8 @@ pub struct AppState {
     pub preferences: Option<UserPreferences>,
     /// Per-cluster preference overrides, keyed by kube context name.
     pub cluster_preferences: Option<HashMap<String, ClusterPreferences>>,
+    /// Native AI provider/action configuration.
+    pub ai_config: Option<AiProviderConfig>,
     /// Active kube context name (for per-cluster preferences).
     pub current_context_name: Option<String>,
     /// When true, config should be saved at next convenient point.

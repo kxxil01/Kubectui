@@ -42,11 +42,12 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
+    ai_actions::{AiActionRegistry, AiWorkflowKind, LoadedAiAction, validate_ai_actions},
     app::{AppAction, AppState, AppView, DetailViewState, ResourceRef, load_config, save_config},
     coordinator::{UpdateCoordinator, UpdateMessage},
     events::apply_action,
     extensions::{
-        AiWorkflowKind, ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
+        ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
         LoadedExtensionActionKind, PreparedExtensionCommand, load_extensions_registry,
         prepare_command,
     },
@@ -714,6 +715,12 @@ fn notify_runbook_load_warnings(app: &mut kubectui::app::AppState, warnings: &[S
     }
 }
 
+fn notify_ai_load_warnings(app: &mut kubectui::app::AppState, warnings: &[String]) {
+    for warning in warnings {
+        app.push_toast(warning.clone(), true);
+    }
+}
+
 fn refresh_palette_extensions(
     app: &mut kubectui::app::AppState,
     snapshot: &kubectui::state::ClusterSnapshot,
@@ -728,6 +735,22 @@ fn refresh_palette_extensions(
         .map(|resource| registry.palette_actions_for(resource))
         .unwrap_or_default();
     app.command_palette.set_extension_actions(actions);
+}
+
+fn refresh_palette_ai_actions(
+    app: &mut kubectui::app::AppState,
+    snapshot: &kubectui::state::ClusterSnapshot,
+    registry: &AiActionRegistry,
+) {
+    let selected = selected_resource(app, snapshot);
+    let actions = app
+        .detail_view
+        .as_ref()
+        .and_then(|detail| detail.resource.as_ref())
+        .or(selected.as_ref())
+        .map(|resource| registry.palette_actions_for(resource))
+        .unwrap_or_default();
+    app.command_palette.set_ai_actions(actions);
 }
 
 fn refresh_palette_runbooks(
@@ -1383,6 +1406,59 @@ fn build_ai_analysis_context(
     }
 }
 
+fn start_ai_analysis(
+    app: &mut kubectui::app::AppState,
+    snapshot: &kubectui::state::ClusterSnapshot,
+    resource: &ResourceRef,
+    action: LoadedAiAction,
+    action_history_id: u64,
+    next_ai_execution_id: &mut u64,
+    ai_analysis_tx: &tokio::sync::mpsc::Sender<AiAnalysisAsyncResult>,
+) {
+    let execution_id = *next_ai_execution_id;
+    *next_ai_execution_id = (*next_ai_execution_id).wrapping_add(1).max(1);
+    let context = build_ai_analysis_context(app, snapshot, resource, action.workflow);
+    app.detail_view = None;
+    app.open_ai_analysis_tab(execution_id, action.title.clone(), resource.clone());
+    let tx = ai_analysis_tx.clone();
+    let title = action.title.clone();
+    let provider = action.provider.clone();
+    let workflow = action.workflow;
+    let system_prompt = action
+        .system_prompt
+        .clone()
+        .unwrap_or_else(|| default_system_prompt_for_workflow(workflow).to_string());
+    let context = context.clone();
+    let resource = resource.clone();
+    let resource_label = format!(
+        "{} on {} '{}'",
+        action.title,
+        resource.kind(),
+        resource.name()
+    );
+    tokio::spawn(async move {
+        let result = match tokio::task::spawn_blocking(move || {
+            run_ai_analysis(&provider, system_prompt.as_str(), &context)
+        })
+        .await
+        {
+            Ok(result) => result.map_err(|err| format!("{resource_label} failed: {err:#}")),
+            Err(err) => Err(format!(
+                "{resource_label} AI analysis task failed to join: {err}"
+            )),
+        };
+        let _ = tx
+            .send(AiAnalysisAsyncResult {
+                action_history_id,
+                resource,
+                execution_id,
+                title,
+                result,
+            })
+            .await;
+    });
+}
+
 /// Main asynchronous runtime entrypoint.
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -1521,6 +1597,9 @@ pub(crate) async fn run_app_inner(
     let initial_extension_load = load_extensions_registry();
     let mut extension_registry = initial_extension_load.registry;
     notify_extension_load_warnings(&mut app, &initial_extension_load.warnings);
+    let initial_ai_load = validate_ai_actions(app.ai_config.clone());
+    let ai_registry = initial_ai_load.registry;
+    notify_ai_load_warnings(&mut app, &initial_ai_load.warnings);
     let extension_config_path = initial_extension_load.path;
     let extension_watch_setup = create_config_watcher(&extension_config_path, "extensions");
     let (_extension_watcher, extension_watch_rx) = match extension_watch_setup {
@@ -1646,6 +1725,7 @@ pub(crate) async fn run_app_inner(
                 notify_extension_load_warnings(&mut app, &reload.warnings);
                 if app.command_palette.is_open() {
                     refresh_palette_extensions(&mut app, &cached_snapshot, &extension_registry);
+                    refresh_palette_ai_actions(&mut app, &cached_snapshot, &ai_registry);
                 }
                 app.push_toast(
                     format!(
@@ -4171,6 +4251,7 @@ pub(crate) async fn run_app_inner(
                     refresh_palette_activity(&mut app);
                     refresh_palette_resources(&mut app, &cached_snapshot);
                     refresh_palette_extensions(&mut app, &cached_snapshot, &extension_registry);
+                    refresh_palette_ai_actions(&mut app, &cached_snapshot, &ai_registry);
                     refresh_palette_runbooks(&mut app, &cached_snapshot, &runbook_registry);
                     app.command_palette.open_with_context(resource_ctx);
                 }
@@ -4374,7 +4455,7 @@ pub(crate) async fn run_app_inner(
                                 "{runbook_title}: running AI workflow '{}'",
                                 workflow.default_title()
                             ));
-                            pending_palette_action = Some(AppAction::ExecuteExtension {
+                            pending_palette_action = Some(AppAction::ExecuteAi {
                                 id: workflow.default_id().to_string(),
                                 resource,
                             });
@@ -4386,6 +4467,45 @@ pub(crate) async fn run_app_inner(
                     {
                         tab.banner = banner_message;
                     }
+                }
+                AppAction::ExecuteAi { id, resource } => {
+                    app.command_palette.close();
+
+                    let Some(action) = ai_registry.get(&id).cloned() else {
+                        app.set_error(format!("AI action '{id}' is no longer available."));
+                        continue;
+                    };
+                    if !action.matches_resource(&resource) {
+                        app.set_error(format!(
+                            "AI action '{}' does not apply to {} resources.",
+                            action.title,
+                            resource.kind()
+                        ));
+                        continue;
+                    }
+
+                    let resource_label = format!(
+                        "{} on {} '{}'",
+                        action.title,
+                        resource.kind(),
+                        resource.name()
+                    );
+                    let action_history_id = app.record_action_pending(
+                        ActionKind::Ai,
+                        app.view(),
+                        Some(resource.clone()),
+                        resource_label.clone(),
+                        format!("Running {resource_label}..."),
+                    );
+                    start_ai_analysis(
+                        &mut app,
+                        &cached_snapshot,
+                        &resource,
+                        action,
+                        action_history_id,
+                        &mut next_ai_execution_id,
+                        &ai_analysis_tx,
+                    );
                 }
                 AppAction::ExecuteExtension { id, resource } => {
                     app.command_palette.close();
@@ -4542,55 +4662,6 @@ pub(crate) async fn run_app_inner(
                                     });
                                 }
                             }
-                        }
-                        LoadedExtensionActionKind::AiAnalysis {
-                            provider,
-                            workflow,
-                            system_prompt,
-                        } => {
-                            let execution_id = next_ai_execution_id;
-                            next_ai_execution_id = next_ai_execution_id.wrapping_add(1).max(1);
-                            let context = build_ai_analysis_context(
-                                &app,
-                                &cached_snapshot,
-                                &resource,
-                                workflow,
-                            );
-                            app.detail_view = None;
-                            app.open_ai_analysis_tab(
-                                execution_id,
-                                action.title.clone(),
-                                resource.clone(),
-                            );
-                            let tx = ai_analysis_tx.clone();
-                            let title = action.title.clone();
-                            tokio::spawn(async move {
-                                let provider = provider.clone();
-                                let system_prompt = system_prompt.clone().unwrap_or_else(|| {
-                                    default_system_prompt_for_workflow(workflow).to_string()
-                                });
-                                let context = context.clone();
-                                let result = match tokio::task::spawn_blocking(move || {
-                                    run_ai_analysis(&provider, system_prompt.as_str(), &context)
-                                })
-                                .await
-                                {
-                                    Ok(result) => result
-                                        .map_err(|err| format!("{resource_label} failed: {err:#}")),
-                                    Err(err) => Err(format!(
-                                        "{resource_label} AI analysis task failed to join: {err}"
-                                    )),
-                                };
-                                let _ = tx
-                                    .send(AiAnalysisAsyncResult {
-                                        action_history_id,
-                                        resource,
-                                        execution_id,
-                                        title,
-                                        result,
-                                    })
-                                    .await;
-                            });
                         }
                     }
                 }

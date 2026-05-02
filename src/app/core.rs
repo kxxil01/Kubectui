@@ -42,6 +42,7 @@ impl Default for AppState {
             recent_jumps: Default::default(),
             preferences: None,
             cluster_preferences: None,
+            ai_config: None,
             current_context_name: None,
             needs_config_save: false,
             resource_template_dialog: None,

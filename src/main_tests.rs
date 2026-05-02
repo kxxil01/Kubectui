@@ -22,13 +22,13 @@ use crate::async_types::{QueuedRefresh, RefreshDispatch, RefreshRuntimeState};
 use kubectui::ui::components::command_palette::PaletteEntry;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
+    ai_actions::AiWorkflowKind,
     app::{
         AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus, ResourceRef,
         SELECTION_SEARCH_FALLBACK_STATUS, SidebarItem, WorkloadSortColumn, WorkloadSortState,
     },
     bookmarks::{BookmarkEntry, resource_exists},
     cronjob::CronJobHistoryEntry,
-    extensions::AiWorkflowKind,
     k8s::{
         client::FluxWatchTarget,
         dtos::{
