@@ -48,7 +48,7 @@ actions:
     mode: background
     command:
       program: kubectl
-      args: ["describe", "pod", "{{resource.name}}", "-n", "{{resource.namespace}}"]
+      args: ["describe", "pod", "$NAME", "-n", "$NAMESPACE"]
 
 ```
 
@@ -64,6 +64,7 @@ Native AI actions load from `~/.kube/kubectui-config.json`:
 ```
 
 Supported AI providers: `open_ai`, `anthropic`, `claude_cli`, and `codex_cli`.
+Legacy `ai:` blocks in `extensions.yaml` are not supported.
 
 ## What it does
 
