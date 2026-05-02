@@ -2109,6 +2109,25 @@ fn append_ai_workload_log_lines(
     log_lines.extend(collected);
 }
 
+fn append_ai_pod_log_lines(
+    log_lines: &mut Vec<String>,
+    logs_tab: &kubectui::workbench::PodLogsTabState,
+) {
+    let remaining = AI_LOG_MAX_LINES.saturating_sub(log_lines.len());
+    if remaining == 0 {
+        return;
+    }
+    log_lines.extend(
+        logs_tab
+            .viewer
+            .recent_visible_lines(remaining)
+            .into_iter()
+            .map(|entry| {
+                truncate_ai_block(entry.display_text(logs_tab.viewer.structured_view), 180)
+            }),
+    );
+}
+
 #[cold]
 #[inline(never)]
 fn build_ai_analysis_context(
@@ -2251,21 +2270,7 @@ fn build_ai_analysis_context(
             WorkbenchTabState::PodLogs(logs_tab)
                 if pod_logs_tab_matches_ai_resource(snapshot, &logs_tab.resource, resource) =>
             {
-                let indices = logs_tab.viewer.filtered_indices();
-                log_lines.extend(
-                    indices
-                        .into_iter()
-                        .rev()
-                        .take(AI_LOG_MAX_LINES)
-                        .rev()
-                        .filter_map(|idx| logs_tab.viewer.lines.get(idx))
-                        .map(|entry| {
-                            truncate_ai_block(
-                                entry.display_text(logs_tab.viewer.structured_view),
-                                180,
-                            )
-                        }),
-                );
+                append_ai_pod_log_lines(&mut log_lines, logs_tab);
             }
             WorkbenchTabState::WorkloadLogs(logs_tab) if &logs_tab.resource == resource => {
                 append_ai_workload_log_lines(&mut log_lines, logs_tab);
