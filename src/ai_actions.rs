@@ -276,8 +276,8 @@ pub fn validate_ai_actions(config: Option<AiConfig>) -> AiActionLoadResult {
     };
     let mut actions = Vec::new();
     let mut warnings = Vec::new();
-    let provider_count = config.providers.len();
-    for (provider_idx, ai) in config.providers.into_iter().enumerate() {
+    let mut providers = Vec::new();
+    for ai in config.providers {
         if let Some(warning) = ai_provider_warning(&ai) {
             warnings.push(format!(
                 "{} provider skipped: {warning}",
@@ -285,7 +285,11 @@ pub fn validate_ai_actions(config: Option<AiConfig>) -> AiActionLoadResult {
             ));
             continue;
         }
+        providers.push(ai);
+    }
 
+    let provider_count = providers.len();
+    for (provider_idx, ai) in providers.into_iter().enumerate() {
         let namespaced = provider_count > 1;
         match build_custom_ai_action(ai.clone(), provider_idx, namespaced) {
             Ok(action) => actions.push(action),
@@ -521,10 +525,9 @@ fn trim_optional(value: Option<String>) -> Option<String> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn validate_native_ai_actions_registers_default_workflows() {
-        let result = validate_ai_actions(Some(AiConfig::single(AiProviderConfig {
-            provider: AiProviderKind::ClaudeCli,
+    fn cli_provider(provider: AiProviderKind) -> AiProviderConfig {
+        AiProviderConfig {
+            provider,
             model: String::new(),
             api_key_env: String::new(),
             endpoint: None,
@@ -534,7 +537,14 @@ mod tests {
             command: None,
             args: Vec::new(),
             action: None,
-        })));
+        }
+    }
+
+    #[test]
+    fn validate_native_ai_actions_registers_default_workflows() {
+        let result = validate_ai_actions(Some(AiConfig::single(cli_provider(
+            AiProviderKind::ClaudeCli,
+        ))));
 
         assert!(result.warnings.is_empty());
         assert_eq!(result.registry.actions().len(), 5);
@@ -572,30 +582,8 @@ mod tests {
     fn multiple_ai_providers_register_picker_actions() {
         let result = validate_ai_actions(Some(AiConfig {
             providers: vec![
-                AiProviderConfig {
-                    provider: AiProviderKind::CodexCli,
-                    model: String::new(),
-                    api_key_env: String::new(),
-                    endpoint: None,
-                    timeout_secs: 15,
-                    max_output_tokens: 512,
-                    temperature: Some(0.1),
-                    command: None,
-                    args: Vec::new(),
-                    action: None,
-                },
-                AiProviderConfig {
-                    provider: AiProviderKind::ClaudeCli,
-                    model: String::new(),
-                    api_key_env: String::new(),
-                    endpoint: None,
-                    timeout_secs: 15,
-                    max_output_tokens: 512,
-                    temperature: Some(0.1),
-                    command: None,
-                    args: Vec::new(),
-                    action: None,
-                },
+                cli_provider(AiProviderKind::CodexCli),
+                cli_provider(AiProviderKind::ClaudeCli),
             ],
         }));
 
@@ -608,6 +596,42 @@ mod tests {
                 .registry
                 .get("ai_explain_failure_claude_cli_1")
                 .is_some()
+        );
+    }
+
+    #[test]
+    fn skipped_ai_providers_do_not_force_picker_ids_for_single_valid_provider() {
+        let result = validate_ai_actions(Some(AiConfig {
+            providers: vec![
+                AiProviderConfig {
+                    provider: AiProviderKind::OpenAi,
+                    model: String::new(),
+                    api_key_env: "OPENAI_API_KEY".into(),
+                    endpoint: None,
+                    timeout_secs: 15,
+                    max_output_tokens: 512,
+                    temperature: Some(0.1),
+                    command: None,
+                    args: Vec::new(),
+                    action: None,
+                },
+                cli_provider(AiProviderKind::ClaudeCli),
+            ],
+        }));
+
+        assert_eq!(
+            result.warnings,
+            vec!["AI provider skipped: skipping AI actions with empty model"]
+        );
+        assert_eq!(result.registry.actions().len(), 5);
+        assert_eq!(result.registry.actions()[0].id, "ask_ai");
+        assert_eq!(result.registry.actions()[0].title, "Ask AI");
+        assert!(result.registry.get("ai_explain_failure").is_some());
+        assert!(
+            result
+                .registry
+                .get("ai_explain_failure_claude_cli_1")
+                .is_none()
         );
     }
 }
