@@ -1072,7 +1072,7 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
         return;
     };
 
-    if tab_state.loading {
+    if tab_state.loading && tab_state.yaml.is_none() {
         frame.render_widget(
             Paragraph::new(Span::styled(" Loading YAML...", theme.inactive_style())),
             area,
@@ -3362,8 +3362,8 @@ mod tests {
     use super::{
         VisibleWindow, access_review_lines, centered_window, render_connectivity_tab,
         render_decoded_secret_tab, render_events_tab, render_extension_output_tab,
-        render_helm_values_diff, render_logs_tab, render_workload_logs_tab, scroll_window,
-        scroll_window_scrollbar_position,
+        render_helm_values_diff, render_logs_tab, render_workload_logs_tab, render_yaml_tab,
+        scroll_window, scroll_window_scrollbar_position,
     };
     use crate::{
         action_history::{ActionKind, ActionStatus},
@@ -4000,6 +4000,35 @@ mod tests {
         assert!(rendered.contains("[repaired] ****"));
         assert!(!rendered.contains("ff fe fd 00"));
         assert!(!rendered.contains("literal-secret"));
+    }
+
+    #[test]
+    fn yaml_tab_refresh_keeps_cached_content_visible() {
+        let backend = TestBackend::new(80, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = crate::workbench::ResourceYamlTabState::new(ResourceRef::Pod(
+            "api-0".into(),
+            "default".into(),
+        ));
+        tab.yaml = Some("kind: Pod\nmetadata:\n  name: api-0".into());
+        tab.loading = true;
+        tab.pending_request_id = Some(7);
+        let tab = WorkbenchTab::new(1, WorkbenchTabState::ResourceYaml(tab));
+
+        terminal
+            .draw(|frame| render_yaml_tab(frame, Rect::new(0, 0, 80, 10), 0, &tab))
+            .expect("yaml tab should render");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("kind: Pod"));
+        assert!(rendered.contains("name: api-0"));
+        assert!(!rendered.contains("Loading YAML"));
     }
 
     #[test]
