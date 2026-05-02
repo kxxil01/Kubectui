@@ -1622,6 +1622,8 @@ pub struct AiAnalysisTabState {
     pub execution_id: u64,
     pub title: String,
     pub resource: ResourceRef,
+    pub provider_label: String,
+    pub model: String,
     pub scroll: usize,
     pub loading: bool,
     pub error: Option<String>,
@@ -1782,11 +1784,19 @@ impl RunbookTabState {
 }
 
 impl AiAnalysisTabState {
-    pub fn new(execution_id: u64, title: impl Into<String>, resource: ResourceRef) -> Self {
+    pub fn new(
+        execution_id: u64,
+        title: impl Into<String>,
+        resource: ResourceRef,
+        provider_label: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Self {
         Self {
             execution_id,
             title: title.into(),
             resource,
+            provider_label: provider_label.into(),
+            model: model.into(),
             scroll: 0,
             loading: true,
             error: None,
@@ -1826,9 +1836,11 @@ impl AiAnalysisTabState {
         self.scroll = 0;
         self.loading = false;
         self.error = None;
+        self.provider_label = provider_label.into();
+        self.model = model.into();
         self.content = Some(Box::new(AiAnalysisContent {
-            provider_label: provider_label.into(),
-            model: model.into(),
+            provider_label: self.provider_label.clone(),
+            model: self.model.clone(),
             summary,
             likely_causes,
             next_steps,
@@ -3432,7 +3444,7 @@ mod tests {
 
     #[test]
     fn ai_analysis_rendered_line_count_tracks_sections_and_resets_scroll() {
-        let mut tab = AiAnalysisTabState::new(7, "Ask AI", pod("pod-0"));
+        let mut tab = AiAnalysisTabState::new(7, "Ask AI", pod("pod-0"), "Codex CLI", "codex-cli");
         assert_eq!(tab.rendered_line_count(), 4);
 
         tab.scroll = 9;

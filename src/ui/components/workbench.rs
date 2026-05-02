@@ -3213,22 +3213,7 @@ fn render_ai_analysis_tab(
             Span::styled(" ready ", theme.badge_success_style())
         },
         Span::raw(" "),
-        Span::styled(
-            if tab
-                .content
-                .as_ref()
-                .is_none_or(|content| content.model.is_empty())
-            {
-                "AI".to_string()
-            } else {
-                let content = tab
-                    .content
-                    .as_ref()
-                    .expect("content exists when model is set");
-                format!("{} • {}", content.provider_label, content.model)
-            },
-            Style::default().fg(theme.fg),
-        ),
+        Span::styled(ai_analysis_header_label(tab), Style::default().fg(theme.fg)),
     ]));
     lines.push(Line::from(Span::styled(
         "[Esc] back",
@@ -3266,6 +3251,20 @@ fn render_ai_analysis_tab(
         .scroll((scroll.min(u16::MAX as usize) as u16, 0));
     frame.render_widget(paragraph, area);
     render_scrollbar(frame, area, total, scroll);
+}
+
+fn ai_analysis_header_label(tab: &crate::workbench::AiAnalysisTabState) -> String {
+    let (provider_label, model) = tab
+        .content
+        .as_ref()
+        .map(|content| (content.provider_label.as_str(), content.model.as_str()))
+        .unwrap_or((tab.provider_label.as_str(), tab.model.as_str()));
+    match (provider_label.is_empty(), model.is_empty()) {
+        (true, true) => "AI".to_string(),
+        (true, false) => model.to_string(),
+        (false, true) => provider_label.to_string(),
+        (false, false) => format!("{provider_label} • {model}"),
+    }
 }
 
 fn render_ai_section(
