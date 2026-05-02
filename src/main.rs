@@ -48,8 +48,7 @@ use kubectui::{
     events::apply_action,
     extensions::{
         ExtensionExecutionMode, ExtensionRegistry, ExtensionSubstitutionContext,
-        LoadedExtensionActionKind, PreparedExtensionCommand, load_extensions_registry,
-        prepare_command,
+        PreparedExtensionCommand, load_extensions_registry, prepare_command,
     },
     k8s::{
         client::K8sClient,
@@ -4537,15 +4536,49 @@ pub(crate) async fn run_app_inner(
                         format!("Running {resource_label}..."),
                     );
 
-                    match action.kind.clone() {
-                        LoadedExtensionActionKind::Command { mode, command } => {
-                            let context =
-                                extension_context_for_resource(&app, &cached_snapshot, &resource);
-                            let prepared = match prepare_command(&action.title, &command, &context)
-                            {
-                                Ok(prepared) => prepared,
-                                Err(err) => {
-                                    let message = format!("{resource_label} failed: {err}");
+                    let context = extension_context_for_resource(&app, &cached_snapshot, &resource);
+                    let prepared = match prepare_command(&action.title, &action.command, &context) {
+                        Ok(prepared) => prepared,
+                        Err(err) => {
+                            let message = format!("{resource_label} failed: {err}");
+                            app.complete_action_history(
+                                action_history_id,
+                                ActionStatus::Failed,
+                                message.clone(),
+                                true,
+                            );
+                            app.set_error(message);
+                            needs_redraw = true;
+                            continue;
+                        }
+                    };
+
+                    match action.mode {
+                        ExtensionExecutionMode::Foreground => {
+                            match run_extension_command_in_terminal(terminal, &prepared) {
+                                Ok(status) if status.success() => {
+                                    app.complete_action_history(
+                                        action_history_id,
+                                        ActionStatus::Succeeded,
+                                        format!("{resource_label} completed."),
+                                        true,
+                                    );
+                                    set_transient_status(
+                                        &mut app,
+                                        &mut status_message_clear_at,
+                                        format!("{resource_label} completed."),
+                                    );
+                                    needs_redraw = true;
+                                }
+                                Ok(status) => {
+                                    let message = status
+                                        .code()
+                                        .map(|code| {
+                                            format!("{resource_label} exited with status {code}.")
+                                        })
+                                        .unwrap_or_else(|| {
+                                            format!("{resource_label} terminated by signal.")
+                                        });
                                     app.complete_action_history(
                                         action_history_id,
                                         ActionStatus::Failed,
@@ -4554,114 +4587,72 @@ pub(crate) async fn run_app_inner(
                                     );
                                     app.set_error(message);
                                     needs_redraw = true;
-                                    continue;
                                 }
-                            };
-
-                            match mode {
-                                ExtensionExecutionMode::Foreground => {
-                                    match run_extension_command_in_terminal(terminal, &prepared) {
-                                        Ok(status) if status.success() => {
-                                            app.complete_action_history(
-                                                action_history_id,
-                                                ActionStatus::Succeeded,
-                                                format!("{resource_label} completed."),
-                                                true,
-                                            );
-                                            set_transient_status(
-                                                &mut app,
-                                                &mut status_message_clear_at,
-                                                format!("{resource_label} completed."),
-                                            );
-                                            needs_redraw = true;
-                                        }
-                                        Ok(status) => {
-                                            let message = status
-                                        .code()
-                                        .map(|code| {
-                                            format!("{resource_label} exited with status {code}.")
-                                        })
-                                        .unwrap_or_else(|| {
-                                            format!("{resource_label} terminated by signal.")
-                                        });
-                                            app.complete_action_history(
-                                                action_history_id,
-                                                ActionStatus::Failed,
-                                                message.clone(),
-                                                true,
-                                            );
-                                            app.set_error(message);
-                                            needs_redraw = true;
-                                        }
-                                        Err(err) => {
-                                            let message =
-                                                format!("{resource_label} failed: {err:#}");
-                                            app.complete_action_history(
-                                                action_history_id,
-                                                ActionStatus::Failed,
-                                                message.clone(),
-                                                true,
-                                            );
-                                            app.set_error(message);
-                                            needs_redraw = true;
-                                        }
-                                    }
-                                }
-                                ExtensionExecutionMode::Background
-                                | ExtensionExecutionMode::Silent => {
-                                    let execution_id = if mode == ExtensionExecutionMode::Background
-                                    {
-                                        let execution_id = next_extension_execution_id;
-                                        next_extension_execution_id =
-                                            next_extension_execution_id.wrapping_add(1).max(1);
-                                        app.detail_view = None;
-                                        app.open_extension_output_tab(
-                                            execution_id,
-                                            action.title.clone(),
-                                            Some(resource.clone()),
-                                            mode.label(),
-                                            prepared.preview.clone(),
-                                        );
-                                        Some(execution_id)
-                                    } else {
-                                        set_transient_status(
-                                            &mut app,
-                                            &mut status_message_clear_at,
-                                            format!("Running {resource_label}..."),
-                                        );
-                                        None
-                                    };
-
-                                    let tx = extension_command_tx.clone();
-                                    let title = action.title.clone();
-                                    tokio::spawn(async move {
-                                        let result = match tokio::task::spawn_blocking(move || {
-                                            run_extension_command(prepared)
-                                        })
-                                        .await
-                                        {
-                                            Ok(result) => result,
-                                            Err(err) => ExtensionCommandRunResult {
-                                                lines: Vec::new(),
-                                                success: false,
-                                                exit_code: None,
-                                                error: Some(format!(
-                                                    "extension task failed to join: {err}"
-                                                )),
-                                            },
-                                        };
-                                        let _ = tx
-                                            .send(ExtensionCommandAsyncResult {
-                                                action_history_id,
-                                                resource,
-                                                execution_id,
-                                                title,
-                                                result,
-                                            })
-                                            .await;
-                                    });
+                                Err(err) => {
+                                    let message = format!("{resource_label} failed: {err:#}");
+                                    app.complete_action_history(
+                                        action_history_id,
+                                        ActionStatus::Failed,
+                                        message.clone(),
+                                        true,
+                                    );
+                                    app.set_error(message);
+                                    needs_redraw = true;
                                 }
                             }
+                        }
+                        ExtensionExecutionMode::Background | ExtensionExecutionMode::Silent => {
+                            let execution_id = if action.mode == ExtensionExecutionMode::Background
+                            {
+                                let execution_id = next_extension_execution_id;
+                                next_extension_execution_id =
+                                    next_extension_execution_id.wrapping_add(1).max(1);
+                                app.detail_view = None;
+                                app.open_extension_output_tab(
+                                    execution_id,
+                                    action.title.clone(),
+                                    Some(resource.clone()),
+                                    action.mode.label(),
+                                    prepared.preview.clone(),
+                                );
+                                Some(execution_id)
+                            } else {
+                                set_transient_status(
+                                    &mut app,
+                                    &mut status_message_clear_at,
+                                    format!("Running {resource_label}..."),
+                                );
+                                None
+                            };
+
+                            let tx = extension_command_tx.clone();
+                            let title = action.title.clone();
+                            tokio::spawn(async move {
+                                let result = match tokio::task::spawn_blocking(move || {
+                                    run_extension_command(prepared)
+                                })
+                                .await
+                                {
+                                    Ok(result) => result,
+                                    Err(err) => ExtensionCommandRunResult {
+                                        lines: Vec::new(),
+                                        success: false,
+                                        exit_code: None,
+                                        error: Some(format!(
+                                            "extension task failed to join: {err}"
+                                        )),
+                                    },
+                                };
+                                let _ = tx
+                                    .send(ExtensionCommandAsyncResult {
+                                        action_history_id,
+                                        resource,
+                                        execution_id,
+                                        title,
+                                        result,
+                                    })
+                                    .await;
+                            });
                         }
                     }
                 }

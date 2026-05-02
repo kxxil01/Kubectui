@@ -2436,14 +2436,12 @@ mod tests {
             aliases: vec!["describe pod".into(), "diag".into()],
             resource_kinds: vec!["Pod".into()],
             shortcut: Some("gp".into()),
-            kind: crate::extensions::LoadedExtensionActionKind::Command {
-                mode: crate::extensions::ExtensionExecutionMode::Background,
-                command: crate::extensions::ExtensionCommandConfig {
-                    program: "kubectl".into(),
-                    args: vec!["describe".into(), "pod".into()],
-                    cwd: None,
-                    env: Default::default(),
-                },
+            mode: crate::extensions::ExtensionExecutionMode::Background,
+            command: crate::extensions::ExtensionCommandConfig {
+                program: "kubectl".into(),
+                args: vec!["describe".into(), "pod".into()],
+                cwd: None,
+                env: Default::default(),
             },
         }]);
         for c in "diag".chars() {
