@@ -25,7 +25,7 @@ use mutation_helpers::*;
 use runtime_helpers::{next_request_id, run_app, start_watch_manager, watch_scope_for_view};
 use selection_helpers::*;
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     io,
     path::Path,
     time::{Duration, Instant},
@@ -835,6 +835,8 @@ fn truncate_ai_block(value: &str, max_chars: usize) -> String {
 
 const AI_METADATA_MAX_LINES: usize = 12;
 const AI_METADATA_MAX_CHARS: usize = 1_400;
+const AI_RESOURCE_STATE_MAX_LINES: usize = 18;
+const AI_RESOURCE_STATE_MAX_CHARS: usize = 2_400;
 const AI_ISSUE_MAX_LINES: usize = 8;
 const AI_ISSUE_MAX_CHARS: usize = 1_400;
 const AI_EVENT_MAX_LINES: usize = 8;
@@ -1063,6 +1065,240 @@ fn sanitize_ai_yaml_excerpt(resource: &ResourceRef, yaml: &str) -> Option<String
     redact_ai_yaml_value(&mut value);
     let rendered = serde_yaml::to_string(&value).ok()?;
     Some(truncate_ai_block(rendered.trim_end(), AI_YAML_MAX_CHARS))
+}
+
+fn ai_join_values(values: &[String], max: usize) -> String {
+    let mut items = values.iter().take(max).cloned().collect::<Vec<_>>();
+    if values.len() > max {
+        items.push(format!("+{} more", values.len() - max));
+    }
+    items.join(", ")
+}
+
+fn ai_join_map(map: &BTreeMap<String, String>, max: usize) -> String {
+    let mut items = map
+        .iter()
+        .take(max)
+        .map(|(key, value)| format!("{key}={value}"))
+        .collect::<Vec<_>>();
+    if map.len() > max {
+        items.push(format!("+{} more", map.len() - max));
+    }
+    items.join(", ")
+}
+
+fn build_ai_resource_state_lines(
+    snapshot: &kubectui::state::ClusterSnapshot,
+    resource: &ResourceRef,
+) -> Vec<String> {
+    let lines = match resource {
+        ResourceRef::Pod(name, namespace) => snapshot
+            .pods
+            .iter()
+            .find(|pod| &pod.name == name && &pod.namespace == namespace)
+            .map(|pod| {
+                let mut lines = vec![
+                    format!("status: {}", pod.status),
+                    format!("restarts: {}", pod.restarts),
+                    format!("node: {}", pod.node.as_deref().unwrap_or("-")),
+                    format!("pod_ip: {}", pod.pod_ip.as_deref().unwrap_or("-")),
+                ];
+                if !pod.waiting_reasons.is_empty() {
+                    lines.push(format!(
+                        "waiting_reasons: {}",
+                        ai_join_values(&pod.waiting_reasons, 6)
+                    ));
+                }
+                if !pod.container_images.is_empty() {
+                    lines.push(format!(
+                        "images: {}",
+                        ai_join_values(&pod.container_images, 5)
+                    ));
+                }
+                if pod.missing_liveness_probes > 0 || pod.missing_readiness_probes > 0 {
+                    lines.push(format!(
+                        "missing_probes: liveness={} readiness={}",
+                        pod.missing_liveness_probes, pod.missing_readiness_probes
+                    ));
+                }
+                if pod.host_network || pod.host_pid || pod.host_ipc {
+                    lines.push(format!(
+                        "host_namespaces: network={} pid={} ipc={}",
+                        pod.host_network, pod.host_pid, pod.host_ipc
+                    ));
+                }
+                if !pod.referenced_config_maps.is_empty() {
+                    lines.push(format!(
+                        "config_maps: {}",
+                        ai_join_values(&pod.referenced_config_maps, 6)
+                    ));
+                }
+                if !pod.referenced_secrets.is_empty() {
+                    lines.push(format!("sensitive_refs: {}", pod.referenced_secrets.len()));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::Deployment(name, namespace) => snapshot
+            .deployments
+            .iter()
+            .find(|deployment| &deployment.name == name && &deployment.namespace == namespace)
+            .map(|deployment| {
+                let mut lines = vec![
+                    format!("desired_replicas: {}", deployment.desired_replicas),
+                    format!("ready_replicas: {}", deployment.ready_replicas),
+                    format!("available_replicas: {}", deployment.available_replicas),
+                    format!("updated_replicas: {}", deployment.updated_replicas),
+                ];
+                if !deployment.images.is_empty() {
+                    lines.push(format!("images: {}", ai_join_values(&deployment.images, 5)));
+                } else if let Some(image) = deployment.image.as_ref() {
+                    lines.push(format!("image: {image}"));
+                }
+                if !deployment.pod_template_labels.is_empty() {
+                    lines.push(format!(
+                        "pod_template_labels: {}",
+                        ai_join_map(&deployment.pod_template_labels, 6)
+                    ));
+                }
+                if !deployment.referenced_config_maps.is_empty() {
+                    lines.push(format!(
+                        "config_maps: {}",
+                        ai_join_values(&deployment.referenced_config_maps, 6)
+                    ));
+                }
+                if !deployment.referenced_secrets.is_empty() {
+                    lines.push(format!(
+                        "sensitive_refs: {}",
+                        deployment.referenced_secrets.len()
+                    ));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::Service(name, namespace) => snapshot
+            .services
+            .iter()
+            .find(|service| &service.name == name && &service.namespace == namespace)
+            .map(|service| {
+                let mut lines = vec![
+                    format!("type: {}", service.type_),
+                    format!(
+                        "cluster_ip: {}",
+                        service.cluster_ip.as_deref().unwrap_or("-")
+                    ),
+                ];
+                if !service.ports.is_empty() {
+                    lines.push(format!("ports: {}", service.ports.join(", ")));
+                }
+                if !service.selector.is_empty() {
+                    lines.push(format!("selector: {}", ai_join_map(&service.selector, 6)));
+                }
+                if let Some(endpoint) = snapshot.endpoints.iter().find(|endpoint| {
+                    endpoint.name == service.name && endpoint.namespace == service.namespace
+                }) {
+                    lines.push(format!("endpoint_addresses: {}", endpoint.addresses.len()));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::Job(name, namespace) => snapshot
+            .jobs
+            .iter()
+            .find(|job| &job.name == name && &job.namespace == namespace)
+            .map(|job| {
+                vec![
+                    format!("status: {}", job.status),
+                    format!("completions: {}", job.completions),
+                    format!("desired_completions: {}", job.desired_completions),
+                    format!("succeeded_pods: {}", job.succeeded_pods),
+                    format!("failed_pods: {}", job.failed_pods),
+                    format!("active_pods: {}", job.active_pods),
+                    format!("parallelism: {}", job.parallelism),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::CronJob(name, namespace) => snapshot
+            .cronjobs
+            .iter()
+            .find(|cronjob| &cronjob.name == name && &cronjob.namespace == namespace)
+            .map(|cronjob| {
+                vec![
+                    format!("schedule: {}", cronjob.schedule),
+                    format!("suspended: {}", cronjob.suspend),
+                    format!("active_jobs: {}", cronjob.active_jobs),
+                    format!(
+                        "last_schedule: {}",
+                        cronjob
+                            .last_schedule_time
+                            .map(kubectui::time::format_rfc3339)
+                            .unwrap_or_else(|| "-".to_string())
+                    ),
+                    format!(
+                        "last_success: {}",
+                        cronjob
+                            .last_successful_time
+                            .map(kubectui::time::format_rfc3339)
+                            .unwrap_or_else(|| "-".to_string())
+                    ),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::Ingress(name, namespace) => snapshot
+            .ingresses
+            .iter()
+            .find(|ingress| &ingress.name == name && &ingress.namespace == namespace)
+            .map(|ingress| {
+                let mut lines = vec![
+                    format!("class: {}", ingress.class.as_deref().unwrap_or("-")),
+                    format!("address: {}", ingress.address.as_deref().unwrap_or("-")),
+                ];
+                if !ingress.hosts.is_empty() {
+                    lines.push(format!("hosts: {}", ingress.hosts.join(", ")));
+                }
+                if !ingress.backend_services.is_empty() {
+                    lines.push(format!(
+                        "backend_services: {}",
+                        ingress.backend_services.len()
+                    ));
+                }
+                lines
+            })
+            .unwrap_or_default(),
+        ResourceRef::NetworkPolicy(name, namespace) => snapshot
+            .network_policies
+            .iter()
+            .find(|policy| &policy.name == name && &policy.namespace == namespace)
+            .map(|policy| {
+                vec![
+                    format!("pod_selector: {}", policy.pod_selector),
+                    format!("policy_types: {}", policy.policy_types.join(", ")),
+                    format!("ingress_rules: {}", policy.ingress_rules),
+                    format!("egress_rules: {}", policy.egress_rules),
+                ]
+            })
+            .unwrap_or_default(),
+        ResourceRef::HelmRelease(name, namespace) => snapshot
+            .helm_releases
+            .iter()
+            .find(|release| &release.name == name && &release.namespace == namespace)
+            .map(|release| {
+                vec![
+                    format!("status: {}", release.status),
+                    format!("chart: {}", release.chart),
+                    format!("chart_version: {}", release.chart_version),
+                    format!("app_version: {}", release.app_version),
+                    format!("revision: {}", release.revision),
+                ]
+            })
+            .unwrap_or_default(),
+        _ => kubectui::detail_sections::sections_for_resource(snapshot, resource),
+    };
+    cap_ai_lines(
+        lines,
+        AI_RESOURCE_STATE_MAX_LINES,
+        AI_RESOURCE_STATE_MAX_CHARS,
+    )
 }
 
 fn build_ai_workflow_context(
@@ -1393,6 +1629,7 @@ fn build_ai_analysis_context(
     AiAnalysisContext {
         resource: resource.clone(),
         cluster_context: app.current_context_name.clone(),
+        resource_state_lines: build_ai_resource_state_lines(snapshot, resource),
         metadata_lines,
         workflow_title,
         workflow_lines,

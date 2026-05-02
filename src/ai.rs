@@ -41,6 +41,7 @@ Do not invent facts. Use only the supplied context. Return strict JSON with keys
 pub struct AiAnalysisContext {
     pub resource: ResourceRef,
     pub cluster_context: Option<String>,
+    pub resource_state_lines: Vec<String>,
     pub metadata_lines: Vec<String>,
     pub workflow_title: Option<String>,
     pub workflow_lines: Vec<String>,
@@ -63,6 +64,10 @@ impl AiAnalysisContext {
         sections.push(format!(
             "Cluster Context\n- current_context: {}",
             self.cluster_context.as_deref().unwrap_or("-"),
+        ));
+        sections.push(render_list_section(
+            "Resource State",
+            &self.resource_state_lines,
         ));
         sections.push(render_list_section("Metadata", &self.metadata_lines));
         if !self.workflow_lines.is_empty() {
@@ -577,6 +582,7 @@ mod tests {
         let prompt = AiAnalysisContext {
             resource: ResourceRef::Pod("api-0".into(), "prod".into()),
             cluster_context: Some("staging".into()),
+            resource_state_lines: vec!["status: CrashLoopBackOff".into()],
             metadata_lines: vec!["status: CrashLoopBackOff".into()],
             workflow_title: Some("Failure Focus".into()),
             workflow_lines: vec!["Prioritize probe failures".into()],
@@ -589,6 +595,7 @@ mod tests {
         .render_prompt();
 
         assert!(prompt.contains("Resource"));
+        assert!(prompt.contains("Resource State"));
         assert!(prompt.contains("Failure Focus"));
         assert!(prompt.contains("Logs"));
         assert!(prompt.contains("kind: Pod"));
@@ -665,6 +672,7 @@ mod tests {
         let context = AiAnalysisContext {
             resource: ResourceRef::Pod("api-0".into(), "prod".into()),
             cluster_context: None,
+            resource_state_lines: Vec::new(),
             metadata_lines: Vec::new(),
             workflow_title: None,
             workflow_lines: Vec::new(),
