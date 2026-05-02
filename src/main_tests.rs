@@ -639,6 +639,71 @@ fn stale_ai_analysis_results_are_ignored_after_scope_change() {
 }
 
 #[test]
+fn stale_ai_analysis_result_completes_history_as_ignored() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let mut app = AppState {
+        view: AppView::Pods,
+        ..AppState::default()
+    };
+    let action_history_id = app.record_action_pending(
+        ActionKind::Ai,
+        AppView::Pods,
+        Some(resource.clone()),
+        "Explain Failure on Pod 'api-0'",
+        "Running Explain Failure on Pod 'api-0'...",
+    );
+    app.open_ai_analysis_tab(
+        42,
+        "Explain Failure",
+        resource.clone(),
+        "Codex CLI",
+        "codex-cli",
+        Vec::new(),
+    );
+
+    super::discard_stale_ai_analysis_result(
+        &mut app,
+        AiAnalysisAsyncResult {
+            context_generation: 2,
+            action_history_id,
+            resource,
+            execution_id: 42,
+            title: "Explain Failure".to_string(),
+            context_summary: Vec::new(),
+            result: Ok(AiAnalysisResult {
+                provider_label: "Codex CLI".to_string(),
+                model: "codex-cli".to_string(),
+                summary: "stale".to_string(),
+                likely_causes: Vec::new(),
+                next_steps: Vec::new(),
+                uncertainty: Vec::new(),
+                raw_json: "{}".to_string(),
+            }),
+        },
+    );
+
+    let entry = app
+        .action_history
+        .find_by_id(action_history_id)
+        .expect("history entry exists");
+    assert_eq!(entry.status, ActionStatus::Failed);
+    assert!(entry.message.contains("ignored after context changed"));
+    assert!(entry.target.is_none());
+
+    let tab = app
+        .workbench
+        .find_tab_mut(&kubectui::workbench::WorkbenchTabKey::AiAnalysis(42))
+        .expect("AI tab exists");
+    let WorkbenchTabState::AiAnalysis(tab) = &tab.state else {
+        panic!("expected AI tab");
+    };
+    assert_eq!(
+        tab.error.as_deref(),
+        Some("AI result ignored after context changed.")
+    );
+}
+
+#[test]
 fn ai_analysis_success_completes_history_when_tab_was_closed() {
     let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
     let mut app = AppState {
