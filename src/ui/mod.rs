@@ -3602,7 +3602,14 @@ mod tests {
     fn render_ai_analysis_workbench_smoke() {
         let mut app = app_with_view(AppView::Pods);
         let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
-        app.open_ai_analysis_tab(11, "Ask AI", resource, "AI", "gpt-test");
+        app.open_ai_analysis_tab(
+            11,
+            "Ask AI",
+            resource,
+            "AI",
+            "gpt-test",
+            vec!["Resource state 2 • Events 1 • Logs 1 • YAML redacted".to_string()],
+        );
         if let Some(tab) = app.workbench_mut().active_tab_mut()
             && let crate::workbench::WorkbenchTabState::AiAnalysis(tab) = &mut tab.state
         {
@@ -3625,12 +3632,27 @@ mod tests {
     fn render_loading_ai_analysis_shows_provider_identity() {
         let mut app = app_with_view(AppView::Pods);
         let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
-        app.open_ai_analysis_tab(11, "Explain Failure", resource, "Codex CLI", "codex-cli");
+        app.open_ai_analysis_tab(
+            11,
+            "Explain Failure",
+            resource,
+            "Codex CLI",
+            "codex-cli",
+            vec![
+                "Resource state 3 • Events unavailable • Logs 20 • YAML redacted • log gaps noted"
+                    .to_string(),
+            ],
+        );
 
         let rendered = render_to_string(&app, &ClusterSnapshot::default());
         assert!(rendered.contains("running"));
         assert!(rendered.contains("Codex CLI"));
         assert!(rendered.contains("codex-cli"));
+        assert!(rendered.contains("context"));
+        assert!(rendered.contains("Events unavailable"));
+        assert!(rendered.contains("Logs 20"));
+        assert!(rendered.contains("YAML redacted"));
+        assert!(rendered.contains("log gaps noted"));
     }
 
     #[test]

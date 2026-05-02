@@ -1215,6 +1215,7 @@ fn ai_workbench_tab_supports_scrolling_shortcuts() {
         ResourceRef::Pod("api-0".into(), "default".into()),
         "Codex CLI",
         "codex-cli",
+        Vec::new(),
     );
     tab.apply_result(
         "AI",

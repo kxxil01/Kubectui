@@ -591,10 +591,18 @@ impl AppState {
         resource: ResourceRef,
         provider_label: impl Into<String>,
         model: impl Into<String>,
+        context_summary: Vec<String>,
     ) {
         self.workbench
             .open_tab(WorkbenchTabState::AiAnalysis(Box::new(
-                AiAnalysisTabState::new(execution_id, title, resource, provider_label, model),
+                AiAnalysisTabState::new(
+                    execution_id,
+                    title,
+                    resource,
+                    provider_label,
+                    model,
+                    context_summary,
+                ),
             )));
         self.focus = Focus::Workbench;
     }

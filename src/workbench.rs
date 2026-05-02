@@ -1624,6 +1624,7 @@ pub struct AiAnalysisTabState {
     pub resource: ResourceRef,
     pub provider_label: String,
     pub model: String,
+    pub context_summary: Vec<String>,
     pub scroll: usize,
     pub loading: bool,
     pub error: Option<String>,
@@ -1790,6 +1791,7 @@ impl AiAnalysisTabState {
         resource: ResourceRef,
         provider_label: impl Into<String>,
         model: impl Into<String>,
+        context_summary: Vec<String>,
     ) -> Self {
         Self {
             execution_id,
@@ -1797,6 +1799,7 @@ impl AiAnalysisTabState {
             resource,
             provider_label: provider_label.into(),
             model: model.into(),
+            context_summary,
             scroll: 0,
             loading: true,
             error: None,
@@ -1805,7 +1808,7 @@ impl AiAnalysisTabState {
     }
 
     pub fn rendered_line_count(&self) -> usize {
-        let mut lines = 3usize;
+        let mut lines = 3usize + self.context_summary.len();
         if self.loading || self.error.is_some() {
             return lines + 1;
         }
@@ -3444,8 +3447,15 @@ mod tests {
 
     #[test]
     fn ai_analysis_rendered_line_count_tracks_sections_and_resets_scroll() {
-        let mut tab = AiAnalysisTabState::new(7, "Ask AI", pod("pod-0"), "Codex CLI", "codex-cli");
-        assert_eq!(tab.rendered_line_count(), 4);
+        let mut tab = AiAnalysisTabState::new(
+            7,
+            "Ask AI",
+            pod("pod-0"),
+            "Codex CLI",
+            "codex-cli",
+            vec!["Resource state 2 • Events unavailable • Logs 3 • YAML redacted".to_string()],
+        );
+        assert_eq!(tab.rendered_line_count(), 5);
 
         tab.scroll = 9;
         tab.apply_result(
@@ -3458,12 +3468,12 @@ mod tests {
         );
 
         assert_eq!(tab.scroll, 0);
-        assert_eq!(tab.rendered_line_count(), 16);
+        assert_eq!(tab.rendered_line_count(), 17);
 
         tab.scroll = 4;
         tab.apply_error("boom".to_string());
         assert_eq!(tab.scroll, 0);
-        assert_eq!(tab.rendered_line_count(), 4);
+        assert_eq!(tab.rendered_line_count(), 5);
     }
 
     #[test]

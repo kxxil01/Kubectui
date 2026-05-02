@@ -839,6 +839,7 @@ fn apply_ai_analysis_result(
         result.resource.kind(),
         result.resource.name(),
     );
+    let context_summary = result.context_summary.clone();
     match result.result {
         Ok(analysis) => {
             if let Some(tab) = app
@@ -846,6 +847,7 @@ fn apply_ai_analysis_result(
                 .find_tab_mut(&WorkbenchTabKey::AiAnalysis(result.execution_id))
                 && let WorkbenchTabState::AiAnalysis(tab_state) = &mut tab.state
             {
+                tab_state.context_summary = context_summary;
                 tab_state.apply_result(
                     analysis.provider_label,
                     analysis.model,
@@ -873,6 +875,7 @@ fn apply_ai_analysis_result(
                 .find_tab_mut(&WorkbenchTabKey::AiAnalysis(result.execution_id))
                 && let WorkbenchTabState::AiAnalysis(tab_state) = &mut tab.state
             {
+                tab_state.context_summary = context_summary;
                 tab_state.apply_error(error.clone());
             }
             app.complete_action_history(
@@ -2267,6 +2270,65 @@ fn build_ai_analysis_context(
     }
 }
 
+fn ai_context_count_label(label: &str, count: usize) -> String {
+    if count == 0 {
+        format!("{label} unavailable")
+    } else {
+        format!("{label} {count}")
+    }
+}
+
+fn ai_context_yaml_label(context: &AiAnalysisContext) -> &'static str {
+    match context.yaml_excerpt.as_deref() {
+        Some(yaml) if yaml.contains("redacted") => "YAML redacted",
+        Some(_) => "YAML included",
+        None => "YAML unavailable",
+    }
+}
+
+fn ai_context_log_gap_label(context: &AiAnalysisContext) -> Option<&'static str> {
+    context
+        .log_lines
+        .iter()
+        .any(|line| ai_context_line_has_availability_gap(line))
+        .then_some("log gaps noted")
+}
+
+fn ai_context_event_gap_label(context: &AiAnalysisContext) -> Option<&'static str> {
+    context
+        .event_lines
+        .iter()
+        .any(|line| ai_context_line_has_availability_gap(line))
+        .then_some("event gaps noted")
+}
+
+fn ai_context_line_has_availability_gap(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("unavailable")
+        || lower.contains("skipped")
+        || lower.contains("forbidden")
+        || lower.contains("denied")
+        || lower.contains("rbac")
+        || lower.contains("timeout")
+        || lower.contains("timed out")
+}
+
+fn summarize_ai_context_for_tab(context: &AiAnalysisContext) -> Vec<String> {
+    let mut parts = vec![
+        ai_context_count_label("Resource state", context.resource_state_lines.len()),
+        ai_context_count_label("Events", context.event_lines.len()),
+        ai_context_count_label("Logs", context.log_lines.len()),
+        ai_context_yaml_label(context).to_string(),
+    ];
+    if let Some(label) = ai_context_event_gap_label(context) {
+        parts.push(label.to_string());
+    }
+    if let Some(label) = ai_context_log_gap_label(context) {
+        parts.push(label.to_string());
+    }
+    vec![parts.join(" • ")]
+}
+
 struct AiAnalysisRuntime<'a> {
     client: &'a K8sClient,
     context_generation: u64,
@@ -2285,6 +2347,7 @@ fn start_ai_analysis(
     let execution_id = *runtime.next_execution_id;
     *runtime.next_execution_id = (*runtime.next_execution_id).wrapping_add(1).max(1);
     let context = build_ai_analysis_context(app, snapshot, resource, action.workflow);
+    let initial_context_summary = summarize_ai_context_for_tab(&context);
     app.detail_view = None;
     app.open_ai_analysis_tab(
         execution_id,
@@ -2292,6 +2355,7 @@ fn start_ai_analysis(
         resource.clone(),
         action.provider.provider.label(),
         action.provider.model.clone(),
+        initial_context_summary,
     );
     let tx = runtime.tx.clone();
     let title = action.title.clone();
@@ -2313,6 +2377,7 @@ fn start_ai_analysis(
     );
     tokio::spawn(async move {
         enrich_ai_context_with_live_pod_logs(&client, &mut context).await;
+        let context_summary = summarize_ai_context_for_tab(&context);
         let result = match tokio::task::spawn_blocking(move || {
             run_ai_analysis(&provider, system_prompt.as_str(), &context)
         })
@@ -2330,6 +2395,7 @@ fn start_ai_analysis(
                 resource,
                 execution_id,
                 title,
+                context_summary,
                 result,
             })
             .await;
