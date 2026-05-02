@@ -609,28 +609,60 @@ fn provider_error_looks_like_prompt_echo(message: &str) -> bool {
 
 fn sanitize_provider_error_line(line: &str) -> String {
     let mut redacted = Vec::new();
-    let mut skip_tokens = 0usize;
+    let mut state = ProviderErrorRedactionState::None;
     for token in line.split_whitespace() {
-        if skip_tokens > 0 {
-            skip_tokens -= 1;
+        if state != ProviderErrorRedactionState::None {
+            if state == ProviderErrorRedactionState::ConsumeValue {
+                let skipped_scheme =
+                    token.eq_ignore_ascii_case("bearer") || token.eq_ignore_ascii_case("basic");
+                state = if skipped_scheme {
+                    ProviderErrorRedactionState::ConsumeValue
+                } else {
+                    ProviderErrorRedactionState::None
+                };
+                continue;
+            }
+            if state == ProviderErrorRedactionState::SeparatorOrValue && matches!(token, ":" | "=")
+            {
+                redacted.push(token.to_string());
+                state = ProviderErrorRedactionState::Value;
+                continue;
+            }
+
+            let redacted_scheme =
+                token.eq_ignore_ascii_case("bearer") || token.eq_ignore_ascii_case("basic");
+            redacted.push("[redacted]".to_string());
+            state = if redacted_scheme {
+                ProviderErrorRedactionState::Value
+            } else {
+                ProviderErrorRedactionState::None
+            };
             continue;
         }
 
         let lower = normalize_provider_error_key_token(token);
-        if lower == "authorization" || lower == "authorization:" {
-            redacted.push("Authorization: [redacted]".to_string());
-            skip_tokens = 2;
-            continue;
-        }
         if provider_error_token_is_split_sensitive_key(token) {
             redacted.push(format!("{token} [redacted]"));
-            skip_tokens = 1;
+            state = ProviderErrorRedactionState::ConsumeValue;
+            continue;
+        }
+        if is_sensitive_error_key(&lower) {
+            redacted.push(token.to_string());
+            state = ProviderErrorRedactionState::SeparatorOrValue;
             continue;
         }
 
         redacted.push(sanitize_provider_error_token(token));
     }
     redacted.join(" ")
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ProviderErrorRedactionState {
+    None,
+    SeparatorOrValue,
+    Value,
+    ConsumeValue,
 }
 
 fn normalize_provider_error_key_token(token: &str) -> String {
@@ -863,6 +895,20 @@ trailing note {also ignored}"#,
         assert!(!message.contains("hunter2"), "{message}");
         assert!(!message.contains("sk-live"), "{message}");
         assert!(!message.contains("inline-token"), "{message}");
+    }
+
+    #[test]
+    fn provider_error_sanitizer_redacts_spaced_sensitive_values() {
+        let message = sanitize_provider_error_message(
+            "bad request password : hunter2 api_key = sk-live Authorization : Bearer live-token",
+        );
+
+        assert!(message.contains("password : [redacted]"), "{message}");
+        assert!(message.contains("api_key = [redacted]"), "{message}");
+        assert!(message.contains("Authorization : [redacted]"), "{message}");
+        assert!(!message.contains("hunter2"), "{message}");
+        assert!(!message.contains("sk-live"), "{message}");
+        assert!(!message.contains("live-token"), "{message}");
     }
 
     #[test]
