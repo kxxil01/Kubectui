@@ -128,6 +128,33 @@ pub enum PaletteEntry {
     },
 }
 
+fn palette_entries_same_identity(left: &PaletteEntry, right: &PaletteEntry) -> bool {
+    match (left, right) {
+        (PaletteEntry::Activity(left), PaletteEntry::Activity(right)) => {
+            left.target == right.target
+        }
+        (PaletteEntry::Resource(left), PaletteEntry::Resource(right)) => {
+            left.resource == right.resource
+        }
+        (PaletteEntry::AiAction(left), PaletteEntry::AiAction(right)) => left.id == right.id,
+        (PaletteEntry::ExtensionAction(left), PaletteEntry::ExtensionAction(right)) => {
+            left.id == right.id
+        }
+        (PaletteEntry::Runbook(left), PaletteEntry::Runbook(right)) => {
+            left.id == right.id && left.resource == right.resource
+        }
+        (
+            PaletteEntry::ColumnToggle { id: left, .. },
+            PaletteEntry::ColumnToggle { id: right, .. },
+        ) => left == right,
+        (
+            PaletteEntry::WorkspaceBank { name: left, .. },
+            PaletteEntry::WorkspaceBank { name: right, .. },
+        ) => left == right,
+        _ => left == right,
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PaletteActivityTarget {
     Navigate(AppView),
@@ -1011,9 +1038,11 @@ impl CommandPalette {
     fn restore_selected_entry(&mut self, selected_entry: Option<PaletteEntry>) {
         self.cached_filtered.borrow_mut().take();
         let filtered = self.filtered_entries();
-        let matched_index = selected_entry
-            .as_ref()
-            .and_then(|entry| filtered.iter().position(|candidate| candidate == entry));
+        let matched_index = selected_entry.as_ref().and_then(|entry| {
+            filtered
+                .iter()
+                .position(|candidate| palette_entries_same_identity(candidate, entry))
+        });
         self.selected_index = matched_index.unwrap_or_else(|| {
             if selected_entry.is_some() {
                 0
@@ -1702,6 +1731,49 @@ mod tests {
         }
     }
 
+    fn extension_action(id: &str, title: &str, alias: &str) -> LoadedExtensionAction {
+        LoadedExtensionAction {
+            id: id.into(),
+            title: title.into(),
+            description: None,
+            aliases: vec![alias.into()],
+            resource_kinds: vec!["Pod".into()],
+            shortcut: None,
+            mode: crate::extensions::ExtensionExecutionMode::Background,
+            command: crate::extensions::ExtensionCommandConfig {
+                program: "kubectl".into(),
+                args: vec!["get".into(), "pod".into()],
+                cwd: None,
+                env: Default::default(),
+            },
+        }
+    }
+
+    fn ai_action(id: &str, title: &str, alias: &str) -> LoadedAiAction {
+        LoadedAiAction {
+            id: id.into(),
+            title: title.into(),
+            description: None,
+            aliases: vec![alias.into()],
+            resource_kinds: vec!["Pod".into()],
+            shortcut: None,
+            provider: crate::ai_actions::AiProviderConfig {
+                provider: crate::ai_actions::AiProviderKind::ClaudeCli,
+                model: "claude-cli".into(),
+                api_key_env: String::new(),
+                endpoint: None,
+                timeout_secs: 15,
+                max_output_tokens: 512,
+                temperature: Some(0.1),
+                command: None,
+                args: Vec::new(),
+                action: None,
+            },
+            workflow: crate::ai_actions::AiWorkflowKind::ExplainFailure,
+            system_prompt: None,
+        }
+    }
+
     #[test]
     fn fuzzy_match_exact() {
         assert!(fuzzy_match("pods", "pods"));
@@ -1961,6 +2033,92 @@ mod tests {
         assert!(matches!(
             filtered.get(palette.selected_index),
             Some(PaletteEntry::Activity(PaletteActivityEntry { title, .. })) if title == "Services"
+        ));
+    }
+
+    #[test]
+    fn extension_reload_preserves_selected_action_by_id() {
+        let resource = ResourceRef::Pod("api".into(), "default".into());
+        let mut palette = CommandPalette::default();
+        palette.open_with_context(Some(ctx(resource, None)));
+        palette.set_extension_actions(vec![extension_action("describe", "Describe", "diag")]);
+        for ch in "diag".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(ch)));
+        }
+
+        palette.set_extension_actions(vec![extension_action("describe", "Describe v2", "diag")]);
+
+        let filtered = palette.filtered();
+        assert!(matches!(
+            filtered.get(palette.selected_index),
+            Some(PaletteEntry::ExtensionAction(PaletteExtensionAction { id, title, .. }))
+                if id == "describe" && title == "Describe v2"
+        ));
+    }
+
+    #[test]
+    fn ai_reload_preserves_selected_action_by_id() {
+        let resource = ResourceRef::Pod("api".into(), "default".into());
+        let mut palette = CommandPalette::default();
+        palette.open_with_context(Some(ctx(resource, None)));
+        palette.set_ai_actions(vec![ai_action("ai_explain_failure", "Explain", "ai diag")]);
+        for ch in "ai diag".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(ch)));
+        }
+
+        palette.set_ai_actions(vec![ai_action(
+            "ai_explain_failure",
+            "Explain v2",
+            "ai diag",
+        )]);
+
+        let filtered = palette.filtered();
+        assert!(matches!(
+            filtered.get(palette.selected_index),
+            Some(PaletteEntry::AiAction(PaletteAiAction { id, title, .. }))
+                if id == "ai_explain_failure" && title == "Explain v2"
+        ));
+    }
+
+    #[test]
+    fn runbook_reload_preserves_selected_entry_by_id_and_resource() {
+        let resource = ResourceRef::Pod("api".into(), "default".into());
+        let mut palette = CommandPalette::default();
+        palette.open_with_context(Some(ctx(resource.clone(), None)));
+        palette.set_runbooks(
+            vec![LoadedRunbook {
+                id: "pod_failure".into(),
+                title: "Pod Failure".into(),
+                description: None,
+                aliases: vec!["incident".into()],
+                resource_kinds: vec!["Pod".into()],
+                shortcut: None,
+                steps: Vec::new(),
+            }],
+            Some(resource.clone()),
+        );
+        for ch in "incident".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(ch)));
+        }
+
+        palette.set_runbooks(
+            vec![LoadedRunbook {
+                id: "pod_failure".into(),
+                title: "Pod Failure v2".into(),
+                description: None,
+                aliases: vec!["incident".into()],
+                resource_kinds: vec!["Pod".into()],
+                shortcut: None,
+                steps: Vec::new(),
+            }],
+            Some(resource),
+        );
+
+        let filtered = palette.filtered();
+        assert!(matches!(
+            filtered.get(palette.selected_index),
+            Some(PaletteEntry::Runbook(PaletteRunbookAction { id, title, .. }))
+                if id == "pod_failure" && title == "Pod Failure v2"
         ));
     }
 
