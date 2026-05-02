@@ -584,6 +584,13 @@ fn sanitize_provider_error_message(message: &str) -> String {
 
 fn provider_error_looks_like_prompt_echo(message: &str) -> bool {
     let lower = message.to_ascii_lowercase();
+    if lower.contains("yaml excerpt")
+        || lower.contains("resource\n- kind:")
+        || lower.contains("cluster context\n- current_context")
+        || lower.contains("secret manifests are not sent to ai")
+    {
+        return true;
+    }
     let markers = [
         "cluster context",
         "resource state",
@@ -795,6 +802,19 @@ trailing note {also ignored}"#,
         );
         assert!(!message.contains("literal-secret"));
         assert!(!message.contains("CrashLoopBackOff"));
+    }
+
+    #[test]
+    fn provider_error_sanitizer_redacts_single_section_prompt_echoes() {
+        let message = sanitize_provider_error_message(
+            "invalid output\nYAML Excerpt\n```yaml\nimagePullSecrets:\n- name: registry-credentials\n```",
+        );
+
+        assert_eq!(
+            message,
+            "provider error output redacted because it included AI context"
+        );
+        assert!(!message.contains("registry-credentials"));
     }
 
     #[test]
