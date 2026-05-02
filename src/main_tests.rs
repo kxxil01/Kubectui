@@ -37,6 +37,7 @@ use kubectui::{
             VulnerabilityReportInfo, VulnerabilitySummaryCounts,
         },
     },
+    log_investigation::LogEntry,
     policy::DetailAction,
     state::{
         ClusterSnapshot, DataPhase, FluxResourceTargetKey, FluxTargetFingerprints, GlobalState,
@@ -172,6 +173,28 @@ fn sanitize_ai_annotation_redacts_sensitive_keys() {
 }
 
 #[test]
+fn sanitize_ai_context_lines_redacts_inline_secret_values() {
+    let lines = super::cap_ai_lines(
+        vec![
+            "Authorization: Bearer live-token password=literal-secret".to_string(),
+            "dsn=postgres://super:db-pass@db.example:5432/app token: literal-token".to_string(),
+        ],
+        4,
+        1_000,
+    );
+
+    let rendered = lines.join("\n");
+    assert!(rendered.contains("Authorization: [redacted]"), "{rendered}");
+    assert!(rendered.contains("password=<redacted>"), "{rendered}");
+    assert!(rendered.contains("[redacted-uri]"), "{rendered}");
+    assert!(rendered.contains("token: [redacted]"), "{rendered}");
+    assert!(!rendered.contains("live-token"), "{rendered}");
+    assert!(!rendered.contains("literal-secret"), "{rendered}");
+    assert!(!rendered.contains("db-pass"), "{rendered}");
+    assert!(!rendered.contains("literal-token"), "{rendered}");
+}
+
+#[test]
 fn sanitize_ai_yaml_excerpt_redacts_secret_values() {
     let excerpt = super::sanitize_ai_yaml_excerpt(
         &ResourceRef::Deployment("api".to_string(), "prod".to_string()),
@@ -208,6 +231,32 @@ fn sanitize_ai_yaml_excerpt_omits_secret_manifests() {
     .expect("redacted secret excerpt");
 
     assert!(excerpt.contains("Secret manifests are not sent to AI"));
+}
+
+#[test]
+fn ai_context_redacts_sensitive_pod_log_values() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let mut app = AppState::default();
+    let mut logs = PodLogsTabState::new(resource.clone());
+    logs.viewer.lines = vec![LogEntry::from_raw(
+        "INFO Authorization: Bearer live-token password=literal-secret dsn=postgres://super:db-pass@db.example:5432/app",
+    )];
+    app.workbench.open_tab(WorkbenchTabState::PodLogs(logs));
+
+    let context = super::build_ai_analysis_context(
+        &app,
+        &ClusterSnapshot::default(),
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+    let rendered = context.log_lines.join("\n");
+
+    assert!(rendered.contains("Authorization: [redacted]"), "{rendered}");
+    assert!(rendered.contains("password=<redacted>"), "{rendered}");
+    assert!(rendered.contains("[redacted-uri]"), "{rendered}");
+    assert!(!rendered.contains("live-token"), "{rendered}");
+    assert!(!rendered.contains("literal-secret"), "{rendered}");
+    assert!(!rendered.contains("db-pass"), "{rendered}");
 }
 
 #[test]

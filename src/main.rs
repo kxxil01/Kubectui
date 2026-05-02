@@ -826,6 +826,7 @@ fn cap_ai_lines(lines: Vec<String>, max_items: usize, max_total_chars: usize) ->
     let mut result = Vec::new();
     let mut total_chars = 0usize;
     for line in lines.into_iter().take(max_items) {
+        let line = redact_ai_inline_secrets(&line);
         let line_chars = line.chars().count();
         if !result.is_empty() && total_chars + line_chars > max_total_chars {
             break;
@@ -881,6 +882,118 @@ fn ai_key_is_sensitive(key: &str) -> bool {
         || normalized.contains("certificate")
 }
 
+fn redact_ai_inline_secrets(value: &str) -> String {
+    let mut redacted = Vec::new();
+    let mut redact_next = false;
+    for token in value.split_whitespace() {
+        if redact_next {
+            let redacted_scheme =
+                token.eq_ignore_ascii_case("bearer") || token.eq_ignore_ascii_case("basic");
+            redacted.push("[redacted]".to_string());
+            redact_next = redacted_scheme;
+            continue;
+        }
+        if token_contains_credential_uri(token) {
+            redacted.push("[redacted-uri]".to_string());
+            continue;
+        }
+        if token.eq_ignore_ascii_case("bearer") || token.eq_ignore_ascii_case("basic") {
+            redacted.push(token.to_string());
+            redact_next = true;
+            continue;
+        }
+        if token_looks_sensitive_key(token) && token.ends_with([':', '=']) {
+            redacted.push(token.to_string());
+            redact_next = true;
+            continue;
+        }
+        if let Some(redacted_token) = redact_ai_inline_assignment(token) {
+            redacted.push(redacted_token);
+            continue;
+        }
+        if token_looks_sensitive_key(token) {
+            redacted.push(token.to_string());
+            redact_next = true;
+            continue;
+        }
+        redacted.push(token.to_string());
+    }
+    redacted.join(" ")
+}
+
+fn token_contains_credential_uri(token: &str) -> bool {
+    let Some(scheme_idx) = token.find("://") else {
+        return false;
+    };
+    let after_scheme = &token[scheme_idx + 3..];
+    let Some(at_idx) = after_scheme.find('@') else {
+        return false;
+    };
+    after_scheme[..at_idx].contains(':')
+}
+
+fn token_looks_sensitive_key(token: &str) -> bool {
+    let trimmed = token.trim_matches(|ch: char| {
+        matches!(
+            ch,
+            '"' | '\'' | '`' | '{' | '}' | '[' | ']' | '(' | ')' | ',' | ';'
+        )
+    });
+    let key = trimmed.trim_start_matches('-').trim_end_matches(':');
+    if trimmed.starts_with('-') {
+        return ai_key_is_sensitive(key);
+    }
+    matches!(
+        normalize_ai_key(key).as_str(),
+        "data"
+            | "stringdata"
+            | "secret"
+            | "secrets"
+            | "token"
+            | "password"
+            | "passwd"
+            | "authorization"
+            | "bearer"
+            | "basic"
+            | "apikey"
+            | "accesskey"
+            | "secretaccesskey"
+            | "privatekey"
+            | "clientsecret"
+            | "certificate"
+            | "credential"
+            | "credentials"
+            | "cacrt"
+            | "tlscrt"
+            | "tlskey"
+    )
+}
+
+fn redact_ai_inline_assignment(token: &str) -> Option<String> {
+    let (separator_idx, separator) = token
+        .char_indices()
+        .find(|(_, ch)| matches!(ch, '=' | ':'))?;
+    let key = token[..separator_idx].trim_matches(|ch: char| {
+        matches!(
+            ch,
+            '"' | '\'' | '`' | '{' | '}' | '[' | ']' | '(' | ')' | ',' | ';'
+        )
+    });
+    if !ai_key_is_sensitive(key) {
+        return None;
+    }
+    let value_start = separator_idx + separator.len_utf8();
+    let suffix = token[value_start..]
+        .chars()
+        .rev()
+        .take_while(|ch| matches!(ch, '"' | '\'' | '`' | '}' | ']' | ')' | ',' | ';'))
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect::<String>();
+    Some(format!("{}<redacted>{suffix}", &token[..value_start]))
+}
+
 fn redact_ai_yaml_value(value: &mut serde_yaml::Value) {
     match value {
         serde_yaml::Value::Mapping(map) => {
@@ -914,7 +1027,7 @@ fn sanitize_ai_annotation(key: &str, value: &str) -> String {
     if ai_key_is_sensitive(key) {
         "[redacted]".to_string()
     } else {
-        truncate_ai_block(value, 120)
+        truncate_ai_block(&redact_ai_inline_secrets(value), 120)
     }
 }
 
