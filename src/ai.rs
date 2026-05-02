@@ -395,13 +395,15 @@ fn parse_structured_response(raw: &str) -> Result<StructuredAiResponse> {
     if trimmed.is_empty() {
         bail!("AI provider returned an empty response");
     }
-    serde_json::from_str::<StructuredAiResponse>(trimmed)
-        .or_else(|_| {
-            extract_json_object(trimmed)
-                .and_then(|json| serde_json::from_str(json).map_err(Into::into))
-        })
+    parse_structured_response_value(trimmed)
+        .or_else(|_| extract_json_object(trimmed).and_then(parse_structured_response_value))
         .map_err(|err| anyhow!("AI response was not valid structured JSON: {err}"))
+        .and_then(normalize_structured_response)
         .and_then(validate_structured_response)
+}
+
+fn parse_structured_response_value(raw: &str) -> Result<Value> {
+    serde_json::from_str::<Value>(raw).map_err(Into::into)
 }
 
 #[cold]
@@ -417,6 +419,53 @@ fn extract_json_object(raw: &str) -> Result<&str> {
         bail!("AI response did not include a valid JSON object");
     }
     Ok(&raw[start..=end])
+}
+
+fn normalize_structured_response(value: Value) -> Result<StructuredAiResponse> {
+    let Value::Object(mut object) = value else {
+        bail!("AI response JSON root was not an object");
+    };
+    Ok(StructuredAiResponse {
+        summary: stringify_ai_field(object.remove("summary").unwrap_or(Value::Null)),
+        likely_causes: normalize_ai_lines(object.remove("likely_causes").unwrap_or(Value::Null)),
+        next_steps: normalize_ai_lines(object.remove("next_steps").unwrap_or(Value::Null)),
+        uncertainty: normalize_ai_lines(object.remove("uncertainty").unwrap_or(Value::Null)),
+    })
+}
+
+fn normalize_ai_lines(value: Value) -> Vec<String> {
+    match value {
+        Value::Array(items) => items.into_iter().map(stringify_ai_field).collect(),
+        Value::Null => Vec::new(),
+        value => vec![stringify_ai_field(value)],
+    }
+}
+
+fn stringify_ai_field(value: Value) -> String {
+    match value {
+        Value::String(value) => value,
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Array(items) => items
+            .into_iter()
+            .map(stringify_ai_field)
+            .filter(|value| !value.trim().is_empty())
+            .collect::<Vec<_>>()
+            .join("; "),
+        Value::Object(object) => object
+            .into_iter()
+            .map(|(key, value)| {
+                let value = stringify_ai_field(value);
+                if value.trim().is_empty() {
+                    key
+                } else {
+                    format!("{key}: {value}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; "),
+        Value::Null => String::new(),
+    }
 }
 
 #[cold]
@@ -472,6 +521,55 @@ mod tests {
 
         assert_eq!(parsed.summary, "ok");
         assert_eq!(parsed.likely_causes, vec!["a"]);
+    }
+
+    #[test]
+    fn parse_structured_response_accepts_object_items_from_cli_providers() {
+        let parsed = parse_structured_response(
+            r#"{
+                "summary": {"status": "failing", "resource": "pod"},
+                "likely_causes": [
+                    {"cause": "database unavailable", "evidence": ["connection refused", "backoff"]},
+                    "image pulled successfully"
+                ],
+                "next_steps": [
+                    {"action": "inspect postgres service", "command": "kubectl get svc"}
+                ],
+                "uncertainty": [{"reason": "logs truncated"}]
+            }"#,
+        )
+        .expect("object-shaped provider output normalizes");
+
+        assert_eq!(parsed.summary, "resource: pod; status: failing");
+        assert_eq!(
+            parsed.likely_causes,
+            vec![
+                "cause: database unavailable; evidence: connection refused; backoff",
+                "image pulled successfully"
+            ]
+        );
+        assert_eq!(
+            parsed.next_steps,
+            vec!["action: inspect postgres service; command: kubectl get svc"]
+        );
+        assert_eq!(parsed.uncertainty, vec!["reason: logs truncated"]);
+    }
+
+    #[test]
+    fn parse_structured_response_accepts_scalar_arrays_from_cli_providers() {
+        let parsed = parse_structured_response(
+            r#"{
+                "summary": "ok",
+                "likely_causes": [404, true],
+                "next_steps": "check events",
+                "uncertainty": null
+            }"#,
+        )
+        .expect("scalar provider output normalizes");
+
+        assert_eq!(parsed.likely_causes, vec!["404", "true"]);
+        assert_eq!(parsed.next_steps, vec!["check events"]);
+        assert!(parsed.uncertainty.is_empty());
     }
 
     #[test]
