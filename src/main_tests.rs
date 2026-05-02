@@ -291,6 +291,30 @@ fn ai_context_redacts_sensitive_pod_log_values() {
 }
 
 #[test]
+fn pod_ai_context_caps_pod_log_extraction_to_recent_lines() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let mut app = AppState::default();
+    let mut logs = PodLogsTabState::new(resource.clone());
+    logs.viewer.lines = (0..40)
+        .map(|idx| LogEntry::from_raw(format!("pod-line-{idx}")))
+        .collect();
+    app.workbench.open_tab(WorkbenchTabState::PodLogs(logs));
+
+    let context = super::build_ai_analysis_context(
+        &app,
+        &ClusterSnapshot::default(),
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+
+    let rendered = context.log_lines.join("\n");
+    assert_eq!(context.log_lines.len(), 20);
+    assert!(rendered.contains("pod-line-39"), "{rendered}");
+    assert!(rendered.contains("pod-line-20"), "{rendered}");
+    assert!(!rendered.contains("pod-line-19"), "{rendered}");
+}
+
+#[test]
 fn workload_ai_context_includes_logs_from_owned_pod_tab() {
     let resource = ResourceRef::Deployment("api".to_string(), "prod".to_string());
     let pod_resource = ResourceRef::Pod("api-rs-1".to_string(), "prod".to_string());
