@@ -521,27 +521,31 @@ fn validate_extensions(config: ExtensionsConfig, path: PathBuf) -> ExtensionLoad
     }
 
     if let Some(ai) = config.ai {
-        let ai_for_workflows = ai.clone();
+        let ai_provider_is_usable =
+            !ai.model.trim().is_empty() && !ai.api_key_env.trim().is_empty();
+        let ai_for_action = ai.clone();
         match validate_ai_extension(ai, &mut seen_ids) {
             Ok(action) => {
                 actions.push(action);
-                for workflow in [
-                    AiWorkflowKind::ExplainFailure,
-                    AiWorkflowKind::RolloutRisk,
-                    AiWorkflowKind::NetworkVerdict,
-                    AiWorkflowKind::TriageFindings,
-                ] {
-                    match build_default_ai_workflow_action(
-                        ai_for_workflows.clone(),
-                        workflow,
-                        &mut seen_ids,
-                    ) {
-                        Ok(action) => actions.push(action),
-                        Err(warning) => warnings.push(warning),
-                    }
-                }
             }
             Err(warning) => warnings.push(warning),
+        }
+        if ai_provider_is_usable {
+            for workflow in [
+                AiWorkflowKind::ExplainFailure,
+                AiWorkflowKind::RolloutRisk,
+                AiWorkflowKind::NetworkVerdict,
+                AiWorkflowKind::TriageFindings,
+            ] {
+                match build_default_ai_workflow_action(
+                    ai_for_action.clone(),
+                    workflow,
+                    &mut seen_ids,
+                ) {
+                    Ok(action) => actions.push(action),
+                    Err(warning) => warnings.push(warning),
+                }
+            }
         }
     }
 
@@ -888,6 +892,54 @@ mod tests {
             result.registry.actions()[0]
                 .matches_resource(&ResourceRef::Pod("api-0".into(), "prod".into(),))
         );
+    }
+
+    #[test]
+    fn duplicate_generic_ai_action_does_not_skip_default_ai_workflows() {
+        let result = validate_extensions(
+            ExtensionsConfig {
+                actions: vec![ExtensionActionConfig {
+                    id: "ask_ai".into(),
+                    title: "Custom Ask AI".into(),
+                    description: None,
+                    aliases: Vec::new(),
+                    resource_kinds: vec!["Pod".into()],
+                    shortcut: None,
+                    mode: ExtensionExecutionMode::Background,
+                    command: ExtensionCommandConfig {
+                        program: "kubectl".into(),
+                        args: vec!["describe".into(), "pod".into(), "$NAME".into()],
+                        cwd: None,
+                        env: BTreeMap::new(),
+                    },
+                }],
+                ai: Some(AiProviderConfig {
+                    provider: AiProviderKind::OpenAi,
+                    model: "gpt-test".into(),
+                    api_key_env: "OPENAI_API_KEY".into(),
+                    endpoint: None,
+                    timeout_secs: 15,
+                    max_output_tokens: 512,
+                    temperature: Some(0.1),
+                    action: None,
+                }),
+            },
+            PathBuf::from("/tmp/extensions.yaml"),
+        );
+
+        assert!(
+            result
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("duplicate extension id 'ask_ai'")),
+            "{:?}",
+            result.warnings
+        );
+        assert_eq!(result.registry.actions().len(), 5);
+        assert!(result.registry.get("ai_explain_failure").is_some());
+        assert!(result.registry.get("ai_rollout_risk").is_some());
+        assert!(result.registry.get("ai_network_verdict").is_some());
+        assert!(result.registry.get("ai_triage_findings").is_some());
     }
 
     #[test]
