@@ -693,6 +693,7 @@ pub struct DetailViewState {
     pub yaml: Option<String>,
     pub yaml_error: Option<String>,
     pub events: Vec<EventInfo>,
+    pub events_error: Option<String>,
     pub sections: Vec<String>,
     pub pod_metrics: Option<PodMetricsInfo>,
     pub node_metrics: Option<NodeMetricsInfo>,

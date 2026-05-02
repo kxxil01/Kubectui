@@ -40,7 +40,7 @@ pub(crate) async fn fetch_detail_view(
     // Run YAML, events, and metrics fetches concurrently (no dependencies between them).
     let (
         (yaml, yaml_error),
-        events,
+        (events, events_error),
         (pod_metrics, node_metrics, metrics_unavailable_message),
         action_authorizations,
     ) = tokio::join!(
@@ -58,6 +58,7 @@ pub(crate) async fn fetch_detail_view(
         yaml,
         yaml_error,
         events,
+        events_error,
         sections,
         pod_metrics,
         node_metrics,
@@ -143,9 +144,9 @@ async fn fetch_detail_yaml(
 async fn fetch_detail_events(
     client: &K8sClient,
     resource: &ResourceRef,
-) -> Vec<kubectui::k8s::events::EventInfo> {
-    match resource {
-        ResourceRef::Pod(name, ns) => client.fetch_pod_events(name, ns).await.unwrap_or_default(),
+) -> (Vec<kubectui::k8s::events::EventInfo>, Option<String>) {
+    let result = match resource {
+        ResourceRef::Pod(name, ns) => client.fetch_pod_events(name, ns).await,
         ResourceRef::Deployment(name, ns)
         | ResourceRef::StatefulSet(name, ns)
         | ResourceRef::DaemonSet(name, ns)
@@ -158,12 +159,13 @@ async fn fetch_detail_events(
         | ResourceRef::Pvc(name, ns)
         | ResourceRef::HelmRelease(name, ns) => {
             let kind = resource.kind();
-            client
-                .fetch_resource_events(kind, name, ns)
-                .await
-                .unwrap_or_default()
+            client.fetch_resource_events(kind, name, ns).await
         }
-        _ => Vec::new(),
+        _ => return (Vec::new(), None),
+    };
+    match result {
+        Ok(events) => (events, None),
+        Err(err) => (Vec::new(), Some(format!("Events fetch failed: {err}"))),
     }
 }
 
