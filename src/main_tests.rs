@@ -344,7 +344,7 @@ fn pod_ai_context_labels_selected_container_for_cached_logs() {
     let rendered = context.log_lines.join("\n");
 
     assert!(
-        rendered.contains("pod api-0 container sidecar previous: crashed sidecar line"),
+        rendered.contains("pod prod/api-0 container sidecar previous: crashed sidecar line"),
         "{rendered}"
     );
 }
@@ -420,6 +420,14 @@ fn workload_ai_context_includes_logs_from_owned_pod_tab() {
         "{:?}",
         context.log_lines
     );
+    assert!(
+        context
+            .log_lines
+            .iter()
+            .any(|line| line.contains("pod prod/api-rs-1")),
+        "{:?}",
+        context.log_lines
+    );
 }
 
 #[test]
@@ -448,6 +456,10 @@ fn workload_ai_context_caps_workload_log_extraction_to_recent_lines() {
 
     let rendered = context.log_lines.join("\n");
     assert_eq!(context.log_lines.len(), 20);
+    assert!(
+        rendered.contains("pod prod/api-0 container main: workload-line-39"),
+        "{rendered}"
+    );
     assert!(rendered.contains("workload-line-39"), "{rendered}");
     assert!(rendered.contains("workload-line-20"), "{rendered}");
     assert!(!rendered.contains("workload-line-19"), "{rendered}");
