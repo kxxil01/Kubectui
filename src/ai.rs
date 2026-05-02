@@ -17,6 +17,8 @@ use kubectui::{
 
 const OPENAI_CHAT_COMPLETIONS_URL: &str = "https://api.openai.com/v1/chat/completions";
 const ANTHROPIC_MESSAGES_URL: &str = "https://api.anthropic.com/v1/messages";
+const PROVIDER_ERROR_MAX_LINES: usize = 12;
+const PROVIDER_ERROR_MAX_CHARS: usize = 600;
 const DEFAULT_SYSTEM_PROMPT: &str = "You are an expert Kubernetes SRE assistant embedded in KubecTUI. \
 Analyze the provided resource context conservatively. Do not invent facts. Use only the supplied context. \
 Return strict JSON with keys summary, likely_causes, next_steps, and uncertainty. \
@@ -341,7 +343,7 @@ fn call_ai_cli(
                     .context("AI CLI returned non-UTF-8 stdout");
             }
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let message = stderr.trim();
+            let message = sanitize_provider_error_message(stderr.trim());
             if message.is_empty() {
                 bail!("AI CLI '{command}' failed with status {}", output.status);
             }
@@ -547,8 +549,118 @@ fn extract_provider_error(provider: &str, value: &Value) -> String {
                 .and_then(Value::as_str)
                 .or_else(|| error.as_str())
         })
-        .map(|message| format!("{provider} request failed: {message}"))
+        .map(|message| {
+            let message = sanitize_provider_error_message(message);
+            if message.is_empty() {
+                format!("{provider} request failed")
+            } else {
+                format!("{provider} request failed: {message}")
+            }
+        })
         .unwrap_or_else(|| format!("{provider} request failed"))
+}
+
+fn sanitize_provider_error_message(message: &str) -> String {
+    let message = message.trim();
+    if message.is_empty() {
+        return String::new();
+    }
+    if provider_error_looks_like_prompt_echo(message) {
+        return "provider error output redacted because it included AI context".to_string();
+    }
+
+    let mut sanitized = message
+        .lines()
+        .take(PROVIDER_ERROR_MAX_LINES)
+        .map(sanitize_provider_error_line)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n");
+    if message.lines().count() > PROVIDER_ERROR_MAX_LINES {
+        sanitized.push_str("\n[truncated]");
+    }
+    truncate_provider_error(&sanitized)
+}
+
+fn provider_error_looks_like_prompt_echo(message: &str) -> bool {
+    let lower = message.to_ascii_lowercase();
+    let markers = [
+        "cluster context",
+        "resource state",
+        "yaml excerpt",
+        "workflow context",
+        "failure focus",
+        "rollout focus",
+    ];
+    markers
+        .iter()
+        .filter(|marker| lower.contains(**marker))
+        .take(2)
+        .count()
+        >= 2
+}
+
+fn sanitize_provider_error_line(line: &str) -> String {
+    let mut redacted = Vec::new();
+    let mut skip_tokens = 0usize;
+    for token in line.split_whitespace() {
+        if skip_tokens > 0 {
+            skip_tokens -= 1;
+            continue;
+        }
+
+        let lower = token
+            .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+            .to_ascii_lowercase();
+        if lower == "authorization" || lower == "authorization:" {
+            redacted.push("Authorization: [redacted]".to_string());
+            skip_tokens = 2;
+            continue;
+        }
+
+        redacted.push(sanitize_provider_error_token(token));
+    }
+    redacted.join(" ")
+}
+
+fn sanitize_provider_error_token(token: &str) -> String {
+    if token.contains("://") && token.contains('@') {
+        return "[redacted-uri]".to_string();
+    }
+
+    for separator in ['=', ':'] {
+        if let Some((key, _value)) = token.split_once(separator) {
+            let normalized = key
+                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+                .to_ascii_lowercase();
+            if is_sensitive_error_key(&normalized) {
+                return format!("{key}{separator}<redacted>");
+            }
+        }
+    }
+
+    token.to_string()
+}
+
+fn is_sensitive_error_key(key: &str) -> bool {
+    key == "authorization"
+        || key == "password"
+        || key == "passwd"
+        || key == "secret"
+        || key == "token"
+        || key == "api_key"
+        || key == "apikey"
+        || key.ends_with("_password")
+        || key.ends_with("_secret")
+        || key.ends_with("_token")
+}
+
+fn truncate_provider_error(message: &str) -> String {
+    let mut char_indices = message.char_indices();
+    let Some((cutoff, _)) = char_indices.nth(PROVIDER_ERROR_MAX_CHARS) else {
+        return message.to_string();
+    };
+    format!("{}…", &message[..cutoff])
 }
 
 #[cfg(test)]
@@ -668,6 +780,51 @@ trailing note {also ignored}"#,
         );
         assert!(
             default_system_prompt_for_workflow(AiWorkflowKind::RolloutRisk).contains("rollout")
+        );
+    }
+
+    #[test]
+    fn provider_error_sanitizer_redacts_prompt_echoes() {
+        let message = sanitize_provider_error_message(
+            "failed request\nResource State\n- status: CrashLoopBackOff\nCluster Context\n- current_context: prod\nYAML Excerpt\npassword=literal-secret",
+        );
+
+        assert_eq!(
+            message,
+            "provider error output redacted because it included AI context"
+        );
+        assert!(!message.contains("literal-secret"));
+        assert!(!message.contains("CrashLoopBackOff"));
+    }
+
+    #[test]
+    fn provider_error_sanitizer_preserves_concise_errors_but_redacts_values() {
+        let message = sanitize_provider_error_message(
+            "request failed Authorization: Bearer live-token dsn=postgres://user:pass@db:5432/app token=secret-value",
+        );
+
+        assert!(message.contains("request failed"), "{message}");
+        assert!(message.contains("Authorization: [redacted]"), "{message}");
+        assert!(message.contains("[redacted-uri]"), "{message}");
+        assert!(message.contains("token=<redacted>"), "{message}");
+        assert!(!message.contains("live-token"), "{message}");
+        assert!(!message.contains("user:pass"), "{message}");
+        assert!(!message.contains("secret-value"), "{message}");
+    }
+
+    #[test]
+    fn extract_provider_error_sanitizes_provider_messages() {
+        let value = json!({
+            "error": {
+                "message": "bad input api_key=sk-live password=hunter2"
+            }
+        });
+
+        let message = extract_provider_error("OpenAI", &value);
+
+        assert_eq!(
+            message,
+            "OpenAI request failed: bad input api_key=<redacted> password=<redacted>"
         );
     }
 
