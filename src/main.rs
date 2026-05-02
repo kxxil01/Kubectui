@@ -1007,15 +1007,32 @@ fn ai_key_is_sensitive(key: &str) -> bool {
         || normalized.contains("certificate")
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AiInlineRedactionState {
+    None,
+    SeparatorOrValue,
+    Value,
+}
+
 fn redact_ai_inline_secrets(value: &str) -> String {
     let mut redacted = Vec::new();
-    let mut redact_next = false;
+    let mut state = AiInlineRedactionState::None;
     for token in value.split_whitespace() {
-        if redact_next {
+        if state != AiInlineRedactionState::None {
+            if state == AiInlineRedactionState::SeparatorOrValue && matches!(token, ":" | "=") {
+                redacted.push(token.to_string());
+                state = AiInlineRedactionState::Value;
+                continue;
+            }
+
             let redacted_scheme =
                 token.eq_ignore_ascii_case("bearer") || token.eq_ignore_ascii_case("basic");
             redacted.push("[redacted]".to_string());
-            redact_next = redacted_scheme;
+            state = if redacted_scheme {
+                AiInlineRedactionState::Value
+            } else {
+                AiInlineRedactionState::None
+            };
             continue;
         }
         if token_contains_credential_uri(token) {
@@ -1024,12 +1041,12 @@ fn redact_ai_inline_secrets(value: &str) -> String {
         }
         if token.eq_ignore_ascii_case("bearer") || token.eq_ignore_ascii_case("basic") {
             redacted.push(token.to_string());
-            redact_next = true;
+            state = AiInlineRedactionState::Value;
             continue;
         }
         if token_looks_sensitive_key(token) && token.ends_with([':', '=']) {
             redacted.push(token.to_string());
-            redact_next = true;
+            state = AiInlineRedactionState::Value;
             continue;
         }
         if let Some(redacted_token) = redact_ai_inline_assignment(token) {
@@ -1038,7 +1055,7 @@ fn redact_ai_inline_secrets(value: &str) -> String {
         }
         if token_looks_sensitive_key(token) {
             redacted.push(token.to_string());
-            redact_next = true;
+            state = AiInlineRedactionState::SeparatorOrValue;
             continue;
         }
         redacted.push(token.to_string());
