@@ -302,6 +302,50 @@ fn explain_failure_ai_context_includes_high_signal_pod_state() {
 }
 
 #[test]
+fn ai_context_includes_recent_event_counts_and_timestamps() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let now = now();
+    let old = now.checked_sub(30.seconds()).expect("timestamp in range");
+    let context = super::build_ai_analysis_context(
+        &AppState::default(),
+        &ClusterSnapshot {
+            events: vec![
+                K8sEventInfo {
+                    name: "old".to_string(),
+                    namespace: "prod".to_string(),
+                    involved_object: "Pod/api-0".to_string(),
+                    type_: "Normal".to_string(),
+                    reason: "Pulled".to_string(),
+                    message: "Container image pulled".to_string(),
+                    count: 1,
+                    last_seen: Some(old),
+                    ..K8sEventInfo::default()
+                },
+                K8sEventInfo {
+                    name: "new".to_string(),
+                    namespace: "prod".to_string(),
+                    involved_object: "Pod/api-0".to_string(),
+                    type_: "Warning".to_string(),
+                    reason: "BackOff".to_string(),
+                    message: "Back-off restarting failed container".to_string(),
+                    count: 4,
+                    last_seen: Some(now),
+                    ..K8sEventInfo::default()
+                },
+            ],
+            ..ClusterSnapshot::default()
+        },
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+
+    assert_eq!(context.event_lines.len(), 2);
+    assert!(context.event_lines[0].contains("Warning BackOff count=4"));
+    assert!(context.event_lines[0].contains("last_seen="));
+    assert!(context.event_lines[1].contains("Normal Pulled count=1"));
+}
+
+#[test]
 fn rollout_ai_context_uses_rollout_summary_when_available() {
     let resource = ResourceRef::Deployment("api".to_string(), "prod".to_string());
     let mut app = AppState::default();

@@ -845,6 +845,9 @@ const AI_PROBE_MAX_LINES: usize = 12;
 const AI_PROBE_MAX_CHARS: usize = 1_800;
 const AI_LOG_MAX_LINES: usize = 20;
 const AI_LOG_MAX_CHARS: usize = 2_800;
+const AI_LIVE_LOG_CONTAINER_LIMIT: usize = 3;
+const AI_LIVE_LOG_TAIL_LINES: i64 = 20;
+const AI_LIVE_LOG_TIMEOUT_SECS: u64 = 6;
 const AI_YAML_MAX_CHARS: usize = 2_000;
 
 fn cap_ai_lines(lines: Vec<String>, max_items: usize, max_total_chars: usize) -> Vec<String> {
@@ -1301,6 +1304,108 @@ fn build_ai_resource_state_lines(
     )
 }
 
+fn format_ai_detail_event(event: &kubectui::k8s::client::EventInfo) -> String {
+    let last_seen = kubectui::time::format_rfc3339(event.last_timestamp);
+    truncate_ai_block(
+        &format!(
+            "{} {} count={} last_seen={}: {}",
+            event.event_type, event.reason, event.count, last_seen, event.message
+        ),
+        220,
+    )
+}
+
+fn format_ai_snapshot_event(event: &kubectui::k8s::dtos::K8sEventInfo) -> String {
+    let last_seen = event
+        .last_seen
+        .map(kubectui::time::format_rfc3339)
+        .unwrap_or_else(|| "-".to_string());
+    truncate_ai_block(
+        &format!(
+            "{} {} count={} last_seen={}: {}",
+            event.type_, event.reason, event.count, last_seen, event.message
+        ),
+        220,
+    )
+}
+
+async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut AiAnalysisContext) {
+    if !context.log_lines.is_empty() {
+        return;
+    }
+    let ResourceRef::Pod(pod_name, namespace) = &context.resource else {
+        return;
+    };
+
+    let fetch = async {
+        let containers = fetch_pod_containers(client, pod_name, namespace).await?;
+        let logs_client = LogsClient::new(client.get_client());
+        let pod_ref = PodRef::new(pod_name.clone(), namespace.clone());
+        let mut lines = Vec::new();
+
+        for container in containers.iter().take(AI_LIVE_LOG_CONTAINER_LIMIT) {
+            match logs_client
+                .tail_logs(
+                    &pod_ref,
+                    Some(AI_LIVE_LOG_TAIL_LINES),
+                    Some(container.as_str()),
+                )
+                .await
+            {
+                Ok(current) if !current.is_empty() => {
+                    lines.push(format!("container {container} current logs:"));
+                    lines.extend(
+                        current
+                            .into_iter()
+                            .map(|line| truncate_ai_block(&format!("{container}: {line}"), 180)),
+                    );
+                }
+                Ok(_) => {}
+                Err(err) => lines.push(format!(
+                    "container {container} current logs unavailable: {err}"
+                )),
+            }
+
+            match logs_client
+                .tail_previous_logs(
+                    &pod_ref,
+                    Some(AI_LIVE_LOG_TAIL_LINES),
+                    Some(container.as_str()),
+                )
+                .await
+            {
+                Ok(previous) if !previous.is_empty() => {
+                    lines.push(format!("container {container} previous logs:"));
+                    lines.extend(previous.into_iter().map(|line| {
+                        truncate_ai_block(&format!("{container} previous: {line}"), 180)
+                    }));
+                }
+                Ok(_) => {}
+                Err(_) => {}
+            }
+        }
+
+        if containers.len() > AI_LIVE_LOG_CONTAINER_LIMIT {
+            lines.push(format!(
+                "log fetch skipped {} additional container(s)",
+                containers.len() - AI_LIVE_LOG_CONTAINER_LIMIT
+            ));
+        }
+
+        anyhow::Ok(lines)
+    };
+
+    let lines =
+        match tokio::time::timeout(Duration::from_secs(AI_LIVE_LOG_TIMEOUT_SECS), fetch).await {
+            Ok(Ok(lines)) => lines,
+            Ok(Err(err)) => vec![format!("live pod logs unavailable: {err}")],
+            Err(_) => vec![format!(
+                "live pod logs unavailable: timed out after {AI_LIVE_LOG_TIMEOUT_SECS}s"
+            )],
+        };
+    context.log_lines = cap_ai_lines(lines, AI_LOG_MAX_LINES, AI_LOG_MAX_CHARS);
+}
+
 fn build_ai_workflow_context(
     app: &kubectui::app::AppState,
     snapshot: &kubectui::state::ClusterSnapshot,
@@ -1512,18 +1617,21 @@ fn build_ai_analysis_context(
     let event_match = format!("{}/{}", resource.kind(), resource.name());
     let event_lines = cap_ai_lines(
         if let Some(detail) = detail {
-            detail
-                .events
+            let mut events = detail.events.clone();
+            events.sort_by(|left, right| {
+                right
+                    .last_timestamp
+                    .cmp(&left.last_timestamp)
+                    .then_with(|| left.event_type.cmp(&right.event_type))
+                    .then_with(|| left.reason.cmp(&right.reason))
+                    .then_with(|| left.message.cmp(&right.message))
+            });
+            events
                 .iter()
-                .map(|event| {
-                    truncate_ai_block(
-                        &format!("{} {}: {}", event.event_type, event.reason, event.message),
-                        180,
-                    )
-                })
+                .map(format_ai_detail_event)
                 .collect::<Vec<_>>()
         } else {
-            snapshot
+            let mut events = snapshot
                 .events
                 .iter()
                 .filter(|event| {
@@ -1532,12 +1640,12 @@ fn build_ai_analysis_context(
                             .namespace()
                             .is_none_or(|namespace| namespace == event.namespace.as_str())
                 })
-                .map(|event| {
-                    truncate_ai_block(
-                        &format!("{} {}: {}", event.type_, event.reason, event.message),
-                        180,
-                    )
-                })
+                .cloned()
+                .collect::<Vec<_>>();
+            kubectui::k8s::dtos::sort_recent_events(&mut events);
+            events
+                .iter()
+                .map(format_ai_snapshot_event)
                 .collect::<Vec<_>>()
         },
         AI_EVENT_MAX_LINES,
@@ -1643,21 +1751,26 @@ fn build_ai_analysis_context(
     }
 }
 
+struct AiAnalysisRuntime<'a> {
+    client: &'a K8sClient,
+    next_execution_id: &'a mut u64,
+    tx: &'a tokio::sync::mpsc::Sender<AiAnalysisAsyncResult>,
+}
+
 fn start_ai_analysis(
     app: &mut kubectui::app::AppState,
     snapshot: &kubectui::state::ClusterSnapshot,
     resource: &ResourceRef,
     action: LoadedAiAction,
     action_history_id: u64,
-    next_ai_execution_id: &mut u64,
-    ai_analysis_tx: &tokio::sync::mpsc::Sender<AiAnalysisAsyncResult>,
+    runtime: &mut AiAnalysisRuntime<'_>,
 ) {
-    let execution_id = *next_ai_execution_id;
-    *next_ai_execution_id = (*next_ai_execution_id).wrapping_add(1).max(1);
+    let execution_id = *runtime.next_execution_id;
+    *runtime.next_execution_id = (*runtime.next_execution_id).wrapping_add(1).max(1);
     let context = build_ai_analysis_context(app, snapshot, resource, action.workflow);
     app.detail_view = None;
     app.open_ai_analysis_tab(execution_id, action.title.clone(), resource.clone());
-    let tx = ai_analysis_tx.clone();
+    let tx = runtime.tx.clone();
     let title = action.title.clone();
     let provider = action.provider.clone();
     let workflow = action.workflow;
@@ -1665,7 +1778,8 @@ fn start_ai_analysis(
         .system_prompt
         .clone()
         .unwrap_or_else(|| default_system_prompt_for_workflow(workflow).to_string());
-    let context = context.clone();
+    let mut context = context.clone();
+    let client = runtime.client.clone();
     let resource = resource.clone();
     let resource_label = format!(
         "{} on {} '{}'",
@@ -1674,6 +1788,7 @@ fn start_ai_analysis(
         resource.name()
     );
     tokio::spawn(async move {
+        enrich_ai_context_with_live_pod_logs(&client, &mut context).await;
         let result = match tokio::task::spawn_blocking(move || {
             run_ai_analysis(&provider, system_prompt.as_str(), &context)
         })
@@ -4734,14 +4849,18 @@ pub(crate) async fn run_app_inner(
                         resource_label.clone(),
                         format!("Running {resource_label}..."),
                     );
+                    let mut ai_runtime = AiAnalysisRuntime {
+                        client: &client,
+                        next_execution_id: &mut next_ai_execution_id,
+                        tx: &ai_analysis_tx,
+                    };
                     start_ai_analysis(
                         &mut app,
                         &cached_snapshot,
                         &resource,
                         action,
                         action_history_id,
-                        &mut next_ai_execution_id,
-                        &ai_analysis_tx,
+                        &mut ai_runtime,
                     );
                 }
                 AppAction::ExecuteExtension { id, resource } => {
