@@ -1115,6 +1115,56 @@ fn redact_ai_inline_assignment(token: &str) -> Option<String> {
     Some(format!("{}<redacted>{suffix}", &token[..value_start]))
 }
 
+fn redact_ai_event_secret_refs(message: &str) -> String {
+    let mut redacted = Vec::new();
+    let mut redact_next = false;
+    for token in message.split_whitespace() {
+        if redact_next {
+            redacted.push(redact_ai_event_secret_token(token));
+            redact_next = false;
+            continue;
+        }
+
+        if let Some(token) = redact_ai_event_secret_path(token) {
+            redacted.push(token);
+            continue;
+        }
+
+        let normalized = normalize_ai_key(token);
+        if matches!(
+            normalized.as_str(),
+            "secret" | "secrets" | "secretname" | "imagepullsecret" | "imagepullsecrets"
+        ) {
+            redacted.push(token.to_string());
+            redact_next = true;
+            continue;
+        }
+
+        redacted.push(token.to_string());
+    }
+    redact_ai_inline_secrets(&redacted.join(" "))
+}
+
+fn redact_ai_event_secret_path(token: &str) -> Option<String> {
+    let lower = token.to_ascii_lowercase();
+    for marker in ["secret/", "secrets/"] {
+        if let Some(index) = lower.find(marker) {
+            let end = index + marker.len();
+            return Some(format!("{}<redacted>", &token[..end]));
+        }
+    }
+    None
+}
+
+fn redact_ai_event_secret_token(token: &str) -> String {
+    let suffix_start = token
+        .char_indices()
+        .rev()
+        .find_map(|(idx, ch)| ch.is_ascii_alphanumeric().then_some(idx + ch.len_utf8()))
+        .unwrap_or(0);
+    format!("<redacted>{}", &token[suffix_start..])
+}
+
 fn ai_yaml_key_is_secret_reference(key: &str) -> bool {
     matches!(
         normalize_ai_key(key).as_str(),
@@ -1727,10 +1777,11 @@ fn build_ai_resource_state_lines(
 
 fn format_ai_detail_event(event: &kubectui::k8s::client::EventInfo) -> String {
     let last_seen = kubectui::time::format_rfc3339(event.last_timestamp);
+    let message = redact_ai_event_secret_refs(&event.message);
     truncate_ai_block(
         &format!(
             "{} {} count={} last_seen={}: {}",
-            event.event_type, event.reason, event.count, last_seen, event.message
+            event.event_type, event.reason, event.count, last_seen, message
         ),
         220,
     )
@@ -1741,10 +1792,11 @@ fn format_ai_snapshot_event(event: &kubectui::k8s::dtos::K8sEventInfo) -> String
         .last_seen
         .map(kubectui::time::format_rfc3339)
         .unwrap_or_else(|| "-".to_string());
+    let message = redact_ai_event_secret_refs(&event.message);
     truncate_ai_block(
         &format!(
             "{} {} count={} last_seen={}: {}",
-            event.type_, event.reason, event.count, last_seen, event.message
+            event.type_, event.reason, event.count, last_seen, message
         ),
         220,
     )

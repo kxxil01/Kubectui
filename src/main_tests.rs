@@ -202,6 +202,23 @@ fn sanitize_ai_context_lines_redacts_inline_secret_values() {
 }
 
 #[test]
+fn sanitize_ai_event_redacts_secret_object_names() {
+    let sanitized = super::redact_ai_event_secret_refs(
+        r#"MountVolume.SetUp failed for volume "creds": secret "database-password" not found; imagePullSecrets registry-credentials; path secret/inline-token"#,
+    );
+
+    assert!(sanitized.contains("secret [redacted]"), "{sanitized}");
+    assert!(
+        sanitized.contains("imagePullSecrets <redacted>"),
+        "{sanitized}"
+    );
+    assert!(sanitized.contains("secret/<redacted>"), "{sanitized}");
+    assert!(!sanitized.contains("database-password"), "{sanitized}");
+    assert!(!sanitized.contains("registry-credentials"), "{sanitized}");
+    assert!(!sanitized.contains("inline-token"), "{sanitized}");
+}
+
+#[test]
 fn sanitize_ai_yaml_excerpt_redacts_secret_values() {
     let excerpt = super::sanitize_ai_yaml_excerpt(
         &ResourceRef::Deployment("api".to_string(), "prod".to_string()),
@@ -574,6 +591,38 @@ fn ai_context_includes_recent_event_counts_and_timestamps() {
     assert!(context.event_lines[0].contains("Warning BackOff count=4"));
     assert!(context.event_lines[0].contains("last_seen="));
     assert!(context.event_lines[1].contains("Normal Pulled count=1"));
+}
+
+#[test]
+fn ai_context_redacts_secret_names_from_event_messages() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let context = super::build_ai_analysis_context(
+        &AppState::default(),
+        &ClusterSnapshot {
+            events: vec![K8sEventInfo {
+                name: "secret-missing".to_string(),
+                namespace: "prod".to_string(),
+                involved_object: "Pod/api-0".to_string(),
+                type_: "Warning".to_string(),
+                reason: "FailedMount".to_string(),
+                message: r#"secret "database-password" not found"#.to_string(),
+                count: 2,
+                last_seen: Some(now()),
+                ..K8sEventInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        },
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+    let rendered = context.render_prompt();
+
+    assert!(
+        rendered.contains("Warning FailedMount count=2"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("secret [redacted]"), "{rendered}");
+    assert!(!rendered.contains("database-password"), "{rendered}");
 }
 
 #[test]
