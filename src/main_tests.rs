@@ -308,10 +308,35 @@ fn ai_context_redacts_sensitive_pod_log_values() {
 }
 
 #[test]
+fn pod_ai_context_labels_selected_container_for_cached_logs() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let mut app = AppState::default();
+    let mut logs = PodLogsTabState::new(resource.clone());
+    logs.viewer.container_name = "sidecar".to_string();
+    logs.viewer.previous_logs = true;
+    logs.viewer.lines = vec![LogEntry::from_raw("crashed sidecar line")];
+    app.workbench.open_tab(WorkbenchTabState::PodLogs(logs));
+
+    let context = super::build_ai_analysis_context(
+        &app,
+        &ClusterSnapshot::default(),
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+    let rendered = context.log_lines.join("\n");
+
+    assert!(
+        rendered.contains("pod api-0 container sidecar previous: crashed sidecar line"),
+        "{rendered}"
+    );
+}
+
+#[test]
 fn pod_ai_context_caps_pod_log_extraction_to_recent_lines() {
     let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
     let mut app = AppState::default();
     let mut logs = PodLogsTabState::new(resource.clone());
+    logs.viewer.container_name = "main".to_string();
     logs.viewer.lines = (0..40)
         .map(|idx| LogEntry::from_raw(format!("pod-line-{idx}")))
         .collect();

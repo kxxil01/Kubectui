@@ -2169,13 +2169,26 @@ fn append_ai_pod_log_lines(
     if remaining == 0 {
         return;
     }
+    let pod_name = logs_tab.resource.name();
+    let container_name = logs_tab.viewer.container_name.trim();
+    let stream_label = if logs_tab.viewer.previous_logs {
+        "previous"
+    } else {
+        "current"
+    };
     log_lines.extend(
         logs_tab
             .viewer
             .recent_visible_lines(remaining)
             .into_iter()
             .map(|entry| {
-                truncate_ai_block(entry.display_text(logs_tab.viewer.structured_view), 180)
+                let line = entry.display_text(logs_tab.viewer.structured_view);
+                let line = if container_name.is_empty() {
+                    format!("pod {pod_name} {stream_label}: {line}")
+                } else {
+                    format!("pod {pod_name} container {container_name} {stream_label}: {line}")
+                };
+                truncate_ai_block(&line, 180)
             }),
     );
 }
