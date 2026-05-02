@@ -198,6 +198,7 @@ fn sanitize_ai_context_lines_redacts_inline_secret_values() {
         vec![
             "Authorization: Bearer live-token password=literal-secret".to_string(),
             "dsn=postgres://super:db-pass@db.example:5432/app token: literal-token".to_string(),
+            "api_key : sk-live password = spaced-secret".to_string(),
         ],
         4,
         1_000,
@@ -208,10 +209,14 @@ fn sanitize_ai_context_lines_redacts_inline_secret_values() {
     assert!(rendered.contains("password=<redacted>"), "{rendered}");
     assert!(rendered.contains("[redacted-uri]"), "{rendered}");
     assert!(rendered.contains("token: [redacted]"), "{rendered}");
+    assert!(rendered.contains("api_key : [redacted]"), "{rendered}");
+    assert!(rendered.contains("password = [redacted]"), "{rendered}");
     assert!(!rendered.contains("live-token"), "{rendered}");
     assert!(!rendered.contains("literal-secret"), "{rendered}");
     assert!(!rendered.contains("db-pass"), "{rendered}");
     assert!(!rendered.contains("literal-token"), "{rendered}");
+    assert!(!rendered.contains("sk-live"), "{rendered}");
+    assert!(!rendered.contains("spaced-secret"), "{rendered}");
 }
 
 #[test]
