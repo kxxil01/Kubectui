@@ -1874,20 +1874,23 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
                 {
                     Ok(current) if !current.is_empty() => {
                         lines.push(format!(
-                            "pod {} container {container} current logs:",
-                            target.pod_name
+                            "pod {}/{} container {container} current logs:",
+                            target.namespace, target.pod_name
                         ));
                         lines.extend(current.into_iter().map(|line| {
                             truncate_ai_block(
-                                &format!("{} {container}: {line}", target.pod_name),
+                                &format!(
+                                    "{}/{} {container}: {line}",
+                                    target.namespace, target.pod_name
+                                ),
                                 180,
                             )
                         }));
                     }
                     Ok(_) => {}
                     Err(err) => lines.push(format!(
-                        "pod {} container {container} current logs unavailable: {err}",
-                        target.pod_name
+                        "pod {}/{} container {container} current logs unavailable: {err}",
+                        target.namespace, target.pod_name
                     )),
                 }
 
@@ -1901,12 +1904,15 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
                 {
                     Ok(previous) if !previous.is_empty() => {
                         lines.push(format!(
-                            "pod {} container {container} previous logs:",
-                            target.pod_name
+                            "pod {}/{} container {container} previous logs:",
+                            target.namespace, target.pod_name
                         ));
                         lines.extend(previous.into_iter().map(|line| {
                             truncate_ai_block(
-                                &format!("{} {container} previous: {line}", target.pod_name),
+                                &format!(
+                                    "{}/{} {container} previous: {line}",
+                                    target.namespace, target.pod_name
+                                ),
                                 180,
                             )
                         }));
@@ -2163,6 +2169,7 @@ fn append_ai_workload_log_lines(
     if remaining == 0 {
         return;
     }
+    let namespace = logs_tab.resource.namespace().unwrap_or("-");
     let mut collected = Vec::with_capacity(remaining);
     for line in logs_tab.lines.iter().rev() {
         if collected.len() >= remaining {
@@ -2173,7 +2180,8 @@ fn append_ai_workload_log_lines(
         }
         collected.push(truncate_ai_block(
             &format!(
-                "{} {} {}",
+                "pod {}/{} container {}: {}",
+                namespace,
                 line.pod_name,
                 line.container_name,
                 line.entry.display_text(logs_tab.structured_view)
@@ -2194,6 +2202,7 @@ fn append_ai_pod_log_lines(
         return;
     }
     let pod_name = logs_tab.resource.name();
+    let namespace = logs_tab.resource.namespace().unwrap_or("-");
     let container_name = logs_tab.viewer.container_name.trim();
     let stream_label = if logs_tab.viewer.previous_logs {
         "previous"
@@ -2208,9 +2217,11 @@ fn append_ai_pod_log_lines(
             .map(|entry| {
                 let line = entry.display_text(logs_tab.viewer.structured_view);
                 let line = if container_name.is_empty() {
-                    format!("pod {pod_name} {stream_label}: {line}")
+                    format!("pod {namespace}/{pod_name} {stream_label}: {line}")
                 } else {
-                    format!("pod {pod_name} container {container_name} {stream_label}: {line}")
+                    format!(
+                        "pod {namespace}/{pod_name} container {container_name} {stream_label}: {line}"
+                    )
                 };
                 truncate_ai_block(&line, 180)
             }),
