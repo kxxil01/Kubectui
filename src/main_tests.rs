@@ -25,7 +25,7 @@ use crate::async_types::{
 use kubectui::ui::components::command_palette::PaletteEntry;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
-    ai_actions::AiWorkflowKind,
+    ai_actions::{AiConfig, AiProviderConfig, AiProviderKind, AiWorkflowKind, validate_ai_actions},
     app::{
         AppAction, AppState, AppView, ContentPaneFocus, DetailViewState, Focus, ResourceRef,
         SELECTION_SEARCH_FALLBACK_STATUS, SidebarItem, WorkloadSortColumn, WorkloadSortState,
@@ -42,7 +42,7 @@ use kubectui::{
         },
     },
     log_investigation::LogEntry,
-    policy::DetailAction,
+    policy::{DetailAction, ResourceActionContext},
     state::{
         ClusterSnapshot, DataPhase, FluxResourceTargetKey, FluxTargetFingerprints, GlobalState,
         RefreshOptions, RefreshScope,
@@ -50,7 +50,8 @@ use kubectui::{
     },
     time::{AppTimestamp, now},
     ui::components::{
-        debug_container_dialog::DebugContainerDialogState, node_debug_dialog::NodeDebugDialogState,
+        command_palette::CommandPaletteAction, debug_container_dialog::DebugContainerDialogState,
+        node_debug_dialog::NodeDebugDialogState,
     },
     workbench::{
         DecodedSecretTabState, PodLogsTabState, ResourceYamlTabState, RolloutTabState,
@@ -61,6 +62,18 @@ use std::{
     collections::BTreeMap,
     time::{Duration, Instant},
 };
+
+fn palette_resource_context(resource: ResourceRef) -> ResourceActionContext {
+    ResourceActionContext {
+        resource,
+        node_unschedulable: None,
+        cronjob_suspended: None,
+        cronjob_history_logs_available: false,
+        effective_logs_resource: None,
+        effective_logs_authorization: None,
+        action_authorizations: Default::default(),
+    }
+}
 
 #[test]
 fn root_enter_shortcut_rejects_control_alt_modifiers() {
@@ -756,6 +769,62 @@ fn ai_context_summary_marks_unavailable_context_gaps() {
     assert!(summary.contains("YAML unavailable"), "{summary}");
     assert!(summary.contains("event gaps noted"), "{summary}");
     assert!(summary.contains("log gaps noted"), "{summary}");
+}
+
+#[test]
+fn palette_ai_reload_uses_open_palette_resource_context() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let registry = validate_ai_actions(Some(AiConfig {
+        providers: vec![AiProviderConfig {
+            provider: AiProviderKind::CodexCli,
+            model: String::new(),
+            api_key_env: String::new(),
+            endpoint: None,
+            timeout_secs: 30,
+            max_output_tokens: 800,
+            temperature: None,
+            command: None,
+            args: Vec::new(),
+            action: None,
+        }],
+    }))
+    .registry;
+    let mut app = AppState::default();
+    app.command_palette
+        .open_with_context(Some(palette_resource_context(resource.clone())));
+
+    super::refresh_palette_ai_actions(&mut app, &ClusterSnapshot::default(), &registry);
+    for ch in "why failing".chars() {
+        app.command_palette
+            .handle_key(KeyEvent::from(KeyCode::Char(ch)));
+    }
+
+    assert_eq!(
+        app.command_palette
+            .handle_key(KeyEvent::from(KeyCode::Enter)),
+        CommandPaletteAction::ExecuteAi("ai_explain_failure".to_string(), resource)
+    );
+}
+
+#[test]
+fn palette_runbook_reload_uses_open_palette_resource_context() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let registry = kubectui::runbooks::load_runbook_registry().registry;
+    let mut app = AppState::default();
+    app.command_palette
+        .open_with_context(Some(palette_resource_context(resource.clone())));
+
+    super::refresh_palette_runbooks(&mut app, &ClusterSnapshot::default(), &registry);
+    for ch in "pod failure".chars() {
+        app.command_palette
+            .handle_key(KeyEvent::from(KeyCode::Char(ch)));
+    }
+
+    assert_eq!(
+        app.command_palette
+            .handle_key(KeyEvent::from(KeyCode::Enter)),
+        CommandPaletteAction::OpenRunbook("pod_failure".to_string(), Some(resource))
+    );
 }
 
 #[test]
