@@ -94,12 +94,45 @@ impl TunnelRegistry {
         self.tunnels.len()
     }
 
-    /// Returns tunnels in insertion order.
+    /// Returns tunnels in stable display order.
     pub fn ordered_tunnels(&self) -> Vec<&PortForwardTunnelInfo> {
         self.tunnel_ids
             .iter()
             .filter_map(|id| self.tunnels.get(id))
             .collect()
+    }
+
+    pub fn ordered_tunnels_matching(&self, search: &str) -> Vec<&PortForwardTunnelInfo> {
+        self.ordered_tunnels()
+            .into_iter()
+            .filter(|tunnel| tunnel_matches_search(tunnel, search))
+            .collect()
+    }
+
+    pub fn update_tunnels_preserving_filtered_selection(
+        &mut self,
+        tunnels: Vec<PortForwardTunnelInfo>,
+        selected_index: usize,
+        search: &str,
+    ) -> usize {
+        let selected_id = self
+            .ordered_tunnels_matching(search)
+            .get(selected_index)
+            .map(|tunnel| tunnel.id.clone());
+        self.update_tunnels(tunnels);
+        selected_id
+            .and_then(|id| {
+                self.ordered_tunnels_matching(search)
+                    .iter()
+                    .position(|tunnel| tunnel.id == id)
+            })
+            .unwrap_or_else(|| {
+                selected_index.min(
+                    self.ordered_tunnels_matching(search)
+                        .len()
+                        .saturating_sub(1),
+                )
+            })
     }
 
     /// Returns the selected index.
@@ -138,6 +171,25 @@ impl TunnelRegistry {
             .map(|tunnel| tunnel.id.clone())
             .collect();
     }
+}
+
+fn tunnel_matches_search(tunnel: &PortForwardTunnelInfo, search: &str) -> bool {
+    search.is_empty()
+        || contains_ascii_case_insensitive(&tunnel.target.pod_name, search)
+        || contains_ascii_case_insensitive(&tunnel.target.namespace, search)
+}
+
+fn contains_ascii_case_insensitive(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    if needle.len() > haystack.len() {
+        return false;
+    }
+    haystack
+        .as_bytes()
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 #[cfg(test)]
@@ -281,6 +333,89 @@ mod tests {
         assert_eq!(
             registry.selected().map(|tunnel| tunnel.id.as_str()),
             Some("alpha")
+        );
+    }
+
+    #[test]
+    fn update_tunnels_preserves_filtered_selected_tunnel_identity() {
+        let mut registry = TunnelRegistry::new();
+        registry.update_tunnels(vec![
+            PortForwardTunnelInfo {
+                id: "target".to_string(),
+                target: PortForwardTarget::new("team-b", "api", 8080),
+                local_addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+                state: TunnelState::Active,
+            },
+            PortForwardTunnelInfo {
+                id: "other".to_string(),
+                target: PortForwardTarget::new("team-b", "worker", 8080),
+                local_addr: SocketAddr::from_str("127.0.0.1:9001").unwrap(),
+                state: TunnelState::Active,
+            },
+        ]);
+
+        let selected = registry.update_tunnels_preserving_filtered_selection(
+            vec![
+                PortForwardTunnelInfo {
+                    id: "inserted-before".to_string(),
+                    target: PortForwardTarget::new("team-a", "api", 8080),
+                    local_addr: SocketAddr::from_str("127.0.0.1:8999").unwrap(),
+                    state: TunnelState::Active,
+                },
+                PortForwardTunnelInfo {
+                    id: "target".to_string(),
+                    target: PortForwardTarget::new("team-b", "api", 8080),
+                    local_addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+                    state: TunnelState::Active,
+                },
+                PortForwardTunnelInfo {
+                    id: "other".to_string(),
+                    target: PortForwardTarget::new("team-b", "worker", 8080),
+                    local_addr: SocketAddr::from_str("127.0.0.1:9001").unwrap(),
+                    state: TunnelState::Active,
+                },
+            ],
+            0,
+            "api",
+        );
+
+        let visible = registry.ordered_tunnels_matching("api");
+        assert_eq!(visible[selected].id, "target");
+    }
+
+    #[test]
+    fn update_tunnels_clamps_filtered_selection_when_selected_tunnel_disappears() {
+        let mut registry = TunnelRegistry::new();
+        registry.update_tunnels(vec![
+            PortForwardTunnelInfo {
+                id: "alpha".to_string(),
+                target: PortForwardTarget::new("team-a", "api", 8080),
+                local_addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+                state: TunnelState::Active,
+            },
+            PortForwardTunnelInfo {
+                id: "beta".to_string(),
+                target: PortForwardTarget::new("team-b", "api", 8080),
+                local_addr: SocketAddr::from_str("127.0.0.1:9001").unwrap(),
+                state: TunnelState::Active,
+            },
+        ]);
+
+        let selected = registry.update_tunnels_preserving_filtered_selection(
+            vec![PortForwardTunnelInfo {
+                id: "alpha".to_string(),
+                target: PortForwardTarget::new("team-a", "api", 8080),
+                local_addr: SocketAddr::from_str("127.0.0.1:9000").unwrap(),
+                state: TunnelState::Active,
+            }],
+            1,
+            "api",
+        );
+
+        assert_eq!(selected, 0);
+        assert_eq!(
+            registry.ordered_tunnels_matching("api")[selected].id,
+            "alpha"
         );
     }
 }

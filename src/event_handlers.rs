@@ -494,7 +494,7 @@ pub(crate) fn refresh_port_forward_workbench(
     status_message_clear_at: &mut Option<Instant>,
 ) {
     let tunnels = port_forwarder.list_tunnels();
-    app.tunnel_registry.update_tunnels(tunnels.clone());
+    update_port_forwarding_registry(app, tunnels.clone());
     if let Some(tab) = app
         .workbench_mut()
         .find_tab_mut(&WorkbenchTabKey::PortForward)
@@ -509,6 +509,24 @@ pub(crate) fn refresh_port_forward_workbench(
         status_message_clear_at,
         "Refreshed port-forward sessions.",
     );
+}
+
+pub(crate) fn update_port_forwarding_registry(
+    app: &mut AppState,
+    tunnels: Vec<kubectui::k8s::portforward::PortForwardTunnelInfo>,
+) {
+    if app.view() == AppView::PortForwarding {
+        let search_query = app.search_query().to_string();
+        app.selected_idx = app
+            .tunnel_registry
+            .update_tunnels_preserving_filtered_selection(
+                tunnels,
+                app.selected_idx,
+                search_query.as_str(),
+            );
+    } else {
+        app.tunnel_registry.update_tunnels(tunnels);
+    }
 }
 
 pub(crate) fn apply_mutation_success(
@@ -920,9 +938,20 @@ pub(crate) fn request_events_refresh(
 mod tests {
     use super::*;
     use kubectui::{
+        k8s::portforward::{PortForwardTarget, PortForwardTunnelInfo, TunnelState},
         secret::{DecodedSecretEntry, DecodedSecretValue},
         workbench::{DecodedSecretTabState, PodLogsTabState, ResourceYamlTabState},
     };
+    use std::{net::SocketAddr, str::FromStr};
+
+    fn tunnel(id: &str, namespace: &str, pod: &str, local_port: u16) -> PortForwardTunnelInfo {
+        PortForwardTunnelInfo {
+            id: id.to_string(),
+            target: PortForwardTarget::new(namespace, pod, 8080),
+            local_addr: SocketAddr::from_str(&format!("127.0.0.1:{local_port}")).expect("socket"),
+            state: TunnelState::Active,
+        }
+    }
 
     #[test]
     fn pod_log_stream_started_clears_loading_state() {
@@ -1093,6 +1122,34 @@ mod tests {
         assert_eq!(tab.pending_request_id, None);
         assert!(tab.events.is_empty());
         assert_eq!(tab.error.as_deref(), Some("failed to read live events"));
+    }
+
+    #[test]
+    fn port_forward_registry_update_preserves_filtered_view_selection_identity() {
+        let mut app = AppState {
+            view: AppView::PortForwarding,
+            search_query: "api".into(),
+            selected_idx: 0,
+            ..AppState::default()
+        };
+        app.tunnel_registry.update_tunnels(vec![
+            tunnel("target", "team-b", "api", 9000),
+            tunnel("other", "team-b", "worker", 9001),
+        ]);
+
+        update_port_forwarding_registry(
+            &mut app,
+            vec![
+                tunnel("inserted-before", "team-a", "api", 8999),
+                tunnel("target", "team-b", "api", 9000),
+                tunnel("other", "team-b", "worker", 9001),
+            ],
+        );
+
+        let visible = app
+            .tunnel_registry
+            .ordered_tunnels_matching(app.search_query());
+        assert_eq!(visible[app.selected_idx()].id, "target");
     }
 
     #[test]
