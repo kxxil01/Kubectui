@@ -1969,7 +1969,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
         return;
     };
 
-    if tab_state.loading {
+    if tab_state.loading && tab_state.timeline.is_empty() {
         frame.render_widget(
             Paragraph::new(Span::styled(" Loading timeline...", theme.inactive_style())),
             area,
@@ -4127,5 +4127,15 @@ mod tests {
         terminal
             .draw(|frame| render_events_tab(frame, Rect::new(0, 0, 72, 10), 0, &tab))
             .expect("resource events timeline should render on narrow width");
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(rendered.contains("very long timeline message"));
+        assert!(!rendered.contains("Loading timeline"));
     }
 }
