@@ -36,8 +36,9 @@ use kubectui::{
         client::FluxWatchTarget,
         dtos::{
             ConfigMapInfo, CustomResourceDefinitionInfo, CustomResourceInfo, DeploymentInfo,
-            FluxResourceInfo, JobInfo, K8sEventInfo, NamespaceInfo, NodeInfo, PodInfo, ServiceInfo,
-            VulnerabilityReportInfo, VulnerabilitySummaryCounts,
+            FluxResourceInfo, JobInfo, K8sEventInfo, NamespaceInfo, NodeInfo, OwnerRefInfo,
+            PodInfo, ReplicaSetInfo, ServiceInfo, VulnerabilityReportInfo,
+            VulnerabilitySummaryCounts,
         },
     },
     log_investigation::LogEntry,
@@ -53,7 +54,7 @@ use kubectui::{
     },
     workbench::{
         DecodedSecretTabState, PodLogsTabState, ResourceYamlTabState, RolloutTabState,
-        WorkbenchTabState,
+        WorkbenchTabState, WorkloadLogLine, WorkloadLogsTabState,
     },
 };
 use std::time::{Duration, Instant};
@@ -284,6 +285,85 @@ fn ai_context_redacts_sensitive_pod_log_values() {
     assert!(!rendered.contains("live-token"), "{rendered}");
     assert!(!rendered.contains("literal-secret"), "{rendered}");
     assert!(!rendered.contains("db-pass"), "{rendered}");
+}
+
+#[test]
+fn workload_ai_context_includes_logs_from_owned_pod_tab() {
+    let resource = ResourceRef::Deployment("api".to_string(), "prod".to_string());
+    let pod_resource = ResourceRef::Pod("api-rs-1".to_string(), "prod".to_string());
+    let mut app = AppState::default();
+    let mut logs = PodLogsTabState::new(pod_resource);
+    logs.viewer.lines = vec![LogEntry::from_raw("deployment owned pod failure log")];
+    app.workbench.open_tab(WorkbenchTabState::PodLogs(logs));
+
+    let context = super::build_ai_analysis_context(
+        &app,
+        &ClusterSnapshot {
+            pods: vec![PodInfo {
+                name: "api-rs-1".to_string(),
+                namespace: "prod".to_string(),
+                owner_references: vec![OwnerRefInfo {
+                    kind: "ReplicaSet".to_string(),
+                    name: "api-rs".to_string(),
+                    uid: "rs-uid".to_string(),
+                }],
+                ..PodInfo::default()
+            }],
+            replicasets: vec![ReplicaSetInfo {
+                name: "api-rs".to_string(),
+                namespace: "prod".to_string(),
+                owner_references: vec![OwnerRefInfo {
+                    kind: "Deployment".to_string(),
+                    name: "api".to_string(),
+                    uid: "deploy-uid".to_string(),
+                }],
+                ..ReplicaSetInfo::default()
+            }],
+            ..ClusterSnapshot::default()
+        },
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+
+    assert!(
+        context
+            .log_lines
+            .iter()
+            .any(|line| line.contains("deployment owned pod failure log")),
+        "{:?}",
+        context.log_lines
+    );
+}
+
+#[test]
+fn workload_ai_context_caps_workload_log_extraction_to_recent_lines() {
+    let resource = ResourceRef::Deployment("api".to_string(), "prod".to_string());
+    let mut app = AppState::default();
+    let mut logs = WorkloadLogsTabState::new(resource.clone(), 7);
+    logs.loading = false;
+    logs.lines = (0..40)
+        .map(|idx| WorkloadLogLine {
+            pod_name: "api-0".to_string(),
+            container_name: "main".to_string(),
+            entry: LogEntry::from_raw(format!("workload-line-{idx}")),
+            is_stderr: false,
+        })
+        .collect();
+    app.workbench
+        .open_tab(WorkbenchTabState::WorkloadLogs(logs));
+
+    let context = super::build_ai_analysis_context(
+        &app,
+        &ClusterSnapshot::default(),
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+
+    let rendered = context.log_lines.join("\n");
+    assert_eq!(context.log_lines.len(), 20);
+    assert!(rendered.contains("workload-line-39"), "{rendered}");
+    assert!(rendered.contains("workload-line-20"), "{rendered}");
+    assert!(!rendered.contains("workload-line-19"), "{rendered}");
 }
 
 #[test]
