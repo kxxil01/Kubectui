@@ -828,6 +828,64 @@ fn ai_analysis_result_is_current(
     result.context_generation == refresh_state.context_generation
 }
 
+fn apply_ai_analysis_result(
+    app: &mut kubectui::app::AppState,
+    result: AiAnalysisAsyncResult,
+    status_message_clear_at: &mut Option<Instant>,
+) {
+    let resource_label = format!(
+        "{} on {} '{}'",
+        result.title,
+        result.resource.kind(),
+        result.resource.name(),
+    );
+    match result.result {
+        Ok(analysis) => {
+            if let Some(tab) = app
+                .workbench_mut()
+                .find_tab_mut(&WorkbenchTabKey::AiAnalysis(result.execution_id))
+                && let WorkbenchTabState::AiAnalysis(tab_state) = &mut tab.state
+            {
+                tab_state.apply_result(
+                    analysis.provider_label,
+                    analysis.model,
+                    analysis.summary,
+                    analysis.likely_causes,
+                    analysis.next_steps,
+                    analysis.uncertainty,
+                );
+            }
+            app.complete_action_history(
+                result.action_history_id,
+                ActionStatus::Succeeded,
+                format!("{resource_label} completed."),
+                true,
+            );
+            set_transient_status(
+                app,
+                status_message_clear_at,
+                format!("{resource_label} completed."),
+            );
+        }
+        Err(error) => {
+            if let Some(tab) = app
+                .workbench_mut()
+                .find_tab_mut(&WorkbenchTabKey::AiAnalysis(result.execution_id))
+                && let WorkbenchTabState::AiAnalysis(tab_state) = &mut tab.state
+            {
+                tab_state.apply_error(error.clone());
+            }
+            app.complete_action_history(
+                result.action_history_id,
+                ActionStatus::Failed,
+                error.clone(),
+                true,
+            );
+            app.set_error(error);
+        }
+    }
+}
+
 fn truncate_ai_block(value: &str, max_chars: usize) -> String {
     if value.chars().count() <= max_chars {
         return value.to_string();
@@ -4103,76 +4161,7 @@ pub(crate) async fn run_app_inner(
                     if !ai_analysis_result_is_current(&result, &refresh_state) {
                         continue;
                     }
-                    let resource_label = format!(
-                        "{} on {} '{}'",
-                        result.title,
-                        result.resource.kind(),
-                        result.resource.name(),
-                    );
-                    if let Some(tab) = app
-                        .workbench_mut()
-                        .find_tab_mut(&WorkbenchTabKey::AiAnalysis(result.execution_id))
-                        && let WorkbenchTabState::AiAnalysis(tab_state) = &mut tab.state
-                    {
-                        match result.result {
-                            Ok(analysis) => {
-                                tab_state.apply_result(
-                                    analysis.provider_label,
-                                    analysis.model,
-                                    analysis.summary,
-                                    analysis.likely_causes,
-                                    analysis.next_steps,
-                                    analysis.uncertainty,
-                                );
-                                app.complete_action_history(
-                                    result.action_history_id,
-                                    ActionStatus::Succeeded,
-                                    format!("{resource_label} completed."),
-                                    true,
-                                );
-                                set_transient_status(
-                                    &mut app,
-                                    &mut status_message_clear_at,
-                                    format!("{resource_label} completed."),
-                                );
-                            }
-                            Err(error) => {
-                                tab_state.apply_error(error.clone());
-                                app.complete_action_history(
-                                    result.action_history_id,
-                                    ActionStatus::Failed,
-                                    error.clone(),
-                                    true,
-                                );
-                                app.set_error(error);
-                            }
-                        }
-                    } else {
-                        match result.result {
-                            Ok(_) => {
-                                app.complete_action_history(
-                                    result.action_history_id,
-                                    ActionStatus::Succeeded,
-                                    format!("{resource_label} completed."),
-                                    true,
-                                );
-                                set_transient_status(
-                                    &mut app,
-                                    &mut status_message_clear_at,
-                                    format!("{resource_label} completed."),
-                                );
-                            }
-                            Err(error) => {
-                                app.complete_action_history(
-                                    result.action_history_id,
-                                    ActionStatus::Failed,
-                                    error.clone(),
-                                    true,
-                                );
-                                app.set_error(error);
-                            }
-                        }
-                    }
+                    apply_ai_analysis_result(&mut app, result, &mut status_message_clear_at);
                     needs_redraw = true;
                 }
             }

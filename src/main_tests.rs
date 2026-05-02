@@ -18,6 +18,7 @@ use super::{
     strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
     workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
+use crate::ai::AiAnalysisResult;
 use crate::async_types::{
     AiAnalysisAsyncResult, QueuedRefresh, RefreshDispatch, RefreshRuntimeState,
 };
@@ -397,6 +398,95 @@ fn stale_ai_analysis_results_are_ignored_after_scope_change() {
         &current,
         &refresh_state
     ));
+}
+
+#[test]
+fn ai_analysis_success_completes_history_when_tab_was_closed() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let mut app = AppState {
+        view: AppView::Pods,
+        ..AppState::default()
+    };
+    let action_history_id = app.record_action_pending(
+        ActionKind::Ai,
+        AppView::Pods,
+        Some(resource.clone()),
+        "Explain Failure on Pod 'api-0'",
+        "Running Explain Failure on Pod 'api-0'...",
+    );
+    let mut status_message_clear_at = None;
+
+    super::apply_ai_analysis_result(
+        &mut app,
+        AiAnalysisAsyncResult {
+            context_generation: 0,
+            action_history_id,
+            resource,
+            execution_id: 99,
+            title: "Explain Failure".to_string(),
+            result: Ok(AiAnalysisResult {
+                provider_label: "Codex CLI".to_string(),
+                model: "codex-cli".to_string(),
+                summary: "Pod is failing.".to_string(),
+                likely_causes: vec!["CrashLoopBackOff".to_string()],
+                next_steps: vec!["Check previous logs.".to_string()],
+                uncertainty: Vec::new(),
+                raw_json: "{}".to_string(),
+            }),
+        },
+        &mut status_message_clear_at,
+    );
+
+    let entry = app
+        .action_history
+        .find_by_id(action_history_id)
+        .expect("history entry exists");
+    assert_eq!(entry.status, ActionStatus::Succeeded);
+    assert!(entry.message.contains("completed"));
+    assert_eq!(
+        app.status_message(),
+        Some("Explain Failure on Pod 'api-0' completed.")
+    );
+    assert!(status_message_clear_at.is_some());
+}
+
+#[test]
+fn ai_analysis_failure_completes_history_when_tab_was_closed() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let mut app = AppState {
+        view: AppView::Pods,
+        ..AppState::default()
+    };
+    let action_history_id = app.record_action_pending(
+        ActionKind::Ai,
+        AppView::Pods,
+        Some(resource.clone()),
+        "Explain Failure on Pod 'api-0'",
+        "Running Explain Failure on Pod 'api-0'...",
+    );
+    let mut status_message_clear_at = None;
+
+    super::apply_ai_analysis_result(
+        &mut app,
+        AiAnalysisAsyncResult {
+            context_generation: 0,
+            action_history_id,
+            resource,
+            execution_id: 99,
+            title: "Explain Failure".to_string(),
+            result: Err("provider failed".to_string()),
+        },
+        &mut status_message_clear_at,
+    );
+
+    let entry = app
+        .action_history
+        .find_by_id(action_history_id)
+        .expect("history entry exists");
+    assert_eq!(entry.status, ActionStatus::Failed);
+    assert_eq!(entry.message, "provider failed");
+    assert_eq!(app.error_message(), Some("provider failed"));
+    assert!(status_message_clear_at.is_none());
 }
 
 #[test]
