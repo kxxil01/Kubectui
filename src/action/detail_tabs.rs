@@ -297,21 +297,19 @@ pub async fn handle_open_resource_events(
     {
         return true;
     }
-    let cached_events = app
+    let cached_detail = app
         .detail_view
         .as_ref()
-        .and_then(|detail| {
-            (detail.resource.as_ref() == Some(&resource)).then(|| detail.events.clone())
-        })
+        .filter(|detail| detail.resource.as_ref() == Some(&resource));
+    let cached_events = cached_detail
+        .map(|detail| detail.events.clone())
         .unwrap_or_default();
-    let cached_events_error = app
-        .detail_view
-        .as_ref()
-        .and_then(|detail| {
-            (detail.resource.as_ref() == Some(&resource)).then(|| detail.events_error.clone())
-        })
-        .flatten();
-    let loading = cached_events.is_empty() && cached_events_error.is_none();
+    let cached_events_error = cached_detail.and_then(|detail| detail.events_error.clone());
+    let cached_events_loaded = cached_detail
+        .map(|detail| !detail.loading && detail.error.is_none())
+        .unwrap_or(false);
+    let loading =
+        !cached_events_loaded && cached_events.is_empty() && cached_events_error.is_none();
     let pending_request_id = loading.then(|| next_request_id(detail_request_seq));
     app.detail_view = None;
     app.open_resource_events_tab(
@@ -958,6 +956,53 @@ mod tests {
         assert_eq!(tab.pending_request_id, None);
         assert!(tab.events.is_empty());
         assert_eq!(tab.error.as_deref(), Some("events unavailable"));
+    }
+
+    #[tokio::test]
+    async fn open_resource_events_uses_loaded_empty_cache_without_refetch() {
+        let client = K8sClient::dummy();
+        let (detail_tx, mut detail_rx) = tokio::sync::mpsc::channel(1);
+        let resource = ResourceRef::Pod("api".into(), "prod".into());
+        let mut detail = DetailViewState {
+            resource: Some(resource.clone()),
+            events: Vec::new(),
+            events_error: None,
+            loading: false,
+            error: None,
+            ..DetailViewState::default()
+        };
+        detail
+            .metadata
+            .action_authorizations
+            .insert(DetailAction::ViewEvents, DetailActionAuthorization::Allowed);
+        let mut app = AppState {
+            detail_view: Some(detail),
+            ..AppState::default()
+        };
+        let mut request_seq = 42;
+
+        let handled = handle_open_resource_events(
+            &mut app,
+            &client,
+            &ClusterSnapshot::default(),
+            &detail_tx,
+            &mut request_seq,
+        )
+        .await;
+
+        assert!(!handled);
+        assert_eq!(request_seq, 42);
+        assert!(detail_rx.try_recv().is_err());
+        let Some(tab) = app.workbench.active_tab() else {
+            panic!("missing events tab");
+        };
+        let WorkbenchTabState::ResourceEvents(tab) = &tab.state else {
+            panic!("expected events tab");
+        };
+        assert!(!tab.loading);
+        assert_eq!(tab.pending_request_id, None);
+        assert!(tab.events.is_empty());
+        assert_eq!(tab.error, None);
     }
 
     #[tokio::test]
