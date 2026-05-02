@@ -5609,7 +5609,7 @@ pub(crate) async fn run_app_inner(
                     app.detail_view = None;
                     app.open_port_forward_tab(Some(resource), dialog);
                     let tunnels = port_forwarder.list_tunnels();
-                    app.tunnel_registry.update_tunnels(tunnels.clone());
+                    update_port_forwarding_registry(&mut app, tunnels.clone());
                     if let Some(tab) = app
                         .workbench_mut()
                         .find_tab_mut(&WorkbenchTabKey::PortForward)
@@ -6203,7 +6203,7 @@ pub(crate) async fn run_app_inner(
                         Ok(tunnel_id) => {
                             app.clear_error();
                             let tunnels = port_forwarder.list_tunnels();
-                            app.tunnel_registry.update_tunnels(tunnels.clone());
+                            update_port_forwarding_registry(&mut app, tunnels.clone());
                             if let Some(tab) = app
                                 .workbench_mut()
                                 .find_tab_mut(&WorkbenchTabKey::PortForward)
@@ -6240,7 +6240,7 @@ pub(crate) async fn run_app_inner(
                     match port_forwarder.stop_forward(&tunnel_id).await {
                         Ok(()) => {
                             let tunnels = port_forwarder.list_tunnels();
-                            app.tunnel_registry.update_tunnels(tunnels.clone());
+                            update_port_forwarding_registry(&mut app, tunnels.clone());
                             if let Some(tab) = app
                                 .workbench_mut()
                                 .find_tab_mut(&WorkbenchTabKey::PortForward)
