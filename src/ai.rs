@@ -616,18 +616,39 @@ fn sanitize_provider_error_line(line: &str) -> String {
             continue;
         }
 
-        let lower = token
-            .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
-            .to_ascii_lowercase();
+        let lower = normalize_provider_error_key_token(token);
         if lower == "authorization" || lower == "authorization:" {
             redacted.push("Authorization: [redacted]".to_string());
             skip_tokens = 2;
+            continue;
+        }
+        if provider_error_token_is_split_sensitive_key(token) {
+            redacted.push(format!("{token} [redacted]"));
+            skip_tokens = 1;
             continue;
         }
 
         redacted.push(sanitize_provider_error_token(token));
     }
     redacted.join(" ")
+}
+
+fn normalize_provider_error_key_token(token: &str) -> String {
+    token
+        .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
+        .to_ascii_lowercase()
+}
+
+fn provider_error_token_is_split_sensitive_key(token: &str) -> bool {
+    let normalized = token
+        .trim_matches(|ch: char| {
+            !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-' && ch != ':' && ch != '='
+        })
+        .to_ascii_lowercase();
+    normalized
+        .strip_suffix(':')
+        .or_else(|| normalized.strip_suffix('='))
+        .is_some_and(is_sensitive_error_key)
 }
 
 fn sanitize_provider_error_token(token: &str) -> String {
@@ -637,9 +658,7 @@ fn sanitize_provider_error_token(token: &str) -> String {
 
     for separator in ['=', ':'] {
         if let Some((key, _value)) = token.split_once(separator) {
-            let normalized = key
-                .trim_matches(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_' && ch != '-')
-                .to_ascii_lowercase();
+            let normalized = normalize_provider_error_key_token(key);
             if is_sensitive_error_key(&normalized) {
                 return format!("{key}{separator}<redacted>");
             }
@@ -830,6 +849,20 @@ trailing note {also ignored}"#,
         assert!(!message.contains("live-token"), "{message}");
         assert!(!message.contains("user:pass"), "{message}");
         assert!(!message.contains("secret-value"), "{message}");
+    }
+
+    #[test]
+    fn provider_error_sanitizer_redacts_split_sensitive_values() {
+        let message = sanitize_provider_error_message(
+            "bad request password: hunter2 api_key: sk-live token=inline-token",
+        );
+
+        assert!(message.contains("password: [redacted]"), "{message}");
+        assert!(message.contains("api_key: [redacted]"), "{message}");
+        assert!(message.contains("token=<redacted>"), "{message}");
+        assert!(!message.contains("hunter2"), "{message}");
+        assert!(!message.contains("sk-live"), "{message}");
+        assert!(!message.contains("inline-token"), "{message}");
     }
 
     #[test]
