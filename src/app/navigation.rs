@@ -2,6 +2,9 @@ use super::*;
 
 impl AppState {
     pub fn set_namespace(&mut self, ns: String) {
+        if self.current_namespace != ns {
+            self.clear_extension_state();
+        }
         self.current_namespace = ns;
         self.selected_idx = 0;
         self.reset_content_secondary_pane_state();
@@ -62,6 +65,15 @@ impl AppState {
 
     pub fn close_namespace_picker(&mut self) {
         self.namespace_picker.close();
+    }
+
+    pub fn clear_extension_state(&mut self) {
+        self.extension_instances.clear();
+        self.extension_error = None;
+        self.extension_selected_crd = None;
+        self.extension_pending_selection = None;
+        self.extension_in_instances = false;
+        self.extension_instance_cursor = 0;
     }
 
     pub fn begin_extension_instances_load(&mut self, crd_name: String) {
@@ -364,6 +376,32 @@ mod tests {
 
         assert_eq!(app.extension_instance_cursor, 0);
         assert_eq!(app.extension_instances[0].name, "beta");
+    }
+
+    #[test]
+    fn namespace_switch_clears_stale_extension_instances() {
+        let mut app = AppState::default();
+        app.set_extension_instances(
+            "widgets.demo.io".to_string(),
+            vec![
+                custom_resource("alpha", Some("team-a")),
+                custom_resource("beta", Some("team-b")),
+            ],
+            Some("old error".to_string()),
+        );
+        app.extension_in_instances = true;
+        app.extension_pending_selection = Some(("beta".to_string(), Some("team-b".to_string())));
+        app.extension_instance_cursor = 1;
+
+        app.set_namespace("prod".to_string());
+
+        assert_eq!(app.get_namespace(), "prod");
+        assert!(app.extension_instances.is_empty());
+        assert!(app.extension_error.is_none());
+        assert!(app.extension_selected_crd.is_none());
+        assert!(app.extension_pending_selection.is_none());
+        assert!(!app.extension_in_instances);
+        assert_eq!(app.extension_instance_cursor, 0);
     }
 
     #[test]
