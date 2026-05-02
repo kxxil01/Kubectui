@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{AppState, views::NavGroup};
 use crate::{
-    ai_actions::AiProviderConfig,
+    ai_actions::AiConfig,
     preferences::{ClusterPreferences, UserPreferences},
     workbench::DEFAULT_WORKBENCH_HEIGHT,
 };
@@ -34,7 +34,7 @@ pub(super) struct AppConfig {
     #[serde(default)]
     clusters: Option<HashMap<String, ClusterPreferences>>,
     #[serde(default)]
-    ai: Option<AiProviderConfig>,
+    ai: Option<AiConfig>,
 }
 
 fn default_refresh_interval() -> u64 {
@@ -214,8 +214,31 @@ mod tests {
 
         let app = load_config_from_path(&path);
         let ai = app.ai_config.expect("ai config");
+        assert_eq!(ai.providers.len(), 1);
+        let ai = &ai.providers[0];
         assert_eq!(ai.provider, AiProviderKind::ClaudeCli);
         assert_eq!(ai.command.as_deref(), Some("claude"));
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn load_config_reads_multiple_native_ai_providers() {
+        let path = std::env::temp_dir().join(format!(
+            "kubectui-ai-config-multi-{}.json",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            r#"{"namespace":"all","ai":{"providers":[{"provider":"codex_cli"},{"provider":"claude_cli"}]}}"#,
+        )
+        .expect("write config");
+
+        let app = load_config_from_path(&path);
+        let ai = app.ai_config.expect("ai config");
+        assert_eq!(ai.providers.len(), 2);
+        assert_eq!(ai.providers[0].provider, AiProviderKind::CodexCli);
+        assert_eq!(ai.providers[1].provider, AiProviderKind::ClaudeCli);
 
         let _ = fs::remove_file(path);
     }
