@@ -29,7 +29,7 @@ Requires a kubeconfig at `~/.kube/config` (or `KUBECONFIG` env var).
 
 Persistent app preferences are written to `~/.kube/kubectui-config.json`.
 
-Optional extensions and AI actions load from:
+Optional command extensions load from:
 
 ```text
 $XDG_CONFIG_HOME/kubectui/extensions.yaml
@@ -50,11 +50,20 @@ actions:
       program: kubectl
       args: ["describe", "pod", "{{resource.name}}", "-n", "{{resource.namespace}}"]
 
-ai:
-  provider: open_ai
-  model: gpt-5.4-mini
-  api_key_env: OPENAI_API_KEY
 ```
+
+Native AI actions load from `~/.kube/kubectui-config.json`:
+
+```json
+{
+  "namespace": "all",
+  "ai": {
+    "provider": "claude_cli"
+  }
+}
+```
+
+Supported AI providers: `open_ai`, `anthropic`, `claude_cli`, and `codex_cli`.
 
 ## What it does
 
@@ -192,7 +201,7 @@ kubectui [OPTIONS]
 - `l` on a Deployment/StatefulSet aggregates logs from all its pods
 - `P` in log viewer shows previous logs from crashed containers
 - `W`, `{`, and `}` let you save and cycle named workspaces for common operator flows
-- AI workflows are opt-in and palette-driven; configure them in `extensions.yaml`
+- AI workflows are opt-in and palette-driven; configure them in `kubectui-config.json`
 - Vulnerability data appears when Trivy Operator CRDs are available in the cluster
 - CPU/memory metrics require `metrics-server` in the cluster
 - Data auto-refreshes every 30s (configurable via `refresh_interval_secs` in config)
