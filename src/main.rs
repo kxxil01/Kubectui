@@ -3228,7 +3228,16 @@ pub(crate) async fn run_app_inner(
             result = logs_viewer_rx.recv() => {
                 if let Some(result) = result {
                     match result {
-                        LogsViewerAsyncResult::Containers { request_id, pod_name, namespace, result } => {
+                        LogsViewerAsyncResult::Containers {
+                            request_id,
+                            context_generation,
+                            pod_name,
+                            namespace,
+                            result,
+                        } => {
+                            if context_generation != refresh_state.context_generation {
+                                continue;
+                            }
                             let mut tail_request: Option<(u64, String, String, String)> = None;
                             for tab in &mut app.workbench.tabs {
                                 if let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
@@ -3296,6 +3305,7 @@ pub(crate) async fn run_app_inner(
                                 tail_request
                             {
                                 let client_clone = client.clone();
+                                let context_generation = refresh_state.context_generation;
                                 let tx = logs_viewer_tx.clone();
                                 tokio::spawn(async move {
                                     let logs_client = LogsClient::new(client_clone.get_client());
@@ -3306,6 +3316,7 @@ pub(crate) async fn run_app_inner(
                                         .map_err(|err| err.to_string());
                                     let _ = tx.send(LogsViewerAsyncResult::Tail {
                                         request_id: tail_request_id,
+                                        context_generation,
                                         pod_name,
                                         namespace: pod_ns,
                                         container_name,
@@ -3316,11 +3327,15 @@ pub(crate) async fn run_app_inner(
                         }
                         LogsViewerAsyncResult::Tail {
                             request_id,
+                            context_generation,
                             pod_name,
                             namespace,
                             container_name,
                             result,
                         } => {
+                            if context_generation != refresh_state.context_generation {
+                                continue;
+                            }
                             for tab in &mut app.workbench.tabs {
                                 if let WorkbenchTabState::PodLogs(logs_tab) = &mut tab.state {
                                     let viewer = &mut logs_tab.viewer;
@@ -4238,6 +4253,9 @@ pub(crate) async fn run_app_inner(
 
             result = exec_bootstrap_rx.recv() => {
                 if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     let mut start_session: Option<(u64, String, String, String)> = None;
                     if let Some(tab) = app
                         .workbench_mut()
@@ -4751,6 +4769,9 @@ pub(crate) async fn run_app_inner(
             result = workload_logs_bootstrap_rx.recv() => {
                 needs_redraw = true;
                 if let Some(result) = result {
+                    if result.context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     let mut sources_to_start = Vec::new();
                     if let Some(tab) = app
                         .workbench_mut()
@@ -4783,6 +4804,9 @@ pub(crate) async fn run_app_inner(
             result = probe_rx.recv() => {
                 if let Some(result) = result {
                     needs_redraw = true;
+                    if result.context_generation != refresh_state.context_generation {
+                        continue;
+                    }
                     if let Some(detail) = &mut app.detail_view
                         && detail.resource.as_ref() == Some(&result.resource)
                         && let ResourceRef::Pod(pod_name, namespace) = result.resource
@@ -6326,6 +6350,7 @@ pub(crate) async fn run_app_inner(
                             next_workload_logs_session_id.wrapping_add(1).max(1);
                         app.detail_view = None;
                         app.open_workload_logs_tab(resource.clone(), session_id);
+                        let context_generation = refresh_state.context_generation;
                         let tx = workload_logs_bootstrap_tx.clone();
                         let client_clone = client.get_client();
                         tokio::spawn(async move {
@@ -6335,6 +6360,7 @@ pub(crate) async fn run_app_inner(
                             let _ = tx
                                 .send(WorkloadLogsBootstrapResult {
                                     session_id,
+                                    context_generation,
                                     resource,
                                     result,
                                 })
@@ -6361,6 +6387,7 @@ pub(crate) async fn run_app_inner(
 
                     if let Some((request_id, pod_name, pod_ns)) = container_request {
                         let client_clone = client.clone();
+                        let context_generation = refresh_state.context_generation;
                         let tx = logs_viewer_tx.clone();
                         tokio::spawn(async move {
                             let pods_api: Api<Pod> =
@@ -6382,6 +6409,7 @@ pub(crate) async fn run_app_inner(
                             let _ = tx
                                 .send(LogsViewerAsyncResult::Containers {
                                     request_id,
+                                    context_generation,
                                     pod_name,
                                     namespace: pod_ns,
                                     result,
@@ -6435,6 +6463,7 @@ pub(crate) async fn run_app_inner(
                         pod_name.clone(),
                         pod_ns.clone(),
                     );
+                    let context_generation = refresh_state.context_generation;
                     let tx = exec_bootstrap_tx.clone();
                     let client_clone = client.clone();
                     tokio::spawn(async move {
@@ -6444,6 +6473,7 @@ pub(crate) async fn run_app_inner(
                         let _ = tx
                             .send(ExecBootstrapResult {
                                 session_id,
+                                context_generation,
                                 resource,
                                 result,
                             })
@@ -6593,6 +6623,7 @@ pub(crate) async fn run_app_inner(
 
                     if let Some((request_id, pod_name, pod_ns, container_name)) = logs_request {
                         let client_clone = client.clone();
+                        let context_generation = refresh_state.context_generation;
                         let tx = logs_viewer_tx.clone();
                         tokio::spawn(async move {
                             let logs_client = LogsClient::new(client_clone.get_client());
@@ -6604,6 +6635,7 @@ pub(crate) async fn run_app_inner(
                             let _ = tx
                                 .send(LogsViewerAsyncResult::Tail {
                                     request_id,
+                                    context_generation,
                                     pod_name,
                                     namespace: pod_ns,
                                     container_name,
@@ -6784,6 +6816,7 @@ pub(crate) async fn run_app_inner(
                             viewer.pending_logs_request_id = Some(request_id);
 
                             let new_previous = viewer.previous_logs;
+                            let context_generation = refresh_state.context_generation;
                             let tx = logs_viewer_tx.clone();
                             let client_clone = client.clone();
                             let pn = pod_name.clone();
@@ -6807,6 +6840,7 @@ pub(crate) async fn run_app_inner(
                                 let _ = tx
                                     .send(LogsViewerAsyncResult::Tail {
                                         request_id,
+                                        context_generation,
                                         pod_name: pn,
                                         namespace: pns,
                                         container_name: cn,
@@ -7591,6 +7625,7 @@ pub(crate) async fn run_app_inner(
                     if let Some((pod_name, pod_ns)) = pod_info {
                         probe_request_seq = probe_request_seq.wrapping_add(1);
                         let request_id = probe_request_seq;
+                        let context_generation = refresh_state.context_generation;
                         let tx = probe_tx.clone();
                         let k = client.get_client();
                         let resource = ResourceRef::Pod(pod_name.clone(), pod_ns.clone());
@@ -7616,6 +7651,7 @@ pub(crate) async fn run_app_inner(
                             let _ = tx
                                 .send(ProbeAsyncResult {
                                     request_id,
+                                    context_generation,
                                     resource,
                                     result,
                                 })
