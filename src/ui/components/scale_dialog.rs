@@ -240,7 +240,12 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         "Namespace: {} | Current replicas: {}",
         state.namespace, state.current_replicas
     ))];
-    let validation_line = if let Some(err) = &state.error_message {
+    let validation_line = if state.pending {
+        Line::from(Span::styled(
+            format!("{} Scaling...", loading_spinner_char()),
+            Style::default().fg(Color::Magenta),
+        ))
+    } else if let Some(err) = &state.error_message {
         Line::from(Span::styled(
             format!("✗ {}", err),
             Style::default().fg(Color::Red),
@@ -249,11 +254,6 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         Line::from(Span::styled(
             format!("⚠ {}", warn),
             Style::default().fg(Color::Yellow),
-        ))
-    } else if state.pending {
-        Line::from(Span::styled(
-            format!("{} Scaling...", loading_spinner_char()),
-            Style::default().fg(Color::Magenta),
         ))
     } else {
         Line::from(Span::styled(
@@ -326,13 +326,17 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
     frame.render_widget(validation_widget, chunks[3]);
 
     // Buttons with focus indication
-    let apply_style = if state.focus_field == ScaleField::ApplyBtn {
+    let apply_style = if state.pending {
+        Style::default().fg(Color::DarkGray)
+    } else if state.focus_field == ScaleField::ApplyBtn {
         Style::default().fg(Color::Black).bg(Color::Green)
     } else {
         Style::default().fg(Color::Green)
     };
 
-    let cancel_style = if state.focus_field == ScaleField::CancelBtn {
+    let cancel_style = if state.pending {
+        Style::default().fg(Color::Black).bg(Color::Yellow)
+    } else if state.focus_field == ScaleField::CancelBtn {
         Style::default().fg(Color::Black).bg(Color::Red)
     } else {
         Style::default().fg(Color::Red)
@@ -413,12 +417,12 @@ fn render_compact_scale_dialog(frame: &mut Frame, popup: Rect, state: &ScaleDial
         ScaleField::ApplyBtn => "apply",
         ScaleField::CancelBtn => "cancel",
     };
-    let status = if let Some(err) = &state.error_message {
+    let status = if state.pending {
+        format!("{} scaling...", loading_spinner_char())
+    } else if let Some(err) = &state.error_message {
         format!("err: {err}")
     } else if let Some(warn) = &state.warning_message {
         format!("warn: {warn}")
-    } else if state.pending {
-        format!("{} scaling...", loading_spinner_char())
     } else {
         "enter apply  esc cancel".to_string()
     };
@@ -660,6 +664,46 @@ mod tests {
         state.set_pending(true);
         state.focus_field = ScaleField::CancelBtn;
         draw(&state);
+    }
+
+    #[test]
+    fn pending_scale_status_overrides_stale_validation_messages_and_animates() {
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut state = ScaleDialogState::new(ScaleTargetKind::Deployment, "nginx", "default", 3);
+        state.error_message = Some("Invalid range".to_string());
+        state.warning_message = Some("Large scale change".to_string());
+        state.set_pending(true);
+
+        crate::ui::set_loading_spinner_tick(0);
+        terminal
+            .draw(|frame| render_scale_dialog(frame, frame.area(), &state))
+            .expect("scale dialog should render");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        crate::ui::set_loading_spinner_tick(1);
+        terminal
+            .draw(|frame| render_scale_dialog(frame, frame.area(), &state))
+            .expect("scale dialog should rerender");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(before.contains("Scaling..."));
+        assert!(after.contains("Scaling..."));
+        assert!(!before.contains("Invalid range"));
+        assert!(!before.contains("Large scale change"));
+        assert_ne!(before, after);
     }
 
     #[test]
