@@ -51,32 +51,53 @@ pub fn copy_resource_full_name(app: &mut AppState, cached_snapshot: &ClusterSnap
 
 /// Copies the active log tab content to the clipboard.
 pub fn copy_log_content(app: &mut AppState) {
-    let content = app
-        .workbench()
-        .active_tab()
-        .and_then(active_log_copy_content);
-    if let Some(content) = content {
-        let line_count = content.lines().count();
-        if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
-            app.set_error(format!("Clipboard error: {e}"));
-        } else {
-            app.status_message = Some(format!("Copied {line_count} log lines"));
-        }
+    let Some(tab) = app.workbench().active_tab() else {
+        app.set_error("Open a log tab before copying logs.".to_string());
+        return;
+    };
+    let Some(content) = active_log_copy_content(tab) else {
+        app.set_error(empty_or_unsupported_log_action_message(tab, "copy"));
+        return;
+    };
+
+    let line_count = content.lines().count();
+    if let Err(e) = kubectui::clipboard::copy_to_clipboard(&content) {
+        app.set_error(format!("Clipboard error: {e}"));
+    } else {
+        app.status_message = Some(format!("Copied {line_count} log lines"));
     }
 }
 
 /// Exports the active log tab content to a file.
 pub fn export_logs(app: &mut AppState) {
-    let export_data = app.workbench().active_tab().and_then(active_log_export);
-    if let Some((label, content)) = export_data {
-        match kubectui::export::save_logs_to_file(&label, &content) {
-            Ok(path) => {
-                app.status_message = Some(format!("Saved to {}", path.display()));
-            }
-            Err(e) => {
-                app.set_error(format!("Export error: {e}"));
-            }
+    let Some(tab) = app.workbench().active_tab() else {
+        app.set_error("Open a log tab before exporting logs.".to_string());
+        return;
+    };
+    let Some((label, content)) = active_log_export(tab) else {
+        app.set_error(empty_or_unsupported_log_action_message(tab, "export"));
+        return;
+    };
+
+    match kubectui::export::save_logs_to_file(&label, &content) {
+        Ok(path) => {
+            app.status_message = Some(format!("Saved to {}", path.display()));
         }
+        Err(e) => {
+            app.set_error(format!("Export error: {e}"));
+        }
+    }
+}
+
+fn empty_or_unsupported_log_action_message(
+    tab: &kubectui::workbench::WorkbenchTab,
+    action: &str,
+) -> String {
+    match &tab.state {
+        WorkbenchTabState::PodLogs(_) | WorkbenchTabState::WorkloadLogs(_) => {
+            format!("No matching log lines to {action}.")
+        }
+        _ => format!("Open a log tab before {action}ing logs."),
     }
 }
 
@@ -245,6 +266,31 @@ mod tests {
         });
 
         assert!(content.is_none());
+    }
+
+    #[test]
+    fn copy_log_content_reports_missing_log_tab() {
+        let mut app = AppState::default();
+
+        copy_log_content(&mut app);
+
+        assert_eq!(
+            app.error_message(),
+            Some("Open a log tab before copying logs.")
+        );
+    }
+
+    #[test]
+    fn export_logs_reports_empty_filtered_log_tab() {
+        let mut app = AppState::default();
+        app.open_pod_logs_tab(ResourceRef::Pod("pod-0".into(), "ns".into()));
+
+        export_logs(&mut app);
+
+        assert_eq!(
+            app.error_message(),
+            Some("No matching log lines to export.")
+        );
     }
 
     #[test]
