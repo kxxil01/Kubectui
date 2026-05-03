@@ -402,7 +402,7 @@ fn render_inspection_panel(frame: &mut Frame, area: Rect, detail_state: &DetailV
     if detail_state.loading {
         frame.render_widget(
             Paragraph::new(Span::styled(
-                " Loading resource details...",
+                format!(" {} Loading resource details...", loading_spinner_char()),
                 theme.badge_warning_style(),
             )),
             inner,
@@ -710,7 +710,10 @@ fn render_compact_detail(frame: &mut Frame, inner: Rect, detail_state: &DetailVi
             Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
         ),
         if detail_state.loading {
-            Span::styled("  loading", theme.badge_warning_style())
+            Span::styled(
+                format!("  {} loading", loading_spinner_char()),
+                theme.badge_warning_style(),
+            )
         } else {
             Span::raw("")
         },
@@ -758,7 +761,7 @@ fn render_compact_detail(frame: &mut Frame, inner: Rect, detail_state: &DetailVi
 
     if detail_state.loading {
         lines.push(Line::from(Span::styled(
-            "Loading resource details...",
+            format!("{} Loading resource details...", loading_spinner_char()),
             theme.badge_warning_style(),
         )));
     } else if let Some(err) = &detail_state.error {
