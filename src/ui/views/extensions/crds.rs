@@ -9,8 +9,8 @@ use ratatui::{
 
 use crate::k8s::dtos::CustomResourceDefinitionInfo;
 use crate::ui::{
-    TableFrame, components::default_theme, contains_ci, render_table_frame, resource_table_title,
-    striped_row_style, table_viewport_rows, table_window,
+    TableFrame, components::default_theme, contains_ci, loading_spinner_char, render_table_frame,
+    resource_table_title, striped_row_style, table_viewport_rows, table_window,
 };
 
 const NARROW_CRD_WIDTH: u16 = 96;
@@ -74,11 +74,15 @@ pub fn render_crd_picker(
 
     if filtered.is_empty() {
         let (icon, icon_color, msg) = if is_loading {
-            ("⟳ ", theme.accent, "Loading CRDs...")
+            (
+                format!("{} ", loading_spinner_char()),
+                theme.accent,
+                "Loading CRDs...",
+            )
         } else if query_trimmed.is_empty() {
-            ("○ ", theme.fg_dim, "No CRDs found")
+            ("○ ".to_string(), theme.fg_dim, "No CRDs found")
         } else {
-            ("⊘ ", theme.warning, "No CRDs match search")
+            ("⊘ ".to_string(), theme.warning, "No CRDs match search")
         };
         frame.render_widget(
             Paragraph::new(ratatui::text::Line::from(vec![

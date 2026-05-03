@@ -20,8 +20,8 @@ use crate::{
     state::ClusterSnapshot,
     time::format_local,
     ui::{
-        components::default_theme, cursor_visible_input_line, theme::Theme, wrap_span_groups,
-        wrapped_line_count,
+        components::default_theme, cursor_visible_input_line, loading_spinner_char, theme::Theme,
+        wrap_span_groups, wrapped_line_count,
     },
     workbench::{RunbookStepState, WorkbenchTab, WorkbenchTabState},
 };
@@ -42,6 +42,13 @@ struct LogHighlightOptions<'a> {
 
 const STACKED_CONNECTIVITY_WIDTH: u16 = 96;
 const STACKED_RUNBOOK_WIDTH: u16 = 96;
+
+fn loading_span(message: &str) -> Span<'static> {
+    Span::styled(
+        format!(" {} {message}", loading_spinner_char()),
+        default_theme().inactive_style(),
+    )
+}
 
 #[inline]
 fn scroll_window(total: usize, scroll: usize, viewport_rows: usize) -> VisibleWindow {
@@ -1073,10 +1080,7 @@ fn render_yaml_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workbench
     };
 
     if tab_state.loading && tab_state.yaml.is_none() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(" Loading YAML...", theme.inactive_style())),
-            area,
-        );
+        frame.render_widget(Paragraph::new(loading_span("Loading YAML...")), area);
         return;
     }
 
@@ -1167,10 +1171,7 @@ fn render_resource_diff_tab(
 
     if tab_state.loading {
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                " Loading resource diff...",
-                theme.inactive_style(),
-            )),
+            Paragraph::new(loading_span("Loading resource diff...")),
             sections[1],
         );
         return;
@@ -1321,10 +1322,7 @@ fn render_rollout_tab(
 
     if tab.loading && tab.revisions.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                " Loading rollout state...",
-                theme.inactive_style(),
-            )),
+            Paragraph::new(loading_span("Loading rollout state...")),
             sections[1],
         );
         return;
@@ -1594,10 +1592,7 @@ fn render_helm_history_tab(
 
     if tab.loading && tab.revisions.is_empty() {
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                " Loading Helm release history...",
-                theme.inactive_style(),
-            )),
+            Paragraph::new(loading_span("Loading Helm release history...")),
             sections[1],
         );
         return;
@@ -1676,10 +1671,7 @@ fn render_helm_values_diff(
 
     if diff.loading {
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                " Loading Helm values diff...",
-                theme.inactive_style(),
-            )),
+            Paragraph::new(loading_span("Loading Helm values diff...")),
             sections[1],
         );
         return;
@@ -1830,10 +1822,7 @@ fn render_decoded_secret_tab(
 
     if tab_state.loading {
         frame.render_widget(
-            Paragraph::new(Span::styled(
-                " Loading decoded Secret data...",
-                theme.inactive_style(),
-            )),
+            Paragraph::new(loading_span("Loading decoded Secret data...")),
             sections[1],
         );
         return;
@@ -1970,10 +1959,7 @@ fn render_events_tab(frame: &mut Frame, area: Rect, scroll: usize, tab: &Workben
     };
 
     if tab_state.loading && tab_state.timeline.is_empty() {
-        frame.render_widget(
-            Paragraph::new(Span::styled(" Loading timeline...", theme.inactive_style())),
-            area,
-        );
+        frame.render_widget(Paragraph::new(loading_span("Loading timeline...")), area);
         return;
     }
 
@@ -2715,13 +2701,21 @@ fn render_workload_logs_tab(
 
     let total = filter_summary.total;
     if total == 0 {
-        let message = tab.notice.as_deref().unwrap_or(if tab.loading {
-            " Loading workload logs..."
-        } else if tab.correlation_request_id.is_some() {
-            " No workload log lines match the current correlation/filter set"
-        } else {
-            " No workload log lines match the current filters"
-        });
+        if tab.loading && tab.notice.is_none() {
+            frame.render_widget(
+                Paragraph::new(loading_span("Loading workload logs...")),
+                content_area,
+            );
+            return;
+        }
+        let message = tab
+            .notice
+            .as_deref()
+            .unwrap_or(if tab.correlation_request_id.is_some() {
+                " No workload log lines match the current correlation/filter set"
+            } else {
+                " No workload log lines match the current filters"
+            });
         frame.render_widget(
             Paragraph::new(Span::styled(message, theme.inactive_style())),
             content_area,
@@ -3228,10 +3222,7 @@ fn render_ai_analysis_tab(
     lines.push(Line::default());
 
     if tab.loading {
-        lines.push(Line::from(Span::styled(
-            "Running AI analysis...",
-            theme.inactive_style(),
-        )));
+        lines.push(Line::from(loading_span("Running AI analysis...")));
     } else if let Some(error) = &tab.error {
         lines.push(Line::from(Span::styled(
             format!("Error: {error}"),
