@@ -22,7 +22,7 @@ use crate::{
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
         format_small_int, render_centered_message, render_table_frame, resource_table_title,
-        table_viewport_rows, table_window,
+        resource_table_title_suffix, table_viewport_rows, table_window,
         views::filtering::{filtered_config_map_indices, filtered_secret_indices},
     },
 };
@@ -203,13 +203,14 @@ pub fn render_config_maps(
         })
         .collect();
 
+    let title_suffix = resource_table_title_suffix(cluster, AppView::ConfigMaps, "");
     let title = resource_table_title(
         view_icon(AppView::ConfigMaps).active(),
         "ConfigMaps",
         total,
         cluster.config_maps.len(),
         query,
-        "",
+        &title_suffix,
     );
     let widths = config_map_widths(area);
 
@@ -374,13 +375,14 @@ pub fn render_secrets(
         })
         .collect();
 
+    let title_suffix = resource_table_title_suffix(cluster, AppView::Secrets, "");
     let title = resource_table_title(
         view_icon(AppView::Secrets).active(),
         "Secrets",
         total,
         cluster.secrets.len(),
         query,
-        "",
+        &title_suffix,
     );
     let widths = secret_widths(area);
 

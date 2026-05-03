@@ -456,13 +456,16 @@ pub(crate) fn render_resource_table<'a, FHeader, FRows>(
     let rows = build_rows(window, theme);
     debug_assert_eq!(rows.len(), window.end.saturating_sub(window.start));
 
+    let title_suffix =
+        resource_table_title_suffix(config.snapshot, config.view, config.sort_suffix);
+
     let title = resource_table_title(
         view_icon(config.view).active(),
         config.label,
         total,
         config.all_total,
         config.query,
-        config.sort_suffix,
+        &title_suffix,
     );
 
     render_table_frame(
@@ -498,6 +501,25 @@ pub(crate) fn resource_table_title(
         format!(" {icon}{label} ({total}){sort_suffix} ")
     } else {
         format!(" {icon}{label} ({total} of {all}) [/{query}]{sort_suffix}")
+    }
+}
+
+pub(crate) fn resource_table_title_suffix<'a>(
+    snapshot: &ClusterSnapshot,
+    view: AppView,
+    base_suffix: &'a str,
+) -> Cow<'a, str> {
+    let activity_suffix = match snapshot.view_load_state(view) {
+        ViewLoadState::Loading => format!(" [{} loading]", loading_spinner_char()),
+        ViewLoadState::Refreshing => format!(" [{} refreshing]", loading_spinner_char()),
+        ViewLoadState::Idle | ViewLoadState::Ready => String::new(),
+    };
+    if activity_suffix.is_empty() {
+        Cow::Borrowed(base_suffix)
+    } else if base_suffix.is_empty() {
+        Cow::Owned(activity_suffix)
+    } else {
+        Cow::Owned(format!("{base_suffix}{activity_suffix}"))
     }
 }
 
@@ -2166,14 +2188,15 @@ fn render_pods_widget(
     let sort_suffix = pod_sort
         .map(|state| format!(" • sort: {}", state.short_label()))
         .unwrap_or_default();
+    let title_suffix = resource_table_title_suffix(cluster, AppView::Pods, &sort_suffix);
     let icon = view_icon(AppView::Pods).active();
-    let title = format!(" {icon}Pods ({total}){sort_suffix} ");
+    let title = format!(" {icon}Pods ({total}){title_suffix} ");
     let block = if query.is_empty() {
         content_block(&title, focused)
     } else {
         let all = cluster.pods.len();
         content_block(
-            &format!(" {icon}Pods ({total} of {all}) [/{query}]{sort_suffix}"),
+            &format!(" {icon}Pods ({total} of {all}) [/{query}]{title_suffix}"),
             focused,
         )
     };
@@ -3432,6 +3455,37 @@ mod tests {
 
         assert!(before.contains("Loading pods..."));
         assert!(after.contains("Loading pods..."));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn populated_resource_table_refresh_title_animates_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Pods);
+        let mut snapshot = pods_snapshot_for_render_tests();
+        snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Refreshing;
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+
+        app.advance_spinner();
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(before.contains("Pods (2) ["));
+        assert!(before.contains("refreshing]"));
+        assert!(after.contains("Pods (2) ["));
+        assert!(after.contains("refreshing]"));
         assert_ne!(before, after);
     }
 

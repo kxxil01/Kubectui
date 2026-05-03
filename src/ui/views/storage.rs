@@ -21,8 +21,8 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        render_centered_message, render_table_frame, resource_table_title, sort_header_cell,
-        table_viewport_rows, table_window,
+        render_centered_message, render_table_frame, resource_table_title,
+        resource_table_title_suffix, sort_header_cell, table_viewport_rows, table_window,
         views::filtering::{
             filtered_pv_indices, filtered_pvc_indices, filtered_storage_class_indices,
         },
@@ -258,13 +258,15 @@ pub fn render_pvcs(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
+    let title_suffix =
+        resource_table_title_suffix(cluster, AppView::PersistentVolumeClaims, &sort_suffix);
     let title = resource_table_title(
         view_icon(AppView::PersistentVolumeClaims).active(),
         "PersistentVolumeClaims",
         total,
         cluster.pvcs.len(),
         query,
-        &sort_suffix,
+        &title_suffix,
     );
     let widths = pvc_widths(area);
 
@@ -449,13 +451,15 @@ pub fn render_pvs(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
+    let title_suffix =
+        resource_table_title_suffix(cluster, AppView::PersistentVolumes, &sort_suffix);
     let title = resource_table_title(
         view_icon(AppView::PersistentVolumes).active(),
         "PersistentVolumes",
         total,
         cluster.pvs.len(),
         query,
-        &sort_suffix,
+        &title_suffix,
     );
     let widths = pv_widths(area);
 
@@ -651,13 +655,14 @@ pub fn render_storage_classes(
         .collect();
 
     let sort_suffix = workload_sort_suffix(sort);
+    let title_suffix = resource_table_title_suffix(cluster, AppView::StorageClasses, &sort_suffix);
     let title = resource_table_title(
         view_icon(AppView::StorageClasses).active(),
         "StorageClasses",
         total,
         cluster.storage_classes.len(),
         query,
-        &sort_suffix,
+        &title_suffix,
     );
     let widths = storage_class_widths(area);
 

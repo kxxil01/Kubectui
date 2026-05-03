@@ -27,8 +27,9 @@ use crate::{
             DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
             cached_filter_indices_with_variant, data_fingerprint,
         },
-        render_centered_message, render_table_frame, resource_table_title, sort_header_cell,
-        table_viewport_rows, table_window, utilization_bar_labeled,
+        render_centered_message, render_table_frame, resource_table_title,
+        resource_table_title_suffix, sort_header_cell, table_viewport_rows, table_window,
+        utilization_bar_labeled,
         views::filtering::filtered_node_indices,
         workload_sort_suffix,
     },
@@ -222,13 +223,14 @@ pub fn render_nodes(
     }
 
     let sort_suffix = workload_sort_suffix(sort);
+    let title_suffix = resource_table_title_suffix(snapshot, AppView::Nodes, &sort_suffix);
     let title = resource_table_title(
         view_icon(AppView::Nodes).active(),
         "Nodes",
         total,
         snapshot.nodes.len(),
         query,
-        &sort_suffix,
+        &title_suffix,
     );
     let widths =
         crate::columns::visible_constraints_for_area(AppView::Nodes, visible_columns, area.width);
