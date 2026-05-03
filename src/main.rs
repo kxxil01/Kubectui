@@ -1904,6 +1904,10 @@ async fn ai_live_log_targets(
     }
 }
 
+fn format_ai_log_context_line(line: &str) -> String {
+    truncate_ai_block(&redact_ai_inline_secrets(line), 180)
+}
+
 async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut AiAnalysisContext) {
     if !context.log_lines.is_empty() {
         return;
@@ -1938,13 +1942,10 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
                             target.namespace, target.pod_name
                         ));
                         lines.extend(current.into_iter().map(|line| {
-                            truncate_ai_block(
-                                &format!(
-                                    "{}/{} {container}: {line}",
-                                    target.namespace, target.pod_name
-                                ),
-                                180,
-                            )
+                            format_ai_log_context_line(&format!(
+                                "{}/{} {container}: {line}",
+                                target.namespace, target.pod_name
+                            ))
                         }));
                     }
                     Ok(_) => {}
@@ -1968,13 +1969,10 @@ async fn enrich_ai_context_with_live_pod_logs(client: &K8sClient, context: &mut 
                             target.namespace, target.pod_name
                         ));
                         lines.extend(previous.into_iter().map(|line| {
-                            truncate_ai_block(
-                                &format!(
-                                    "{}/{} {container} previous: {line}",
-                                    target.namespace, target.pod_name
-                                ),
-                                180,
-                            )
+                            format_ai_log_context_line(&format!(
+                                "{}/{} {container} previous: {line}",
+                                target.namespace, target.pod_name
+                            ))
                         }));
                     }
                     Ok(_) => {}
@@ -2238,16 +2236,13 @@ fn append_ai_workload_log_lines(
         if !logs_tab.matches_filter(line) {
             continue;
         }
-        collected.push(truncate_ai_block(
-            &format!(
-                "pod {}/{} container {}: {}",
-                namespace,
-                line.pod_name,
-                line.container_name,
-                line.entry.display_text(logs_tab.structured_view)
-            ),
-            180,
-        ));
+        collected.push(format_ai_log_context_line(&format!(
+            "pod {}/{} container {}: {}",
+            namespace,
+            line.pod_name,
+            line.container_name,
+            line.entry.display_text(logs_tab.structured_view)
+        )));
     }
     collected.reverse();
     log_lines.extend(collected);
@@ -2283,7 +2278,7 @@ fn append_ai_pod_log_lines(
                         "pod {namespace}/{pod_name} container {container_name} {stream_label}: {line}"
                     )
                 };
-                truncate_ai_block(&line, 180)
+                format_ai_log_context_line(&line)
             }),
     );
 }
