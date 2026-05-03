@@ -97,9 +97,18 @@ impl ContextPicker {
         let selected_context = self
             .selected_context_from_indices(&self.filtered_context_indices())
             .map(ToOwned::to_owned);
+        let had_selected_context = selected_context.is_some() || self.selection_anchor.is_some();
         self.contexts = contexts;
         self.current_context = current_context;
         self.restore_selected_context(selected_context.or_else(|| self.selection_anchor.clone()));
+        if had_selected_context {
+            let filtered = self.filtered_context_indices();
+            if !filtered.is_empty() {
+                self.selection_anchor = self
+                    .selected_context_from_indices(&filtered)
+                    .map(ToOwned::to_owned);
+            }
+        }
     }
 
     pub fn handle_key(&mut self, key: KeyEvent) -> ContextPickerAction {
@@ -766,6 +775,27 @@ mod tests {
         assert_eq!(
             picker.filtered_contexts().get(picker.selected_index),
             Some(&"prod".to_string())
+        );
+    }
+
+    #[test]
+    fn context_picker_refresh_drops_stale_anchor_when_selected_context_disappears() {
+        let mut picker = ContextPicker::new(
+            vec!["dev".to_string(), "prod".to_string()],
+            Some("dev".to_string()),
+        );
+        picker.open();
+        picker.handle_key(KeyEvent::from(KeyCode::Down));
+
+        picker.set_contexts(vec!["dev".to_string()], Some("dev".to_string()));
+        picker.set_contexts(
+            vec!["dev".to_string(), "prod".to_string()],
+            Some("dev".to_string()),
+        );
+
+        assert_eq!(
+            picker.filtered_contexts().get(picker.selected_index),
+            Some(&"dev".to_string())
         );
     }
 }
