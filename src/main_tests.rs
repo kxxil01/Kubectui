@@ -874,6 +874,35 @@ fn stale_ai_analysis_results_are_ignored_after_scope_change() {
 }
 
 #[test]
+fn context_switch_start_invalidates_pending_ai_results() {
+    let mut refresh_state = RefreshRuntimeState {
+        context_generation: 7,
+        ..RefreshRuntimeState::default()
+    };
+    let pending_ai_result = AiAnalysisAsyncResult {
+        context_generation: refresh_state.context_generation,
+        action_history_id: 1,
+        resource: ResourceRef::Pod("api-0".to_string(), "prod".to_string()),
+        execution_id: 1,
+        title: "Explain Failure".to_string(),
+        context_summary: Vec::new(),
+        result: Err("late result".to_string()),
+    };
+
+    assert!(super::ai_analysis_result_is_current(
+        &pending_ai_result,
+        &refresh_state
+    ));
+
+    super::invalidate_context_generation(&mut refresh_state);
+
+    assert!(!super::ai_analysis_result_is_current(
+        &pending_ai_result,
+        &refresh_state
+    ));
+}
+
+#[test]
 fn stale_ai_analysis_result_completes_history_as_ignored() {
     let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
     let mut app = AppState {
