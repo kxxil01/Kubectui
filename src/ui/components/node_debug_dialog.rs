@@ -14,9 +14,9 @@ use crate::k8s::{
 use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
-    delete_char_right_at_cursor, insert_char_at_cursor, move_cursor_end, move_cursor_home,
-    move_cursor_left, move_cursor_right, truncate_line_content, truncate_message, wrap_span_groups,
-    wrapped_line_count,
+    delete_char_right_at_cursor, insert_char_at_cursor, loading_spinner_char, move_cursor_end,
+    move_cursor_home, move_cursor_left, move_cursor_right, truncate_line_content, truncate_message,
+    wrap_span_groups, wrapped_line_count,
 };
 
 fn plain_shortcut(key: KeyEvent) -> bool {
@@ -389,7 +389,7 @@ pub fn render_node_debug_dialog(frame: &mut Frame, area: Rect, state: &NodeDebug
         &[vec![
             Span::styled(
                 if state.pending_launch {
-                    " launching ".to_string()
+                    format!(" {} launching ", loading_spinner_char())
                 } else {
                     " ready ".to_string()
                 },
@@ -579,9 +579,9 @@ fn render_compact_node_debug_dialog(frame: &mut Frame, popup: Rect, state: &Node
     frame.render_widget(block, popup);
 
     let status = if state.pending_launch {
-        "launching"
+        format!("{} launching", loading_spinner_char())
     } else {
-        "ready"
+        "ready".to_string()
     };
     let image = if state.selected_preset == DebugImagePreset::Custom {
         if state.custom_image.is_empty() {
@@ -599,7 +599,7 @@ fn render_compact_node_debug_dialog(frame: &mut Frame, popup: Rect, state: &Node
     } else {
         "general profile".to_string()
     };
-    let lines = compact_node_debug_lines(state, status, image, &note, inner.width, inner.height);
+    let lines = compact_node_debug_lines(state, &status, image, &note, inner.width, inner.height);
     frame.render_widget(Paragraph::new(lines), inner);
 }
 

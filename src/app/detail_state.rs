@@ -736,6 +736,18 @@ pub struct DetailViewState {
 }
 
 impl DetailViewState {
+    pub fn has_loading_indicator(&self) -> bool {
+        self.loading
+            || self
+                .debug_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.loading_targets || dialog.pending_launch)
+            || self
+                .node_debug_dialog
+                .as_ref()
+                .is_some_and(|dialog| dialog.pending_launch)
+    }
+
     pub fn has_confirmation_dialog(&self) -> bool {
         self.confirm_delete || self.confirm_drain || self.confirm_cronjob_suspend.is_some()
     }
@@ -798,7 +810,44 @@ impl DetailViewState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::log_investigation::LogEntry;
+    use crate::{
+        log_investigation::LogEntry,
+        ui::components::{DebugContainerDialogState, node_debug_dialog::NodeDebugDialogState},
+    };
+
+    #[test]
+    fn detail_loading_indicator_reports_nested_loading_states() {
+        let mut detail = DetailViewState::default();
+        assert!(!detail.has_loading_indicator());
+
+        detail.loading = true;
+        assert!(detail.has_loading_indicator());
+
+        detail.loading = false;
+        detail.debug_dialog = Some(DebugContainerDialogState::new("pod-a", "default"));
+        assert!(detail.has_loading_indicator());
+
+        detail
+            .debug_dialog
+            .as_mut()
+            .expect("debug dialog should exist")
+            .set_target_containers(vec!["main".to_string()]);
+        assert!(!detail.has_loading_indicator());
+
+        detail
+            .debug_dialog
+            .as_mut()
+            .expect("debug dialog should exist")
+            .begin_launch(42);
+        assert!(detail.has_loading_indicator());
+
+        detail.debug_dialog = None;
+        let mut node_dialog =
+            NodeDebugDialogState::new("node-a", "default", vec!["default".to_string()]);
+        node_dialog.begin_launch(43);
+        detail.node_debug_dialog = Some(node_dialog);
+        assert!(detail.has_loading_indicator());
+    }
 
     #[test]
     fn logs_viewer_apply_containers_preserves_selected_identity() {

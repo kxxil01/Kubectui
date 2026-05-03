@@ -11,9 +11,9 @@ use crate::k8s::exec::{DebugContainerLaunchRequest, DebugImagePreset};
 use crate::ui::components::render_vertical_scrollbar;
 use crate::ui::{
     clear_input_at_cursor, cursor_visible_input_line, delete_char_left_at_cursor,
-    delete_char_right_at_cursor, insert_char_at_cursor, move_cursor_end, move_cursor_home,
-    move_cursor_left, move_cursor_right, truncate_line_content, truncate_message, wrap_span_groups,
-    wrapped_line_count,
+    delete_char_right_at_cursor, insert_char_at_cursor, loading_spinner_char, move_cursor_end,
+    move_cursor_home, move_cursor_left, move_cursor_right, truncate_line_content, truncate_message,
+    wrap_span_groups, wrapped_line_count,
 };
 
 fn plain_shortcut(key: KeyEvent) -> bool {
@@ -426,9 +426,9 @@ pub fn render_debug_container_dialog(
         &[vec![
             Span::styled(
                 if state.pending_launch {
-                    " launching ".to_string()
+                    format!(" {} launching ", loading_spinner_char())
                 } else if state.loading_targets {
-                    " loading ".to_string()
+                    format!(" {} loading ", loading_spinner_char())
                 } else {
                     " ready ".to_string()
                 },
@@ -582,7 +582,7 @@ pub fn render_debug_container_dialog(
     );
 
     let target_line = if state.loading_targets {
-        "Loading Pod containers...".to_string()
+        format!("{} Loading Pod containers...", loading_spinner_char())
     } else if let Some(target) = state.selected_target_container() {
         format!("Selected target container: {target}")
     } else {
@@ -670,11 +670,11 @@ fn render_compact_debug_container_dialog(
     frame.render_widget(block, popup);
 
     let status = if state.pending_launch {
-        "launching"
+        format!("{} launching", loading_spinner_char())
     } else if state.loading_targets {
-        "loading"
+        format!("{} loading", loading_spinner_char())
     } else {
-        "ready"
+        "ready".to_string()
     };
     let image = state
         .selected_image()
@@ -694,7 +694,7 @@ fn render_compact_debug_container_dialog(
     };
     let lines = compact_debug_container_lines(
         state,
-        status,
+        &status,
         &image,
         &target,
         &note,
