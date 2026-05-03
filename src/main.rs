@@ -42,7 +42,10 @@ use ratatui::{Terminal, backend::CrosstermBackend};
 use kubectui::ui::components::port_forward_dialog::PortForwardDialog;
 use kubectui::{
     action_history::{ActionKind, ActionStatus},
-    ai_actions::{AiActionRegistry, AiWorkflowKind, LoadedAiAction, validate_ai_actions},
+    ai_actions::{
+        AiActionRegistry, AiWorkflowKind, LoadedAiAction, ai_analysis_provider_label,
+        validate_ai_actions,
+    },
     app::{
         AppAction, AppState, AppView, DetailViewState, ResourceRef, config_path,
         load_ai_config_from_path, load_config, save_config,
@@ -2566,7 +2569,7 @@ fn start_ai_analysis(
         execution_id,
         action.title.clone(),
         resource.clone(),
-        action.provider.provider.label(),
+        ai_analysis_provider_label(&action.provider),
         action.provider.model.clone(),
         initial_context_summary,
     );

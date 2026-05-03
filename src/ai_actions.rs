@@ -489,6 +489,19 @@ fn add_provider_aliases(aliases: &mut Vec<String>, provider: &AiProviderConfig) 
     aliases.dedup();
 }
 
+pub fn ai_analysis_provider_label(provider: &AiProviderConfig) -> String {
+    match provider.provider {
+        AiProviderKind::OpenAi | AiProviderKind::Anthropic => provider.provider.label().to_string(),
+        AiProviderKind::ClaudeCli | AiProviderKind::CodexCli => provider
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|command| !command.is_empty())
+            .map(|command| format!("{} ({command})", provider.provider.label()))
+            .unwrap_or_else(|| provider.provider.label().to_string()),
+    }
+}
+
 fn provider_display_label(provider: &AiProviderConfig) -> String {
     match provider.provider {
         AiProviderKind::OpenAi | AiProviderKind::Anthropic => {
@@ -702,6 +715,19 @@ mod tests {
                 .actions()
                 .iter()
                 .any(|action| action.title == "Ask AI (Codex CLI (codex-dev))")
+        );
+    }
+
+    #[test]
+    fn ai_analysis_header_labels_keep_model_and_cli_command_distinct() {
+        let openai = openai_provider("gpt-4.1");
+        assert_eq!(ai_analysis_provider_label(&openai), "OpenAI");
+
+        let mut codex_alt = cli_provider(AiProviderKind::CodexCli);
+        codex_alt.command = Some(" codex-dev ".into());
+        assert_eq!(
+            ai_analysis_provider_label(&codex_alt),
+            "Codex CLI (codex-dev)"
         );
     }
 
