@@ -13,10 +13,10 @@ use super::{
     preserve_selection_identity_after_snapshot_change, queued_refresh_requires_two_phase,
     refresh_options_for_view, refresh_palette_resources, refresh_scope_pending, request_refresh,
     selected_extension_crd, selected_flux_reconcile_resource, selected_resource,
-    should_include_flux_in_auto_refresh, should_preserve_current_flux_after_refresh,
-    should_request_navigation_refresh, should_request_periodic_redraw,
-    strip_active_watch_scope_from_refresh, ui_staleness_visible, watch_scope_for_view,
-    workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
+    should_animate_loading_spinner, should_include_flux_in_auto_refresh,
+    should_preserve_current_flux_after_refresh, should_request_navigation_refresh,
+    should_request_periodic_redraw, strip_active_watch_scope_from_refresh, ui_staleness_visible,
+    watch_scope_for_view, workbench_all_follow_streams_to_stop, workbench_follow_streams_to_stop,
 };
 use crate::ai::{AiAnalysisContext, AiAnalysisResult};
 use crate::async_types::{
@@ -1470,6 +1470,41 @@ async fn visible_targeted_refresh_preempts_in_flight_secondary_backfill() {
             .as_ref()
             .is_some_and(|queued| queued.target_view.is_none() && queued.options.skip_core)
     );
+}
+
+#[test]
+fn loading_spinner_animates_for_visible_idle_resource_view() {
+    let mut app = AppState {
+        view: AppView::Pods,
+        ..AppState::default()
+    };
+    let mut snapshot = ClusterSnapshot {
+        phase: DataPhase::Ready,
+        ..ClusterSnapshot::default()
+    };
+    let refresh_state = RefreshRuntimeState::default();
+
+    assert!(should_animate_loading_spinner(
+        &app,
+        &snapshot,
+        &refresh_state
+    ));
+
+    snapshot.loaded_scope = snapshot.loaded_scope.union(RefreshScope::DASHBOARD_WATCHED);
+    app.view = AppView::Dashboard;
+    assert!(!should_animate_loading_spinner(
+        &app,
+        &snapshot,
+        &refresh_state
+    ));
+
+    app.view = AppView::Pods;
+    snapshot.loaded_scope = snapshot.loaded_scope.union(RefreshScope::PODS);
+    assert!(!should_animate_loading_spinner(
+        &app,
+        &snapshot,
+        &refresh_state
+    ));
 }
 
 #[tokio::test]

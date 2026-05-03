@@ -66,7 +66,7 @@ use kubectui::{
     secret::{decode_secret_yaml, encode_secret_yaml},
     state::{
         ClusterSnapshot, DataPhase, FluxTargetFingerprints, GlobalState, RefreshOptions,
-        RefreshScope,
+        RefreshScope, ViewLoadState,
         watch::{WatchPayload, WatchUpdate, WatchedResource},
     },
     ui,
@@ -124,6 +124,37 @@ fn should_mark_snapshot_dirty_after_watch(
 
 fn should_include_flux_in_auto_refresh(auto_refresh_count: u64) -> bool {
     auto_refresh_count.is_multiple_of(FLUX_AUTO_REFRESH_EVERY)
+}
+
+fn current_view_has_visible_loading_surface(app: &AppState, snapshot: &ClusterSnapshot) -> bool {
+    let view = app.view();
+    let scope = GlobalState::view_ready_scope(view);
+    !scope.is_empty()
+        && !snapshot.scope_loaded(scope)
+        && matches!(snapshot.view_load_state(view), ViewLoadState::Idle)
+}
+
+fn should_animate_loading_spinner(
+    app: &AppState,
+    snapshot: &ClusterSnapshot,
+    refresh_state: &RefreshRuntimeState,
+) -> bool {
+    matches!(snapshot.phase, DataPhase::Loading | DataPhase::Idle)
+        || refresh_state.in_flight_id.is_some()
+        || matches!(
+            snapshot.view_load_state(app.view()),
+            ViewLoadState::Loading | ViewLoadState::Refreshing
+        )
+        || current_view_has_visible_loading_surface(app, snapshot)
+        || app.workbench().has_loading_tab()
+        || app
+            .detail_view
+            .as_ref()
+            .is_some_and(DetailViewState::has_loading_indicator)
+        || app
+            .resource_template_dialog
+            .as_ref()
+            .is_some_and(|dialog| dialog.pending)
 }
 
 fn should_request_navigation_refresh(view: AppView) -> bool {
@@ -5148,19 +5179,7 @@ pub(crate) async fn run_app_inner(
                     needs_redraw = true;
                 }
                 // Animate spinner during loading/refreshing phases
-                let phase = cached_snapshot.phase;
-                if matches!(phase, DataPhase::Loading | DataPhase::Idle)
-                    || refresh_state.in_flight_id.is_some()
-                    || app.workbench().has_loading_tab()
-                    || app
-                        .detail_view
-                        .as_ref()
-                        .is_some_and(DetailViewState::has_loading_indicator)
-                    || app
-                        .resource_template_dialog
-                        .as_ref()
-                        .is_some_and(|dialog| dialog.pending)
-                {
+                if should_animate_loading_spinner(&app, &cached_snapshot, &refresh_state) {
                     app.advance_spinner();
                     needs_redraw = true;
                 }
