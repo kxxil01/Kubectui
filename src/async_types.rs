@@ -220,6 +220,7 @@ pub struct WorkloadLogsBootstrapResult {
 
 #[derive(Debug)]
 pub struct ExtensionFetchResult {
+    pub context_generation: u64,
     pub crd_name: String,
     pub result: Result<Vec<kubectui::k8s::dtos::CustomResourceInfo>, String>,
 }
@@ -235,6 +236,7 @@ pub struct ExtensionCommandRunResult {
 #[derive(Debug)]
 pub struct ExtensionCommandAsyncResult {
     pub action_history_id: u64,
+    pub context_generation: u64,
     pub resource: ResourceRef,
     pub execution_id: Option<u64>,
     pub title: String,
