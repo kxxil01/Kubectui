@@ -767,6 +767,36 @@ fn ai_context_reports_detail_events_error_before_empty_events() {
 }
 
 #[test]
+fn ai_context_reports_detail_yaml_error_without_marking_yaml_included() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let app = AppState {
+        detail_view: Some(DetailViewState {
+            resource: Some(resource.clone()),
+            yaml_error: Some("YAML fetch failed: forbidden token=literal-secret".to_string()),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+    let context = super::build_ai_analysis_context(
+        &app,
+        &ClusterSnapshot::default(),
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+    let rendered = context.render_prompt();
+    let summary = super::summarize_ai_context_for_tab(&context).join("\n");
+
+    assert!(
+        rendered.contains("# unavailable: YAML fetch failed"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("token=<redacted>"), "{rendered}");
+    assert!(!rendered.contains("literal-secret"), "{rendered}");
+    assert!(summary.contains("YAML unavailable"), "{summary}");
+    assert!(!summary.contains("YAML included"), "{summary}");
+}
+
+#[test]
 fn ai_context_summary_reports_sent_context_counts() {
     let context = AiAnalysisContext {
         resource: ResourceRef::Pod("api-0".to_string(), "prod".to_string()),
