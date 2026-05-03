@@ -25,7 +25,7 @@ use mutation_helpers::*;
 use runtime_helpers::{next_request_id, run_app, start_watch_manager, watch_scope_for_view};
 use selection_helpers::*;
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap},
     io,
     path::Path,
     time::{Duration, Instant},
@@ -808,21 +808,9 @@ fn refresh_palette_resources(
         app.command_palette.set_resource_entries(base_entries);
         return;
     }
-
-    let mut merged_entries = Vec::with_capacity(base_entries.len() + extension_entries.len());
-    merged_entries.extend(base_entries.iter().cloned());
-    let mut seen_resources = merged_entries
-        .iter()
-        .map(|entry| entry.resource.clone())
-        .collect::<HashSet<_>>();
-    for entry in extension_entries {
-        if seen_resources.insert(entry.resource.clone()) {
-            merged_entries.push(entry);
-        }
-    }
-
-    app.command_palette
-        .set_resource_entries(std::sync::Arc::new(merged_entries));
+    app.command_palette.set_resource_entries(
+        kubectui::global_search::merge_resource_search_entries(base_entries, extension_entries),
+    );
 }
 
 fn refresh_palette_activity(app: &mut kubectui::app::AppState) {

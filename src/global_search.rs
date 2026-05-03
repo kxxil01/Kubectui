@@ -20,10 +20,32 @@ pub struct GlobalResourceSearchEntry {
 
 type GlobalSearchCacheKey = (u64, usize);
 type GlobalSearchCacheValue = Arc<Vec<GlobalResourceSearchEntry>>;
+type ExtensionSearchCacheValue = Arc<Vec<GlobalResourceSearchEntry>>;
+type MergedSearchCacheKey = (usize, usize);
 
 #[allow(clippy::type_complexity)]
 static GLOBAL_SEARCH_CACHE: LazyLock<
     Mutex<BTreeMap<GlobalSearchCacheKey, Weak<Vec<GlobalResourceSearchEntry>>>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ExtensionSearchCacheKey {
+    crd_name: String,
+    group: String,
+    version: String,
+    kind: String,
+    plural: String,
+    instances: Vec<(String, Option<String>)>,
+}
+
+#[allow(clippy::type_complexity)]
+static EXTENSION_SEARCH_CACHE: LazyLock<
+    Mutex<BTreeMap<ExtensionSearchCacheKey, Weak<Vec<GlobalResourceSearchEntry>>>>,
+> = LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+#[allow(clippy::type_complexity)]
+static MERGED_SEARCH_CACHE: LazyLock<
+    Mutex<BTreeMap<MergedSearchCacheKey, Weak<Vec<GlobalResourceSearchEntry>>>>,
 > = LazyLock::new(|| Mutex::new(BTreeMap::new()));
 
 pub fn collect_global_resource_search_entries(
@@ -60,7 +82,28 @@ pub fn collect_global_resource_search_entries(
 pub fn collect_extension_resource_search_entries(
     crd: &CustomResourceDefinitionInfo,
     instances: &[CustomResourceInfo],
-) -> Vec<GlobalResourceSearchEntry> {
+) -> ExtensionSearchCacheValue {
+    let key = ExtensionSearchCacheKey {
+        crd_name: crd.name.clone(),
+        group: crd.group.clone(),
+        version: crd.version.clone(),
+        kind: crd.kind.clone(),
+        plural: crd.plural.clone(),
+        instances: instances
+            .iter()
+            .map(|item| (item.name.clone(), item.namespace.clone()))
+            .collect(),
+    };
+    {
+        let mut guard = EXTENSION_SEARCH_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.retain(|_, entries| entries.strong_count() > 0);
+        if let Some(entries) = guard.get(&key).and_then(Weak::upgrade) {
+            return entries;
+        }
+    }
+
     let mut entries = Vec::with_capacity(instances.len());
 
     for item in instances {
@@ -104,6 +147,65 @@ pub fn collect_extension_resource_search_entries(
         });
     }
 
+    let entries = Arc::new(entries);
+    {
+        let mut guard = EXTENSION_SEARCH_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.retain(|_, entries| entries.strong_count() > 0);
+        if let Some(cached_entries) = guard.get(&key).and_then(Weak::upgrade) {
+            return cached_entries;
+        }
+        guard.insert(key, Arc::downgrade(&entries));
+    }
+    entries
+}
+
+pub fn merge_resource_search_entries(
+    base_entries: GlobalSearchCacheValue,
+    extension_entries: ExtensionSearchCacheValue,
+) -> GlobalSearchCacheValue {
+    if extension_entries.is_empty() {
+        return base_entries;
+    }
+
+    let key = (
+        Arc::as_ptr(&base_entries) as usize,
+        Arc::as_ptr(&extension_entries) as usize,
+    );
+    {
+        let mut guard = MERGED_SEARCH_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.retain(|_, entries| entries.strong_count() > 0);
+        if let Some(entries) = guard.get(&key).and_then(Weak::upgrade) {
+            return entries;
+        }
+    }
+
+    let mut merged_entries = Vec::with_capacity(base_entries.len() + extension_entries.len());
+    merged_entries.extend(base_entries.iter().cloned());
+    let mut seen_resources = merged_entries
+        .iter()
+        .map(|entry| entry.resource.clone())
+        .collect::<std::collections::HashSet<_>>();
+    for entry in extension_entries.iter() {
+        if seen_resources.insert(entry.resource.clone()) {
+            merged_entries.push(entry.clone());
+        }
+    }
+
+    let entries = Arc::new(merged_entries);
+    {
+        let mut guard = MERGED_SEARCH_CACHE
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        guard.retain(|_, entries| entries.strong_count() > 0);
+        if let Some(cached_entries) = guard.get(&key).and_then(Weak::upgrade) {
+            return cached_entries;
+        }
+        guard.insert(key, Arc::downgrade(&entries));
+    }
     entries
 }
 
@@ -665,6 +767,7 @@ fn labels_from_pairs<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) ->
 mod tests {
     use super::{
         collect_extension_resource_search_entries, collect_global_resource_search_entries,
+        merge_resource_search_entries,
     };
     use crate::{
         app::ResourceRef,
@@ -840,6 +943,66 @@ mod tests {
                 .iter()
                 .any(|alias| alias == "widget prod/redis")
         );
+    }
+
+    #[test]
+    fn extension_search_entries_are_cached_for_same_crd_instances() {
+        let crd = CustomResourceDefinitionInfo {
+            name: "widgets.demo.io".into(),
+            group: "demo.io".into(),
+            version: "v1".into(),
+            kind: "Widget".into(),
+            plural: "widgets".into(),
+            scope: "Namespaced".into(),
+            instances: 1,
+        };
+        let instances = vec![CustomResourceInfo {
+            name: "redis".into(),
+            namespace: Some("prod".into()),
+            ..CustomResourceInfo::default()
+        }];
+
+        let first = collect_extension_resource_search_entries(&crd, &instances);
+        let second = collect_extension_resource_search_entries(&crd, &instances);
+
+        assert!(Arc::ptr_eq(&first, &second));
+    }
+
+    #[test]
+    fn merged_resource_search_entries_are_cached_for_same_inputs() {
+        let mut snapshot = ClusterSnapshot {
+            snapshot_version: 11,
+            ..ClusterSnapshot::default()
+        };
+        snapshot.pods.push(PodInfo {
+            name: "api-0".into(),
+            namespace: "prod".into(),
+            ..PodInfo::default()
+        });
+        let crd = CustomResourceDefinitionInfo {
+            name: "widgets.demo.io".into(),
+            group: "demo.io".into(),
+            version: "v1".into(),
+            kind: "Widget".into(),
+            plural: "widgets".into(),
+            scope: "Namespaced".into(),
+            instances: 1,
+        };
+        let extension = collect_extension_resource_search_entries(
+            &crd,
+            &[CustomResourceInfo {
+                name: "redis".into(),
+                namespace: Some("prod".into()),
+                ..CustomResourceInfo::default()
+            }],
+        );
+        let base = collect_global_resource_search_entries(&snapshot);
+
+        let first = merge_resource_search_entries(Arc::clone(&base), Arc::clone(&extension));
+        let second = merge_resource_search_entries(base, extension);
+
+        assert!(Arc::ptr_eq(&first, &second));
+        assert_eq!(first.len(), 2);
     }
 
     #[test]
