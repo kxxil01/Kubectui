@@ -204,6 +204,7 @@ pub struct NodeDebugLaunchAsyncResult {
 
 #[derive(Debug)]
 pub struct NodeDebugCleanupAsyncResult {
+    pub context_generation: u64,
     pub node_name: String,
     pub pod_name: String,
     pub namespace: String,
