@@ -1338,6 +1338,13 @@ fn sanitize_ai_yaml_excerpt(resource: &ResourceRef, yaml: &str) -> Option<String
     Some(truncate_ai_block(rendered.trim_end(), AI_YAML_MAX_CHARS))
 }
 
+fn ai_yaml_unavailable_excerpt(error: &str) -> String {
+    truncate_ai_block(
+        &format!("# unavailable: {}", redact_ai_inline_secrets(error)),
+        AI_YAML_MAX_CHARS,
+    )
+}
+
 fn ai_join_values(values: &[String], max: usize) -> String {
     let mut items = values.iter().take(max).cloned().collect::<Vec<_>>();
     if values.len() > max {
@@ -2466,9 +2473,18 @@ fn build_ai_analysis_context(
         event_lines,
         probe_lines,
         log_lines,
-        yaml_excerpt: detail
-            .and_then(|detail| detail.yaml.clone())
-            .and_then(|yaml| sanitize_ai_yaml_excerpt(resource, &yaml)),
+        yaml_excerpt: detail.and_then(|detail| {
+            detail
+                .yaml
+                .as_ref()
+                .and_then(|yaml| sanitize_ai_yaml_excerpt(resource, yaml))
+                .or_else(|| {
+                    detail
+                        .yaml_error
+                        .as_deref()
+                        .map(ai_yaml_unavailable_excerpt)
+                })
+        }),
     }
 }
 
@@ -2505,6 +2521,7 @@ fn ai_context_count_label(label: &str, count: usize) -> String {
 
 fn ai_context_yaml_label(context: &AiAnalysisContext) -> &'static str {
     match context.yaml_excerpt.as_deref() {
+        Some(yaml) if yaml.contains("unavailable") => "YAML unavailable",
         Some(yaml) if yaml.contains("redacted") => "YAML redacted",
         Some(_) => "YAML included",
         None => "YAML unavailable",
