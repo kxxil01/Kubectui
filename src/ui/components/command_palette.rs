@@ -1064,7 +1064,14 @@ impl CommandPalette {
 
     fn update_loaded_entries(&mut self, selected_entry: Option<PaletteEntry>) {
         if self.is_open {
+            let had_selected_entry = selected_entry.is_some();
             self.restore_selected_entry(selected_entry);
+            if had_selected_entry {
+                let filtered = self.filtered_entries();
+                if !filtered.is_empty() {
+                    self.selection_anchor = filtered.get(self.selected_index).cloned();
+                }
+            }
         } else {
             self.cached_filtered.borrow_mut().take();
             self.selection_anchor = None;
@@ -2083,6 +2090,44 @@ mod tests {
             filtered.get(palette.selected_index),
             Some(PaletteEntry::AiAction(PaletteAiAction { id, title, .. }))
                 if id == "ai_explain_failure" && title == "Explain v2"
+        ));
+    }
+
+    #[test]
+    fn reload_drops_stale_anchor_when_selected_action_disappears() {
+        let resource = ResourceRef::Pod("api".into(), "default".into());
+        let mut palette = CommandPalette::default();
+        palette.open_with_context(Some(ctx(resource, None)));
+        palette.set_ai_actions(vec![
+            ai_action("ai_describe", "Describe", "provider-action"),
+            ai_action("ai_debug", "Debug", "provider-action"),
+        ]);
+        for ch in "provider-action".chars() {
+            palette.handle_key(KeyEvent::from(KeyCode::Char(ch)));
+        }
+        let filtered = palette.filtered();
+        palette.selected_index = filtered
+            .iter()
+            .position(|entry| {
+                matches!(entry, PaletteEntry::AiAction(PaletteAiAction { id, .. }) if id == "ai_debug")
+            })
+            .expect("debug action");
+        palette.selection_anchor = palette.selected_entry_snapshot();
+
+        palette.set_ai_actions(vec![ai_action(
+            "ai_describe",
+            "Describe",
+            "provider-action",
+        )]);
+        palette.set_ai_actions(vec![
+            ai_action("ai_describe", "Describe", "provider-action"),
+            ai_action("ai_debug", "Debug", "provider-action"),
+        ]);
+
+        let filtered = palette.filtered();
+        assert!(matches!(
+            filtered.get(palette.selected_index),
+            Some(PaletteEntry::AiAction(PaletteAiAction { id, .. })) if id == "ai_describe"
         ));
     }
 
