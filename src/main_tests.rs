@@ -737,6 +737,36 @@ fn ai_context_reports_events_refresh_error_before_empty_events() {
 }
 
 #[test]
+fn ai_context_reports_detail_events_error_before_empty_events() {
+    let resource = ResourceRef::Pod("api-0".to_string(), "prod".to_string());
+    let app = AppState {
+        detail_view: Some(DetailViewState {
+            resource: Some(resource.clone()),
+            events_error: Some(
+                "Events fetch failed: events is forbidden: token=literal-secret".to_string(),
+            ),
+            ..DetailViewState::default()
+        }),
+        ..AppState::default()
+    };
+    let context = super::build_ai_analysis_context(
+        &app,
+        &ClusterSnapshot::default(),
+        &resource,
+        AiWorkflowKind::ExplainFailure,
+    );
+    let rendered = context.render_prompt();
+
+    assert!(
+        rendered.contains("Events unavailable: Events fetch failed"),
+        "{rendered}"
+    );
+    assert!(rendered.contains("forbidden"), "{rendered}");
+    assert!(rendered.contains("token=<redacted>"), "{rendered}");
+    assert!(!rendered.contains("literal-secret"), "{rendered}");
+}
+
+#[test]
 fn ai_context_summary_reports_sent_context_counts() {
     let context = AiAnalysisContext {
         resource: ResourceRef::Pod("api-0".to_string(), "prod".to_string()),

@@ -2357,10 +2357,20 @@ fn build_ai_analysis_context(
                     .then_with(|| left.reason.cmp(&right.reason))
                     .then_with(|| left.message.cmp(&right.message))
             });
-            events
+            let mut lines = events
                 .iter()
                 .map(format_ai_detail_event)
-                .collect::<Vec<_>>()
+                .collect::<Vec<_>>();
+            if let Some(error) = detail.events_error.as_deref() {
+                lines.insert(
+                    0,
+                    truncate_ai_block(
+                        &format!("Events unavailable: {}", redact_ai_inline_secrets(error)),
+                        220,
+                    ),
+                );
+            }
+            lines
         } else {
             let mut events = snapshot
                 .events
