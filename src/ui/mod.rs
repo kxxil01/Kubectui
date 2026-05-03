@@ -22,7 +22,10 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     hash::{Hash, Hasher},
-    sync::{Arc, LazyLock, Mutex},
+    sync::{
+        Arc, LazyLock, Mutex,
+        atomic::{AtomicU8, Ordering},
+    },
 };
 
 use crate::{
@@ -44,6 +47,20 @@ use crate::{
         theme::Theme,
     },
 };
+
+static LOADING_SPINNER_TICK: AtomicU8 = AtomicU8::new(0);
+
+fn set_loading_spinner_tick(tick: u8) {
+    LOADING_SPINNER_TICK.store(tick % 8, Ordering::Relaxed);
+}
+
+fn loading_spinner_char() -> char {
+    const FRAMES: [char; 8] = [
+        '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
+        '\u{2827}',
+    ];
+    FRAMES[usize::from(LOADING_SPINNER_TICK.load(Ordering::Relaxed) % 8)]
+}
 use filter_cache::{
     DerivedRowsCache, DerivedRowsCacheKey, DerivedRowsCacheValue, cached_derived_rows,
     cached_filter_indices_with_variant, data_fingerprint,
@@ -576,7 +593,10 @@ pub(crate) fn render_centered_message(
 
     let line = if is_loading {
         Line::from(vec![
-            Span::styled("⟳ ", Style::default().fg(theme.accent)),
+            Span::styled(
+                format!("{} ", loading_spinner_char()),
+                Style::default().fg(theme.accent),
+            ),
             Span::styled(loading_text, Style::default().fg(theme.muted)),
         ])
     } else if query.trim().is_empty() {
@@ -836,6 +856,7 @@ struct ViewRenderKey {
     visible_columns_hash: u64,
     phase: DataPhase,
     view_load_state: ViewLoadState,
+    loading_spinner_tick: u8,
     transient_hash: u64,
     freshness_bucket: i64,
 }
@@ -1117,6 +1138,16 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         SplitPaneFocus::None
     };
     let content_focused = matches!(split_pane_focus, SplitPaneFocus::List);
+    set_loading_spinner_tick(app.spinner_tick);
+    let view_load_state = cluster.view_load_state(app.view());
+    let loading_spinner_tick = if matches!(
+        view_load_state,
+        ViewLoadState::Idle | ViewLoadState::Loading | ViewLoadState::Refreshing
+    ) {
+        app.spinner_tick
+    } else {
+        0
+    };
     let view_cache_key = ViewRenderKey {
         view: app.view(),
         area: content,
@@ -1138,7 +1169,8 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         bookmark_hash: bookmark_render_hash(app.bookmarks()),
         visible_columns_hash: visible_columns_signature(visible_columns.as_ref()),
         phase: cluster.phase,
-        view_load_state: cluster.view_load_state(app.view()),
+        view_load_state,
+        loading_spinner_tick,
         transient_hash: active_view_transient_hash(app.view(), cluster),
         // Keep age-sensitive cells advancing without disabling stable-frame skipping.
         freshness_bucket: now_unix_seconds() / 60,
@@ -3364,6 +3396,35 @@ mod tests {
         draw_in_terminal(&mut terminal, &app, &snapshot);
         let after = terminal_to_string(&terminal);
 
+        assert!(after.contains("Loading pods..."));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn centered_loading_message_animates_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Pods);
+        let mut snapshot = ClusterSnapshot::default();
+        snapshot.view_load_states[AppView::Pods.index()] = ViewLoadState::Loading;
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+
+        app.advance_spinner();
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(before.contains("Loading pods..."));
         assert!(after.contains("Loading pods..."));
         assert_ne!(before, after);
     }
