@@ -22,8 +22,8 @@ use crate::{
         TableFrame, bookmarked_name_cell,
         components::default_theme,
         filter_cache::{cached_filter_indices, data_fingerprint},
-        render_centered_message, render_table_frame, resource_table_title, table_viewport_rows,
-        table_window,
+        render_centered_message, render_table_frame, resource_table_title,
+        resource_table_title_suffix, table_viewport_rows, table_window,
         views::filtering::{filtered_helm_release_indices, filtered_helm_repo_indices},
     },
 };
@@ -251,13 +251,14 @@ pub fn render_helm_releases(
         })
         .collect();
 
+    let title_suffix = resource_table_title_suffix(cluster, AppView::HelmReleases, "");
     let title = resource_table_title(
         view_icon(AppView::HelmReleases).active(),
         "Helm Releases",
         total,
         cluster.helm_releases.len(),
         query,
-        "",
+        &title_suffix,
     );
     let widths = helm_release_widths(area);
 
@@ -350,13 +351,14 @@ pub fn render_helm_repos(
         })
         .collect();
 
+    let title_suffix = resource_table_title_suffix(cluster, AppView::HelmCharts, "");
     let title = resource_table_title(
         view_icon(AppView::HelmCharts).active(),
         "Helm Repositories",
         total,
         cluster.helm_repositories.len(),
         query,
-        "",
+        &title_suffix,
     );
     let widths = helm_repo_widths(area);
 

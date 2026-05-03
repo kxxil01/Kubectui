@@ -124,7 +124,12 @@ pub fn render_crd_picker(
     .style(theme.header_style())
     .height(1);
 
-    let title = resource_table_title(" ", "CRDs", total, crds.len(), query_trimmed, "");
+    let title_suffix = if is_loading {
+        format!(" [{} loading]", loading_spinner_char())
+    } else {
+        String::new()
+    };
+    let title = resource_table_title(" ", "CRDs", total, crds.len(), query_trimmed, &title_suffix);
     let widths = crd_widths(area);
     render_table_frame(
         frame,
