@@ -622,6 +622,16 @@ pub(crate) fn render_centered_message(
             ),
             Span::styled(loading_text, Style::default().fg(theme.muted)),
         ])
+    } else if query.trim().is_empty()
+        && let Some(error) = active_view_fetch_error(snapshot, view)
+    {
+        Line::from(vec![
+            Span::styled("✗ ", theme.badge_error_style()),
+            Span::styled(
+                truncate_message(&format!("Failed to load {title}: {error}"), 180).into_owned(),
+                theme.inactive_style(),
+            ),
+        ])
     } else if query.trim().is_empty() {
         Line::from(vec![
             Span::styled("○ ", Style::default().fg(theme.fg_dim)),
@@ -640,6 +650,70 @@ pub(crate) fn render_centered_message(
             .block(components::content_block(title, focused)),
         area,
     );
+}
+
+fn active_view_fetch_error(snapshot: &ClusterSnapshot, view: AppView) -> Option<&str> {
+    let error = snapshot.last_error.as_deref()?;
+    view_fetch_error_labels(view).iter().find_map(|label| {
+        error.split(" | ").map(str::trim).find_map(|part| {
+            part.strip_prefix(label)
+                .and_then(|rest| rest.strip_prefix(": "))
+        })
+    })
+}
+
+fn view_fetch_error_labels(view: AppView) -> &'static [&'static str] {
+    match view {
+        AppView::Nodes => &["nodes"],
+        AppView::Pods => &["pods"],
+        AppView::Deployments => &["deployments"],
+        AppView::StatefulSets => &["statefulsets"],
+        AppView::DaemonSets => &["daemonsets"],
+        AppView::ReplicaSets => &["replicasets"],
+        AppView::ReplicationControllers => &["replicationcontrollers"],
+        AppView::Jobs => &["jobs"],
+        AppView::CronJobs => &["cronjobs"],
+        AppView::Services => &["services"],
+        AppView::Endpoints => &["endpoints"],
+        AppView::Ingresses => &["ingresses"],
+        AppView::IngressClasses => &["ingressclasses"],
+        AppView::GatewayClasses => &["gatewayclasses"],
+        AppView::Gateways => &["gateways"],
+        AppView::HttpRoutes => &["httproutes"],
+        AppView::GrpcRoutes => &["grpcroutes"],
+        AppView::ReferenceGrants => &["referencegrants"],
+        AppView::NetworkPolicies => &["networkpolicies"],
+        AppView::ConfigMaps => &["configmaps"],
+        AppView::Secrets => &["secrets"],
+        AppView::ResourceQuotas => &["resourcequotas"],
+        AppView::LimitRanges => &["limitranges"],
+        AppView::HPAs => &["hpas"],
+        AppView::PodDisruptionBudgets => &["pdbs"],
+        AppView::PriorityClasses => &["priorityclasses"],
+        AppView::PersistentVolumeClaims => &["pvcs"],
+        AppView::PersistentVolumes => &["pvs"],
+        AppView::StorageClasses => &["storageclasses"],
+        AppView::Namespaces => &["namespacelist"],
+        AppView::HelmReleases => &["helmreleases"],
+        AppView::Vulnerabilities => &["vulnerabilityreports"],
+        AppView::ServiceAccounts => &["serviceaccounts"],
+        AppView::ClusterRoles => &["clusterroles"],
+        AppView::Roles => &["roles"],
+        AppView::ClusterRoleBindings => &["clusterrolebindings"],
+        AppView::RoleBindings => &["rolebindings"],
+        AppView::Extensions => &["crds"],
+        AppView::FluxCDAlertProviders
+        | AppView::FluxCDAlerts
+        | AppView::FluxCDAll
+        | AppView::FluxCDArtifacts
+        | AppView::FluxCDHelmReleases
+        | AppView::FluxCDHelmRepositories
+        | AppView::FluxCDImages
+        | AppView::FluxCDKustomizations
+        | AppView::FluxCDReceivers
+        | AppView::FluxCDSources => &["fluxresources"],
+        _ => &[],
+    }
 }
 
 fn effective_workbench_height(
@@ -938,10 +1012,14 @@ fn bookmark_render_hash(bookmarks: &[BookmarkEntry]) -> u64 {
 }
 
 fn active_view_transient_hash(view: AppView, cluster: &ClusterSnapshot) -> u64 {
-    match view {
-        AppView::Events => cluster.events_last_error.as_deref().map_or(0, hash_str),
-        _ => 0,
+    let mut hasher = std::hash::DefaultHasher::new();
+    if let Some(error) = active_view_fetch_error(cluster, view) {
+        error.hash(&mut hasher);
     }
+    if view == AppView::Events {
+        cluster.events_last_error.hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 fn active_view_app_state_hash(view: AppView, app: &AppState) -> u64 {
@@ -3497,6 +3575,93 @@ mod tests {
         let text = render_to_string(&app, &snapshot);
         assert!(text.contains("No pods available"));
         assert!(!text.contains("Loading pods..."));
+    }
+
+    #[test]
+    fn centered_empty_message_surfaces_matching_fetch_error() {
+        let app = app_with_view(AppView::Pods);
+        let snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            loaded_scope: RefreshScope::PODS,
+            view_load_states: {
+                let mut states = [ViewLoadState::Idle; AppView::COUNT];
+                states[AppView::Pods.index()] = ViewLoadState::Ready;
+                states
+            },
+            last_error: Some("pods: forbidden by RBAC | services: timed out".to_string()),
+            ..ClusterSnapshot::default()
+        };
+
+        let text = render_to_string(&app, &snapshot);
+
+        assert!(
+            text.contains("Failed to load Pods: forbidden by RBAC"),
+            "{text}"
+        );
+        assert!(!text.contains("No pods available"), "{text}");
+    }
+
+    #[test]
+    fn centered_no_match_message_takes_precedence_over_fetch_error() {
+        let mut app = app_with_view(AppView::Pods);
+        app.search_query = "api".to_string();
+        let snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            loaded_scope: RefreshScope::PODS,
+            view_load_states: {
+                let mut states = [ViewLoadState::Idle; AppView::COUNT];
+                states[AppView::Pods.index()] = ViewLoadState::Ready;
+                states
+            },
+            last_error: Some("pods: forbidden by RBAC".to_string()),
+            ..ClusterSnapshot::default()
+        };
+
+        let text = render_to_string(&app, &snapshot);
+
+        assert!(text.contains("No pods match the search query"), "{text}");
+        assert!(!text.contains("Failed to load Pods"), "{text}");
+    }
+
+    #[test]
+    fn render_invalidates_when_matching_fetch_error_changes_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let app = app_with_view(AppView::Pods);
+        let mut snapshot = ClusterSnapshot {
+            phase: DataPhase::Ready,
+            loaded_scope: RefreshScope::PODS,
+            view_load_states: {
+                let mut states = [ViewLoadState::Idle; AppView::COUNT];
+                states[AppView::Pods.index()] = ViewLoadState::Ready;
+                states
+            },
+            last_error: Some("pods: forbidden".to_string()),
+            ..ClusterSnapshot::default()
+        };
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let before = terminal_to_string(&terminal);
+        assert!(
+            before.contains("Failed to load Pods: forbidden"),
+            "{before}"
+        );
+
+        snapshot.last_error = Some("pods: timed out".to_string());
+        draw_in_terminal(&mut terminal, &app, &snapshot);
+        let after = terminal_to_string(&terminal);
+
+        assert!(after.contains("Failed to load Pods: timed out"), "{after}");
+        assert_ne!(before, after);
     }
 
     #[test]
