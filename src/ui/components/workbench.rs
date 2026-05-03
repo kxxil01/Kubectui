@@ -1299,10 +1299,7 @@ fn render_rollout_tab(
         render_wrapped_text_lines(
             frame,
             sections[1],
-            vec![Line::from(Span::styled(
-                " Rollout mutation in progress...",
-                theme.inactive_style(),
-            ))],
+            vec![Line::from(loading_span("Rollout mutation in progress..."))],
             tab.detail_scroll,
         );
         return;
@@ -1561,9 +1558,8 @@ fn render_helm_history_tab(
         render_wrapped_text_lines(
             frame,
             sections[1],
-            vec![Line::from(Span::styled(
-                " Helm rollback is running. Action history will update when the CLI call completes.",
-                theme.inactive_style(),
+            vec![Line::from(loading_span(
+                "Helm rollback is running. Action history will update when the CLI call completes.",
             ))],
             tab.scroll,
         );
@@ -3377,8 +3373,8 @@ mod tests {
     use super::{
         VisibleWindow, access_review_lines, centered_window, render_connectivity_tab,
         render_decoded_secret_tab, render_events_tab, render_exec_tab, render_extension_output_tab,
-        render_helm_values_diff, render_logs_tab, render_workload_logs_tab, render_yaml_tab,
-        scroll_window, scroll_window_scrollbar_position,
+        render_helm_history_tab, render_helm_values_diff, render_logs_tab, render_rollout_tab,
+        render_workload_logs_tab, render_yaml_tab, scroll_window, scroll_window_scrollbar_position,
     };
     use crate::{
         action_history::{ActionKind, ActionStatus},
@@ -3391,13 +3387,14 @@ mod tests {
             AccessReviewSubject, SubjectAccessReview, SubjectBindingResolution,
             SubjectRoleResolution,
         },
+        state::ClusterSnapshot,
         timeline::TimelineEntry,
         ui::{components::default_theme, truncate_message, wrapped_line_count},
         workbench::{
             AccessReviewTabState, AttemptedActionReview, ConnectivityTabFocus,
-            ConnectivityTabState, ExecTabState, ExtensionOutputTabState, HelmValuesDiffState,
-            PodLogsTabState, ResourceEventsTabState, WorkbenchTab, WorkbenchTabState,
-            WorkloadLogsTabState,
+            ConnectivityTabState, ExecTabState, ExtensionOutputTabState, HelmHistoryTabState,
+            HelmValuesDiffState, PodLogsTabState, ResourceEventsTabState, RolloutMutationState,
+            RolloutTabState, WorkbenchTab, WorkbenchTabState, WorkloadLogsTabState,
         },
     };
     use ratatui::{Terminal, backend::TestBackend, layout::Rect, text::Line};
@@ -4268,6 +4265,80 @@ mod tests {
 
         assert!(before.contains("Running extension command..."));
         assert!(after.contains("Running extension command..."));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn rollout_mutation_body_animates() {
+        let backend = TestBackend::new(96, 12);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab = RolloutTabState::new(ResourceRef::Deployment("api".into(), "default".into()));
+        tab.begin_mutation(RolloutMutationState::Restart, 42);
+        let snapshot = ClusterSnapshot::default();
+
+        crate::ui::set_loading_spinner_tick(0);
+        terminal
+            .draw(|frame| render_rollout_tab(frame, Rect::new(0, 0, 96, 12), &snapshot, &tab))
+            .expect("rollout tab should render");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        crate::ui::set_loading_spinner_tick(1);
+        terminal
+            .draw(|frame| render_rollout_tab(frame, Rect::new(0, 0, 96, 12), &snapshot, &tab))
+            .expect("rollout tab should rerender");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(before.contains("Rollout mutation in progress..."));
+        assert!(after.contains("Rollout mutation in progress..."));
+        assert_ne!(before, after);
+    }
+
+    #[test]
+    fn helm_rollback_body_animates() {
+        let backend = TestBackend::new(112, 10);
+        let mut terminal = Terminal::new(backend).expect("terminal should initialize");
+        let mut tab =
+            HelmHistoryTabState::new(ResourceRef::HelmRelease("api".into(), "default".into()));
+        tab.begin_rollback(42);
+
+        crate::ui::set_loading_spinner_tick(0);
+        terminal
+            .draw(|frame| render_helm_history_tab(frame, Rect::new(0, 0, 112, 10), &tab))
+            .expect("helm history tab should render");
+        let before = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        crate::ui::set_loading_spinner_tick(1);
+        terminal
+            .draw(|frame| render_helm_history_tab(frame, Rect::new(0, 0, 112, 10), &tab))
+            .expect("helm history tab should rerender");
+        let after = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+
+        assert!(before.contains("Helm rollback is running."));
+        assert!(after.contains("Helm rollback is running."));
         assert_ne!(before, after);
     }
 
