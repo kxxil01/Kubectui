@@ -56,12 +56,13 @@ pub struct AiAnalysisContext {
 
 impl AiAnalysisContext {
     pub fn render_prompt(&self) -> String {
+        let (resource_name, resource_namespace) = ai_prompt_resource_identity(&self.resource);
         let mut sections = Vec::new();
         sections.push(format!(
             "Resource\n- kind: {}\n- name: {}\n- namespace: {}",
             self.resource.kind(),
-            self.resource.name(),
-            self.resource.namespace().unwrap_or("-"),
+            resource_name,
+            resource_namespace,
         ));
         sections.push(format!(
             "Cluster Context\n- current_context: {}",
@@ -87,6 +88,14 @@ impl AiAnalysisContext {
             None => "YAML Excerpt\n- unavailable".to_string(),
         });
         sections.join("\n\n")
+    }
+}
+
+fn ai_prompt_resource_identity(resource: &ResourceRef) -> (&str, &str) {
+    if matches!(resource, ResourceRef::Secret(_, _)) {
+        ("<redacted>", "<redacted>")
+    } else {
+        (resource.name(), resource.namespace().unwrap_or("-"))
     }
 }
 
@@ -912,6 +921,30 @@ trailing note {also ignored}"#,
         assert!(prompt.contains("Failure Focus"));
         assert!(prompt.contains("Logs"));
         assert!(prompt.contains("kind: Pod"));
+    }
+
+    #[test]
+    fn context_prompt_redacts_secret_resource_identity() {
+        let prompt = AiAnalysisContext {
+            resource: ResourceRef::Secret("database-password".into(), "prod".into()),
+            cluster_context: Some("prod-cluster".into()),
+            resource_state_lines: Vec::new(),
+            metadata_lines: Vec::new(),
+            workflow_title: None,
+            workflow_lines: Vec::new(),
+            issue_lines: Vec::new(),
+            event_lines: Vec::new(),
+            probe_lines: Vec::new(),
+            log_lines: Vec::new(),
+            yaml_excerpt: Some("# redacted: Secret manifests are not sent to AI".into()),
+        }
+        .render_prompt();
+
+        assert!(prompt.contains("- kind: Secret"), "{prompt}");
+        assert!(prompt.contains("- name: <redacted>"), "{prompt}");
+        assert!(prompt.contains("- namespace: <redacted>"), "{prompt}");
+        assert!(!prompt.contains("database-password"), "{prompt}");
+        assert!(!prompt.contains("namespace: prod\n"), "{prompt}");
     }
 
     #[test]
