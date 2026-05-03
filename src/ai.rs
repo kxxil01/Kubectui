@@ -252,6 +252,12 @@ fn call_openai(
     if !status.is_success() {
         bail!(extract_provider_error("OpenAI", &value));
     }
+    extract_openai_message_content(&value)
+        .map(str::to_string)
+        .ok_or_else(|| anyhow!("OpenAI response did not include message.content"))
+}
+
+fn extract_openai_message_content(value: &Value) -> Option<&str> {
     value
         .get("choices")
         .and_then(Value::as_array)
@@ -259,8 +265,6 @@ fn call_openai(
         .and_then(|choice| choice.get("message"))
         .and_then(|message| message.get("content"))
         .and_then(Value::as_str)
-        .map(str::to_string)
-        .ok_or_else(|| anyhow!("OpenAI response did not include message.content"))
 }
 
 #[cold]
@@ -849,6 +853,41 @@ trailing note {also ignored}"#,
         assert!(!rendered.contains("user:pass"), "{rendered}");
         assert!(!rendered.contains("sk-live"), "{rendered}");
         assert!(!rendered.contains("literal-value"), "{rendered}");
+    }
+
+    #[test]
+    fn openai_message_content_extracts_standard_chat_completion_text() {
+        let value = json!({
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": "{\"summary\":\"ok\",\"likely_causes\":[],\"next_steps\":[],\"uncertainty\":[]}"
+                    }
+                }
+            ]
+        });
+
+        assert_eq!(
+            extract_openai_message_content(&value),
+            Some("{\"summary\":\"ok\",\"likely_causes\":[],\"next_steps\":[],\"uncertainty\":[]}")
+        );
+    }
+
+    #[test]
+    fn openai_message_content_rejects_missing_text_content() {
+        let value = json!({
+            "choices": [
+                {
+                    "message": {
+                        "role": "assistant",
+                        "content": null
+                    }
+                }
+            ]
+        });
+
+        assert_eq!(extract_openai_message_content(&value), None);
     }
 
     #[test]
