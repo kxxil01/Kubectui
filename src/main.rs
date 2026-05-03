@@ -5059,6 +5059,10 @@ pub(crate) async fn run_app_inner(
                         .detail_view
                         .as_ref()
                         .is_some_and(DetailViewState::has_loading_indicator)
+                    || app
+                        .resource_template_dialog
+                        .as_ref()
+                        .is_some_and(|dialog| dialog.pending)
                 {
                     app.advance_spinner();
                     needs_redraw = true;

@@ -8,7 +8,9 @@ use ratatui::{
     widgets::{Block, Borders, Clear, Paragraph},
 };
 
-use crate::ui::{cursor_visible_input_line, truncate_message, wrapped_line_count};
+use crate::ui::{
+    cursor_visible_input_line, loading_spinner_char, truncate_message, wrapped_line_count,
+};
 
 /// Field focus for keyboard navigation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -250,7 +252,7 @@ pub fn render_scale_dialog(frame: &mut Frame, area: Rect, state: &ScaleDialogSta
         ))
     } else if state.pending {
         Line::from(Span::styled(
-            "⏳ Scaling...",
+            format!("{} Scaling...", loading_spinner_char()),
             Style::default().fg(Color::Magenta),
         ))
     } else {
@@ -416,7 +418,7 @@ fn render_compact_scale_dialog(frame: &mut Frame, popup: Rect, state: &ScaleDial
     } else if let Some(warn) = &state.warning_message {
         format!("warn: {warn}")
     } else if state.pending {
-        "scaling...".to_string()
+        format!("{} scaling...", loading_spinner_char())
     } else {
         "enter apply  esc cancel".to_string()
     };
