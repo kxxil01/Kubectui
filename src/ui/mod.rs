@@ -54,7 +54,7 @@ fn set_loading_spinner_tick(tick: u8) {
     LOADING_SPINNER_TICK.store(tick % 8, Ordering::Relaxed);
 }
 
-fn loading_spinner_char() -> char {
+pub(crate) fn loading_spinner_char() -> char {
     const FRAMES: [char; 8] = [
         '\u{280B}', '\u{2819}', '\u{2839}', '\u{2838}', '\u{283C}', '\u{2834}', '\u{2826}',
         '\u{2827}',
@@ -976,6 +976,7 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
     let _frame_scope = profiling::frame_scope(app.view());
     let _render_scope = profiling::span_scope("render");
     let area = frame.area();
+    set_loading_spinner_tick(app.spinner_tick);
 
     // Guard against terminals too small to render the layout
     if area.height < MIN_TERMINAL_HEIGHT || area.width < MIN_TERMINAL_WIDTH {
@@ -1138,7 +1139,6 @@ pub fn render(frame: &mut Frame, app: &AppState, cluster: &ClusterSnapshot) {
         SplitPaneFocus::None
     };
     let content_focused = matches!(split_pane_focus, SplitPaneFocus::List);
-    set_loading_spinner_tick(app.spinner_tick);
     let view_load_state = cluster.view_load_state(app.view());
     let loading_spinner_tick = if matches!(
         view_load_state,
@@ -3714,6 +3714,42 @@ mod tests {
         assert!(rendered.contains("Logs 20"));
         assert!(rendered.contains("YAML redacted"));
         assert!(rendered.contains("log gaps noted"));
+    }
+
+    #[test]
+    fn loading_workbench_tabs_animate_on_same_terminal() {
+        let _render_lock = RENDER_INVALIDATION_TEST_LOCK
+            .lock()
+            .expect("lock should not poison");
+        let _theme_guard = ThemeResetGuard(crate::ui::theme::active_theme_index());
+        let _icon_mode_lock = crate::icons::icon_mode_test_lock();
+        let _icon_guard = IconResetGuard(crate::icons::active_icon_mode());
+        crate::ui::theme::set_active_theme(0);
+        crate::icons::set_icon_mode(IconMode::Plain);
+
+        let mut app = app_with_view(AppView::Pods);
+        let resource = ResourceRef::Pod("api-0".to_string(), "default".to_string());
+        app.open_ai_analysis_tab(
+            11,
+            "Explain Failure",
+            resource,
+            "Codex CLI",
+            "codex-cli",
+            Vec::new(),
+        );
+        let backend = TestBackend::new(120, 40);
+        let mut terminal = Terminal::new(backend).expect("test terminal should initialize");
+
+        draw_in_terminal(&mut terminal, &app, &ClusterSnapshot::default());
+        let before = terminal_to_string(&terminal);
+
+        app.advance_spinner();
+        draw_in_terminal(&mut terminal, &app, &ClusterSnapshot::default());
+        let after = terminal_to_string(&terminal);
+
+        assert!(before.contains("Running AI analysis..."));
+        assert!(after.contains("Running AI analysis..."));
+        assert_ne!(before, after);
     }
 
     #[test]

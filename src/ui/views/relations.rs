@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::k8s::relationships::{FlatNode, RelationKind, flatten_tree};
-use crate::ui::theme::Theme;
+use crate::ui::{loading_spinner_char, theme::Theme};
 use crate::workbench::RelationsTabState;
 
 pub struct RelationTreeView<'a> {
@@ -46,7 +46,12 @@ pub fn render_relation_tree(
     theme: &Theme,
 ) {
     if view.loading {
-        let text = Paragraph::new(view.loading_message).style(Style::default().fg(theme.fg_dim));
+        let text = Paragraph::new(format!(
+            "{} {}",
+            loading_spinner_char(),
+            view.loading_message
+        ))
+        .style(Style::default().fg(theme.fg_dim));
         frame.render_widget(text, area);
         return;
     }
